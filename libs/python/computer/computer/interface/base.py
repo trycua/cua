@@ -17,6 +17,7 @@ class BaseComputerInterface(ABC):
         password: str = "lume",
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
+        proxy_base_url: Optional[str] = None,
     ):
         """Initialize interface.
 
@@ -26,12 +27,16 @@ class BaseComputerInterface(ABC):
             password: Password for authentication
             api_key: Optional API key for cloud authentication
             vm_name: Optional VM name for cloud authentication
+            proxy_base_url: Optional base URL for cloud API proxy mode
+                (e.g. "https://api.cua.ai"). When set, traffic is routed
+                through the cloud API proxy instead of directly to the VM.
         """
         self.ip_address = ip_address
         self.username = username
         self.password = password
         self.api_key = api_key
         self.vm_name = vm_name
+        self.proxy_base_url = proxy_base_url.rstrip("/") if proxy_base_url else None
         self.logger = Logger("cua.interface", LogLevel.NORMAL)
 
         # Optional default delay time between commands (in seconds)

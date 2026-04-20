@@ -17,6 +17,7 @@ class InterfaceFactory:
         api_port: Optional[int] = None,
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
+        proxy_base_url: Optional[str] = None,
     ) -> BaseComputerInterface:
         """Create an interface for the specified OS.
 
@@ -26,6 +27,7 @@ class InterfaceFactory:
             api_port: Optional API port of the computer to control
             api_key: Optional API key for cloud authentication
             vm_name: Optional VM name for cloud authentication
+            proxy_base_url: Optional cloud API proxy base URL
 
         Returns:
             BaseComputerInterface: The appropriate interface for the OS
@@ -38,25 +40,25 @@ class InterfaceFactory:
             from .macos import MacOSComputerInterface
 
             return MacOSComputerInterface(
-                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port, proxy_base_url=proxy_base_url
             )
         elif os == "linux":
             from .linux import LinuxComputerInterface
 
             return LinuxComputerInterface(
-                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port, proxy_base_url=proxy_base_url
             )
         elif os == "windows":
             from .windows import WindowsComputerInterface
 
             return WindowsComputerInterface(
-                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port, proxy_base_url=proxy_base_url
             )
         elif os == "android":
             from .android import AndroidComputerInterface
 
             return AndroidComputerInterface(
-                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port, proxy_base_url=proxy_base_url
             )
         else:
             raise ValueError(f"Unsupported OS type: {os}")

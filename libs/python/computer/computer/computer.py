@@ -629,6 +629,11 @@ class Computer:
                 and self.api_key
                 and self.config.name
             ):
+                # Determine proxy base URL from the cloud provider
+                proxy_url = None
+                if self.config.vm_provider and hasattr(self.config.vm_provider, "api_base"):
+                    proxy_url = self.config.vm_provider.api_base
+
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -637,6 +642,7 @@ class Computer:
                         api_key=self.api_key,
                         vm_name=self.config.name,
                         api_port=self.api_port,
+                        proxy_base_url=proxy_url,
                     ),
                 )
             else:
@@ -839,6 +845,9 @@ class Computer:
                 and self.api_key
                 and self.config.name
             ):
+                proxy_url = None
+                if self.config.vm_provider and hasattr(self.config.vm_provider, "api_base"):
+                    proxy_url = self.config.vm_provider.api_base
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -847,6 +856,7 @@ class Computer:
                         api_key=self.api_key,
                         vm_name=self.config.name,
                         api_port=self.api_port,
+                        proxy_base_url=proxy_url,
                     ),
                 )
             else:

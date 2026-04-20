@@ -14,7 +14,8 @@ class LinuxComputerInterface(GenericComputerInterface):
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
         api_port: Optional[int] = None,
+        proxy_base_url: Optional[str] = None,
     ):
         super().__init__(
-            ip_address, username, password, api_key, vm_name, "computer.interface.linux", api_port
+            ip_address, username, password, api_key, vm_name, "computer.interface.linux", api_port, proxy_base_url
         )

@@ -32,8 +32,9 @@ class GenericComputerInterface(BaseComputerInterface):
         vm_name: Optional[str] = None,
         logger_name: str = "computer.interface.generic",
         api_port: Optional[int] = None,
+        proxy_base_url: Optional[str] = None,
     ):
-        super().__init__(ip_address, username, password, api_key, vm_name)
+        super().__init__(ip_address, username, password, api_key, vm_name, proxy_base_url)
         self._ws = None
         self._reconnect_task = None
         self._closed = False
@@ -74,6 +75,11 @@ class GenericComputerInterface(BaseComputerInterface):
         Returns:
             WebSocket URI for the Computer API Server
         """
+        if self.proxy_base_url and self.vm_name:
+            scheme = "wss" if self.proxy_base_url.startswith("https") else "ws"
+            host = self.proxy_base_url.split("://", 1)[-1]
+            return f"{scheme}://{host}/v1/vms/{self.vm_name}/ws"
+
         protocol = "wss" if self.api_key else "ws"
         # Use custom API port if provided, otherwise use defaults based on API key
         port = (
@@ -90,6 +96,9 @@ class GenericComputerInterface(BaseComputerInterface):
         Returns:
             REST URI for the Computer API Server
         """
+        if self.proxy_base_url and self.vm_name:
+            return f"{self.proxy_base_url}/v1/vms/{self.vm_name}/http/cmd"
+
         protocol = "https" if self.api_key else "http"
         # Use custom API port if provided, otherwise use defaults based on API key
         port = (
@@ -764,15 +773,20 @@ class GenericComputerInterface(BaseComputerInterface):
             # Web search
             await interface.playwright_exec("web_search", {"query": "computer use agent"})
         """
-        protocol = "https" if self.api_key else "http"
-        port = str(self._api_port) if self._api_port else ("8443" if self.api_key else "8000")
-        url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
+        if self.proxy_base_url and self.vm_name:
+            url = f"{self.proxy_base_url}/v1/vms/{self.vm_name}/http/playwright_exec"
+        else:
+            protocol = "https" if self.api_key else "http"
+            port = str(self._api_port) if self._api_port else ("8443" if self.api_key else "8000")
+            url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
 
         payload = {"command": command, "params": params or {}}
         headers = {"Content-Type": "application/json", **cua_version_headers()}
-        if self.api_key:
+        if self.proxy_base_url and self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        elif self.api_key:
             headers["X-API-Key"] = self.api_key
-        if self.vm_name:
+        if self.vm_name and not self.proxy_base_url:
             headers["X-Container-Name"] = self.vm_name
 
         try:
@@ -821,6 +835,12 @@ class GenericComputerInterface(BaseComputerInterface):
                                 f"Attempting WebSocket connection to {self.ws_uri} (attempt {retry_count})"
                             )
 
+                        # In proxy mode, the cloud API service handles auth via
+                        # the Authorization header; no WS authenticate handshake needed.
+                        ws_extra_headers = {}
+                        if self.proxy_base_url and self.api_key:
+                            ws_extra_headers["Authorization"] = f"Bearer {self.api_key}"
+
                         self._ws = await asyncio.wait_for(
                             websockets.connect(
                                 self.ws_uri,
@@ -830,13 +850,17 @@ class GenericComputerInterface(BaseComputerInterface):
                                 ping_timeout=self._ping_timeout,
                                 close_timeout=5,
                                 compression=None,  # Disable compression to reduce overhead
+                                additional_headers=ws_extra_headers or None,
                             ),
                             timeout=120,
                         )
                         self.logger.info("WebSocket connection established")
 
-                        # If api_key and vm_name are provided, perform authentication handshake
-                        if self.api_key and self.vm_name:
+                        # In proxy mode, skip the authenticate handshake — the proxy
+                        # already validated the workspace key via the Bearer header.
+                        if self.proxy_base_url:
+                            self.logger.info("Proxy mode: skipping authenticate handshake")
+                        elif self.api_key and self.vm_name:
                             self.logger.info("Performing authentication handshake...")
                             auth_message = {
                                 "command": "authenticate",
@@ -1009,9 +1033,11 @@ class GenericComputerInterface(BaseComputerInterface):
 
             # Prepare headers
             headers = {"Content-Type": "application/json", **cua_version_headers()}
-            if self.api_key:
+            if self.proxy_base_url and self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            elif self.api_key:
                 headers["X-API-Key"] = self.api_key
-            if self.vm_name:
+            if self.vm_name and not self.proxy_base_url:
                 headers["X-Container-Name"] = self.vm_name
 
             # Send the request

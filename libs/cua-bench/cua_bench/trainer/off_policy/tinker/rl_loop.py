@@ -6,9 +6,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .grpo import GRPOConfig
 from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.image_processing_utils import get_image_processor
+
+from .grpo import GRPOConfig
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -72,11 +73,11 @@ def run(config: TrainingConfig) -> None:
     All Tinker imports are deferred so the module can be imported in
     environments where ``tinker`` is not installed.
     """
-    from tinker import ServiceClient
     import tinker.types as tt
-    from transformers import AutoTokenizer, AutoProcessor
+    from tinker import ServiceClient
+    from transformers import AutoProcessor, AutoTokenizer
 
-    from . import traces, rollout, grpo, checkpoints
+    from . import checkpoints, grpo, rollout, traces
     from .rollout import _get_run_output_dir
 
     if config.mode not in ("online", "offline"):

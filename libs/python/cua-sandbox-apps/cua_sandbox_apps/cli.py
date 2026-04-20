@@ -73,8 +73,8 @@ def discover_software(input_path: str | None, output: str | None, target: int, m
     and a submit_apps tool to ingest entries. Outer loop re-prompts until target.
     Fully resumable — deduplicates on ingress.
     """
-    from .discovery.onet import read_jsonl
     from .discovery.discover import run_discovery
+    from .discovery.onet import read_jsonl
 
     inp = Path(input_path) if input_path else DEFAULT_DATA_DIR / "occupations.jsonl"
     out = Path(output) if output else DEFAULT_DATA_DIR / "raw_software.jsonl"

@@ -227,7 +227,7 @@ async def discover_software_for_group(
     If the agent submits fewer than min_new_entries new items, it is re-prompted
     up to 2 extra times to search from a different sub-angle.
     """
-    from claude_agent_sdk import query, ClaudeAgentOptions, create_sdk_mcp_server
+    from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query
 
     submit_tool = _make_ingress_tool(catalog_path)
     ingress_server = create_sdk_mcp_server(

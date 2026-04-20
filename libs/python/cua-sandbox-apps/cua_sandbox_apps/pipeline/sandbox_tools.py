@@ -209,8 +209,9 @@ def make_sandbox_tools(evidence_dir: Path | None = None, sandbox_registry: dict[
                 elif isinstance(screenshot, bytes):
                     # Raw PNG bytes — convert to JPEG
                     try:
-                        from PIL import Image as PILImage
                         import io
+
+                        from PIL import Image as PILImage
                         img = PILImage.open(io.BytesIO(screenshot)).convert("RGB")
                         img.save(str(out_path), "JPEG", quality=85)
                     except ImportError:

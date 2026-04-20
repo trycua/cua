@@ -272,7 +272,9 @@ class LayerExecutor:
         """Install an app from cua-sandbox-apps. Reads its install.sh and runs it."""
         app_id = layer["app_id"]
         try:
-            from cua_sandbox_apps.pipeline.task_creator_agent import _resolve_app_scripts
+            from cua_sandbox_apps.pipeline.task_creator_agent import (
+                _resolve_app_scripts,
+            )
         except ImportError:
             # cua-sandbox-apps not installed — try to locate the script file directly
             pass

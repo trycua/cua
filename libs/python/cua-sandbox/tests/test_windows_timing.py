@@ -9,7 +9,6 @@ import os
 import time
 
 import pytest
-
 from cua_sandbox import Image, Sandbox
 
 pytestmark = pytest.mark.asyncio

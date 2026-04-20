@@ -1,5 +1,5 @@
+from .checkpoints import CheckpointInfo, get_last_checkpoint, save_checkpoint
 from .grpo import GRPOConfig
-from .checkpoints import CheckpointInfo, save_checkpoint, get_last_checkpoint
 
 __all__ = [
     "TrainingConfig",

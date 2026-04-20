@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-import subprocess
 import os
+import subprocess
 import time
 
 os.environ['DISPLAY'] = ':1'

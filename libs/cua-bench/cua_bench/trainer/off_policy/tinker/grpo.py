@@ -106,8 +106,8 @@ def _build_datum(
 
     All four arrays must have the same length (``model_input.length``).
     """
-    import torch
     import tinker.types as tt
+    import torch
     from tinker.types.tensor_data import TensorData
 
     if not any(a != 0.0 for a in advantages):

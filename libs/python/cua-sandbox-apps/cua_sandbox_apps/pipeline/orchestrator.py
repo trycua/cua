@@ -11,7 +11,7 @@ import json
 import logging
 from pathlib import Path
 
-from .shared_memory import init_memory, read_memory, append_learning
+from .shared_memory import append_learning, init_memory, read_memory
 
 logger = logging.getLogger(__name__)
 

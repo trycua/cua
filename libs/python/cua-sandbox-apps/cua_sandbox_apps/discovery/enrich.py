@@ -148,7 +148,7 @@ def _make_submit_tool(output_path: Path, result_holder: list):
 
 async def enrich_app(raw_entry: dict, output_path: Path, model: str = "haiku") -> dict | None:
     """Enrich a single app entry via a Claude agent with submit_enriched tool."""
-    from claude_agent_sdk import query, ClaudeAgentOptions, create_sdk_mcp_server
+    from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query
 
     name = raw_entry.get("name", "unknown")
     website = raw_entry.get("website", "")

@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from claude_agent_sdk import query, ClaudeAgentOptions, create_sdk_mcp_server
+from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query
 
 from .sandbox_tools import make_sandbox_tools
 
@@ -445,7 +445,8 @@ def _make_submit_tool(result_holder: list, output_dir: Path | None, app_name: st
                 else:
                     # Full end-to-end re-run in a fresh sandbox to catch idempotency
                     # regressions that the agent's iterative debugging masked.
-                    from cua_sandbox import Image as _Image, Sandbox as _Sandbox
+                    from cua_sandbox import Image as _Image
+                    from cua_sandbox import Sandbox as _Sandbox
                     img_map = {"linux": _Image.linux, "macos": _Image.macos, "android": _Image.android}
                     img = img_map[target_os]()
                     verify_sb = await _Sandbox.create(img, local=True, name=f"verify-{sandbox_name}")

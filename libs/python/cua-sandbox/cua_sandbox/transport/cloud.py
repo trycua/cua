@@ -41,6 +41,7 @@ class CloudTransport(Transport):
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
+        ttl_seconds: Optional[int] = None,
     ):
         self._name = name
         self._api_key_override = api_key
@@ -50,6 +51,7 @@ class CloudTransport(Transport):
         self._memory_mb = memory_mb
         self._disk_gb = disk_gb
         self._region = region
+        self._ttl_seconds = ttl_seconds
         self._inner: Optional[HTTPTransport] = None
         self._api_client: Optional[httpx.AsyncClient] = None
 
@@ -340,12 +342,14 @@ class CloudTransport(Transport):
         # Fork path: image came from sb.snapshot() — create VM from snapshot
         snap_source = getattr(self._image, "_snapshot_source", None)
         if snap_source:
-            body = {
+            body: Dict[str, Any] = {
                 "source": "snapshot",
                 "instance": snap_source["instance"],
                 "snapshot": snap_source["snapshot"],
                 "instanceType": snap_source.get("instanceType", "vm"),
             }
+            if self._ttl_seconds is not None and self._ttl_seconds > 0:
+                body["ttlSeconds"] = self._ttl_seconds
             resp = await self._api_client.post("/v1/vms", json=body)
             resp.raise_for_status()
             return resp.json()
@@ -367,6 +371,8 @@ class CloudTransport(Transport):
             body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
         else:
             body["configuration"] = "small"
+        if self._ttl_seconds is not None and self._ttl_seconds > 0:
+            body["ttlSeconds"] = self._ttl_seconds
         resp = await self._api_client.post("/v1/vms", json=body)
         resp.raise_for_status()
         return resp.json()

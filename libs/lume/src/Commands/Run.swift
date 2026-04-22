@@ -147,11 +147,14 @@ struct Run: AsyncParsableCommand {
             "headless": noDisplay
         ])
 
-        // LUME_NO_AUDIO=1 is an env-var fallback for the --no-audio flag so
+        // LUME_NO_AUDIO is an env-var fallback for the --no-audio flag so
         // wrappers (e.g. harbor-ios-env) can opt out host-wide without
-        // editing every caller.
+        // editing every caller. Accept the usual truthy strings.
+        let envNoAudio = (ProcessInfo.processInfo.environment["LUME_NO_AUDIO"] ?? "")
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
         let resolvedNoAudio = noAudio
-            || ProcessInfo.processInfo.environment["LUME_NO_AUDIO"] == "1"
+            || ["1", "true", "yes", "y", "on"].contains(envNoAudio)
 
         try await LumeController().runVM(
             name: name,

@@ -222,6 +222,22 @@ class BaseVirtualizationService: VMVirtualizationService {
             return device
         } ?? []
     }
+
+    /// Build a host-backed virtio sound device (shared between Darwin and Linux
+    /// configurations). Factored out so the two call sites can't drift.
+    static func createAudioDeviceConfiguration() -> VZVirtioSoundDeviceConfiguration {
+        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
+        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
+        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
+
+        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
+        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
+
+        soundDeviceConfiguration.streams = [
+            inputAudioStreamConfiguration, outputAudioStreamConfiguration,
+        ]
+        return soundDeviceConfiguration
+    }
 }
 
 /// macOS-specific virtualization service
@@ -315,15 +331,7 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         // Default is unchanged (audio enabled); opt-out preserves behavior for
         // everyone else.
         if !config.disableAudio {
-            let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-            let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-            let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-
-            inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-            outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-
-            soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-            vzConfig.audioDevices = [soundDeviceConfiguration]
+            vzConfig.audioDevices = [createAudioDeviceConfiguration()]
         }
 
         // Clipboard sharing via Spice agent
@@ -481,15 +489,7 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         // See DarwinVirtualizationService.createConfiguration for the rationale
         // — same sandbox-extension failure mode applies to Linux guests.
         if !config.disableAudio {
-            let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-            let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-            let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-
-            inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-            outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-
-            soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-            vzConfig.audioDevices = [soundDeviceConfiguration]
+            vzConfig.audioDevices = [createAudioDeviceConfiguration()]
         }
 
         // Clipboard sharing via Spice agent

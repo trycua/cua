@@ -17,6 +17,7 @@ struct VMVirtualizationServiceContext {
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
     let networkMode: NetworkMode
+    let disableAudio: Bool
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -304,18 +305,27 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
-        
-        // Audio configuration
-        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-        
-        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-        
-        soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-        vzConfig.audioDevices = [soundDeviceConfiguration]
-        
+
+        // Audio configuration (opt-out via --no-audio / LUME_NO_AUDIO=1).
+        // On hosts where lume.app hasn't been granted Microphone access in TCC,
+        // requesting VZHostAudioInputStreamSource / VZHostAudioOutputStreamSink
+        // makes VZ ask the kernel for an audio sandbox extension, which is
+        // denied, and VM boot fails with:
+        //   "Failed to issue audio output sandbox extension."
+        // Default is unchanged (audio enabled); opt-out preserves behavior for
+        // everyone else.
+        if !config.disableAudio {
+            let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
+            let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
+            let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
+
+            inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
+            outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
+
+            soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
+            vzConfig.audioDevices = [soundDeviceConfiguration]
+        }
+
         // Clipboard sharing via Spice agent
         let spiceAgentConsoleDevice = VZVirtioConsoleDeviceConfiguration()
         let spiceAgentPort = VZVirtioConsolePortConfiguration()
@@ -467,16 +477,20 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 
-        // Audio configuration
-        let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
-        let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
-        let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
-        
-        inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
-        outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
-        
-        soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
-        vzConfig.audioDevices = [soundDeviceConfiguration]
+        // Audio configuration (opt-out via --no-audio / LUME_NO_AUDIO=1).
+        // See DarwinVirtualizationService.createConfiguration for the rationale
+        // — same sandbox-extension failure mode applies to Linux guests.
+        if !config.disableAudio {
+            let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
+            let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()
+            let outputAudioStreamConfiguration = VZVirtioSoundDeviceOutputStreamConfiguration()
+
+            inputAudioStreamConfiguration.source = VZHostAudioInputStreamSource()
+            outputAudioStreamConfiguration.sink = VZHostAudioOutputStreamSink()
+
+            soundDeviceConfiguration.streams = [inputAudioStreamConfiguration, outputAudioStreamConfiguration]
+            vzConfig.audioDevices = [soundDeviceConfiguration]
+        }
 
         // Clipboard sharing via Spice agent
         let spiceAgentConsoleDevice = VZVirtioConsoleDeviceConfiguration()

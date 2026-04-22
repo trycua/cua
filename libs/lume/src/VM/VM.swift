@@ -144,7 +144,7 @@ class VM {
     func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
         vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil, clipboard: Bool = false
+        networkMode: NetworkMode? = nil, clipboard: Bool = false, disableAudio: Bool = false
     ) async throws {
         Logger.info(
             "VM.run method called",
@@ -248,7 +248,8 @@ class VM {
                 mount: mount,
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
-                networkMode: networkMode
+                networkMode: networkMode,
+                disableAudio: disableAudio
             )
             Logger.info(
                 "Successfully created virtualization service context",
@@ -870,7 +871,8 @@ class VM {
         mount: Path? = nil,
         recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil
+        networkMode: NetworkMode? = nil,
+        disableAudio: Bool = false
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
         try validateDiskState()
@@ -891,7 +893,8 @@ class VM {
             nvramPath: vmDirContext.nvramPath,
             recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
-            networkMode: effectiveNetworkMode
+            networkMode: effectiveNetworkMode,
+            disableAudio: disableAudio
         )
     }
 

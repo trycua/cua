@@ -76,6 +76,11 @@ struct Run: AsyncParsableCommand {
     @Flag(name: .customLong("clipboard"), help: "Enable bidirectional clipboard sync with the VM via SSH (experimental)")
     var clipboard: Bool = false
 
+    @Flag(
+        name: .customLong("no-audio"),
+        help: "Do not attach a virtio sound device. Use on hosts where lume.app lacks Microphone TCC access and VM boot fails with 'Failed to issue audio output sandbox extension.' Can also be set via LUME_NO_AUDIO=1.")
+    var noAudio: Bool = false
+
     private var parsedNetworkMode: NetworkMode? {
         get throws {
             guard let network else {
@@ -142,6 +147,12 @@ struct Run: AsyncParsableCommand {
             "headless": noDisplay
         ])
 
+        // LUME_NO_AUDIO=1 is an env-var fallback for the --no-audio flag so
+        // wrappers (e.g. harbor-ios-env) can opt out host-wide without
+        // editing every caller.
+        let resolvedNoAudio = noAudio
+            || ProcessInfo.processInfo.environment["LUME_NO_AUDIO"] == "1"
+
         try await LumeController().runVM(
             name: name,
             noDisplay: noDisplay,
@@ -157,7 +168,8 @@ struct Run: AsyncParsableCommand {
             nvramPath: nvramPath.map { Path($0) },
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
             networkMode: parsedNetworkMode,
-            clipboard: clipboard
+            clipboard: clipboard,
+            disableAudio: resolvedNoAudio
         )
     }
 }

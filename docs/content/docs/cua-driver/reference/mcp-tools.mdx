@@ -111,9 +111,29 @@ Launch an app hidden (no focus steal) and return its pid plus the initial `windo
 - `bundle_id` (string, optional): App bundle identifier, e.g. `com.apple.calculator`.
 - `name` (string, optional): App display name. Used only when `bundle_id` is absent.
 - `urls` (array of string, optional): `file://` / `http(s)://` URLs (or plain paths with `~` expansion) handed to the launched app via `application(_:open:)`. For Finder, a folder URL opens a backgrounded window rooted there. Apps that don't implement `application(_:open:)` launch normally and ignore these.
+- `arguments` (array of string, optional): Process arguments passed through `NSWorkspace.OpenConfiguration`.
+- `environment` (object of string values, optional): Environment variables passed through `NSWorkspace.OpenConfiguration`.
+- `creates_new_application_instance` (boolean, optional): Maps to `NSWorkspace.OpenConfiguration.createsNewApplicationInstance`. Use this when launch arguments must apply to a distinct process instead of an already-running app instance.
+- `allows_running_application_substitution` (boolean, optional): Maps to `NSWorkspace.OpenConfiguration.allowsRunningApplicationSubstitution`. Set `false` when the launch must not be satisfied by a substitute already-running application.
 
 ```json
 {"bundle_id": "com.apple.finder", "urls": ["~/Documents"]}
+```
+
+Isolated Chrome-family sessions can pass a temporary user data directory and force a distinct process:
+
+```json
+{
+  "bundle_id": "com.google.Chrome",
+  "urls": ["http://localhost:3000"],
+  "arguments": [
+    "--user-data-dir=/tmp/cua-session-a",
+    "--no-first-run",
+    "--no-default-browser-check"
+  ],
+  "creates_new_application_instance": true,
+  "allows_running_application_substitution": false
+}
 ```
 
 ### check_permissions

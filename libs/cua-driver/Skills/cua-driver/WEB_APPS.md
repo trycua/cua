@@ -78,6 +78,28 @@ AX reads + element-indexed actions against the hidden window
 work normally, so for agents that just need to extract / click
 things on the loaded page, no unhide is required.
 
+**Isolated test sessions:** when the agent must avoid the user's
+default browser profile, pass Chrome-family launch flags through
+`arguments` and force a distinct app instance:
+
+```
+launch_app({
+  bundle_id: "com.google.Chrome",
+  urls: ["http://localhost:3000"],
+  arguments: [
+    "--user-data-dir=/tmp/cua-session-a",
+    "--no-first-run",
+    "--no-default-browser-check"
+  ],
+  creates_new_application_instance: true,
+  allows_running_application_substitution: false
+})
+```
+
+Use a fresh `--user-data-dir` per agent. This keeps cookies,
+localStorage, extensions, and profile state isolated from both the
+human user's Chrome profile and other agent sessions.
+
 **Last-resort path — omnibox via `⌘L`:** forbidden under the
 no-foreground contract (see SKILL.md) because `⌘L` activates
 Chrome even when delivered to a backgrounded pid. Keep this

@@ -3,6 +3,26 @@ import CoreGraphics
 import Foundation
 
 public enum AppLauncher {
+    public struct LaunchOptions: Sendable {
+        public var arguments: [String]
+        public var environment: [String: String]
+        public var createsNewApplicationInstance: Bool?
+        public var allowsRunningApplicationSubstitution: Bool?
+
+        public init(
+            arguments: [String] = [],
+            environment: [String: String] = [:],
+            createsNewApplicationInstance: Bool? = nil,
+            allowsRunningApplicationSubstitution: Bool? = nil
+        ) {
+            self.arguments = arguments
+            self.environment = environment
+            self.createsNewApplicationInstance = createsNewApplicationInstance
+            self.allowsRunningApplicationSubstitution =
+                allowsRunningApplicationSubstitution
+        }
+    }
+
     public enum LaunchError: Error, CustomStringConvertible, Sendable {
         case notFound(String)
         case launchFailed(String)
@@ -53,13 +73,31 @@ public enum AppLauncher {
     public static func launch(
         bundleId: String? = nil,
         name: String? = nil,
-        urls: [URL] = []
+        urls: [URL] = [],
+        options: LaunchOptions = LaunchOptions()
     ) async throws -> AppInfo {
         let appURL = try locate(bundleId: bundleId, name: name)
 
         let config = NSWorkspace.OpenConfiguration()
         config.activates = false
         config.addsToRecentItems = false
+        if !options.arguments.isEmpty {
+            config.arguments = options.arguments
+        }
+        if !options.environment.isEmpty {
+            config.environment = options.environment
+        }
+        if let createsNewApplicationInstance =
+            options.createsNewApplicationInstance
+        {
+            config.createsNewApplicationInstance = createsNewApplicationInstance
+        }
+        if let allowsRunningApplicationSubstitution =
+            options.allowsRunningApplicationSubstitution
+        {
+            config.allowsRunningApplicationSubstitution =
+                allowsRunningApplicationSubstitution
+        }
         // NOTE: we used to set `config.hides = true` on the theory that
         // it forced the launch lifecycle to complete. Empirically, when
         // LaunchServices cold-launches Calculator without `hides`,

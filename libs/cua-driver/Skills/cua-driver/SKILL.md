@@ -116,7 +116,7 @@ rationale in "Navigating native menu bars" below.
 
 **"Open \<app\>" in user speech means launch, not activate.**
 `cua-driver launch_app` is the one correct path for process
-startup — it's idempotent (no-op on a running app), returns the
+startup — by default it's idempotent (no-op on a running app), returns the
 pid, and has an internal `FocusRestoreGuard` that catches
 `NSApp.activate(ignoringOtherApps:)` calls the target makes during
 `application(_:open:)` and clobbers the frontmost back to what it
@@ -124,6 +124,10 @@ was before the launch. That guard is why `launch_app` with `urls`
 (e.g. `{"bundle_id": "com.colliderli.iina", "urls": ["~/video.mp4"]}`)
 is safe even for apps that normally foreground on media-load
 (Chrome, Electron, media players).
+
+When an agent needs a separate browser state, pass launch
+`arguments` and `creates_new_application_instance: true`; for
+Chrome-family browsers, use a fresh `--user-data-dir` per session.
 
 ## Defaults — always prefer cua-driver over shell shims
 

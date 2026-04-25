@@ -101,6 +101,12 @@ cua-driver launch_app '{"bundle_id":"com.google.Chrome","urls":["https://trycua.
 
 The URL opens in a new window via Chrome's `application(_:open:)` delegate. The driver's focus-restore guard catches Chrome's internal activation and clobbers the frontmost back to what it was before the call.
 
+For isolated test runs, pass a fresh Chrome user data directory and force a distinct process:
+
+```bash
+cua-driver launch_app '{"bundle_id":"com.google.Chrome","urls":["https://trycua.com"],"arguments":["--user-data-dir=/tmp/cua-session-a","--no-first-run","--no-default-browser-check"],"creates_new_application_instance":true,"allows_running_application_substitution":false}'
+```
+
 <Callout type="warn">
   Don't use `hotkey ⌘L` to focus the omnibox. Even when delivered to a backgrounded pid, `⌘L` steals
   focus because the receiving app interprets "user wants to type here" as activation intent.

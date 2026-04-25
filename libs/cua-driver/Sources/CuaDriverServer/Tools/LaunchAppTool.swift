@@ -4,6 +4,11 @@ import Foundation
 import MCP
 
 public enum LaunchAppTool {
+    private enum Validation<T> {
+        case success(T)
+        case failure(String)
+    }
+
     public static let handler = ToolHandler(
         tool: Tool(
             name: "launch_app",
@@ -47,6 +52,17 @@ public enum LaunchAppTool {
                 with any app that implements `application(_:open:)`; apps
                 that ignore the delegate simply launch without side effects.
 
+                Optional `arguments`, `environment`,
+                `creates_new_application_instance`, and
+                `allows_running_application_substitution` map directly to
+                `NSWorkspace.OpenConfiguration`. Use these when the target
+                app needs launch-time configuration, for example starting a
+                Chrome-family browser with an isolated `--user-data-dir`.
+                Note that apps may ignore launch arguments when the request
+                is routed to an already-running instance; pass
+                `creates_new_application_instance: true` when you need a
+                distinct process.
+
                 Use this instead of shelling out to `open -a` — the shell form
                 always activates the target, requires an extra permission
                 prompt for Bash, and doesn't even try to respect
@@ -82,13 +98,35 @@ public enum LaunchAppTool {
                         "description":
                             "Optional file:// or http(s):// URLs (or plain paths with ~ expansion) to hand to the launched app via application(_:open:). For Finder, pass a folder URL or path to open a backgrounded Finder window rooted at that folder — no activation. Apps that don't implement application(_:open:) launch normally and ignore these.",
                     ],
+                    "arguments": [
+                        "type": "array",
+                        "items": ["type": "string"],
+                        "description":
+                            "Optional process arguments passed through NSWorkspace.OpenConfiguration. For isolated Chrome-family sessions, include flags such as --user-data-dir=/tmp/cua-session-a, --no-first-run, and --no-default-browser-check.",
+                    ],
+                    "environment": [
+                        "type": "object",
+                        "additionalProperties": ["type": "string"],
+                        "description":
+                            "Optional environment variables passed through NSWorkspace.OpenConfiguration.",
+                    ],
+                    "creates_new_application_instance": [
+                        "type": "boolean",
+                        "description":
+                            "Optional NSWorkspace.OpenConfiguration.createsNewApplicationInstance. Set true when launch arguments must apply to a distinct process instead of an already-running app instance.",
+                    ],
+                    "allows_running_application_substitution": [
+                        "type": "boolean",
+                        "description":
+                            "Optional NSWorkspace.OpenConfiguration.allowsRunningApplicationSubstitution. Set false when the launch must not be satisfied by a substitute already-running application.",
+                    ],
                 ],
                 "additionalProperties": false,
             ],
             annotations: .init(
                 readOnlyHint: false,
                 destructiveHint: false,
-                idempotentHint: true,  // relaunching a running app is a no-op
+                idempotentHint: false,
                 openWorldHint: true
             )
         ),
@@ -96,10 +134,48 @@ public enum LaunchAppTool {
             let bundleId = arguments?["bundle_id"]?.stringValue
             let name = arguments?["name"]?.stringValue
             let rawUrls = arguments?["urls"]?.arrayValue ?? []
+            let launchArguments: [String]
+            let launchEnvironment: [String: String]
+            let createsNewApplicationInstance: Bool?
+            let allowsRunningApplicationSubstitution: Bool?
 
             if bundleId == nil && name == nil {
                 return errorResult(
                     "Provide either bundle_id or name to identify the app to launch.")
+            }
+
+            switch parseStringArray(arguments?["arguments"], field: "arguments") {
+            case .success(let values):
+                launchArguments = values
+            case .failure(let message):
+                return errorResult(message)
+            }
+
+            switch parseStringMap(arguments?["environment"], field: "environment") {
+            case .success(let values):
+                launchEnvironment = values
+            case .failure(let message):
+                return errorResult(message)
+            }
+
+            switch parseOptionalBool(
+                arguments?["creates_new_application_instance"],
+                field: "creates_new_application_instance"
+            ) {
+            case .success(let value):
+                createsNewApplicationInstance = value
+            case .failure(let message):
+                return errorResult(message)
+            }
+
+            switch parseOptionalBool(
+                arguments?["allows_running_application_substitution"],
+                field: "allows_running_application_substitution"
+            ) {
+            case .success(let value):
+                allowsRunningApplicationSubstitution = value
+            case .failure(let message):
+                return errorResult(message)
             }
 
             // Resolve url strings → URL values. Accept file:// and http(s)://
@@ -153,7 +229,14 @@ public enum LaunchAppTool {
                 let info = try await AppLauncher.launch(
                     bundleId: bundleId,
                     name: name,
-                    urls: urls
+                    urls: urls,
+                    options: AppLauncher.LaunchOptions(
+                        arguments: launchArguments,
+                        environment: launchEnvironment,
+                        createsNewApplicationInstance: createsNewApplicationInstance,
+                        allowsRunningApplicationSubstitution:
+                            allowsRunningApplicationSubstitution
+                    )
                 )
 
                 // Replace the placeholder pid with the real one so any
@@ -276,6 +359,53 @@ public enum LaunchAppTool {
         }
         let expanded = (raw as NSString).expandingTildeInPath
         return URL(fileURLWithPath: expanded)
+    }
+
+    private static func parseStringArray(
+        _ value: Value?,
+        field: String
+    ) -> Validation<[String]> {
+        guard let value else { return .success([]) }
+        guard let rawValues = value.arrayValue else {
+            return .failure("\(field) must be an array of strings.")
+        }
+        var values: [String] = []
+        for raw in rawValues {
+            guard let str = raw.stringValue, !str.isEmpty else {
+                return .failure("\(field) entries must be non-empty strings.")
+            }
+            values.append(str)
+        }
+        return .success(values)
+    }
+
+    private static func parseStringMap(
+        _ value: Value?,
+        field: String
+    ) -> Validation<[String: String]> {
+        guard let value else { return .success([:]) }
+        guard let rawValues = value.objectValue else {
+            return .failure("\(field) must be an object with string values.")
+        }
+        var values: [String: String] = [:]
+        for (key, raw) in rawValues {
+            guard let str = raw.stringValue else {
+                return .failure("\(field).\(key) must be a string.")
+            }
+            values[key] = str
+        }
+        return .success(values)
+    }
+
+    private static func parseOptionalBool(
+        _ value: Value?,
+        field: String
+    ) -> Validation<Bool?> {
+        guard let value else { return .success(nil) }
+        guard let flag = value.boolValue else {
+            return .failure("\(field) must be a boolean.")
+        }
+        return .success(flag)
     }
 
     private static func errorResult(_ message: String) -> CallTool.Result {

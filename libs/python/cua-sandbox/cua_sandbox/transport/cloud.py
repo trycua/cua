@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 0.5  # seconds between status polls
 _POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
+_GET_VM_RETRIES = 3  # retries for transient errors during VM status polling
+_GET_VM_RETRY_DELAY = 1.0  # seconds between retries
 
 
 class CloudTransport(Transport):
@@ -179,7 +181,13 @@ class CloudTransport(Transport):
 
                 await asyncio.sleep(_POLL_INTERVAL)
                 elapsed += _POLL_INTERVAL
-                vm_info = await self._get_vm(self._name)
+                try:
+                    vm_info = await self._get_vm(self._name)
+                except (httpx.HTTPStatusError, httpx.TransportError, httpx.TimeoutException) as exc:
+                    # Transient errors during polling are expected under load.
+                    # Log and continue polling rather than aborting the entire connect.
+                    logger.debug("[cloud] transient poll error for %r at %.1fs: %s", self._name, elapsed, exc)
+                    continue
                 is_running = vm_info.get("status") in ("running", "ready")
 
             if not is_running:
@@ -330,9 +338,22 @@ class CloudTransport(Transport):
 
     async def _get_vm(self, name: str) -> dict:
         assert self._api_client
-        resp = await self._api_client.get(f"/v1/vms/{name}")
-        resp.raise_for_status()
-        return resp.json()
+        last_exc: Exception | None = None
+        for attempt in range(_GET_VM_RETRIES):
+            try:
+                resp = await self._api_client.get(f"/v1/vms/{name}")
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500:
+                    raise  # 4xx errors are not transient
+                last_exc = exc
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_exc = exc
+            if attempt < _GET_VM_RETRIES - 1:
+                logger.debug("[cloud] _get_vm %r attempt %d failed, retrying: %s", name, attempt + 1, last_exc)
+                await asyncio.sleep(_GET_VM_RETRY_DELAY)
+        raise last_exc  # type: ignore[misc]
 
     async def _create_vm(self) -> dict:
         assert self._api_client

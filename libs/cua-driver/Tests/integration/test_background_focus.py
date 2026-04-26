@@ -52,6 +52,13 @@ FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _tool_text(result: dict) -> str:
+    """Extract text from a tool call result's content array."""
+    for item in result.get("content", []):
+        if item.get("type") == "text":
+            return item.get("text", "")
+    return ""
+
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
         subprocess.run(
@@ -86,17 +93,23 @@ def _read_focus_losses() -> int:
 
 
 def _open_safari_to_html(client: DriverClient) -> int:
-    """Open the test HTML page in Safari and return its pid."""
-    result = client.call_tool("launch_app", {"bundle_id": SAFARI_BUNDLE})
-    safari_pid = result["structuredContent"]["pid"]
+    """Open the test HTML page in Safari (backgrounded) and return its pid.
 
+    Uses launch_app with urls so Safari never becomes frontmost — the
+    driver's FocusRestoreGuard clobbers any activate Safari fires during
+    document load back to whatever was frontmost before the call.
+    """
     file_url = f"file://{_HTML_PAGE}"
-    subprocess.run(
-        ["osascript", "-e", f'tell application "Safari" to open location "{file_url}"'],
-        check=True,
-    )
+    result = client.call_tool("launch_app", {
+        "bundle_id": SAFARI_BUNDLE,
+        "urls": [file_url],
+    })
+    text = _tool_text(result)
+    m = re.search(r'pid[=:\s]+(\d+)', text, re.IGNORECASE)
+    if not m:
+        raise RuntimeError(f"launch_app did not return a pid: {text[:200]}")
     time.sleep(2.0)  # let page load
-    return safari_pid
+    return int(m.group(1))
 
 
 def _get_page_text(client: DriverClient, pid: int) -> str:

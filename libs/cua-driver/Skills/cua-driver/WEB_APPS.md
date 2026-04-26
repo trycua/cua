@@ -239,6 +239,225 @@ coerces the event back to a left-click — this appears to affect
 every non-HID-tap synthesis path. Prefer `element_index` whenever
 the target is AX-addressable.
 
+## Enable "Allow JavaScript from Apple Events" — browser support matrix
+
+| Browser | `execute javascript` supported | Setting needed | Programmatic path |
+|---|---|---|---|
+| Chrome | ✅ Full | ✅ Yes | Edit Preferences JSON (see below) |
+| Brave | ✅ Full | ✅ Yes | Edit Preferences JSON (same key, different path) |
+| Edge | ✅ Full | ✅ Yes | Edit Preferences JSON (same key, different path) |
+| Safari | ✅ Full (`do JavaScript`) | ✅ Yes | UI automation only — `defaults write` broken |
+| Arc | ⚠️ No return values | No toggle | No reliable path |
+| Firefox | ❌ Not supported | N/A | N/A |
+
+### Chrome / Brave / Edge — Preferences JSON
+
+Required for `osascript execute javascript` calls. All three are
+Chromium-based and share the same preference key and mechanism.
+Each browser stores preferences per-profile.
+
+### Why menu clicks don't work
+
+The menu item (`View → Developer → Allow JavaScript from Apple Events`)
+is a security-sensitive toggle. Verified experimentally:
+
+- `AXPress` — advertised actions are `[AXCancel, AXPick]`, not
+  `AXPress`; Chrome's command dispatch silently discards it.
+- `AXPick` on a leaf item — opens submenus correctly but does NOT
+  commit a leaf toggle; the item is "selected" but not activated.
+- System Events `click theItem` / `click at {x, y}` — returns the
+  menu item reference (found it) but Chrome requires a genuine
+  trusted user event to flip this flag; synthetic AppleEvent-routed
+  clicks are rejected.
+- `CGEvent.post(tap: .cghidEventTap)` while the menu is open —
+  Chrome's event loop is occupied processing the menu; the event
+  either races or Chrome treats it as untrusted for this toggle.
+
+Additionally, when Chrome is **backgrounded**, the Developer submenu
+items appear with `AXEnabled = false` (Chrome's `commandDispatch`
+marks them DISABLED) — any action dispatched returns `.success` at
+the AX layer but is silently discarded. This is the root cause of the
+"ghost click" pattern: the driver reports ✅ but nothing changes.
+
+### Correct path — write the Preferences JSON directly
+
+Quit Chrome first, then write the flag, then relaunch:
+
+```bash
+# 1. Quit Chrome
+osascript -e 'quit app "Google Chrome"'
+sleep 1
+
+# 2. Write the flag into the active profile's Preferences.
+#    Chrome stores this in TWO places — both must be set.
+python3 -c "
+import json, os
+prefs_path = os.path.expanduser(
+    '~/Library/Application Support/Google/Chrome/Default/Preferences')
+data = json.load(open(prefs_path))
+data.setdefault('browser', {})['allow_javascript_apple_events'] = True
+data.setdefault('account_values', {}).setdefault('browser', {})['allow_javascript_apple_events'] = True
+json.dump(data, open(prefs_path, 'w'))
+print('allow_javascript_apple_events enabled in Default profile')
+"
+
+# 3. Relaunch Chrome and wait for sync to stabilise.
+#    Chrome sync fires ~1-2 s after launch and may briefly pull
+#    an older value from the server before Chrome pushes our local
+#    True back. Either test before sync fires (<1 s) or after it
+#    settles (>4 s). Waiting exactly ~2 s lands in the race window
+#    and is the most likely way to see a false negative.
+open -a "Google Chrome"
+sleep 5
+
+# 4. Verify
+osascript -e 'tell application "Google Chrome"
+  tell active tab of front window
+    execute javascript "1+1"
+  end tell
+end tell'
+# → 2
+```
+
+**Which profile?** Chrome writes to whichever profile is active.
+If you're unsure, write to all non-system profiles:
+
+```bash
+python3 -c "
+import json, glob, os
+for p in glob.glob(os.path.expanduser(
+        '~/Library/Application Support/Google/Chrome/*/Preferences')):
+    profile = p.split('/')[-2]
+    if 'System' in profile or 'Guest' in profile:
+        continue
+    try:
+        data = json.load(open(p))
+        data.setdefault('browser', {})['allow_javascript_apple_events'] = True
+        data.setdefault('account_values', {}).setdefault('browser', {})['allow_javascript_apple_events'] = True
+        json.dump(data, open(p, 'w'))
+        print(f'wrote to {profile}')
+    except Exception as e:
+        print(f'skipped {profile}: {e}')
+"
+```
+
+Chrome overwrites its Preferences file on every clean exit, so the
+write must happen while Chrome is **not running** — otherwise Chrome
+will stomp the change when it quits.
+
+**Sync note (Chrome only):** Chrome syncs `browser.allow_javascript_apple_events`
+via Google account (confirmed in `chrome_syncable_prefs_database.cc`).
+Writing both `browser` and `account_values.browser` to the local file
+causes Chrome to push `true` to the sync server on next launch,
+making the change durable. Brave and Edge use their own sync systems
+and likely do NOT sync this Mac-only pref — treat as local-only for
+those browsers.
+
+### Brave
+
+Same Chromium pref key, different profile directory:
+
+```bash
+osascript -e 'quit app "Brave Browser"' && sleep 1
+python3 -c "
+import json, glob, os
+for p in glob.glob(os.path.expanduser(
+        '~/Library/Application Support/BraveSoftware/Brave-Browser/*/Preferences')):
+    profile = p.split('/')[-2]
+    if 'System' in profile or 'Guest' in profile:
+        continue
+    try:
+        data = json.load(open(p))
+        data.setdefault('browser', {})['allow_javascript_apple_events'] = True
+        json.dump(data, open(p, 'w'))
+        print(f'wrote to {profile}')
+    except Exception as e:
+        print(f'skipped {profile}: {e}')
+"
+open -a "Brave Browser" && sleep 5
+```
+
+### Edge
+
+Same Chromium pref key, different profile directory:
+
+```bash
+osascript -e 'quit app "Microsoft Edge"' && sleep 1
+python3 -c "
+import json, glob, os
+for p in glob.glob(os.path.expanduser(
+        '~/Library/Application Support/Microsoft Edge/*/Preferences')):
+    profile = p.split('/')[-2]
+    if 'System' in profile or 'Guest' in profile:
+        continue
+    try:
+        data = json.load(open(p))
+        data.setdefault('browser', {})['allow_javascript_apple_events'] = True
+        json.dump(data, open(p, 'w'))
+        print(f'wrote to {profile}')
+    except Exception as e:
+        print(f'skipped {profile}: {e}')
+"
+open -a "Microsoft Edge" && sleep 5
+```
+
+### Safari
+
+Safari uses `do JavaScript "..." in document 1` (different AppleScript
+verb from Chrome's `execute javascript`). The setting is under
+`Develop → Allow JavaScript from Apple Events` (requires the Develop
+menu to be enabled first via Settings → Advanced → "Show features for
+web developers").
+
+`defaults write -app Safari AllowJavaScriptFromAppleEvents 1` **does
+not work** — Safari ignores the defaults key and routes this toggle
+through macOS's security framework, which shows a password-confirmation
+dialog. The only working programmatic path is UI automation:
+
+```applescript
+-- Requires Accessibility permission for the calling process.
+-- Safari must already be running with the Develop menu visible.
+tell application "Safari" to activate
+delay 0.3
+tell application "System Events"
+  tell process "Safari"
+    click menu item "Allow JavaScript from Apple Events" of menu 1 ¬
+      of menu bar item "Develop" of menu bar 1
+    delay 0.3
+    -- Safari shows a confirmation dialog — click Allow
+    click button "Allow" of window 1
+  end tell
+end tell
+```
+
+### Arc
+
+Arc has an AppleScript dictionary and accepts `execute javascript`, but
+**never returns a value** — the call always returns `missing value`.
+There is no "Allow JavaScript from Apple Events" toggle. The only
+workaround is to write results to the clipboard inside the JS and read
+it back:
+
+```applescript
+tell application "Arc"
+  tell active tab of front window
+    execute javascript "navigator.clipboard.writeText(document.title)"
+  end tell
+end tell
+delay 0.3
+set theTitle to the clipboard
+```
+
+Arc's AppleScript JS support is confirmed broken for return values
+(as of 2025). If you need JS results from Arc, use a WebExtension
+with Native Messaging instead.
+
+### Firefox
+
+Firefox has no `execute javascript` capability. Bugzilla #287447
+(filed 2004) tracks this and remains unresolved. Use WebDriver /
+Playwright / a WebExtension with Native Messaging for Firefox.
+
 ## Typing into a web input
 
 ```

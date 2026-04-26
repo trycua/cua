@@ -94,6 +94,19 @@ public enum GetWindowStateTool {
                         "description":
                             "Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged.",
                     ],
+                    "javascript": [
+                        "type": "string",
+                        "description": """
+                            Optional JavaScript to execute in the browser tab and return \
+                            alongside the AX snapshot — one round-trip instead of two. \
+                            Only works for Chromium-family browsers (Chrome, Brave, Edge) \
+                            and Safari; requires 'Allow JavaScript from Apple Events' to be \
+                            enabled first (see WEB_APPS.md). The result is appended to the \
+                            response as a `## JavaScript result` section. Use for read-only \
+                            queries (document.title, innerText, querySelectorAll, etc.). \
+                            For mutations or side effects use the `page` tool instead.
+                            """,
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -123,6 +136,7 @@ public enum GetWindowStateTool {
                     "window_id \(rawWindowId) is outside the supported UInt32 range.")
             }
             let query = arguments?["query"]?.stringValue
+            let javascript = arguments?["javascript"]?.stringValue
 
             // Validate that the window belongs to this pid. The driver
             // never guesses which window to snapshot — the caller names
@@ -218,6 +232,24 @@ public enum GetWindowStateTool {
                 if captureMode != .vision && !snapshot.treeMarkdown.isEmpty {
                     textContent += "\n\n" + snapshot.treeMarkdown
                 }
+                // If the caller passed a javascript snippet, run it in the
+                // browser tab and append the result — one round-trip instead
+                // of two separate tool calls.
+                if let js = javascript,
+                   let bundleId = snapshot.bundleId
+                {
+                    do {
+                        let jsResult = try await BrowserJS.execute(
+                            javascript: js,
+                            bundleId: bundleId,
+                            windowId: windowId
+                        )
+                        textContent += "\n\n## JavaScript result\n\n```\n\(jsResult)\n```"
+                    } catch {
+                        textContent += "\n\n## JavaScript result\n\n❌ \(error)"
+                    }
+                }
+
                 var content: [Tool.Content] = []
                 if let b64 = snapshot.screenshotPngBase64 {
                     content.append(

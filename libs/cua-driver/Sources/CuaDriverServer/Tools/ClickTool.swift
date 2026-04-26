@@ -249,6 +249,21 @@ public enum ClickTool {
             // without this we have no way to detect a silent no-op.
             // See the post-dispatch warning assembled below.
             let advertisedActions = AXInput.advertisedActionNames(of: element)
+            // Bail early if the element is disabled (AXEnabled = false).
+            // AXUIElementPerformAction returns .success even on disabled
+            // elements — the call reaches the app's AX layer but the app's
+            // command-dispatch silently discards it (Chrome marks Developer
+            // submenu items as disabled via commandDispatch when it isn't
+            // frontmost). Surfacing this as an error rather than a silent
+            // no-op lets the caller decide whether to activate the app first.
+            if AXInput.boolAttribute("AXEnabled", of: element) == false {
+                let target = AXInput.describe(element)
+                var msg = "❌ [\(index)] \(target.role ?? "element") \"\(target.title ?? "")\" is disabled (AXEnabled = false) — action would be a silent no-op."
+                msg += "\n\nThis usually means the target app is not frontmost."
+                msg += " Activate it first, then re-snapshot and retry:"
+                msg += "\n  osascript -e 'tell application \"<App Name>\" to activate'"
+                return errorResult(msg)
+            }
             // Animate the visual agent cursor to the target before
             // firing the AX action. `animateAndWait` is a no-op
             // when the cursor is disabled (the default) or when

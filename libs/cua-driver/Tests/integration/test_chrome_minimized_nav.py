@@ -149,18 +149,12 @@ class ChromeMinimizedNavTests(unittest.TestCase):
                 time.sleep(2.0)
         print(f"\n  Chrome pid: {cls._chrome_pid}")
 
-        # Ensure Chrome is visible with a window.
-        subprocess.run(
-            ["osascript", "-e",
-             'tell application "Google Chrome"\n'
-             '  activate\n'
-             '  if (count of windows) is 0 then\n'
-             '    make new window\n'
-             '    set URL of active tab of window 1 to "about:blank"\n'
-             '  end if\n'
-             'end tell'],
-            check=False, timeout=10,
-        )
+        # Ensure Chrome has an about:blank window via launch_app (no focus steal).
+        with DriverClient(cls.binary) as c:
+            c.call_tool("launch_app", {
+                "bundle_id": CHROME_BUNDLE,
+                "urls": ["about:blank"],
+            })
         time.sleep(2.0)
 
         # Snapshot AX tree BEFORE minimizing to cache the omnibox index.
@@ -219,17 +213,13 @@ class ChromeMinimizedNavTests(unittest.TestCase):
             pass
 
     def setUp(self) -> None:
-        # Reliably minimize Chrome: activate, wait, Cmd+M, wait.
-        subprocess.run(
-            ["osascript", "-e", 'tell application "Google Chrome" to activate'],
-            check=False, timeout=5,
-        )
-        time.sleep(1.0)
-        subprocess.run(
-            ["osascript", "-e",
-             'tell application "System Events" to keystroke "m" using command down'],
-            check=False, timeout=5,
-        )
+        # Minimize Chrome via hotkey — cua-driver delivers Cmd+M to the pid
+        # via CGEvent.postToPid without stealing focus.
+        with DriverClient(self.binary) as c:
+            c.call_tool("hotkey", {
+                "pid": self._chrome_pid,
+                "keys": ["cmd", "m"],
+            })
         time.sleep(1.5)
         _activate_focus_monitor()
         self._losses_before = _read_focus_losses()

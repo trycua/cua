@@ -239,5 +239,6 @@ public struct ToolRegistry: Sendable {
         GetConfigTool.handler,
         SetConfigTool.handler,
         ZoomTool.handler,
+        PageTool.handler,
     ])
 }

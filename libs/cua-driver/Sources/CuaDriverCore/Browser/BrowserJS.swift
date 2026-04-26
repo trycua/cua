@@ -158,7 +158,29 @@ public enum BrowserJS {
             let stderr = Pipe()
             proc.standardOutput = stdout
             proc.standardError = stderr
+
+            let lock = NSLock()
+            var resumed = false
+            func resumeOnce(_ result: Result<String, Swift.Error>) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                switch result {
+                case .success(let s): continuation.resume(returning: s)
+                case .failure(let e): continuation.resume(throwing: e)
+                }
+            }
+
+            let timeoutItem = DispatchWorkItem {
+                proc.terminate()
+                resumeOnce(.failure(Error.executionFailed(
+                    "osascript timed out after 15 s — browser may be showing a permission dialog")))
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: timeoutItem)
+
             proc.terminationHandler = { p in
+                timeoutItem.cancel()
                 let out = String(
                     data: stdout.fileHandleForReading.readDataToEndOfFile(),
                     encoding: .utf8
@@ -167,19 +189,19 @@ public enum BrowserJS {
                     data: stderr.fileHandleForReading.readDataToEndOfFile(),
                     encoding: .utf8
                 )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
                 if p.terminationStatus == 0 {
-                    continuation.resume(returning: out)
+                    resumeOnce(.success(out))
                 } else if err.contains("turned off") || err.contains("AppleScript is turned off") {
-                    continuation.resume(throwing: Error.javascriptNotEnabled(appName))
+                    resumeOnce(.failure(Error.javascriptNotEnabled(appName)))
                 } else {
-                    continuation.resume(throwing: Error.executionFailed(err.isEmpty ? out : err))
+                    resumeOnce(.failure(Error.executionFailed(err.isEmpty ? out : err)))
                 }
             }
             do {
                 try proc.run()
             } catch {
-                continuation.resume(throwing: Error.executionFailed(error.localizedDescription))
+                timeoutItem.cancel()
+                resumeOnce(.failure(error))
             }
         }
     }

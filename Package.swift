@@ -6,9 +6,16 @@ import PackageDescription
 // internal layout. Sources live in libs/cua-driver/Sources/; this file uses
 // path: to forward there.
 //
-// Add to your Package.swift:
+// IMPORTANT — SPM version resolution:
+// SPM's `from:` / `upToNextMajor` only recognises semver tags ("0.1.0",
+// "v0.1.0"). This repo uses "cua-driver-v*" tags for the CLI releases, which
+// SPM cannot parse. Until plain semver tags are published, pin by revision:
 //
-//   .package(url: "https://github.com/trycua/cua.git", from: "cua-driver-v0.1.0")
+//   .package(url: "https://github.com/trycua/cua.git", .revision("cua-driver-v0.1.0"))
+//
+// When the repo starts publishing semver tags alongside the CLI tags, use:
+//
+//   .package(url: "https://github.com/trycua/cua.git", from: "0.1.0")
 //
 // Then in your target's dependencies:
 //
@@ -34,6 +41,9 @@ let package = Package(
         ),
     ],
     targets: [
+        // NOTE: if libs/cua-driver/Package.swift ever gains resources:,
+        // swiftSettings:, linkerSettings:, or exclude: on these targets,
+        // mirror those changes here to avoid a silent build mismatch.
         .target(
             name: "CuaDriverCore",
             path: "libs/cua-driver/Sources/CuaDriverCore"

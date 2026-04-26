@@ -85,28 +85,80 @@ public enum CDPClient {
             encoding: .utf8
         )!
 
+        let requestId = 1
+
         return try await withCheckedThrowingContinuation { continuation in
             let ws = URLSession.shared.webSocketTask(with: wsURL)
             ws.resume()
+
+            // Single-resume guard: ensures the continuation is resumed exactly once
+            // even if the timeout fires concurrently with a late-arriving frame.
+            let lock = NSLock()
+            var resumed = false
+            func resumeOnce(_ action: () -> Void) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                action()
+            }
+
+            // 10-second timeout: close the socket and resume with an error if no
+            // matching CDP response frame arrives in time.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+                resumeOnce {
+                    ws.cancel()
+                    continuation.resume(throwing: Error.connectionFailed("CDP response timed out after 10 seconds"))
+                }
+            }
+
             ws.send(.string(payloadStr)) { sendError in
                 if let err = sendError {
-                    ws.cancel()
-                    continuation.resume(throwing: Error.connectionFailed(err.localizedDescription))
+                    resumeOnce {
+                        ws.cancel()
+                        continuation.resume(throwing: Error.connectionFailed(err.localizedDescription))
+                    }
                     return
                 }
-                ws.receive { result in
-                    ws.cancel()
-                    switch result {
-                    case .failure(let err):
-                        continuation.resume(throwing: Error.connectionFailed(err.localizedDescription))
-                    case .success(let message):
-                        guard case .string(let str) = message else {
-                            continuation.resume(throwing: Error.connectionFailed("binary WebSocket frame"))
-                            return
+
+                // Receive loop: discard CDP event frames (those with a "method" key)
+                // and keep reading until a frame whose "id" matches requestId arrives.
+                func receiveLoop() {
+                    ws.receive { result in
+                        switch result {
+                        case .failure(let err):
+                            resumeOnce {
+                                ws.cancel()
+                                continuation.resume(throwing: Error.connectionFailed(err.localizedDescription))
+                            }
+                        case .success(let message):
+                            let text: String
+                            switch message {
+                            case .string(let s): text = s
+                            case .data(let d): text = String(data: d, encoding: .utf8) ?? ""
+                            @unknown default: receiveLoop(); return
+                            }
+
+                            guard let frameData = text.data(using: .utf8),
+                                  let json = try? JSONSerialization.jsonObject(with: frameData) as? [String: Any]
+                            else { receiveLoop(); return }
+
+                            // Discard CDP events — they carry "method" but no "id".
+                            if json["method"] != nil { receiveLoop(); return }
+
+                            // Only act on the frame whose "id" matches our request.
+                            guard let frameId = json["id"] as? Int, frameId == requestId else {
+                                receiveLoop(); return
+                            }
+
+                            resumeOnce {
+                                ws.cancel()
+                                continuation.resume(with: Result { try Self.parseResult(text) })
+                            }
                         }
-                        continuation.resume(with: Result { try Self.parseResult(str) })
                     }
                 }
+                receiveLoop()
             }
         }
     }

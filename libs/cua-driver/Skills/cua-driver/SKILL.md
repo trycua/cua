@@ -788,7 +788,22 @@ page data in the same turn.
 | Scrape structured data (tables, hrefs) | `page(query_dom)` |
 | Trigger JS events / mutations | `page(execute_javascript)` |
 
-Supported browsers: Chrome, Brave, Edge (Chromium family) and Safari.
+Supported backends:
+
+| App type | How | Context |
+|---|---|---|
+| Chrome / Brave / Edge | Apple Events `execute javascript` | Full DOM ✅ |
+| Safari | Apple Events `do JavaScript` | Full DOM ✅ |
+| Electron (VS Code, Cursor…) | SIGUSR1 → V8 inspector → CDP | Main process only: `process`, `Buffer` — no `document`, no `require` in sandboxed apps |
+| Electron (with `--remote-debugging-port`) | CDP page target | Full DOM ✅ |
+
+**Electron sandbox note:** SIGUSR1 connects to the Node.js *main* process.
+Sandboxed Electron apps (VS Code, Cursor) strip `require` and Electron
+APIs there. Useful for: `process.env`, `process.versions`, `process.cwd()`,
+`process.pid`. For full DOM/renderer access, launch the app with
+`--remote-debugging-port=9222` — cua-driver will detect and prefer the
+page target automatically.
+
 Arc returns no values; Firefox has no JS-via-AppleEvents support — see
 `WEB_APPS.md` for the full matrix.
 

@@ -235,15 +235,19 @@ public enum GetWindowStateTool {
                 // If the caller passed a javascript snippet, run it in the
                 // browser tab and append the result — one round-trip instead
                 // of two separate tool calls.
-                if let js = javascript,
-                   let bundleId = snapshot.bundleId
-                {
+                if let js = javascript {
+                    let bundleId = snapshot.bundleId ?? ""
                     do {
-                        let jsResult = try await BrowserJS.execute(
-                            javascript: js,
-                            bundleId: bundleId,
-                            windowId: windowId
-                        )
+                        let jsResult: String
+                        if BrowserJS.supports(bundleId: bundleId) {
+                            jsResult = try await BrowserJS.execute(
+                                javascript: js, bundleId: bundleId, windowId: windowId)
+                        } else if ElectronJS.isElectron(pid: pid) {
+                            jsResult = try await ElectronJS.execute(
+                                javascript: js, pid: pid)
+                        } else {
+                            throw BrowserJS.Error.unsupportedBrowser(bundleId)
+                        }
                         textContent += "\n\n## JavaScript result\n\n```\n\(jsResult)\n```"
                     } catch {
                         textContent += "\n\n## JavaScript result\n\n❌ \(error)"

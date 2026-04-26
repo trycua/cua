@@ -117,18 +117,17 @@ public enum PageTool {
                         "action=execute_javascript requires a non-empty javascript field.")
                 }
                 do {
-                    let result = try await BrowserJS.execute(
-                        javascript: js, bundleId: bundleId, windowId: windowId)
+                    let result = try await executeJS(js, bundleId: bundleId, pid: pid, windowId: windowId)
                     return okResult("## Result\n\n```\n\(result)\n```")
                 } catch {
                     return errorResult("\(error)")
                 }
 
             case "get_text":
-                let js = "document.body.innerText"
                 do {
-                    let result = try await BrowserJS.execute(
-                        javascript: js, bundleId: bundleId, windowId: windowId)
+                    let result = try await executeJS(
+                        "document.body.innerText",
+                        bundleId: bundleId, pid: pid, windowId: windowId)
                     return okResult(result)
                 } catch {
                     return errorResult("\(error)")
@@ -163,8 +162,7 @@ public enum PageTool {
                 })()
                 """
                 do {
-                    let result = try await BrowserJS.execute(
-                        javascript: js, bundleId: bundleId, windowId: windowId)
+                    let result = try await executeJS(js, bundleId: bundleId, pid: pid, windowId: windowId)
                     return okResult("## DOM query: `\(selector)`\n\n```json\n\(result)\n```")
                 } catch {
                     return errorResult("\(error)")
@@ -186,6 +184,28 @@ public enum PageTool {
             content: [.text(text: message, annotations: nil, _meta: nil)],
             isError: true
         )
+    }
+
+    /// Route JS execution to the right backend:
+    /// 1. Apple Events (BrowserJS) — Chrome, Brave, Edge, Safari by bundle ID.
+    /// 2. Electron CDP (ElectronJS) — any Electron app detected by bundle presence.
+    /// 3. Error — unsupported app type.
+    private static func executeJS(
+        _ javascript: String,
+        bundleId: String,
+        pid: Int32,
+        windowId: UInt32
+    ) async throws -> String {
+        // Apple Events path — covers all Chromium browsers and Safari.
+        if BrowserJS.supports(bundleId: bundleId) {
+            return try await BrowserJS.execute(
+                javascript: javascript, bundleId: bundleId, windowId: windowId)
+        }
+        // Electron CDP path — SIGUSR1 → V8 inspector → Runtime.evaluate.
+        if ElectronJS.isElectron(pid: pid) {
+            return try await ElectronJS.execute(javascript: javascript, pid: pid)
+        }
+        throw BrowserJS.Error.unsupportedBrowser(bundleId)
     }
 
     /// JSON-safe string literal for embedding in JS source.

@@ -61,6 +61,11 @@ public enum BrowserJS {
         return try await runAppleScript(script, appName: spec.appName)
     }
 
+    /// True when this bundle ID is handled via Apple Events (Chrome/Brave/Edge/Safari).
+    public static func supports(bundleId: String) -> Bool {
+        browserSpec(for: bundleId) != nil
+    }
+
     // MARK: - Browser specs
 
     private struct BrowserSpec {

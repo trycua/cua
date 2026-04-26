@@ -38,12 +38,18 @@ public enum AXPageReader {
             let str = String(line)
             guard let parsed = parseLine(str) else { continue }
             switch parsed.role {
-            case "AXStaticText", "AXHeading":
-                let text = parsed.title.isEmpty ? parsed.value : parsed.title
+            case "AXStaticText", "AXHeading", "AXWebArea":
+                // title first, then value, then description as fallback.
+                // WebKit/Tauri AX trees sometimes store text content in description.
+                let text = !parsed.title.isEmpty ? parsed.title
+                         : !parsed.value.isEmpty ? parsed.value
+                         : parsed.description
                 if !text.isEmpty { lines.append(text) }
             default:
-                // Include value text for inputs, links, buttons with meaningful content.
-                let text = parsed.title.isEmpty ? parsed.value : parsed.title
+                // Include text for inputs, links, buttons with meaningful content.
+                let text = !parsed.title.isEmpty ? parsed.title
+                         : !parsed.value.isEmpty ? parsed.value
+                         : parsed.description
                 if !text.isEmpty, parsed.role != "AXWindow", parsed.role != "AXApplication",
                    parsed.role != "AXGroup", parsed.role != "AXScrollArea",
                    parsed.role != "AXSplitGroup", parsed.role != "AXSplitter",

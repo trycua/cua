@@ -148,7 +148,7 @@ public enum PageTool {
                 }
                 let attrJS = attrs.isEmpty
                     ? "[]"
-                    : "[\(attrs.map { "\"\($0)\"" }.joined(separator: ", "))]"
+                    : "[\(attrs.map { jsonString($0) }.joined(separator: ", "))]"
                 let js = """
                 (() => {
                   const attrs = \(attrJS);

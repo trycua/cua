@@ -57,3 +57,69 @@ Documentation improvements are always welcome. You can:
 For detailed instructions on setting up your development environment and submitting code contributions, please see our [Developer-Guide](Development.md).
 
 Feel free to join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss ideas or get help with your contributions.
+## Windows (Anaconda) Setup
+
+> **Relevant to**: Windows 10 / 11 with Anaconda or Miniconda environments.
+
+### PyTorch / OMP Duplicate Library Crash
+
+When running the test suite on Windows with an Anaconda environment that has
+`numpy` installed, you may see the following fatal crash:
+
+```
+OMP: Error #15: Initializing libiomp5md.dll, but found vcomp140.dll already initialized.
+Fatal Python error: Aborted
+```
+
+**Root cause**: Anaconda ships its own OpenMP runtime (via `numpy`/`mkl`).
+PyTorch bundles a separate OpenMP runtime.  When both are loaded in the same
+process, the Intel OpenMP layer aborts to avoid undefined behaviour.
+
+**Quick fix** – set the environment variable before running pytest:
+
+```bat
+:: Windows Command Prompt
+set KMP_DUPLICATE_LIB_OK=TRUE
+pytest tests/ -v
+```
+
+```powershell
+# PowerShell
+$env:KMP_DUPLICATE_LIB_OK="TRUE"
+pytest tests/ -v
+```
+
+This variable is already set automatically inside the test suite's
+`conftest.py` (via `os.environ.setdefault`), so unit tests that mock torch
+will never hit this crash.  The manual step above is only needed when
+running **integration tests** that import real torch.
+
+**Permanent fix (optional)** – add the variable to your conda environment's
+activation script so it is always set when the environment is active:
+
+```bat
+conda env config vars set KMP_DUPLICATE_LIB_OK=TRUE -n <your-env-name>
+```
+
+### Running Tests on Windows
+
+```bat
+:: 1. Clone and enter the repo
+git clone https://github.com/trycua/cua.git
+cd cua\libs\python\agent
+
+:: 2. Install in editable mode (use pip or uv)
+pip install -e ".[uitars-hf]"   :: if you need local HuggingFace models
+pip install -e "."               :: base install
+
+:: 3. Install test dependencies
+pip install pytest pytest-asyncio
+
+:: 4. Run the test suite
+set KMP_DUPLICATE_LIB_OK=TRUE
+pytest tests/ -v
+```
+
+The unit tests for `HuggingFaceLocalAdapter` use module-level mocks for
+`torch` and `transformers`, so **you do not need a GPU or a full PyTorch
+installation** to run `tests/test_huggingfacelocal_adapter.py`.

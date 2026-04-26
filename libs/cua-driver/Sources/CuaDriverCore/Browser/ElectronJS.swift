@@ -77,7 +77,7 @@ public enum ElectronJS {
 
         // Prefer a "page" target (renderer with DOM) if the app was launched with
         // --remote-debugging-port. Page targets expose document/window/DOM APIs.
-        if let pagePort = await pageTarget() {
+        if let pagePort = await pageTarget(pid: pid) {
             return try await cdpEvaluate(port: pagePort, javascript: javascript)
         }
 
@@ -130,8 +130,20 @@ public enum ElectronJS {
     /// DOM access). Returns the port if found. Apps launched with
     /// `--remote-debugging-port=N` expose page targets here; apps activated via
     /// SIGUSR1 only expose a "node" main-process target with no DOM.
-    private static func pageTarget() async -> Int? {
-        for port in [9222, 9223, 9224, 9225, 9230] {
+    ///
+    /// Only probes ports that `lsof` confirms are owned by `pid`, so JS is never
+    /// executed in a different Electron/Chromium app that happens to be listening
+    /// on the same well-known port. Falls back to all candidate ports when
+    /// `lsof` returns empty (race window before the inspector has started).
+    private static func pageTarget(pid: Int32) async -> Int? {
+        let candidatePorts = [9222, 9223, 9224, 9225, 9230]
+        let ownedPorts = await listeningPorts(pid: pid)
+        // Only probe ports owned by this pid; fall back to all candidates when
+        // lsof returns empty (inspector hasn't started yet).
+        let portsToProbe = ownedPorts.isEmpty
+            ? candidatePorts
+            : candidatePorts.filter { ownedPorts.contains($0) }
+        for port in portsToProbe {
             guard let url = URL(string: "http://127.0.0.1:\(port)/json") else { continue }
             var req = URLRequest(url: url); req.timeoutInterval = 0.3
             guard let (data, _) = try? await URLSession.shared.data(for: req),

@@ -40,6 +40,7 @@ public struct ToolRegistry: Sendable {
         "press_key",
         "hotkey",
         "set_value",
+        "page",
     ]
 
     /// Click-family tools — their argument set carries a click point we

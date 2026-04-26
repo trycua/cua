@@ -190,22 +190,26 @@ public enum BrowserJS {
         // Enumerate all on-screen windows and find the one with matching ID.
         // CGWindowListCopyWindowInfo([.optionIncludingWindow], id) is unreliable
         // for windows not yet in the compositing list — enumerating all is safer.
+        //
+        // Return "" (empty string) when the window exists but has no title
+        // (new tab, about:blank, freshly-opened window). The AppleScript
+        // `name contains ""` expression matches every string, so an empty
+        // title falls through to the `front window` fallback — correct behavior.
+        // Only return nil when the window ID is genuinely not in any list.
         let list = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
         ) as? [[String: Any]] ?? []
         for entry in list {
             guard let id = entry[kCGWindowNumber as String] as? Int,
                   UInt32(id) == windowId else { continue }
-            let name = entry[kCGWindowName as String] as? String ?? ""
-            return name.isEmpty ? nil : name
+            return entry[kCGWindowName as String] as? String ?? ""
         }
         // Fall back to off-screen windows (minimized, hidden).
         let all = CGWindowListCopyWindowInfo([], kCGNullWindowID) as? [[String: Any]] ?? []
         for entry in all {
             guard let id = entry[kCGWindowNumber as String] as? Int,
                   UInt32(id) == windowId else { continue }
-            let name = entry[kCGWindowName as String] as? String ?? ""
-            return name.isEmpty ? nil : name
+            return entry[kCGWindowName as String] as? String ?? ""
         }
         return nil
     }

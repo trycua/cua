@@ -258,10 +258,12 @@ public enum ClickTool {
             // no-op lets the caller decide whether to activate the app first.
             if AXInput.boolAttribute("AXEnabled", of: element) == false {
                 let target = AXInput.describe(element)
+                let appName = NSRunningApplication(processIdentifier: pid)?
+                    .localizedName ?? "the app"
                 var msg = "❌ [\(index)] \(target.role ?? "element") \"\(target.title ?? "")\" is disabled (AXEnabled = false) — action would be a silent no-op."
                 msg += "\n\nThis usually means the target app is not frontmost."
                 msg += " Activate it first, then re-snapshot and retry:"
-                msg += "\n  osascript -e 'tell application \"<App Name>\" to activate'"
+                msg += "\n  osascript -e 'tell application \"\(appName)\" to activate'"
                 return errorResult(msg)
             }
             // Animate the visual agent cursor to the target before

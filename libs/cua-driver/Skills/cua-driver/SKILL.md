@@ -744,6 +744,54 @@ Chromium web content specifically also coerces `right_click` back to
 left — use `element_index` for AX-addressable targets and accept the
 limit otherwise.
 
+### Browser JS primitives — `page` tool and `get_window_state(javascript=)`
+
+When the AX tree doesn't expose the data you need (common in
+Chromium/Electron — the tree is sparse for web content), use the
+`page` tool or the `javascript` param on `get_window_state` to query
+the DOM directly via Apple Events. Requires "Allow JavaScript from
+Apple Events" to be enabled — see `WEB_APPS.md` for the setup path.
+
+**Three actions on the `page` tool:**
+
+- `page({pid, window_id, action: "get_text"})` — returns
+  `document.body.innerText`. Fastest way to read page content, prices,
+  article text, or any raw text the AX tree truncates or omits.
+
+- `page({pid, window_id, action: "query_dom", css_selector: "a[href]",
+  attributes: ["href"]})` — runs `querySelectorAll` and returns each
+  match's tag, text, and requested attributes as a JSON array. Use for
+  table rows, link hrefs, data attributes, structured page data.
+
+- `page({pid, window_id, action: "execute_javascript", javascript:
+  "..."})` — raw JS. Wrap in an IIFE with try-catch. Don't use this for
+  elements already indexed by `get_window_state` — `click` and
+  `set_value` are more reliable there.
+
+**Co-located read — `get_window_state` with `javascript`:**
+
+```
+get_window_state({pid, window_id, javascript: "document.title"})
+```
+
+Runs the JS and appends the result as a `## JavaScript result` section
+alongside the AX snapshot — one round-trip instead of two. Use this
+when you need both the element tree (for subsequent clicks) and some
+page data in the same turn.
+
+**Decision rule — AX vs JS:**
+
+| Need | Use |
+|---|---|
+| Click / type into an element | `get_window_state` → `click` / `set_value` (AX, works backgrounded) |
+| Read text the AX tree drops | `page(get_text)` or `get_window_state(javascript=)` |
+| Scrape structured data (tables, hrefs) | `page(query_dom)` |
+| Trigger JS events / mutations | `page(execute_javascript)` |
+
+Supported browsers: Chrome, Brave, Edge (Chromium family) and Safari.
+Arc returns no values; Firefox has no JS-via-AppleEvents support — see
+`WEB_APPS.md` for the full matrix.
+
 ### 3. Re-snapshot and verify — mandatory
 
 **Always** call `get_window_state({pid, window_id})` after the action.

@@ -47,6 +47,24 @@ public enum LaunchAppTool {
                 with any app that implements `application(_:open:)`; apps
                 that ignore the delegate simply launch without side effects.
 
+                Optional `electron_debugging_port` launches an Electron app
+                with `--remote-debugging-port=<N>`, activating its Chrome
+                DevTools Protocol (CDP) on that port. This gives the `page`
+                tool full renderer/DOM access (`document`, `window`,
+                `fetch`, etc.) via page targets rather than the restricted
+                Node main-process context exposed by SIGUSR1. Use port 9222
+                unless you're running multiple Electron apps simultaneously.
+                Has no effect on non-Electron apps.
+
+                Optional `webkit_inspector_port` launches a Tauri/WKWebView
+                app with `WEBKIT_INSPECTOR_SERVER=127.0.0.1:<N>`, activating
+                WebKit's remote inspector. The `page` tool will use this to
+                execute JavaScript in the WKWebView renderer. Use port 9226
+                (reserved WebKit range: 9226–9228). Requires
+                `developerExtrasEnabled = true` in the app's WKWebView config
+                (default in Tauri debug builds; production builds may disable
+                it). Has no effect on non-WKWebView apps.
+
                 Use this instead of shelling out to `open -a` — the shell form
                 always activates the target, requires an extra permission
                 prompt for Bash, and doesn't even try to respect
@@ -82,6 +100,37 @@ public enum LaunchAppTool {
                         "description":
                             "Optional file:// or http(s):// URLs (or plain paths with ~ expansion) to hand to the launched app via application(_:open:). For Finder, pass a folder URL or path to open a backgrounded Finder window rooted at that folder — no activation. Apps that don't implement application(_:open:) launch normally and ignore these.",
                     ],
+                    "electron_debugging_port": [
+                        "type": "integer",
+                        "description": "Launch an Electron app with --remote-debugging-port=<N> so the `page` tool gets full renderer/DOM access. Use 9222 unless running multiple Electron apps. Ignored for non-Electron apps.",
+                    ],
+                    "webkit_inspector_port": [
+                        "type": "integer",
+                        "description": "Launch a Tauri/WKWebView app with WEBKIT_INSPECTOR_SERVER=127.0.0.1:<N> so the `page` tool can reach its WebKit inspector. Use 9226 (reserved WebKit range: 9226–9228, distinct from Electron's 9222–9225). Requires developerExtrasEnabled=true in the WKWebView config (default in Tauri debug builds).",
+                    ],
+                    "creates_new_application_instance": [
+                        "type": "boolean",
+                        "description": """
+                            Force a brand-new process even if the app is already running. \
+                            Useful for isolated browser sessions: pass \
+                            creates_new_application_instance=true together with \
+                            additional_arguments=[\"--user-data-dir=/tmp/session-a\", \
+                            \"--no-first-run\", \"--no-default-browser-check\"] to launch \
+                            a sandboxed Chrome that cannot see the user's real profile, \
+                            cookies, or extensions. Each session gets its own pid and \
+                            window identity and can be controlled independently.
+                            """,
+                    ],
+                    "additional_arguments": [
+                        "type": "array",
+                        "items": ["type": "string"],
+                        "description": """
+                            Extra command-line arguments passed to the launched process. \
+                            Passed directly as argv entries — no shell expansion. \
+                            Example: [\"--user-data-dir=/tmp/cua-session\", \
+                            \"--no-first-run\"] for an isolated Chrome session.
+                            """,
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -96,6 +145,10 @@ public enum LaunchAppTool {
             let bundleId = arguments?["bundle_id"]?.stringValue
             let name = arguments?["name"]?.stringValue
             let rawUrls = arguments?["urls"]?.arrayValue ?? []
+            let electronDebuggingPort = arguments?["electron_debugging_port"]?.intValue
+            let webkitInspectorPort = arguments?["webkit_inspector_port"]?.intValue
+            let createsNewInstance = arguments?["creates_new_application_instance"]?.boolValue ?? false
+            let rawExtraArgs = arguments?["additional_arguments"]?.arrayValue ?? []
 
             if bundleId == nil && name == nil {
                 return errorResult(
@@ -150,10 +203,28 @@ public enum LaunchAppTool {
                         )
                 }
 
+                var additionalArguments: [String] = rawExtraArgs.compactMap { $0.stringValue }
+                if let port = electronDebuggingPort {
+                    additionalArguments.append("--remote-debugging-port=\(port)")
+                }
+
+                var additionalEnvironment: [String: String] = [:]
+                if let port = webkitInspectorPort {
+                    additionalEnvironment["WEBKIT_INSPECTOR_SERVER"] = "127.0.0.1:\(port)"
+                    // wry (the WebView runtime used by Tauri) checks this env var at
+                    // WKWebView init time and sets allowsRemoteInspection = true, which
+                    // is required for WEBKIT_INSPECTOR_SERVER to actually open the socket.
+                    // Harmless for non-Tauri WKWebView apps (they don't read it).
+                    additionalEnvironment["TAURI_WEBVIEW_AUTOMATION"] = "1"
+                }
+
                 let info = try await AppLauncher.launch(
                     bundleId: bundleId,
                     name: name,
-                    urls: urls
+                    urls: urls,
+                    additionalArguments: additionalArguments,
+                    additionalEnvironment: additionalEnvironment,
+                    createsNewApplicationInstance: createsNewInstance
                 )
 
                 // Replace the placeholder pid with the real one so any
@@ -203,6 +274,12 @@ public enum LaunchAppTool {
                 }
 
                 var summary = "✅ Launched \(info.name) (pid \(info.pid)) in background."
+                if let port = electronDebuggingPort {
+                    summary += " CDP renderer available on port \(port) — use `page` tool for full DOM access."
+                }
+                if let port = webkitInspectorPort {
+                    summary += " WebKit inspector available on port \(port) — use `page` tool for DOM access."
+                }
                 if shouldSuppress {
                     let frontmostAfter = await MainActor.run {
                         NSWorkspace.shared.frontmostApplication

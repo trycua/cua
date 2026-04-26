@@ -2,11 +2,9 @@
 # cua-driver uninstaller. Removes everything install.sh laid down:
 #
 #   - /usr/local/bin/cua-driver symlink
-#   - /usr/local/bin/cua-driver-update script
 #   - /Applications/CuaDriver.app bundle
 #   - ~/.cua-driver/ (telemetry id + install marker)
 #   - ~/Library/Application Support/Cua Driver/ (config.json)
-#   - ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist
 #
 # Does NOT revoke TCC grants (Accessibility + Screen Recording).
 #
@@ -15,11 +13,12 @@
 set -euo pipefail
 
 BIN_LINK="/usr/local/bin/cua-driver"
-UPDATE_SCRIPT="/usr/local/bin/cua-driver-update"
 APP_BUNDLE="/Applications/CuaDriver.app"
 USER_DATA="$HOME/.cua-driver"
 CONFIG_DIR="$HOME/Library/Application Support/Cua Driver"
-UPDATER_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
+# Legacy — remove if present from older installs.
+LEGACY_UPDATE_SCRIPT="/usr/local/bin/cua-driver-update"
+LEGACY_UPDATER_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
 
 log() { printf '==> %s\n' "$*"; }
 
@@ -35,25 +34,16 @@ else
     log "no symlink at $BIN_LINK (skipping)"
 fi
 
-# Update script (may need sudo on some systems).
-if [[ -f "$UPDATE_SCRIPT" ]]; then
-    SUDO=""
-    if [[ ! -w "$(dirname "$UPDATE_SCRIPT")" ]]; then
-        SUDO="sudo"
-    fi
-    $SUDO rm -f "$UPDATE_SCRIPT"
-    log "removed $UPDATE_SCRIPT"
-else
-    log "no update script at $UPDATE_SCRIPT (skipping)"
+# Legacy update script + LaunchAgent (present in installs before 0.0.6).
+if [[ -f "$LEGACY_UPDATE_SCRIPT" ]]; then
+    SUDO=""; [[ ! -w "$(dirname "$LEGACY_UPDATE_SCRIPT")" ]] && SUDO="sudo"
+    $SUDO rm -f "$LEGACY_UPDATE_SCRIPT"
+    log "removed legacy $LEGACY_UPDATE_SCRIPT"
 fi
-
-# LaunchAgent updater plist.
-if [[ -f "$UPDATER_PLIST" ]]; then
-    launchctl unload "$UPDATER_PLIST" 2>/dev/null || true
-    rm -f "$UPDATER_PLIST"
-    log "removed $UPDATER_PLIST"
-else
-    log "no updater LaunchAgent at $UPDATER_PLIST (skipping)"
+if [[ -f "$LEGACY_UPDATER_PLIST" ]]; then
+    launchctl unload "$LEGACY_UPDATER_PLIST" 2>/dev/null || true
+    rm -f "$LEGACY_UPDATER_PLIST"
+    log "removed legacy $LEGACY_UPDATER_PLIST"
 fi
 
 # .app bundle (in /Applications, usually writable by the user).

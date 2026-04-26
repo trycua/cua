@@ -10,11 +10,8 @@
 # Override the release tag with $CUA_DRIVER_VERSION:
 #   CUA_DRIVER_VERSION=0.1.0 /bin/bash -c "$(curl -fsSL .../install.sh)"
 #
-# Skip the auto-updater setup:
-#   CUA_DRIVER_NO_UPDATER=1 /bin/bash -c "$(curl -fsSL .../install.sh)"
-#
 # Uninstall:
-#   sudo rm -rf /Applications/CuaDriver.app /usr/local/bin/cua-driver
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
 set -euo pipefail
 
 REPO="trycua/cua"
@@ -25,14 +22,6 @@ APP_DEST="/Applications/$APP_NAME"
 BIN_LINK="/usr/local/bin/$BINARY_NAME"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
-
-# Whether to install the auto-updater (default: true)
-INSTALL_AUTO_UPDATER="${CUA_DRIVER_NO_UPDATER:-0}"
-if [[ "$INSTALL_AUTO_UPDATER" == "1" ]]; then
-    INSTALL_AUTO_UPDATER=false
-else
-    INSTALL_AUTO_UPDATER=true
-fi
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
@@ -138,201 +127,6 @@ if [[ -d "$HOME/.claude/skills" ]]; then
     else
         log "skill pack missing at $SKILL_TARGET (skipping; older release?)"
     fi
-fi
-
-# --- Install auto-updater -----------------------------------------------
-
-if [[ "$INSTALL_AUTO_UPDATER" == "true" ]]; then
-    log "setting up auto-updater"
-
-    # Matches lume's pattern — emit the update script as a heredoc
-    # from inside install.sh rather than shipping a sibling
-    # update.sh file. Keeps the installer self-contained and means a
-    # user who runs just `curl | bash` has everything they need with
-    # no second fetch. Contents are identical to what an external
-    # update.sh would be.
-    UPDATER_SCRIPT="/usr/local/bin/cua-driver-update"
-    $SUDO tee "$UPDATER_SCRIPT" > /dev/null << 'UPDATER_EOF'
-#!/bin/bash
-# cua-driver auto-updater. Installed by scripts/install.sh; invoked
-# weekly by the com.trycua.cua_driver_updater LaunchAgent or on demand
-# via `cua-driver update`. Reads the opt-out flag from the persisted
-# config + the CUA_DRIVER_AUTO_UPDATE_ENABLED env var, fetches the
-# latest cua-driver-v* release from GitHub, and atomically replaces
-# /Applications/CuaDriver.app when a newer version is available.
-set -e
-
-LOG_FILE="/tmp/cua_driver_updater.log"
-GITHUB_REPO="trycua/cua"
-TAG_PREFIX="cua-driver-v"
-APP_NAME="CuaDriver.app"
-APP_INSTALL_DIR="/Applications/$APP_NAME"
-BIN_LINK="/usr/local/bin/cua-driver"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-log "Starting cua-driver update check..."
-
-# Env override wins over config.
-if [ -n "${CUA_DRIVER_AUTO_UPDATE_ENABLED:-}" ]; then
-    case "${CUA_DRIVER_AUTO_UPDATE_ENABLED,,}" in
-        0|false|no|off)
-            log "Auto-update disabled via CUA_DRIVER_AUTO_UPDATE_ENABLED; exiting."
-            exit 0
-            ;;
-    esac
-fi
-
-# Otherwise consult the persisted config.
-CONFIG_FILE="$HOME/Library/Application Support/Cua Driver/config.json"
-if [ -f "$CONFIG_FILE" ] && grep -q '"auto_update_enabled":[[:space:]]*false' "$CONFIG_FILE"; then
-    log "Auto-update disabled in config; exiting."
-    exit 0
-fi
-
-if [ ! -x "$BIN_LINK" ]; then
-    log "ERROR: cua-driver binary not found at $BIN_LINK"
-    exit 1
-fi
-
-CURRENT_VERSION=$("$BIN_LINK" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
-log "Current version: $CURRENT_VERSION"
-
-get_latest_tag() {
-    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=40")
-    [ -z "$response" ] && return 1
-    echo "$response" | grep -oE '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' | head -n 1 | sed -E 's/.*"('"${TAG_PREFIX}"'[^"]+)".*/\1/'
-}
-
-LATEST_TAG=$(get_latest_tag)
-if [ -z "$LATEST_TAG" ]; then
-    log "ERROR: Could not fetch latest release tag"
-    exit 1
-fi
-
-LATEST_VERSION="${LATEST_TAG#${TAG_PREFIX}}"
-log "Latest version: $LATEST_VERSION"
-
-version_gt() {
-    [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
-}
-
-apply_update() {
-    log "Downloading and applying update..."
-    local temp_dir=$(mktemp -d)
-    trap 'rm -rf "$temp_dir"' EXIT
-
-    local arch=$(uname -m)
-    local version="${LATEST_TAG#${TAG_PREFIX}}"
-    local tarball="cua-driver-${version}-darwin-${arch}.tar.gz"
-    local download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/$tarball"
-
-    if ! curl -fsSL -o "$temp_dir/$tarball" "$download_url"; then
-        log "ERROR: Failed to download $tarball"
-        exit 1
-    fi
-    if ! tar -tzf "$temp_dir/$tarball" > /dev/null 2>&1; then
-        log "ERROR: Downloaded file is not a valid tar.gz archive"
-        exit 1
-    fi
-    if ! tar -xzf "$temp_dir/$tarball" -C "$temp_dir"; then
-        log "ERROR: Failed to extract tarball"
-        exit 1
-    fi
-    if [ ! -d "$temp_dir/$APP_NAME" ]; then
-        log "ERROR: $APP_NAME not found inside tarball"
-        exit 1
-    fi
-
-    # ditto preserves code signatures and xattrs; cp -R strips
-    # Gatekeeper metadata on some macOS versions.
-    [ -e "$APP_INSTALL_DIR" ] && rm -rf "$APP_INSTALL_DIR"
-    ditto "$temp_dir/$APP_NAME" "$APP_INSTALL_DIR"
-
-    local app_binary="$APP_INSTALL_DIR/Contents/MacOS/cua-driver"
-    if [ ! -x "$app_binary" ]; then
-        log "ERROR: Binary missing at $app_binary after extraction"
-        exit 1
-    fi
-
-    local sudo=""
-    [ ! -w "$(dirname "$BIN_LINK")" ] && sudo="sudo"
-    $sudo mkdir -p "$(dirname "$BIN_LINK")"
-    $sudo ln -sf "$app_binary" "$BIN_LINK"
-
-    log "Successfully updated cua-driver to version $version"
-    osascript -e "display notification \"Updated to version $version\" with title \"cua-driver Updated\"" 2>/dev/null || true
-}
-
-if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
-    log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
-    case "${1:-}" in
-        --silent|--apply)
-            # LaunchAgent path: no dialog.
-            apply_update
-            ;;
-        *)
-            # Interactive path (user ran `cua-driver update` in a terminal):
-            # prompt via osascript before downloading.
-            response=$(osascript -e "display dialog \"cua-driver $LATEST_VERSION is available (current: $CURRENT_VERSION).\" buttons {\"Later\", \"Update Now\"} default button \"Update Now\" with title \"cua-driver Update\"" 2>/dev/null || echo "")
-            if echo "$response" | grep -q "Update Now"; then
-                log "User chose to update"
-                apply_update
-            else
-                log "User chose to skip update"
-            fi
-            ;;
-    esac
-else
-    log "Already up to date (version $CURRENT_VERSION)"
-fi
-
-log "Update check complete"
-UPDATER_EOF
-
-    $SUDO chmod +x "$UPDATER_SCRIPT"
-    log "installed updater at $UPDATER_SCRIPT"
-
-    AGENT_LABEL="com.trycua.cua_driver_updater"
-    AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
-
-    mkdir -p "$HOME/Library/LaunchAgents"
-
-    cat > "$AGENT_PLIST" << 'PLIST_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.trycua.cua_driver_updater</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/cua-driver-update</string>
-        <string>--silent</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StartInterval</key>
-    <integer>604800</integer>
-    <key>StandardOutPath</key>
-    <string>/tmp/cua_driver_updater.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/cua_driver_updater.error.log</string>
-</dict>
-</plist>
-PLIST_EOF
-    
-    chmod 644 "$AGENT_PLIST"
-    launchctl load "$AGENT_PLIST" 2>/dev/null || true
-    
-    log "auto-updater installed (checks weekly)"
-    echo ""
-    echo "To disable auto-updates later, run:"
-    echo "  cua-driver config updates disable"
-else
-    log "skipping auto-updater setup (CUA_DRIVER_NO_UPDATER=1)"
 fi
 
 # --- Done ---------------------------------------------------------------

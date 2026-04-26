@@ -327,65 +327,53 @@ enum AppKitBootstrap {
     }
 }
 
-/// `cua-driver update` — trigger a manual update check and optionally apply updates.
-/// Respects the auto-update config flag: if disabled, this command will refuse to run.
+/// `cua-driver update` — check for a newer release and optionally apply it.
 struct UpdateCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "update",
-        abstract: "Check for and apply updates to cua-driver."
+        abstract: "Check for a newer cua-driver release and apply it."
     )
 
-    @Flag(name: .long, help: "Apply updates silently without prompting.")
-    var silent = false
+    @Flag(name: .long, help: "Download and apply the update without prompting.")
+    var apply = false
 
     func run() async throws {
-        let config = await ConfigStore.shared.load()
-        let envOverride = ProcessInfo.processInfo.environment["CUA_DRIVER_AUTO_UPDATE_ENABLED"]
-        
-        var autoUpdateEnabled = config.autoUpdateEnabled
-        if let envValue = envOverride {
-            let lower = envValue.lowercased()
-            if ["0", "false", "no", "off"].contains(lower) {
-                autoUpdateEnabled = false
-            } else if ["1", "true", "yes", "on"].contains(lower) {
-                autoUpdateEnabled = true
-            }
-        }
-        
-        if !autoUpdateEnabled {
-            print("Auto-update is disabled. Enable it with:")
-            print("  cua-driver config updates enable")
+        let current = CuaDriverCore.version
+        print("Current version: \(current)")
+        print("Checking for updates…")
+
+        guard let latest = await VersionCheck.fetchLatest() else {
+            print("Could not reach GitHub — check your connection and try again.")
             throw ExitCode(1)
         }
-        
-        // Find and execute the update script
-        let updateScriptPath = "/usr/local/bin/cua-driver-update"
-        let fileManager = FileManager.default
-        
-        if !fileManager.fileExists(atPath: updateScriptPath) {
-            print("Error: update script not found at \(updateScriptPath)")
-            throw ExitCode(1)
+
+        guard VersionCheck.isNewer(latest, than: current) else {
+            print("Already up to date.")
+            return
         }
-        
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        var args = [updateScriptPath]
-        if silent {
-            args.append("--silent")
+
+        print("New version available: \(latest)")
+
+        if !apply {
+            print("")
+            print("Run with --apply to download and install it:")
+            print("  cua-driver update --apply")
+            print("")
+            print("Or reinstall directly:")
+            print("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash")
+            return
         }
-        process.arguments = args
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            if process.terminationStatus != 0 {
-                print("Update check failed. See /tmp/cua_driver_updater.log for details.")
-                throw ExitCode(Int32(process.terminationStatus))
-            }
-        } catch {
-            print("Error running update script: \(error)")
-            throw ExitCode(1)
+
+        print("Downloading and installing cua-driver \(latest)…")
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+        proc.arguments = ["-c",
+            "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash"]
+        try proc.run()
+        proc.waitUntilExit()
+        if proc.terminationStatus != 0 {
+            print("Installation failed — run the command above manually for details.")
+            throw ExitCode(Int32(proc.terminationStatus))
         }
     }
 }

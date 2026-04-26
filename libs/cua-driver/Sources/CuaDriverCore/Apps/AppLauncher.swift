@@ -53,11 +53,21 @@ public enum AppLauncher {
     public static func launch(
         bundleId: String? = nil,
         name: String? = nil,
-        urls: [URL] = []
+        urls: [URL] = [],
+        additionalArguments: [String] = [],
+        additionalEnvironment: [String: String] = [:],
+        createsNewApplicationInstance: Bool = false
     ) async throws -> AppInfo {
         let appURL = try locate(bundleId: bundleId, name: name)
 
         let config = NSWorkspace.OpenConfiguration()
+        if !additionalArguments.isEmpty {
+            config.arguments = additionalArguments
+        }
+        if !additionalEnvironment.isEmpty {
+            config.environment = additionalEnvironment
+        }
+        config.createsNewApplicationInstance = createsNewApplicationInstance
         config.activates = false
         config.addsToRecentItems = false
         // NOTE: we used to set `config.hides = true` on the theory that

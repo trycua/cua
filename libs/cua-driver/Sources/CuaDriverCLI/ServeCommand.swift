@@ -143,6 +143,10 @@ struct ServeCommand: ParsableCommand {
             // defaults inside `ConfigStore.load()` — no failure here.
             let config = await ConfigStore.shared.load()
 
+            // Non-blocking version hint — prints to stderr if a newer release
+            // exists on GitHub. Fails silently when offline.
+            VersionCheck.warnIfOutdated()
+
             // Propagate persisted agent-cursor preferences into the live
             // singleton so the daemon boots in the same state the user
             // last wrote. `setAgentCursorEnabled` / `setAgentCursorMotion`

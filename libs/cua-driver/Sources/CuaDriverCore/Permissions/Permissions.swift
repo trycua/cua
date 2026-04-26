@@ -22,10 +22,13 @@ public enum Permissions {
     ///
     /// Accessibility uses `AXIsProcessTrusted()` — reliable.
     ///
-    /// Screen Recording does a real probe via `SCShareableContent.current`
+    /// Screen Recording does a real probe via
+    /// `SCShareableContent.excludingDesktopWindows(_:onScreenWindowsOnly:)`
     /// rather than `CGPreflightScreenCaptureAccess()` — the latter returns
     /// false negatives for subprocess-launched apps, even when the grant is
-    /// active. The probe costs ~100-300ms but returns the truth.
+    /// active. Limiting the query to on-screen windows avoids the multi-second
+    /// stall caused by `SCShareableContent.current` enumerating thousands of
+    /// off-screen windows (e.g. from a crashed system process).
     public static func currentStatus() async -> PermissionsStatus {
         async let screen = probeScreenRecording()
         return await PermissionsStatus(
@@ -54,7 +57,15 @@ public enum Permissions {
 
     private static func probeScreenRecording() async -> Bool {
         do {
-            _ = try await SCShareableContent.current
+            // Prefer the on-screen-only variant over `SCShareableContent.current`.
+            // The latter must resolve app names for every window — including
+            // thousands of off-screen windows left by crashed system processes —
+            // which can stall for several seconds on affected machines.
+            // The lighter query still throws `SCStreamError.userDeclined` when
+            // the Screen Recording TCC grant is absent, so it is equally
+            // reliable as a permission probe.
+            _ = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true)
             return true
         } catch {
             return false

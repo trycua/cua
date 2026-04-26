@@ -1,0 +1,98 @@
+---
+title: Swift Integration
+description: Embed CuaDriverCore or CuaDriverServer in a Swift package
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`CuaDriverCore` and `CuaDriverServer` are available as Swift library products directly from the `trycua/cua` repository. Use this when you want to embed accessibility automation, window capture, or MCP tool handling into your own macOS Swift app or package — without shelling out to the `cua-driver` CLI.
+
+## Add the dependency
+
+In your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(
+        url: "https://github.com/trycua/cua.git",
+        from: "cua-driver-v0.1.0"
+    ),
+],
+```
+
+Then add the products you need to your target:
+
+```swift
+targets: [
+    .target(
+        name: "MyApp",
+        dependencies: [
+            // Accessibility, input synthesis, window capture, recording.
+            // No external dependencies — system frameworks only.
+            .product(name: "CuaDriverCore", package: "cua"),
+
+            // MCP tool handlers and daemon layer (adds swift-sdk dependency).
+            // Use this if you want to expose cua-driver tools over MCP.
+            .product(name: "CuaDriverServer", package: "cua"),
+        ]
+    ),
+]
+```
+
+<Callout type="info">
+  `CuaDriverCore` depends only on system frameworks (AppKit, CoreGraphics, ScreenCaptureKit, etc.). `CuaDriverServer` adds [modelcontextprotocol/swift-sdk](https://github.com/modelcontextprotocol/swift-sdk) for the MCP protocol types.
+</Callout>
+
+## What's in each product
+
+### CuaDriverCore
+
+Low-level macOS automation primitives:
+
+| Module area | What it gives you |
+|---|---|
+| `AppStateEngine` | AX tree snapshots with element-index caching |
+| `AppLauncher` | Launch apps without focus steal |
+| `AXInput` | Perform AX actions, read attributes |
+| `MouseInput` / `KeyboardInput` | Synthesize CGEvents |
+| `WindowCapture` | Per-window screenshots via ScreenCaptureKit |
+| `RecordingSession` | Trajectory recording and replay |
+| `AgentCursor` | Animated overlay cursor |
+| `BrowserJS` / `ElectronJS` | Execute JS in browser tabs via Apple Events or CDP |
+| `AXPageReader` | Extract text / query DOM from WKWebView AX trees |
+
+### CuaDriverServer
+
+Ready-made MCP tool handlers built on `CuaDriverCore`:
+
+```swift
+import CuaDriverServer
+
+let registry = ToolRegistry.default
+// registry.handlers["click"], ["get_window_state"], ["page"], etc.
+```
+
+Embed the full tool set in your own MCP server:
+
+```swift
+import MCP
+import CuaDriverServer
+
+let server = MCPServer(tools: ToolRegistry.default.allTools) { name, args in
+    try await ToolRegistry.default.call(name, arguments: args)
+}
+```
+
+## Minimum requirements
+
+- macOS 14 (Sonoma) or later
+- Swift 6.0+
+
+## TCC permissions
+
+Calling AX or screen-capture APIs from an embedded library still requires the host app to hold the relevant TCC grants:
+
+- **Accessibility** — for any `AXUIElement` work (snapshots, clicks, AX actions).
+- **Screen Recording** — for `WindowCapture` screenshots.
+
+Grant these under **System Settings → Privacy & Security** against your app's bundle identifier, the same as for the standalone `CuaDriver.app`.

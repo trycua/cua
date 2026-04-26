@@ -65,7 +65,9 @@ public enum AppLauncher {
             config.arguments = additionalArguments
         }
         if !additionalEnvironment.isEmpty {
-            config.environment = additionalEnvironment
+            var env = ProcessInfo.processInfo.environment
+            env.merge(additionalEnvironment) { _, new in new }
+            config.environment = env
         }
         config.createsNewApplicationInstance = createsNewApplicationInstance
         config.activates = false

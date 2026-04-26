@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import os
 
 /// Execute JavaScript in a browser tab via Apple Events.
 ///

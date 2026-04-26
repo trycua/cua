@@ -135,7 +135,7 @@ rm -rf ~/.cua-driver
 rm -rf ~/Library/Application\ Support/Cua\ Driver
 rm -rf ~/Library/Caches/cua-driver
 
-# Optional: remove the updater LaunchAgent.
+# Optional: remove legacy LaunchAgent from older installs (≤ v0.0.5).
 launchctl unload ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist 2>/dev/null
 rm -f ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist
 ```

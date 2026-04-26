@@ -111,9 +111,11 @@ Launch an app hidden (no focus steal) and return its pid plus the initial `windo
 - `bundle_id` (string, optional): App bundle identifier, e.g. `com.apple.calculator`.
 - `name` (string, optional): App display name. Used only when `bundle_id` is absent.
 - `urls` (array of string, optional): `file://` / `http(s)://` URLs (or plain paths with `~` expansion) handed to the launched app via `application(_:open:)`. For Finder, a folder URL opens a backgrounded window rooted there. Apps that don't implement `application(_:open:)` launch normally and ignore these.
+- `creates_new_application_instance` (boolean, optional): When true, force-launches a separate process even if the app is already running. Useful for isolated browser sessions. Default false.
+- `additional_arguments` (array of string, optional): Extra command-line arguments passed to the launched process, e.g. `["--user-data-dir=/tmp/session-a"]` for an isolated Chrome profile.
 
 ```json
-{"bundle_id": "com.apple.finder", "urls": ["~/Documents"]}
+{"bundle_id": "com.google.Chrome", "urls": ["https://example.com"], "creates_new_application_instance": true, "additional_arguments": ["--user-data-dir=/tmp/cua-session"]}
 ```
 
 ### check_permissions
@@ -291,6 +293,29 @@ Write an element's `AXValue` directly. For sliders, steppers, text fields, and s
 
 ```json
 {"pid": 844, "window_id": 10725, "element_index": 9, "value": "42"}
+```
+
+## Browser
+
+### page
+
+Browser page primitives — execute JavaScript, extract page text, or query DOM elements. Supports Chrome, Brave, Edge, and Safari (requires "Allow JavaScript from Apple Events"). For WKWebView/Tauri apps where the remote inspector is blocked, `get_text` and `query_dom` automatically fall back to the accessibility tree.
+
+**Arguments:**
+
+- `pid` (integer, required): Browser process ID.
+- `window_id` (integer, required): CGWindowID of the target browser window.
+- `action` (string, required): One of `execute_javascript`, `get_text`, `query_dom`, `enable_javascript_apple_events`.
+- `javascript` (string): JS to evaluate — action `execute_javascript` only. Wrap in an IIFE with try-catch for safety.
+- `css_selector` (string): CSS selector — action `query_dom` only.
+- `attributes` (array of string, optional): Attributes to include per element — action `query_dom` only. `tag` and `text` are always included.
+- `bundle_id` (string): Browser bundle ID — action `enable_javascript_apple_events` only.
+- `user_has_confirmed_enabling` (boolean): Must be `true` — action `enable_javascript_apple_events` only. **You must ask the user for explicit permission before passing this.**
+
+```json
+{"pid": 1234, "window_id": 5678, "action": "get_text"}
+{"pid": 1234, "window_id": 5678, "action": "execute_javascript", "javascript": "document.title"}
+{"pid": 1234, "window_id": 5678, "action": "query_dom", "css_selector": "a[href]", "attributes": ["href"]}
 ```
 
 ## Zoom

@@ -34,7 +34,9 @@ _fake_transformers.AutoProcessor = MagicMock()  # type: ignore[attr-defined]
 _fake_transformers.AutoConfig = MagicMock()  # type: ignore[attr-defined]
 
 # Patch into sys.modules so any `import torch` / `import transformers` in
-# the adapter resolves to our fakes.
+# the adapter resolves to our fakes.  `setdefault` intentionally keeps an
+# already-imported real module in place (no fresh load → no OMP crash);
+# under that scenario tests run against real deps, which is acceptable.
 sys.modules.setdefault("torch", _fake_torch)
 sys.modules.setdefault("transformers", _fake_transformers)
 
@@ -148,7 +150,9 @@ class TestGenerateWithoutHFDeps:
 
     def test_raises_import_error_when_hf_unavailable(self):
         """_generate raises ImportError with helpful message when HF deps are missing."""
-        with patch("cua_agent.adapters.huggingfacelocal_adapter.HF_AVAILABLE", False):
+        with patch(
+            "cua_agent.adapters.huggingfacelocal_adapter.HF_AVAILABLE", False
+        ):
             adapter = _make_adapter()
             with pytest.raises(ImportError, match="cua-agent\\[uitars-hf\\]"):
                 adapter._generate(
@@ -195,7 +199,8 @@ class TestGenerateWithMockedHF:
             )
 
         _, kwargs = handler.generate.call_args
-        assert kwargs.get("max_new_tokens", 128) == 128
+        assert "max_new_tokens" in kwargs, "default max_new_tokens not forwarded to handler"
+        assert kwargs["max_new_tokens"] == 128
 
     def test_generate_warns_on_unknown_kwargs(self):
         """_generate emits a warning for unsupported kwargs."""
@@ -213,7 +218,9 @@ class TestGenerateWithMockedHF:
     def test_handler_is_cached(self):
         """Calling _get_handler twice for the same model reuses the same instance."""
         mock_load = Mock(return_value=Mock())
-        with patch("cua_agent.adapters.huggingfacelocal_adapter.load_model_handler", mock_load):
+        with patch(
+            "cua_agent.adapters.huggingfacelocal_adapter.load_model_handler", mock_load
+        ):
             with patch("cua_agent.adapters.huggingfacelocal_adapter.HF_AVAILABLE", True):
                 h1 = self.adapter._get_handler("some/model")
                 h2 = self.adapter._get_handler("some/model")
@@ -233,7 +240,9 @@ class TestCompletionMethod:
         )
 
         with patch("cua_agent.adapters.huggingfacelocal_adapter.HF_AVAILABLE", True):
-            with patch("cua_agent.adapters.huggingfacelocal_adapter.completion") as mock_completion:
+            with patch(
+                "cua_agent.adapters.huggingfacelocal_adapter.completion"
+            ) as mock_completion:
                 mock_completion.return_value = {"choices": [{"message": {"content": "action()"}}]}
                 result = adapter.completion(
                     messages=[{"role": "user", "content": "hi"}],
@@ -262,7 +271,9 @@ class TestAsyncCompletionMethod:
                 "cua_agent.adapters.huggingfacelocal_adapter.acompletion",
                 new_callable=AsyncMock,
             ) as mock_acompletion:
-                mock_acompletion.return_value = {"choices": [{"message": {"content": "action()"}}]}
+                mock_acompletion.return_value = {
+                    "choices": [{"message": {"content": "action()"}}]
+                }
                 result = await adapter.acompletion(
                     messages=[{"role": "user", "content": "hi"}],
                     model="ByteDance-Seed/UI-TARS-1.5-7B",

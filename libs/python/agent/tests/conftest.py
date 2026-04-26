@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # Torch / Transformers mock fixture
 # ---------------------------------------------------------------------------
@@ -78,8 +79,16 @@ def mock_torch_and_transformers():
     originals = {k: sys.modules.get(k) for k in stubs}
 
     for name, stub in stubs.items():
-        if name not in sys.modules:
+        existing = sys.modules.get(name)
+        if existing is None:
             sys.modules[name] = stub
+        else:
+            # Fill in any attributes the earlier stub didn't define so that
+            # session-wide stubs remain authoritative even when a test module
+            # already inserted a minimal stub via sys.modules.setdefault().
+            for attr in vars(stub):
+                if not hasattr(existing, attr):
+                    setattr(existing, attr, getattr(stub, attr))
 
     yield
 

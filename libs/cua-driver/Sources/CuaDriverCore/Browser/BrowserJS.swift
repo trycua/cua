@@ -159,13 +159,13 @@ public enum BrowserJS {
             proc.standardOutput = stdout
             proc.standardError = stderr
 
-            let lock = NSLock()
-            var resumed = false
-            func resumeOnce(_ result: Result<String, Swift.Error>) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !resumed else { return }
-                resumed = true
+            let once = OSAllocatedUnfairLock(initialState: false)
+            let resumeOnce: @Sendable (Result<String, Swift.Error>) -> Void = { result in
+                let shouldResume = once.withLock { (fired: inout Bool) -> Bool in
+                    guard !fired else { return false }
+                    fired = true; return true
+                }
+                guard shouldResume else { return }
                 switch result {
                 case .success(let s): continuation.resume(returning: s)
                 case .failure(let e): continuation.resume(throwing: e)

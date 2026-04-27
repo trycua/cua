@@ -7,7 +7,7 @@ _Published on April 23, 2026 by Francesco Bonacci_
 **TL;DR:**
 - `cua-driver` is an open-source macOS driver that lets any agent (Claude Code, Codex, your own harness) drive any Mac app in the background.
 - The user's cursor doesn't move, focus doesn't change, and macOS doesn't drag them across Spaces - this is called [background computer-use](https://x.com/embirico/status/2044833942856196378).
-- Built on SkyLight's `SLEventPostToPid`, a private AX SPI for sparse accessbility trees, and yabai's focus-without-raise pattern.
+- Built on SkyLight's `SLEventPostToPid`, a private AX SPI for sparse accessibility trees, and yabai's focus-without-raise pattern.
 - Source: [github.com/trycua/cua](https://github.com/trycua/cua).
 
 ---

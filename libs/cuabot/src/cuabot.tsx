@@ -20,6 +20,7 @@ import {
 import { runOnboarding } from './onboarding.js';
 import { sendTelemetryToServer } from './telemetry.js';
 import { checkDependencies } from './utils.js';
+import { exitCodeForBashResult } from './bashResult.js';
 import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
@@ -306,10 +307,10 @@ Commands:
           process.exit(1);
         }
         const client = await getClient();
-        const { stdout, stderr } = await client.bash(cmd);
-        if (stdout) console.log(stdout);
-        if (stderr) console.error(stderr);
-        process.exit(0);
+        const result = await client.bash(cmd);
+        if (result.stdout) console.log(result.stdout);
+        if (result.stderr) console.error(result.stderr);
+        process.exit(exitCodeForBashResult(result));
       }
 
       case '--click': {

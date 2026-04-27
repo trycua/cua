@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { bashResultFromExecError, buildContainerScript, exitCodeForBashResult } from './bashResult.js';
+
+test('buildContainerScript sets GUI user environment', () => {
+  const script = buildContainerScript('firefox');
+
+  assert.match(script, /export DISPLAY=:100/);
+  assert.match(script, /export USER=user/);
+  assert.match(script, /export LOGNAME=user/);
+  assert.match(script, /export HOME=\/home\/user/);
+  assert.match(script, /export XDG_RUNTIME_DIR=\/tmp\/runtime-user/);
+  assert.match(script, /export XAUTHORITY=\/home\/user\/\.Xauthority/);
+});
+
+test('bashResultFromExecError preserves exit code and failure status', () => {
+  const result = bashResultFromExecError({ code: 42, stdout: 'out', stderr: 'err' });
+
+  assert.equal(result.success, false);
+  assert.equal(result.exit_code, 42);
+  assert.equal(result.stdout, 'out');
+  assert.equal(result.stderr, 'err');
+});
+
+test('bashResultFromExecError does not use wrapper message as stderr for plain nonzero exits', () => {
+  const result = bashResultFromExecError({ code: 42, message: 'Command failed: ...' });
+
+  assert.equal(result.success, false);
+  assert.equal(result.exit_code, 42);
+  assert.equal(result.stderr, '');
+});
+
+test('bashResultFromExecError marks timeouts', () => {
+  const result = bashResultFromExecError({ killed: true, signal: 'SIGTERM', message: 'timed out' });
+
+  assert.equal(result.success, false);
+  assert.equal(result.timed_out, true);
+  assert.equal(result.signal, 'SIGTERM');
+});
+
+test('bashResultFromExecError treats timeout exit code as timeout', () => {
+  const result = bashResultFromExecError({ code: 124, stdout: 'partial' });
+
+  assert.equal(result.success, false);
+  assert.equal(result.exit_code, 124);
+  assert.equal(result.timed_out, true);
+});
+
+test('bashResultFromExecError does not treat timeout command name as timeout', () => {
+  const result = bashResultFromExecError({ code: 127, message: 'Command failed: timeout 10s nope' });
+
+  assert.equal(result.success, false);
+  assert.equal(result.exit_code, 127);
+  assert.equal(result.timed_out, undefined);
+});
+
+test('exitCodeForBashResult propagates failures to CLI exit status', () => {
+  assert.equal(exitCodeForBashResult({ success: true, exit_code: 0 }), 0);
+  assert.equal(exitCodeForBashResult({ success: false, exit_code: 42 }), 42);
+  assert.equal(exitCodeForBashResult({ success: false, exit_code: null, timed_out: true }), 124);
+  assert.equal(exitCodeForBashResult({ success: false, exit_code: null }), 1);
+});

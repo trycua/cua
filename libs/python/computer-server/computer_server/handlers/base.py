@@ -203,7 +203,7 @@ def normalize_screenshot_format(format: str, quality: int) -> tuple[str, int]:
     fmt = _FORMAT_ALIASES.get(format.lower(), format.lower())
     if fmt not in _SUPPORTED_FORMATS:
         raise ValueError(
-            f"Unsupported screenshot format {format!r}. " f"Supported: {sorted(_SUPPORTED_FORMATS)}"
+            f"Unsupported screenshot format {format!r}. Supported: {sorted(_SUPPORTED_FORMATS)}"
         )
     if fmt == "jpeg":
         quality = max(1, min(95, quality))
@@ -422,7 +422,7 @@ class BaseAutomationHandler(ABC):
                     "return_code": -1,
                 }
             return {
-                "success": True,
+                "success": process.returncode == 0,
                 "stdout": stdout.decode() if stdout else "",
                 "stderr": stderr.decode() if stderr else "",
                 "return_code": process.returncode,

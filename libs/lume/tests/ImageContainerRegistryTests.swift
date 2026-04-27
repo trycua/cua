@@ -18,6 +18,21 @@ func testParameterizedTarDiskLayerIsRecognizedAsRawDiskPart() throws {
     #expect(diskPart?.totalParts == 41)
 }
 
+@Test("OCI tar disk layer parameters tolerate case, whitespace, and quoted values")
+func testParameterizedTarDiskLayerNormalizesParameters() throws {
+    let layer = Layer(
+        mediaType: "Application/Vnd.Oci.Image.Layer.V1.Tar; Part.Number = \"2\" ; PART.TOTAL = \"41\"",
+        digest: "sha256:part2",
+        size: 512,
+        annotations: ["org.opencontainers.image.title": "disk.img.part.ab"]
+    )
+
+    let diskPart = OCIMediaType.rawDiskPartInfo(for: layer)
+
+    #expect(diskPart?.partNumber == 2)
+    #expect(diskPart?.totalParts == 41)
+}
+
 @Test("non-disk OCI tar layers are not treated as disk parts")
 func testNonDiskTarLayerIsNotRecognizedAsRawDiskPart() throws {
     let layer = Layer(
@@ -81,4 +96,29 @@ func testRawDiskPartWriterCopiesBytesWithoutDecompression() throws {
 
     #expect(writtenBytes == 4)
     #expect(output == Data([0x00, 0x00, 0xde, 0xad, 0xbe, 0xef]))
+}
+
+@Test("raw disk part writer fails when the source file is missing")
+func testRawDiskPartWriterThrowsForMissingSource() throws {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let destination = tempDir.appendingPathComponent("disk.img")
+    _ = FileManager.default.createFile(atPath: destination.path, contents: nil)
+    let handle = try FileHandle(forWritingTo: destination)
+    defer { try? handle.close() }
+
+    var didThrow = false
+    do {
+        _ = try DiskPartWriter.writeRawChunk(
+            inputPath: tempDir.appendingPathComponent("missing.part").path,
+            outputHandle: handle,
+            startOffset: 0
+        )
+    } catch {
+        didThrow = true
+    }
+
+    #expect(didThrow)
 }

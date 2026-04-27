@@ -117,7 +117,7 @@ enum OCIMediaType {
 
     static func rawDiskPartInfo(for layer: Layer) -> OCIDiskPartInfo? {
         let mediaType = parse(layer.mediaType)
-        guard mediaType.base == standardTarLayer,
+        guard mediaType.base.lowercased() == standardTarLayer,
             let partNumberText = mediaType.parameters["part.number"],
             let partNumber = Int(partNumberText),
             partNumber > 0
@@ -150,7 +150,13 @@ enum OCIMediaType {
             let pair = parameter.split(
                 separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             guard pair.count == 2 else { continue }
-            parameters[String(pair[0])] = String(pair[1])
+            let key = String(pair[0])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let value = String(pair[1])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            parameters[key] = value
         }
 
         return OCIMediaTypeComponents(base: base, parameters: parameters)
@@ -276,7 +282,7 @@ enum DiskPartWriter {
     ) throws -> UInt64 {
         guard FileManager.default.fileExists(atPath: inputPath) else {
             Logger.error("Raw disk part not found at: \(inputPath)")
-            return 0
+            throw PullError.layerDownloadFailed(inputPath)
         }
 
         let readHandle = try FileHandle(forReadingFrom: URL(fileURLWithPath: inputPath))
@@ -2054,25 +2060,15 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 var reassemblyProgressLogger = ProgressLogger(threshold: 0.05)
                 var currentOffset: UInt64 = 0
 
-                // Iterate from 1 up to the total number of parts found by the collector
-                for collectorPartNum in 1...totalParts {
-                    // Find the source URL from our collected parts using the sequential collectorPartNum
-                    guard
-                        let sourceInfo = diskPartSources.first(where: {
-                            $0.partNumber == collectorPartNum
-                        })
-                    else {
-                        Logger.error(
-                            "Missing required cached part number \(collectorPartNum) in collected parts during reassembly."
-                        )
-                        throw PullError.missingPart(collectorPartNum)
-                    }
+                // Use the collector's sorted sources directly. Raw OCI disk parts are validated
+                // against part.total above when that metadata is present.
+                for sourceInfo in diskPartSources {
                     let sourceURL = sourceInfo.url
 
                     // Log using the sequential collector part number
                     let action = sourceInfo.compression == .raw ? "Copying" : "Decompressing"
                     Logger.info(
-                        "\(action) part \(collectorPartNum) of \(totalParts) from cache: \(sourceURL.lastPathComponent) at offset \(currentOffset)..."
+                        "\(action) part \(sourceInfo.partNumber) of \(totalParts) from cache: \(sourceURL.lastPathComponent) at offset \(currentOffset)..."
                     )
 
                     let bytesWritten: UInt64

@@ -306,6 +306,19 @@ Next steps:
         • OpenClaw:
             cua-driver mcp-config --client openclaw
 
+        • GitHub Copilot CLI (paste into ~/.copilot/mcp-config.json):
+            {
+              "mcpServers": {
+                "cua-driver": {
+                  "type": "local",
+                  "command": "$BIN_LINK",
+                  "args": ["mcp"],
+                  "tools": ["*"]
+                }
+              }
+            }
+            Or inside gh copilot chat: /mcp add → type=STDIO, command=$BIN_LINK, args=mcp
+
         • Cursor / OpenCode / Hermes (no add CLI — paste config):
             cua-driver mcp-config --client cursor     # JSON for ~/.cursor/mcp.json
             cua-driver mcp-config --client opencode   # JSON for opencode.json

@@ -1,0 +1,128 @@
+---
+title: Integrations
+description: Connect cua-driver to your AI coding agent
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver mcp` is a stdio MCP server. Any agent that supports MCP can use it — no extra setup beyond adding it to the agent's MCP config.
+
+<Callout type="warn">
+  Grant Accessibility and Screen Recording permissions to cua-driver before connecting any agent.
+  Run `cua-driver check_permissions` to verify.
+</Callout>
+
+## Claude Code
+
+```bash
+claude mcp add --transport stdio cua-driver -- cua-driver mcp
+```
+
+Verify:
+
+```bash
+claude mcp list
+# cua-driver: cua-driver mcp (stdio) - ✓ Connected
+```
+
+## GitHub Copilot CLI
+
+Add to `~/.copilot/mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "type": "local",
+      "command": "cua-driver",
+      "args": ["mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+Or interactively inside `gh copilot` chat:
+
+```
+/mcp add
+```
+
+Fill in: name=`cua-driver`, type=STDIO, command=`cua-driver`, args=`mcp`. Press **Ctrl+S** to save.
+
+## Codex (OpenAI)
+
+```bash
+codex mcp add cua-driver -- cua-driver mcp
+```
+
+## Cursor
+
+Generate the config snippet and paste it into `~/.cursor/mcp.json`:
+
+```bash
+cua-driver mcp-config --client cursor
+```
+
+## Gemini CLI
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "cua-driver": {
+        "type": "stdio",
+        "command": "cua-driver",
+        "args": ["mcp"]
+      }
+    }
+  }
+}
+```
+
+Tools appear prefixed as `mcp_cua-driver_*`.
+
+## OpenCode
+
+```bash
+cua-driver mcp-config --client opencode
+```
+
+Paste the output into your `opencode.json`.
+
+## Hermes (NousResearch)
+
+```bash
+cua-driver mcp-config --client hermes
+```
+
+Paste the output into `~/.hermes/config.yaml`.
+
+## OpenClaw
+
+```bash
+cua-driver mcp-config --client openclaw
+```
+
+## Other clients
+
+For any client that accepts the standard `mcpServers` shape:
+
+```bash
+cua-driver mcp-config
+```
+
+Output:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```

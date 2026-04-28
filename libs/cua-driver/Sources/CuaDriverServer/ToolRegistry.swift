@@ -215,6 +215,7 @@ public struct ToolRegistry: Sendable {
     public static let `default` = ToolRegistry(handlers: [
         ListAppsTool.handler,
         ListWindowsTool.handler,
+        ValidateWindowTool.handler,
         LaunchAppTool.handler,
         GetScreenSizeTool.handler,
         CheckPermissionsTool.handler,

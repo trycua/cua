@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CuaDriverCore
 import Foundation
@@ -24,11 +25,20 @@ public enum ListWindowsTool {
 
                 - window_id: CGWindowID, addressable for screenshot /
                   activation / Space-move APIs.
+                - window_uid: daemon-stable identity for this OS window
+                  observation. Stable across list order changes and title /
+                  bounds changes while the CGWindowID remains owned by the
+                  same pid.
+                - generation / first_seen / last_seen: lifecycle metadata
+                  for callers maintaining a task-level window lease.
                 - pid + app_name: owning app identity.
+                - bundle_id: owning app bundle identifier when available.
                 - title: current window title (empty string for helpers
                   and chromeless surfaces).
                 - bounds: x / y / width / height, top-left origin in
                   global screen points.
+                - display_id: CoreGraphics display containing the largest
+                  part of the window, when available.
                 - layer: CGWindow stratum. Always 0 in the default
                   filter; reserved for future higher-layer opt-in.
                 - z_index: stacking order on the current Space (higher =
@@ -105,23 +115,12 @@ public enum ListWindowsTool {
                 }
 
             let currentSpaceID = SpaceMigrator.currentSpaceID()
+            let identities = await WindowIdentityStore.shared.metadata(for: windows)
             let records = windows.map { info -> Row in
-                let spaceIDs = SpaceMigrator.spaceIDs(forWindowID: UInt32(info.id))
-                let onCurrentSpace: Bool? = {
-                    guard let spaceIDs, let currentSpaceID else { return nil }
-                    return spaceIDs.contains(currentSpaceID)
-                }()
-                return Row(
-                    windowId: info.id,
-                    pid: info.pid,
-                    appName: info.owner,
-                    title: info.name,
-                    bounds: info.bounds,
-                    layer: info.layer,
-                    zIndex: info.zIndex,
-                    isOnScreen: info.isOnScreen,
-                    onCurrentSpace: onCurrentSpace,
-                    spaceIds: spaceIDs
+                row(
+                    for: info,
+                    currentSpaceID: currentSpaceID,
+                    identity: identities[info.id]
                 )
             }
 
@@ -143,10 +142,16 @@ public enum ListWindowsTool {
 
     struct Row: Codable, Sendable {
         let windowId: Int
+        let windowUID: String?
+        let generation: Int?
+        let firstSeen: String?
+        let lastSeen: String?
         let pid: Int32
         let appName: String
+        let bundleId: String?
         let title: String
         let bounds: WindowBounds
+        let displayId: UInt32?
         let layer: Int
         let zIndex: Int
         let isOnScreen: Bool
@@ -155,10 +160,16 @@ public enum ListWindowsTool {
 
         private enum CodingKeys: String, CodingKey {
             case windowId = "window_id"
+            case windowUID = "window_uid"
+            case generation
+            case firstSeen = "first_seen"
+            case lastSeen = "last_seen"
             case pid
             case appName = "app_name"
+            case bundleId = "bundle_id"
             case title
             case bounds
+            case displayId = "display_id"
             case layer
             case zIndex = "z_index"
             case isOnScreen = "is_on_screen"
@@ -169,10 +180,16 @@ public enum ListWindowsTool {
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(windowId, forKey: .windowId)
+            try c.encodeIfPresent(windowUID, forKey: .windowUID)
+            try c.encodeIfPresent(generation, forKey: .generation)
+            try c.encodeIfPresent(firstSeen, forKey: .firstSeen)
+            try c.encodeIfPresent(lastSeen, forKey: .lastSeen)
             try c.encode(pid, forKey: .pid)
             try c.encode(appName, forKey: .appName)
+            try c.encodeIfPresent(bundleId, forKey: .bundleId)
             try c.encode(title, forKey: .title)
             try c.encode(bounds, forKey: .bounds)
+            try c.encodeIfPresent(displayId, forKey: .displayId)
             try c.encode(layer, forKey: .layer)
             try c.encode(zIndex, forKey: .zIndex)
             try c.encode(isOnScreen, forKey: .isOnScreen)
@@ -199,6 +216,55 @@ public enum ListWindowsTool {
             content: [.text(text: message, annotations: nil, _meta: nil)],
             isError: true
         )
+    }
+
+    static func row(
+        for info: WindowInfo,
+        currentSpaceID: UInt64?,
+        identity: WindowIdentityMetadata?
+    ) -> Row {
+        let spaceIDs = SpaceMigrator.spaceIDs(forWindowID: UInt32(info.id))
+        let onCurrentSpace: Bool? = {
+            guard let spaceIDs, let currentSpaceID else { return nil }
+            return spaceIDs.contains(currentSpaceID)
+        }()
+        return Row(
+            windowId: info.id,
+            windowUID: identity?.windowUID,
+            generation: identity?.generation,
+            firstSeen: identity?.firstSeen,
+            lastSeen: identity?.lastSeen,
+            pid: info.pid,
+            appName: info.owner,
+            bundleId: bundleIdentifier(for: info.pid),
+            title: info.name,
+            bounds: info.bounds,
+            displayId: displayID(for: info.bounds),
+            layer: info.layer,
+            zIndex: info.zIndex,
+            isOnScreen: info.isOnScreen,
+            onCurrentSpace: onCurrentSpace,
+            spaceIds: spaceIDs
+        )
+    }
+
+    private static func bundleIdentifier(for pid: Int32) -> String? {
+        NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+    }
+
+    private static func displayID(for bounds: WindowBounds) -> UInt32? {
+        let rect = CGRect(
+            x: bounds.x,
+            y: bounds.y,
+            width: max(bounds.width, 1),
+            height: max(bounds.height, 1)
+        )
+        var count: UInt32 = 0
+        CGGetDisplaysWithRect(rect, 0, nil, &count)
+        guard count > 0 else { return nil }
+        var displays = Array(repeating: CGDirectDisplayID(0), count: Int(count))
+        CGGetDisplaysWithRect(rect, count, &displays, &count)
+        return displays.first
     }
 
     private static func summary(

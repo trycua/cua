@@ -72,14 +72,15 @@ public enum LaunchAppTool {
 
                 Returns the launched app's pid, bundle_id, name, active
                 flag, AND a `windows` array — same per-window shape as
-                `list_windows` returns (window_id, title, bounds,
-                z_index, is_on_screen, on_current_space, space_ids).
-                That lets callers skip an extra `list_windows` round-trip
-                before `get_window_state(pid, window_id)` in the common
-                case. When the launch settles but no window has
-                materialized yet (transient; rare), `windows` comes back
-                empty — call `list_windows(pid)` explicitly a moment
-                later to resolve a target.
+                `list_windows` returns (window_id, window_uid, generation,
+                title, bounds, display_id, z_index, is_on_screen,
+                on_current_space, space_ids). That lets callers skip an
+                extra `list_windows` round-trip before
+                `get_window_state(pid, window_id)` in the common case.
+                When the launch settles but no window has materialized
+                yet (transient; rare), `windows` comes back empty — call
+                `list_windows(pid)` explicitly a moment later to resolve
+                a target.
                 """,
             inputSchema: [
                 "type": "object",
@@ -374,6 +375,7 @@ public enum LaunchAppTool {
                 .filter { $0.pid == pid && $0.layer == 0 }
                 .filter { $0.bounds.width > 1 && $0.bounds.height > 1 }
             if !found.isEmpty {
+                let identities = await WindowIdentityStore.shared.metadata(for: found)
                 return found.map { info -> WindowRow in
                     let spaceIDs = SpaceMigrator.spaceIDs(
                         forWindowID: UInt32(info.id))
@@ -381,10 +383,16 @@ public enum LaunchAppTool {
                         guard let spaceIDs, let currentSpaceID else { return nil }
                         return spaceIDs.contains(currentSpaceID)
                     }()
+                    let identity = identities[info.id]
                     return WindowRow(
                         windowId: info.id,
+                        windowUID: identity?.windowUID,
+                        generation: identity?.generation,
+                        firstSeen: identity?.firstSeen,
+                        lastSeen: identity?.lastSeen,
                         title: info.name,
                         bounds: info.bounds,
+                        displayId: displayID(for: info.bounds),
                         layer: info.layer,
                         zIndex: info.zIndex,
                         isOnScreen: info.isOnScreen,
@@ -398,6 +406,21 @@ public enum LaunchAppTool {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return []
+    }
+
+    private static func displayID(for bounds: WindowBounds) -> UInt32? {
+        let rect = CGRect(
+            x: bounds.x,
+            y: bounds.y,
+            width: max(bounds.width, 1),
+            height: max(bounds.height, 1)
+        )
+        var count: UInt32 = 0
+        CGGetDisplaysWithRect(rect, 0, nil, &count)
+        guard count > 0 else { return nil }
+        var displays = Array(repeating: CGDirectDisplayID(0), count: Int(count))
+        CGGetDisplaysWithRect(rect, count, &displays, &count)
+        return displays.first
     }
 
     /// Extends `AppInfo` with a `windows` array for `launch_app`'s
@@ -449,8 +472,13 @@ public enum LaunchAppTool {
     /// two sources interchangeably.
     private struct WindowRow: Codable, Sendable {
         let windowId: Int
+        let windowUID: String?
+        let generation: Int?
+        let firstSeen: String?
+        let lastSeen: String?
         let title: String
         let bounds: WindowBounds
+        let displayId: UInt32?
         let layer: Int
         let zIndex: Int
         let isOnScreen: Bool
@@ -459,8 +487,13 @@ public enum LaunchAppTool {
 
         private enum CodingKeys: String, CodingKey {
             case windowId = "window_id"
+            case windowUID = "window_uid"
+            case generation
+            case firstSeen = "first_seen"
+            case lastSeen = "last_seen"
             case title
             case bounds
+            case displayId = "display_id"
             case layer
             case zIndex = "z_index"
             case isOnScreen = "is_on_screen"
@@ -471,8 +504,13 @@ public enum LaunchAppTool {
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(windowId, forKey: .windowId)
+            try c.encodeIfPresent(windowUID, forKey: .windowUID)
+            try c.encodeIfPresent(generation, forKey: .generation)
+            try c.encodeIfPresent(firstSeen, forKey: .firstSeen)
+            try c.encodeIfPresent(lastSeen, forKey: .lastSeen)
             try c.encode(title, forKey: .title)
             try c.encode(bounds, forKey: .bounds)
+            try c.encodeIfPresent(displayId, forKey: .displayId)
             try c.encode(layer, forKey: .layer)
             try c.encode(zIndex, forKey: .zIndex)
             try c.encode(isOnScreen, forKey: .isOnScreen)

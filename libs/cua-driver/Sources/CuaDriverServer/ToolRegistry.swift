@@ -235,6 +235,7 @@ public struct ToolRegistry: Sendable {
         SetValueTool.handler,
         SetAgentCursorEnabledTool.handler,
         SetAgentCursorMotionTool.handler,
+        SetAgentCursorStyleTool.handler,
         GetAgentCursorStateTool.handler,
         SetRecordingTool.handler,
         GetRecordingStateTool.handler,

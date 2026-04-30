@@ -96,3 +96,56 @@ Calling AX or screen-capture APIs from an embedded library still requires the ho
 - **Screen Recording** — for `WindowCapture` screenshots.
 
 Grant these under **System Settings → Privacy & Security** against your app's bundle identifier, the same as for the standalone `CuaDriver.app`.
+
+## Cursor customization
+
+`AgentCursorRenderer.shared` drives the visual style applied to every click animation. Set it at app startup from the `@MainActor` context — changes take effect on the next rendered frame.
+
+### Custom gradient colors
+
+```swift
+import CuaDriverCore
+
+await MainActor.run {
+    AgentCursorRenderer.shared.style = AgentCursorStyle(
+        strokeGradientStops: [
+            AgentCursorGradientStop(color: NSColor(hex: "#A855F7")!, location: 0),
+            AgentCursorGradientStop(color: NSColor(hex: "#6366F1")!, location: 1),
+        ],
+        bloomColor: NSColor(hex: "#A855F7")!
+    )
+}
+```
+
+### Custom PNG / SVG cursor image
+
+Replace the default arrow with any image `NSImage` can load (PNG, JPEG, PDF, SVG on macOS 12+):
+
+```swift
+import CuaDriverCore
+
+await MainActor.run {
+    let img = NSImage(contentsOf: Bundle.main.url(forResource: "cursor", withExtension: "png")!)
+    AgentCursorRenderer.shared.style = AgentCursorStyle(image: img)
+}
+```
+
+The image is drawn at `shapeSize × shapeSize` points (default 22 pt), centered on the cursor position and rotated to track the motion heading. To suppress the bloom halo behind it, pass `bloomCenterAlpha: 0`.
+
+### Revert to default
+
+```swift
+await MainActor.run {
+    AgentCursorRenderer.shared.style = .default
+}
+```
+
+### All style knobs
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `image` | `NSImage?` | `nil` | Custom cursor image (replaces arrow when non-nil) |
+| `strokeGradientStops` | `[AgentCursorGradientStop]` | ice-blue → cyan → mint | Arrow fill gradient |
+| `bloomColor` | `NSColor` | cyan `#5EC0E8` | Bloom halo and focus-rect color |
+| `bloomCenterAlpha` | `CGFloat` | `0.55` | Center opacity of the bloom glow |
+| `shapeSize` | `CGFloat` | `22` | Width and height of the cursor shape (points) |

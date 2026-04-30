@@ -388,6 +388,22 @@ Toggle the overlay. Persists to config.
 
 Tune the Bezier-arc + spring motion knobs. All fields are optional; omitted fields keep their current value.
 
+### set_agent_cursor_style
+
+Customize the cursor's visual appearance. All fields optional; omitted fields keep their current value. Changes persist to config across restarts.
+
+**Arguments:**
+
+- `gradient_colors` (array of string, optional): CSS hex color strings (`#RRGGBB` or `#RGB`) defining the arrow fill gradient from tip to tail. Pass an empty array `[]` to revert to the default.
+- `bloom_color` (string, optional): CSS hex color for the bloom halo and the focus-rect highlight around clicked elements. Pass `""` to revert.
+- `image_path` (string, optional): Absolute or `~`-rooted path to a PNG, JPEG, PDF, or SVG file. When set, replaces the default procedural arrow. Pass `""` to revert to the arrow.
+
+```json
+{"gradient_colors": ["#A855F7", "#6366F1"], "bloom_color": "#A855F7"}
+{"image_path": "~/cursors/my-cursor.png"}
+{"gradient_colors": [], "bloom_color": "", "image_path": ""}
+```
+
 **Arguments:**
 
 - `start_handle` (number, optional): Start-handle fraction in [0, 1]. Default 0.3.

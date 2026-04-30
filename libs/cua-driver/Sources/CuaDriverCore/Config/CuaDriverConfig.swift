@@ -191,6 +191,10 @@ public struct AgentCursorConfig: Codable, Sendable, Equatable {
     /// five sibling fields fighting for space with `enabled`.
     public var motion: Motion
 
+    /// Persisted cursor style overrides. Applied to `AgentCursorRenderer.shared`
+    /// at daemon startup via `AgentCursor.shared.apply(config:)`.
+    public var style: Style
+
     public struct Motion: Codable, Sendable, Equatable {
         /// Start-handle fraction along the straight line, in `[0, 1]`.
         public var startHandle: Double
@@ -220,12 +224,55 @@ public struct AgentCursorConfig: Codable, Sendable, Equatable {
         public static let `default` = Motion()
     }
 
+    /// Persisted visual style overrides. Only non-nil fields are applied;
+    /// nil fields fall back to `AgentCursorStyle.default`.
+    public struct Style: Codable, Sendable, Equatable {
+        /// Gradient color stops as CSS hex strings (#RRGGBB / #RGB).
+        /// When set, replaces the default ice-blue→cyan→mint gradient.
+        public var gradientColors: [String]?
+
+        /// Bloom halo color as a CSS hex string. When set, also tints the
+        /// focus-rect highlight drawn around clicked AX elements.
+        public var bloomColor: String?
+
+        /// Absolute or `~`-rooted path to a PNG, JPEG, PDF, or SVG file
+        /// that replaces the default procedural arrow shape.
+        public var imagePath: String?
+
+        public init(
+            gradientColors: [String]? = nil,
+            bloomColor: String? = nil,
+            imagePath: String? = nil
+        ) {
+            self.gradientColors = gradientColors
+            self.bloomColor = bloomColor
+            self.imagePath = imagePath
+        }
+
+        public static let `default` = Style()
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case motion
+        case style
+    }
+
     public init(
         enabled: Bool = true,
-        motion: Motion = .default
+        motion: Motion = .default,
+        style: Style = .default
     ) {
         self.enabled = enabled
         self.motion = motion
+        self.style = style
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.enabled = (try? container.decode(Bool.self, forKey: .enabled)) ?? true
+        self.motion = (try? container.decode(Motion.self, forKey: .motion)) ?? .default
+        self.style = (try? container.decode(Style.self, forKey: .style)) ?? .default
     }
 
     public static let `default` = AgentCursorConfig()

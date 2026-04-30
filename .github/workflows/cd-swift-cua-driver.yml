@@ -234,6 +234,24 @@ jobs:
           echo "Files with symlinks in release directory:"
           ls -la
 
+      - name: Package bare binary
+        working-directory: ./libs/cua-driver/.release
+        run: |
+          VERSION=${{ steps.set_version.outputs.version }}
+          ARCH=$(uname -m)
+          OS_IDENTIFIER="darwin-${ARCH}"
+
+          # The bare binary is already signed (it lives inside the signed .app).
+          # Re-extract it and package it for embedders who build their own bundle.
+          BINARY="CuaDriver.app/Contents/MacOS/cua-driver"
+          if [ -f "$BINARY" ]; then
+            tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" -C "CuaDriver.app/Contents/MacOS" cua-driver
+            ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" "cua-driver-binary.tar.gz"
+            echo "Bare binary packaged."
+          else
+            echo "Warning: binary not found at $BINARY"
+          fi
+
       - name: Upload Notarized Package (Tarball)
         uses: actions/upload-artifact@v4
         with:
@@ -247,6 +265,13 @@ jobs:
           name: cua-driver-notarized-installer
           path: ./libs/cua-driver/${{ steps.build_notarize.outputs.pkg_path }}
           if-no-files-found: error
+
+      - name: Upload Bare Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-bare-binary
+          path: ./libs/cua-driver/.release/cua-driver-*-binary.tar.gz
+          if-no-files-found: warn
 
       - name: Generate path-filtered release notes
         if: startsWith(github.ref, 'refs/tags/cua-driver-v')
@@ -289,6 +314,7 @@ jobs:
             ./libs/cua-driver/.release/cua-driver-darwin.pkg.tar.gz
             ./libs/cua-driver/.release/cua-driver.tar.gz
             ./libs/cua-driver/.release/cua-driver.pkg.tar.gz
+            ./libs/cua-driver/.release/cua-driver-binary.tar.gz
           body: |
             ${{ steps.release-notes.outputs.RELEASE_NOTES }}
 

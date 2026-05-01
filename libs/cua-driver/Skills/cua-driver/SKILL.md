@@ -432,32 +432,28 @@ In `som` mode the response carries:
   ~1600 elements, ~190 KB); when it exceeds token limits the MCP
   harness saves it to a file and returns the path. Use `Bash` +
   `jq -r '.tree_markdown'` + `grep` to pull the section you need.
-- `screenshot_png_b64` + `screenshot_width` / `_height` /
-  `_scale_factor` — the window screenshot (actually JPEG-85 despite
-  the `_png_` field name, hard-coded in
-  `WindowCapture.captureFrontmostWindow`). Present in `som` mode
-  (spliced into the structured JSON alongside the tree). In `vision`
-  mode the image arrives as a native MCP image content block with no
-  structured wrapper. Omitted when the target has no on-screen
-  window.
-- `has_screenshot: bool` — **gate on this before piping the PNG**.
-  Otherwise `jq -r '.screenshot_png_b64'` emits the literal
-  `"null"`, base64-decodes into 3 bytes of garbage, and downstream
-  vision APIs reject it with an opaque "Could not process image"
-  error.
+- `screenshot_file_path` — absolute path to the saved screenshot when
+  `screenshot_out_file` was passed. Absent otherwise.
+- `screenshot_width` / `_height` / `_scale_factor` — dimensions of the
+  captured image. Present whenever a screenshot was taken.
+- `has_screenshot: bool` — `true` when a screenshot was captured this turn
+  (either inline via MCP image block or written to `screenshot_file_path`).
+
+**Getting the screenshot as a file (CLI and context-constrained agents):**
 
 ```
-# canonical, works in every capture mode — writes the image bytes
-# wherever you point, stdout stays readable (tree in som, summary
-# in vision). stderr warns (exit 0) if the response had no image.
-cua-driver get_window_state '{"pid":N,"window_id":W}' --image-out /tmp/shot.png
+# write to file — stdout stays readable (AX tree / summary only, no base64)
+cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
 
-# som-only legacy path: pull the spliced base64 out of structuredContent.
-# Prefer --image-out above — it's one flag vs a probe + pipe.
-if [ "$(cua-driver get_window_state '{"pid":N,"window_id":W}' | jq -r '.has_screenshot')" = "true" ]; then
-  cua-driver get_window_state '{"pid":N,"window_id":W}' | jq -r '.screenshot_png_b64' | base64 -d > shot.png
-fi
+# CLI --image-out flag is equivalent and works for all capture modes
+cua-driver get_window_state '{"pid":N,"window_id":W}' --image-out /tmp/shot.jpg
 ```
+
+Pass `screenshot_out_file` when using `get_window_state` via CLI or from an
+agent whose context window can't absorb ~31 KB of inline base64 (e.g.
+OpenCode with a local Ollama model). The MCP image content block is omitted
+from the response when this param is set — the model receives only the AX
+tree and `screenshot_file_path`, then reads the image from disk.
 
 **Reason over both the tree AND the screenshot — they're
 complementary, not redundant.** In `som` mode every

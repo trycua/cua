@@ -251,10 +251,7 @@ struct CallCommand: AsyncParsableCommand {
             let encoder = JSONEncoder()
             encoder.outputFormatting = output.encoderOutputFormatting
             let encoded = try encoder.encode(structured)
-            let merged = mergeImageContentIntoJSON(
-                encoded, content: result.content, output: output
-            )
-            printDataLine(merged)
+            printDataLine(encoded)
             return
         }
 
@@ -426,10 +423,7 @@ private func emitUnwrappedResultForDaemon(
         let encoder = JSONEncoder()
         encoder.outputFormatting = output.encoderOutputFormatting
         let encoded = try encoder.encode(structured)
-        let merged = mergeImageContentIntoJSON(
-            encoded, content: result.content, output: output
-        )
-        FileHandle.standardOutput.write(merged)
+        FileHandle.standardOutput.write(encoded)
         FileHandle.standardOutput.write(Data("\n".utf8))
         return
     }
@@ -487,53 +481,6 @@ enum DaemonCLIError: Error {
     case protocolMismatch
 }
 
-/// MCP delivers screenshot bytes as a native `.image()` content block
-/// separate from `structuredContent`, so shell consumers of
-/// `cua-driver <tool>` only see the metadata half ("has_screenshot",
-/// dimensions) and the base64 pixels silently vanish. This reunites them
-/// at CLI emit time: if any image block is present in `content`, splice
-/// its base64 into the outgoing JSON as `screenshot_png_b64` (plus
-/// `screenshot_mime_type`) alongside the existing fields. The MCP wire
-/// contract is unchanged — only the CLI's pretty-printed output gains
-/// the pixels that downstream `jq -r '.screenshot_png_b64' | base64 -d`
-/// pipelines expect.
-///
-/// Returns the input `encoded` unchanged when there's no image block to
-/// splice OR when the structured content didn't decode as a JSON object
-/// (e.g. a bare array / scalar from some other tool). Never throws —
-/// merge failures fall through silently so a malformed structured
-/// response still emits its original bytes.
-private func mergeImageContentIntoJSON(
-    _ encoded: Data,
-    content: [Tool.Content],
-    output: JSONOutputOptions
-) -> Data {
-    var imageBase64: String? = nil
-    var imageMime: String? = nil
-    for item in content {
-        if case let .image(data, mime, _, _) = item {
-            imageBase64 = data
-            imageMime = mime
-            break
-        }
-    }
-    guard let imageBase64, let imageMime else { return encoded }
-
-    guard
-        var object = (try? JSONSerialization.jsonObject(with: encoded))
-            as? [String: Any]
-    else { return encoded }
-    object["screenshot_png_b64"] = imageBase64
-    object["screenshot_mime_type"] = imageMime
-
-    var writingOptions: JSONSerialization.WritingOptions = [
-        .sortedKeys, .withoutEscapingSlashes,
-    ]
-    if !output.compact { writingOptions.insert(.prettyPrinted) }
-    return (try? JSONSerialization.data(
-        withJSONObject: object, options: writingOptions
-    )) ?? encoded
-}
 
 /// Write the first `.image(...)` content block from a tool result to
 /// `path`, decoded from base64. Used by the `--image-out` flag so

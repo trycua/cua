@@ -107,6 +107,19 @@ public enum GetWindowStateTool {
                             For mutations or side effects use the `page` tool instead.
                             """,
                     ],
+                    "screenshot_out_file": [
+                        "type": "string",
+                        "description": """
+                            Optional absolute path to write the screenshot to (e.g. \
+                            "/tmp/shot.jpg"). When set, the screenshot bytes are written \
+                            to this file and the MCP image content block is omitted from \
+                            the response — `screenshot_file_path` is returned instead of \
+                            `screenshot_png_b64`. Useful for CLI callers and agents that \
+                            cannot consume inline base64 without saturating their context \
+                            window (e.g. OpenCode with a local Ollama model). The directory \
+                            must already exist; the file is created or overwritten.
+                            """,
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -137,6 +150,7 @@ public enum GetWindowStateTool {
             }
             let query = arguments?["query"]?.stringValue
             let javascript = arguments?["javascript"]?.stringValue
+            let screenshotOutFile = arguments?["screenshot_out_file"]?.stringValue
 
             // Validate that the window belongs to this pid. The driver
             // never guesses which window to snapshot — the caller names
@@ -254,16 +268,31 @@ public enum GetWindowStateTool {
                     }
                 }
 
+                // When the caller supplied screenshot_out_file, write the bytes
+                // to disk and omit the MCP image content block entirely — the
+                // path is surfaced via structuredContent.screenshot_file_path
+                // so the caller knows where to find the image without paying
+                // the base64-in-context token cost.
+                var resolvedScreenshotFilePath: String? = nil
+                if let outPath = screenshotOutFile, let b64 = snapshot.screenshotPngBase64 {
+                    let expandedPath = (outPath as NSString).expandingTildeInPath
+                    if let bytes = Data(base64Encoded: b64) {
+                        let url = URL(fileURLWithPath: expandedPath)
+                        try? bytes.write(to: url)
+                        resolvedScreenshotFilePath = expandedPath
+                    }
+                }
+
                 var content: [Tool.Content] = []
-                if let b64 = snapshot.screenshotPngBase64 {
+                if resolvedScreenshotFilePath == nil, let b64 = snapshot.screenshotPngBase64 {
                     content.append(
                         .image(data: b64, mimeType: "image/jpeg", annotations: nil, _meta: nil)
                     )
                 }
                 content.append(.text(text: textContent, annotations: nil, _meta: nil))
                 // Strip the b64 bytes from the structured snapshot — the image
-                // is already the first content block and tests just need the
-                // metadata fields (screenshot_scale_factor, dimensions, etc.).
+                // is already the first content block (or on disk) and tests
+                // just need the metadata fields.
                 let structuredSnapshot = AppStateSnapshot(
                     pid: snapshot.pid,
                     bundleId: snapshot.bundleId,
@@ -276,7 +305,8 @@ public enum GetWindowStateTool {
                     screenshotHeight: snapshot.screenshotHeight,
                     screenshotScaleFactor: snapshot.screenshotScaleFactor,
                     screenshotOriginalWidth: snapshot.screenshotOriginalWidth,
-                    screenshotOriginalHeight: snapshot.screenshotOriginalHeight
+                    screenshotOriginalHeight: snapshot.screenshotOriginalHeight,
+                    screenshotFilePath: resolvedScreenshotFilePath
                 )
                 if let result = try? CallTool.Result(
                     content: content,

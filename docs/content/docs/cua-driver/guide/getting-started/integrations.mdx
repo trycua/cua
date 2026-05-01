@@ -90,7 +90,43 @@ Tools appear prefixed as `mcp_cua-driver_*`.
 cua-driver mcp-config --client opencode
 ```
 
-Paste the output into your `opencode.json`.
+Paste the output into `~/.config/opencode/config.json` (global) or `opencode.json` at the project root.
+
+<Callout type="warn">
+**Always configure cua-driver as an MCP server — never rely on the CLI fallback.** If MCP is not wired up, OpenCode will call `cua-driver` as a shell subprocess and the full `get_window_state` response (including a ~31 KB base64 screenshot) lands as raw text in the model context, consuming thousands of tokens per call.
+</Callout>
+
+### Local vision models (Ollama)
+
+If you are using a vision-capable model via Ollama, you must also declare its input modalities in `config.json` — otherwise OpenCode strips images before they reach the model:
+
+```json
+{
+  "mcp": {
+    "cua-driver": {
+      "type": "local",
+      "command": ["/Users/you/.local/bin/cua-driver", "mcp"],
+      "enabled": true
+    }
+  },
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "http://localhost:11434/v1" },
+      "models": {
+        "gemma4:26b": {
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The `modalities` field is required because OpenCode's `@ai-sdk/openai-compatible` provider defaults to text-only when no capabilities are declared. Without it, screenshots are replaced with an error string and never reach the model.
 
 ## Hermes (NousResearch)
 

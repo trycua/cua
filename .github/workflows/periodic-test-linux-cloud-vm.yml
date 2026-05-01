@@ -18,7 +18,7 @@ jobs:
       matrix:
         secret_name:
           - PERIODIC_TEST_CUA_API_KEY
-          - PERIODIC_TEST_CUA_API_KEY_BASALT
+          # - PERIODIC_TEST_CUA_API_KEY_BASALT
 
     steps:
       - name: Checkout latest main

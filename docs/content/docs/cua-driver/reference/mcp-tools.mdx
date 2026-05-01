@@ -58,16 +58,6 @@ Return the current mouse cursor position in screen points (top-left origin).
 {}
 ```
 
-### get_accessibility_tree
-
-Lightweight desktop snapshot: running regular apps and on-screen visible windows with bounds, z-order, and owner pid. For a single window's internal UI, use `get_window_state`.
-
-**Arguments:** none.
-
-```json
-{}
-```
-
 ### screenshot
 
 Raw ScreenCaptureKit capture. Full main display, or a single window when `window_id` is set. Returns an image content block plus a text summary listing on-screen windows.
@@ -271,7 +261,7 @@ Modifier combo as a single array, e.g. `["cmd", "c"]`. Requires at least two ent
 
 ### type_text
 
-Insert text at the target's current cursor via `AXSelectedText`. Fast (single AX write) but skipped by apps with custom text layers; for Chromium / Electron inputs use `type_text_chars`.
+Insert text at the target's current cursor. Attempts `AXSelectedText` write first (fast, single AX call); automatically falls back to character-by-character `CGEvent.postToPid` synthesis when the target input doesn't implement `AXSelectedText` — this makes it work for Chromium and Electron inputs without any manual switching.
 
 **Arguments:**
 
@@ -279,22 +269,10 @@ Insert text at the target's current cursor via `AXSelectedText`. Fast (single AX
 - `text` (string, required): Text to insert at the target's cursor.
 - `element_index` (integer, optional): When present, the element is focused before the write. Requires `window_id`.
 - `window_id` (integer, optional): Required when `element_index` is used.
+- `delay_ms` (integer, optional): Milliseconds between characters when the CGEvent fallback path is used, 0-200. Default 30.
 
 ```json
 {"pid": 844, "window_id": 10725, "element_index": 12, "text": "hello"}
-```
-
-### type_text_chars
-
-Character-by-character input via `CGEvent.postToPid`. Slower than `type_text` but reaches Chromium and Electron inputs that ignore AX writes.
-
-**Arguments:**
-
-- `pid` (integer, required): Target process ID.
-- `text` (string, required): Text to type into the target's focused element.
-- `delay_ms` (integer, optional): Milliseconds between characters, 0-200. Default 30.
-
-```json
 {"pid": 844, "text": "hello world", "delay_ms": 40}
 ```
 
@@ -450,7 +428,7 @@ Supported keys and ranges: see the [CLI reference](/cua-driver/reference/cli-ref
 
 ## Recording and replay
 
-The trajectory recorder captures every action-tool call (`click`, `right_click`, `scroll`, `type_text`, `type_text_chars`, `press_key`, `hotkey`, `set_value`) into numbered turn folders. Recordings can be replayed turn-by-turn.
+The trajectory recorder captures every action-tool call (`click`, `right_click`, `scroll`, `type_text`, `press_key`, `hotkey`, `set_value`) into numbered turn folders. Recordings can be replayed turn-by-turn.
 
 ### get_recording_state
 

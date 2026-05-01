@@ -6,7 +6,7 @@ user explicitly asks to record — the skill does not auto-enable this.
 
 `set_recording` turns on a session-scoped trajectory recorder. While
 enabled, every action-tool call (`click`, `right_click`, `scroll`,
-`type_text`, `type_text_chars`, `press_key`, `hotkey`, `set_value`)
+`type_text`, `press_key`, `hotkey`, `set_value`)
 writes a numbered turn folder under a caller-chosen output
 directory. Read-only tools (`get_window_state`, `list_windows`,
 `screenshot`, `list_apps`, permission probes, agent-cursor getters /
@@ -101,8 +101,7 @@ keyed on `(pid, window_id)`, so a recorded
 resolve today — the pid is usually different, the window_id always
 is. The call returns `Invalid element_index` or `No cached AX
 state`. Pixel clicks (`click({pid, x, y})`) and keyboard tools
-(`press_key`, `type_text_chars`, `hotkey`, `type_text` without
-element_index) replay cleanly; element-indexed actions require a
+(`press_key`, `hotkey`, `type_text` without element_index) replay cleanly; element-indexed actions require a
 live snapshot that replay doesn't currently re-emit (read-only tools
 like `get_window_state` aren't recorded). For a reliable replay, either
 compose the trajectory from pixel + keyboard primitives, or capture

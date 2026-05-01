@@ -3,31 +3,28 @@ import Foundation
 import MCP
 
 /// Unified text-insertion primitive — always targets a specific pid.
-/// Previously there were two tools (`type_text` which wrote to whatever
-/// was system-focused, and `type_text_in` which targeted a pid + element).
-/// The system-focused variant was a footgun because any driver-backgrounded
-/// app that triggered it would write characters into the user's real
-/// foreground app. Merging them under a mandatory-pid shape removes the
-/// footgun; the old `type_text_in` is gone.
 ///
-/// `element_index` is optional. When present, the element is looked up
-/// from the last `get_window_state` snapshot and focused before the write —
-/// the canonical path for "fill this specific text field." When absent,
-/// the write targets whatever element currently has focus within the
-/// target pid's AX tree (`AXUIElementCreateApplication(pid)` +
-/// `AXFocusedUIElement`), which is the cheaper path when focus was
-/// already established by a prior click.
+/// Tries `AXSetAttribute(kAXSelectedText)` first (fast, bulk insert).
+/// If the target element rejects the AX write (Chromium / Electron inputs
+/// that don't expose `kAXSelectedText`), automatically falls back to
+/// `KeyboardInput.typeCharacters` — character-by-character CGEvent synthesis
+/// via `CGEvent.postToPid`. The fallback path is noted in the response summary
+/// so callers can tell which path was taken.
 public enum TypeTextTool {
     public static let handler = ToolHandler(
         tool: Tool(
             name: "type_text",
             description: """
-                Insert text into the target pid via
-                `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa
-                text fields and text views. No keystrokes are synthesized —
-                special keys (Return / Escape / arrows) go through
-                `press_key` / `hotkey`. For Chromium / Electron inputs that
-                don't implement `kAXSelectedText`, use `type_text_chars`.
+                Insert text into the target pid. Tries
+                `AXSetAttribute(kAXSelectedText)` first (fast bulk insert —
+                works for standard Cocoa text fields). If the target element
+                rejects the AX write, automatically falls back to
+                character-by-character `CGEvent.postToPid` synthesis —
+                reaches Chromium / Electron inputs and any surface that
+                doesn't implement `kAXSelectedText`.
+
+                Special keys (Return, Escape, arrows, Tab) go through
+                `press_key` / `hotkey` — they are not text.
 
                 Optional `element_index` + `window_id` (from the last
                 `get_window_state` snapshot of that window) pre-focuses
@@ -36,8 +33,11 @@ public enum TypeTextTool {
                 targets the pid's currently-focused element — useful
                 after a prior click already set focus.
 
-                Requires Accessibility. Returns isError=true when the
-                target element has no focus / rejects the attribute write.
+                `delay_ms` (0–200, default 30) spaces successive characters
+                in the CGEvent fallback path so autocomplete and IME can keep
+                up; ignored when the AX path succeeds.
+
+                Requires Accessibility.
                 """,
             inputSchema: [
                 "type": "object",
@@ -61,6 +61,13 @@ public enum TypeTextTool {
                         "description":
                             "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used.",
                     ],
+                    "delay_ms": [
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 200,
+                        "description":
+                            "Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds.",
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -80,6 +87,7 @@ public enum TypeTextTool {
             }
             let elementIndex = arguments?["element_index"]?.intValue
             let rawWindowId = arguments?["window_id"]?.intValue
+            let delayMs = arguments?["delay_ms"]?.intValue ?? 30
             guard let pid = Int32(exactly: rawPid) else {
                 return errorResult(
                     "pid \(rawPid) is outside the supported Int32 range.")
@@ -91,6 +99,9 @@ public enum TypeTextTool {
                     + "the same window_id you used in `get_window_state`.")
             }
 
+            // Attempt AX bulk-insert. On any AXInputError fall back to
+            // CGEvent character synthesis, which reaches Chromium / Electron
+            // inputs that don't expose kAXSelectedText.
             do {
                 if let index = elementIndex, let rawWindowId {
                     guard let windowId = UInt32(exactly: rawWindowId) else {
@@ -101,38 +112,58 @@ public enum TypeTextTool {
                         pid: pid,
                         windowId: windowId,
                         elementIndex: index)
-                    try await AppStateRegistry.focusGuard.withFocusSuppressed(
-                        pid: pid, element: element
-                    ) {
+                    do {
+                        try await AppStateRegistry.focusGuard.withFocusSuppressed(
+                            pid: pid, element: element
+                        ) {
+                            try AXInput.setAttribute(
+                                "AXSelectedText",
+                                on: element,
+                                value: text as CFTypeRef
+                            )
+                        }
+                        let target = AXInput.describe(element)
+                        let summary =
+                            "✅ Inserted \(text.count) char(s) into [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
+                        return CallTool.Result(
+                            content: [.text(text: summary, annotations: nil, _meta: nil)]
+                        )
+                    } catch is AXInputError {
+                        // AX rejected — fall through to CGEvent synthesis.
+                    }
+                } else {
+                    do {
+                        let element = try AXInput.focusedElement(pid: pid)
                         try AXInput.setAttribute(
                             "AXSelectedText",
                             on: element,
                             value: text as CFTypeRef
                         )
+                        let target = AXInput.describe(element)
+                        let summary =
+                            "✅ Inserted \(text.count) char(s) into focused \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
+                        return CallTool.Result(
+                            content: [.text(text: summary, annotations: nil, _meta: nil)]
+                        )
+                    } catch is AXInputError {
+                        // AX rejected — fall through to CGEvent synthesis.
                     }
-                    let target = AXInput.describe(element)
-                    let summary =
-                        "✅ Inserted \(text.count) char(s) into [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid)."
-                    return CallTool.Result(
-                        content: [.text(text: summary, annotations: nil, _meta: nil)]
-                    )
-                } else {
-                    let element = try AXInput.focusedElement(pid: pid)
-                    try AXInput.setAttribute(
-                        "AXSelectedText",
-                        on: element,
-                        value: text as CFTypeRef
-                    )
-                    let target = AXInput.describe(element)
-                    let summary =
-                        "✅ Inserted \(text.count) char(s) into focused \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid)."
-                    return CallTool.Result(
-                        content: [.text(text: summary, annotations: nil, _meta: nil)]
-                    )
                 }
+
+                // CGEvent fallback path.
+                try KeyboardInput.typeCharacters(
+                    text,
+                    delayMilliseconds: delayMs,
+                    toPid: pid
+                )
+                let summary =
+                    "✅ Typed \(text.count) char(s) on pid \(rawPid) via CGEvent (AX fallback, \(delayMs)ms delay)."
+                return CallTool.Result(
+                    content: [.text(text: summary, annotations: nil, _meta: nil)]
+                )
             } catch let error as AppStateError {
                 return errorResult(error.description)
-            } catch let error as AXInputError {
+            } catch let error as KeyboardError {
                 return errorResult(error.description)
             } catch {
                 return errorResult("Unexpected error: \(error)")

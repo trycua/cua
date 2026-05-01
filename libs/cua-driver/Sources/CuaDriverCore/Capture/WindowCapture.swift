@@ -100,7 +100,7 @@ public actor WindowCapture {
     }
 
     /// Capture a single window by its CGWindowID / kCGWindowNumber.
-    /// Pairs with `get_accessibility_tree` which returns each window's `id`.
+    /// Get window ids from `list_windows`.
     public func captureWindow(
         windowID: UInt32,
         format: ImageFormat = .png,

@@ -182,7 +182,7 @@ Pipe to `pbcopy` to put any output on the clipboard, or pass the printed `claude
 
 ### cua-driver recording start
 
-Enable the trajectory recorder. Every subsequent action-tool call (`click`, `right_click`, `scroll`, `type_text`, `type_text_chars`, `press_key`, `hotkey`, `set_value`) writes a numbered turn folder under `<output-dir>`.
+Enable the trajectory recorder. Every subsequent action-tool call (`click`, `right_click`, `scroll`, `type_text`, `press_key`, `hotkey`, `set_value`) writes a numbered turn folder under `<output-dir>`.
 
 ```bash
 cua-driver recording start ~/cua-trajectories/demo1
@@ -346,7 +346,6 @@ The following MCP tools are callable via `cua-driver <tool>`. For input schemas 
 - `check_permissions` — Accessibility + Screen Recording TCC status.
 - `get_screen_size` — main display size in points + scale factor.
 - `get_cursor_position` — current mouse cursor position.
-- `get_accessibility_tree` — lightweight desktop snapshot (apps + visible windows).
 
 **App lifecycle**
 
@@ -368,8 +367,7 @@ The following MCP tools are callable via `cua-driver <tool>`. For input schemas 
 
 **Keyboard**
 
-- `type_text` — insert text via `AXSelectedText`. Pid-scoped.
-- `type_text_chars` — character-by-character via `CGEvent.postToPid`. Reaches Chromium/Electron inputs.
+- `type_text` — insert text via `AXSelectedText` with automatic CGEvent fallback for Chromium/Electron inputs. Pid-scoped.
 - `press_key` — single key press. Pid-scoped.
 - `hotkey` — modifier combo (e.g. `["cmd","c"]`). Pid-scoped.
 

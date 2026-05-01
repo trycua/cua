@@ -102,8 +102,9 @@ jobs:
             GENERATORS="$GENERATORS cuabot"
           fi
 
-          # Shared infrastructure changes (runner, config) → run all
-          if echo "$CHANGED_FILES" | grep -qE "^scripts/docs-generators/(runner|config)\.(ts|json)$"; then
+          # Only runner.ts changes trigger all generators (it's the orchestration layer)
+          # config.json changes only affect whichever generator scripts were also changed
+          if echo "$CHANGED_FILES" | grep -qE "^scripts/docs-generators/runner\.ts$"; then
             GENERATORS="all"
           fi
 

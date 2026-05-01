@@ -83,13 +83,13 @@ struct CallCommand: AsyncParsableCommand {
             file path. `vision` and `screenshot` capture modes return a
             PNG as a native MCP image block with no accompanying
             structuredContent, so the CLI's text formatter would otherwise
-            drop the bytes silently. With `--image-out /tmp/shot.png` the
-            raw PNG lands on disk and downstream tooling (PIL, sips,
+            drop the bytes silently. With `--screenshot-out-file /tmp/shot.jpg`
+            the raw image lands on disk and downstream tooling (PIL, sips,
             ffprobe) can read it directly. Silently warns (no error exit)
             when the response carries no image.
             """
     )
-    var imageOut: String?
+    var screenshotOutFile: String?
 
     @OptionGroup var output: JSONOutputOptions
     @OptionGroup var daemon: DaemonForwardingOptions
@@ -113,7 +113,7 @@ struct CallCommand: AsyncParsableCommand {
                 arguments: arguments,
                 socketPath: daemon.resolvedSocketPath,
                 raw: raw,
-                imageOut: imageOut,
+                imageOut: screenshotOutFile,
                 output: output
             )
             return
@@ -184,7 +184,7 @@ struct CallCommand: AsyncParsableCommand {
             throw ExitCode(Exit.software)
         }
 
-        if let path = imageOut {
+        if let path = screenshotOutFile {
             writeFirstImageContent(result.content, to: path)
         }
 
@@ -349,7 +349,7 @@ func forwardCallToDaemon(
     arguments: [String: Value]?,
     socketPath: String,
     raw: Bool,
-    imageOut: String?,
+    screenshotOutFile: String?,
     output: JSONOutputOptions
 ) async throws {
     let request = DaemonRequest(method: "call", name: toolName, args: arguments)
@@ -378,7 +378,7 @@ func forwardCallToDaemon(
             throw ExitCode(Exit.software)
         }
 
-        if let path = imageOut {
+        if let path = screenshotOutFile {
             writeFirstImageContent(result.content, to: path)
         }
 
@@ -483,21 +483,21 @@ enum DaemonCLIError: Error {
 
 
 /// Write the first `.image(...)` content block from a tool result to
-/// `path`, decoded from base64. Used by the `--image-out` flag so
+/// `path`, decoded from base64. Used by the `--screenshot-out-file` flag so
 /// vision-mode screenshots land on disk without callers needing to
 /// speak the raw daemon protocol or the MCP bridge.
 ///
 /// Never throws — an empty/malformed image, a write failure, or a
 /// response that carries no image at all each emit a stderr warning
 /// and return. The exit code is NOT affected: callers have already
-/// gotten the textual result on stdout, and `--image-out` is
+/// gotten the textual result on stdout, and `--screenshot-out-file` is
 /// advisory ("if the tool returned a PNG, put it here"), not a hard
 /// contract.
 func writeFirstImageContent(_ content: [Tool.Content], to path: String) {
     for item in content {
         if case let .image(base64, mime, _, _) = item {
             guard let bytes = Data(base64Encoded: base64) else {
-                printToStderr("--image-out: base64 decode failed for \(mime) block")
+                printToStderr("--screenshot-out-file: base64 decode failed for \(mime) block")
                 return
             }
             let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
@@ -505,7 +505,7 @@ func writeFirstImageContent(_ content: [Tool.Content], to path: String) {
                 try bytes.write(to: url)
             } catch {
                 printToStderr(
-                    "--image-out: failed to write \(url.path): \(error.localizedDescription)"
+                    "--screenshot-out-file: failed to write \(url.path): \(error.localizedDescription)"
                 )
             }
             return
@@ -515,7 +515,7 @@ func writeFirstImageContent(_ content: [Tool.Content], to path: String) {
     // tools legitimately return nothing (hidden/minimized windows,
     // `ax` capture mode, list operations). Warn so the user notices
     // the file they expected didn't get written.
-    printToStderr("--image-out: no image content in tool response; file not written")
+    printToStderr("--screenshot-out-file: no image content in tool response; file not written")
 }
 
 private func printUnknownTool(_ name: String, registry: ToolRegistry) {

@@ -445,8 +445,8 @@ In `som` mode the response carries:
 # write to file — stdout stays readable (AX tree / summary only, no base64)
 cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
 
-# CLI --image-out flag is equivalent and works for all capture modes
-cua-driver get_window_state '{"pid":N,"window_id":W}' --image-out /tmp/shot.jpg
+# CLI --screenshot-out-file flag is equivalent and works for all capture modes
+cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.jpg
 ```
 
 Pass `screenshot_out_file` when using `get_window_state` via CLI or from an
@@ -552,7 +552,7 @@ below against the full-resolution file in that case.
 1. `get_window_state({pid, window_id})` returns an image capped
    at 1568 long-side (default) plus its dimensions
    (`screenshot_width` / `screenshot_height`). Write the bytes to
-   disk with `--image-out <path>` in any capture mode — works
+   disk with `--screenshot-out-file <path>` in any capture mode — works
    identically in `vision` (where it's the only way) and `som`
    (where it sidesteps the jq + base64 dance on the spliced
    `screenshot_png_b64` field).

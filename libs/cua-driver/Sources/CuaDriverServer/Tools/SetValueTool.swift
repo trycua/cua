@@ -80,6 +80,15 @@ public enum SetValueTool {
                 )
                 let target = AXInput.describe(element)
 
+                // Animate the agent cursor to the target element before
+                // setting its value — same visual feedback as click.
+                // No-op when the cursor is disabled or the element has no
+                // resolvable screen position.
+                if let center = AXInput.screenCenter(of: element) {
+                    await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                    await AgentCursor.shared.animateAndWait(to: center)
+                }
+
                 // ── AXPopUpButton (HTML <select>) special path ──────────
                 // Safari WebKit does not propagate AXValue writes back to
                 // the HTML DOM for <select> elements — the AX write returns
@@ -88,32 +97,39 @@ public enum SetValueTool {
                 // AXPress the one whose AXTitle or AXValue matches `value`.
                 // This bypasses the native macOS popup menu entirely, so the
                 // option is selected without the menu needing to be visible.
+                let result: CallTool.Result
                 if target.role == "AXPopUpButton" {
-                    return try await selectPopupOption(
+                    result = try await selectPopupOption(
                         element: element,
                         index: index,
                         pid: pid,
                         value: value,
                         elementTitle: target.title ?? ""
                     )
-                }
-
-                // ── Default path: write AXValue directly ────────────────
-                try await AppStateRegistry.focusGuard.withFocusSuppressed(
-                    pid: pid,
-                    element: element
-                ) {
-                    try AXInput.setAttribute(
-                        "AXValue",
-                        on: element,
-                        value: value as CFTypeRef
+                } else {
+                    // ── Default path: write AXValue directly ────────────────
+                    try await AppStateRegistry.focusGuard.withFocusSuppressed(
+                        pid: pid,
+                        element: element
+                    ) {
+                        try AXInput.setAttribute(
+                            "AXValue",
+                            on: element,
+                            value: value as CFTypeRef
+                        )
+                    }
+                    let summary =
+                        "✅ Set AXValue on [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\"."
+                    result = CallTool.Result(
+                        content: [.text(text: summary, annotations: nil, _meta: nil)]
                     )
                 }
-                let summary =
-                    "✅ Set AXValue on [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\"."
-                return CallTool.Result(
-                    content: [.text(text: summary, annotations: nil, _meta: nil)]
-                )
+                // Cursor press-pulse after the action — mirrors ClickTool's
+                // finishClick sequence. No-op when the cursor is disabled.
+                await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                await AgentCursor.shared.playClickPress()
+                await AgentCursor.shared.finishClick(pid: pid)
+                return result
             } catch let error as AppStateError {
                 return errorResult(error.description)
             } catch let error as AXInputError {

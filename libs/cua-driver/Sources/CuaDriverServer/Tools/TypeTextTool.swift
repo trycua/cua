@@ -99,9 +99,11 @@ public enum TypeTextTool {
                     + "the same window_id you used in `get_window_state`.")
             }
 
-            // Attempt AX bulk-insert. On any AXInputError fall back to
-            // CGEvent character synthesis, which reaches Chromium / Electron
-            // inputs that don't expose kAXSelectedText.
+            // Attempt AX bulk-insert. On any AXInputError — or when a
+            // silent-accept-but-no-DOM-update is detected (Chromium web
+            // inputs accept kAXSelectedText writes without error but never
+            // propagate the value to the HTML DOM) — fall back to CGEvent
+            // character synthesis.
             do {
                 if let index = elementIndex, let rawWindowId {
                     guard let windowId = UInt32(exactly: rawWindowId) else {
@@ -112,6 +114,13 @@ public enum TypeTextTool {
                         pid: pid,
                         windowId: windowId,
                         elementIndex: index)
+                    // Animate the agent cursor to the target element before
+                    // writing — same visual feedback as click. No-op when the
+                    // cursor is disabled or the element has no screen position.
+                    if let center = AXInput.screenCenter(of: element) {
+                        await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                        await AgentCursor.shared.animateAndWait(to: center)
+                    }
                     do {
                         try await AppStateRegistry.focusGuard.withFocusSuppressed(
                             pid: pid, element: element
@@ -122,42 +131,78 @@ public enum TypeTextTool {
                                 value: text as CFTypeRef
                             )
                         }
-                        let target = AXInput.describe(element)
-                        let summary =
-                            "✅ Inserted \(text.count) char(s) into [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
-                        return CallTool.Result(
-                            content: [.text(text: summary, annotations: nil, _meta: nil)]
-                        )
+                        // Verify the write was actually applied — Chromium
+                        // web inputs silently accept the call but never
+                        // update their DOM value. Read AXValue back; if it's
+                        // still empty when we just wrote non-empty text the
+                        // write was a no-op and we must use CGEvent instead.
+                        if !text.isEmpty,
+                           let axValue = AXInput.stringAttribute("AXValue", of: element),
+                           axValue.isEmpty
+                        {
+                            // Silent-accept detected — fall through.
+                        } else {
+                            let target = AXInput.describe(element)
+                            let summary =
+                                "✅ Inserted \(text.count) char(s) into [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
+                            await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                            await AgentCursor.shared.playClickPress()
+                            await AgentCursor.shared.finishClick(pid: pid)
+                            return CallTool.Result(
+                                content: [.text(text: summary, annotations: nil, _meta: nil)]
+                            )
+                        }
                     } catch is AXInputError {
                         // AX rejected — fall through to CGEvent synthesis.
                     }
                 } else {
                     do {
                         let element = try AXInput.focusedElement(pid: pid)
+                        // Animate the cursor to the focused element before writing.
+                        if let center = AXInput.screenCenter(of: element) {
+                            await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                            await AgentCursor.shared.animateAndWait(to: center)
+                        }
                         try AXInput.setAttribute(
                             "AXSelectedText",
                             on: element,
                             value: text as CFTypeRef
                         )
-                        let target = AXInput.describe(element)
-                        let summary =
-                            "✅ Inserted \(text.count) char(s) into focused \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
-                        return CallTool.Result(
-                            content: [.text(text: summary, annotations: nil, _meta: nil)]
-                        )
+                        // Same silent-accept check as the element_index path.
+                        if !text.isEmpty,
+                           let axValue = AXInput.stringAttribute("AXValue", of: element),
+                           axValue.isEmpty
+                        {
+                            // Silent-accept detected — fall through.
+                        } else {
+                            let target = AXInput.describe(element)
+                            let summary =
+                                "✅ Inserted \(text.count) char(s) into focused \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
+                            await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                            await AgentCursor.shared.playClickPress()
+                            await AgentCursor.shared.finishClick(pid: pid)
+                            return CallTool.Result(
+                                content: [.text(text: summary, annotations: nil, _meta: nil)]
+                            )
+                        }
                     } catch is AXInputError {
                         // AX rejected — fall through to CGEvent synthesis.
                     }
                 }
 
-                // CGEvent fallback path.
+                // CGEvent fallback path — reached when AX write was rejected
+                // (AXInputError) or silently accepted without updating the
+                // DOM value (Chromium web inputs).
                 try KeyboardInput.typeCharacters(
                     text,
                     delayMilliseconds: delayMs,
                     toPid: pid
                 )
                 let summary =
-                    "✅ Typed \(text.count) char(s) on pid \(rawPid) via CGEvent (AX fallback, \(delayMs)ms delay)."
+                    "✅ Typed \(text.count) char(s) on pid \(rawPid) via CGEvent (\(delayMs)ms delay)."
+                await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
+                await AgentCursor.shared.playClickPress()
+                await AgentCursor.shared.finishClick(pid: pid)
                 return CallTool.Result(
                     content: [.text(text: summary, annotations: nil, _meta: nil)]
                 )

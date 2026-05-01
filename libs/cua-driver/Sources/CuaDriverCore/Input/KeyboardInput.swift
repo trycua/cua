@@ -138,6 +138,14 @@ public enum KeyboardInput {
     /// is left at 0 — macOS uses the attached unicode string instead.
     /// Pass `toPid` to deliver the events directly to a process's queue
     /// rather than the system HID tap.
+    ///
+    /// **Modifier-state isolation**: when posting via `postToPid` some
+    /// apps (notably Chrome) inspect the CGEvent's `flags` field to infer
+    /// whether Shift or other modifiers were held to produce the unicode
+    /// character. If `flags` is non-zero the app may "remember" the
+    /// modifier and apply it to the next character. We explicitly clear
+    /// `event.flags` on every event so the receiver always sees a clean
+    /// modifier state regardless of what was typed before.
     private static func sendUnicodeCharacter(
         _ character: Character, toPid pid: pid_t? = nil
     ) throws {
@@ -154,6 +162,11 @@ public enum KeyboardInput {
                     "unicode character \"\(character)\" down=\(keyDown)"
                 )
             }
+            // Clear all modifier flags so the receiver doesn't accumulate
+            // Shift/Control/Option state between characters. Without this,
+            // Chrome interprets uppercase unicode events as "Shift held" and
+            // applies Shift to the next character (e.g. 'E' + '2' → '@').
+            event.flags = []
             utf16.withUnsafeBufferPointer { buffer in
                 if let base = buffer.baseAddress {
                     event.keyboardSetUnicodeString(

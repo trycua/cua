@@ -420,8 +420,7 @@ you're interacting with a long-lived process). In the default
 get_window_state → reason over PNG → pixel click`. When you need
 `element_index` dispatch (AX-addressable elements, backgrounded
 clicks), flip to `som` first: `cua-driver set_config '{"key":
-"capture_mode", "value": "som"}'`, or call `get_accessibility_tree`
-directly. The rest of this section walks through `som` mode, which
+"capture_mode", "value": "som"}'`. The rest of this section walks through `som` mode, which
 is what you want once you've decided element-indexed addressing is
 required.
 
@@ -505,7 +504,7 @@ anchor the conversion against a specific window):
 | Focus + send key | `press_key({pid, key, window_id, element_index, modifiers})` | element_index sets AXFocused, then posts key |
 | Send key to pid | `press_key({pid, key, modifiers})` | no focus change; key goes to pid's current focus |
 | Modifier combo | `hotkey({pid, keys})` | e.g. `["cmd","c"]`; posted per-pid, not HID tap |
-| Unicode keystrokes | `type_text_chars({pid, text, delay_ms})` | CGEvent-to-pid; reaches Chromium/Electron inputs |
+| Unicode keystrokes | `type_text({pid, text, delay_ms})` | AX write with automatic CGEvent fallback; reaches Chromium/Electron inputs |
 
 **All keyboard/text primitives require `pid`.** There is no
 frontmost-routed variant — every key goes to the named target via

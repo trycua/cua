@@ -113,7 +113,7 @@ struct CallCommand: AsyncParsableCommand {
                 arguments: arguments,
                 socketPath: daemon.resolvedSocketPath,
                 raw: raw,
-                imageOut: screenshotOutFile,
+                screenshotOutFile: screenshotOutFile,
                 output: output
             )
             return

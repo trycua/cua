@@ -20,6 +20,7 @@ on:
       # Cua-Bot
       - "libs/cuabot/src/**"
       # Documentation files themselves
+      - "docs/content/docs/cua-driver/reference/**"
       - "docs/content/docs/cua/reference/**"
       - "docs/content/docs/cuabot/reference/**"
       # Generator scripts

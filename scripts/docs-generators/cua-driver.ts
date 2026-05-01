@@ -216,9 +216,14 @@ async function main() {
   console.log('\nGenerating documentation files...');
 
   const releasedVersion = getLatestReleasedVersion();
+  // Use the version embedded in the binary itself as the canonical current
+  // version — it's always correct even on unreleased branches where no git
+  // tag exists yet. Fall back to the latest released tag only when the
+  // binary reports an empty/missing version.
+  const currentVersion = dumpDocs.cli.version || dumpDocs.mcp.version || releasedVersion;
 
-  const cliMdx = generateCLIReferenceMDX(dumpDocs.cli, releasedVersion);
-  const mcpMdx = generateMCPToolsMDX(dumpDocs.mcp, releasedVersion);
+  const cliMdx = generateCLIReferenceMDX(dumpDocs.cli, currentVersion);
+  const mcpMdx = generateMCPToolsMDX(dumpDocs.mcp, currentVersion);
 
   const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli-reference.mdx');
   const mcpPath = path.join(DOCS_OUTPUT_DIR, 'mcp-tools.mdx');
@@ -405,7 +410,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
     lines.push('| ---- | ---- | -------- | ----------- |');
     for (const arg of cmd.arguments) {
       const required = arg.is_optional ? 'No' : 'Yes';
-      lines.push(`| \`<${arg.name}>\` | ${arg.type} | ${required} | ${arg.help} |`);
+      lines.push(`| \`<${arg.name}>\` | ${escapeTableCell(arg.type)} | ${required} | ${escapeTableCell(arg.help)} |`);
     }
     lines.push('');
   }
@@ -421,7 +426,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
         ? `\`-${opt.short_name}\`, \`--${opt.name}\``
         : `\`--${opt.name}\``;
       const defaultVal = opt.default_value != null ? opt.default_value : '—';
-      lines.push(`| ${nameCell} | ${opt.type} | ${defaultVal} | ${opt.help} |`);
+      lines.push(`| ${nameCell} | ${escapeTableCell(opt.type)} | ${escapeTableCell(defaultVal)} | ${escapeTableCell(opt.help)} |`);
     }
     lines.push('');
   }
@@ -436,7 +441,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
       const nameCell = flag.short_name
         ? `\`-${flag.short_name}\`, \`--${flag.name}\``
         : `\`--${flag.name}\``;
-      lines.push(`| ${nameCell} | ${flag.help} |`);
+      lines.push(`| ${nameCell} | ${escapeTableCell(flag.help)} |`);
     }
     lines.push('');
   }
@@ -461,7 +466,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
         lines.push('| ---- | ---- | -------- | ----------- |');
         for (const arg of sub.arguments) {
           const required = arg.is_optional ? 'No' : 'Yes';
-          lines.push(`| \`<${arg.name}>\` | ${arg.type} | ${required} | ${arg.help} |`);
+          lines.push(`| \`<${arg.name}>\` | ${escapeTableCell(arg.type)} | ${required} | ${escapeTableCell(arg.help)} |`);
         }
         lines.push('');
       }
@@ -476,7 +481,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
             ? `\`-${opt.short_name}\`, \`--${opt.name}\``
             : `\`--${opt.name}\``;
           const defaultVal = opt.default_value != null ? opt.default_value : '—';
-          lines.push(`| ${nameCell} | ${opt.type} | ${defaultVal} | ${opt.help} |`);
+          lines.push(`| ${nameCell} | ${escapeTableCell(opt.type)} | ${escapeTableCell(defaultVal)} | ${escapeTableCell(opt.help)} |`);
         }
         lines.push('');
       }
@@ -490,7 +495,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
           const nameCell = flag.short_name
             ? `\`-${flag.short_name}\`, \`--${flag.name}\``
             : `\`--${flag.name}\``;
-          lines.push(`| ${nameCell} | ${flag.help} |`);
+          lines.push(`| ${nameCell} | ${escapeTableCell(flag.help)} |`);
         }
         lines.push('');
       }
@@ -515,7 +520,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
             lines.push('| ---- | ---- | -------- | ----------- |');
             for (const arg of nested.arguments) {
               const required = arg.is_optional ? 'No' : 'Yes';
-              lines.push(`| \`<${arg.name}>\` | ${arg.type} | ${required} | ${arg.help} |`);
+              lines.push(`| \`<${arg.name}>\` | ${escapeTableCell(arg.type)} | ${required} | ${escapeTableCell(arg.help)} |`);
             }
             lines.push('');
           }
@@ -530,7 +535,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
                 ? `\`-${opt.short_name}\`, \`--${opt.name}\``
                 : `\`--${opt.name}\``;
               const defaultVal = opt.default_value != null ? opt.default_value : '—';
-              lines.push(`| ${nameCell} | ${opt.type} | ${defaultVal} | ${opt.help} |`);
+              lines.push(`| ${nameCell} | ${escapeTableCell(opt.type)} | ${escapeTableCell(defaultVal)} | ${escapeTableCell(opt.help)} |`);
             }
             lines.push('');
           }
@@ -544,7 +549,7 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
               const nameCell = flag.short_name
                 ? `\`-${flag.short_name}\`, \`--${flag.name}\``
                 : `\`--${flag.name}\``;
-              lines.push(`| ${nameCell} | ${flag.help} |`);
+              lines.push(`| ${nameCell} | ${escapeTableCell(flag.help)} |`);
             }
             lines.push('');
           }
@@ -626,12 +631,16 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
       const isRequired = required.has(propName);
       const requiredLabel = isRequired ? 'required' : 'optional';
       const typeLabel = formatPropertyType(prop);
-      lines.push(`- \`${propName}\` (${typeLabel}, ${requiredLabel}): ${prop.description}`);
+      lines.push(`- \`${propName}\` (${typeLabel}, ${requiredLabel}): ${prop.description ?? ''}`);
     }
     lines.push('');
   }
 
-  // Synthesize a minimal JSON example from required params only
+  // Synthesize a minimal JSON example from required params only.
+  // Skip the example entirely when there are no required params (tools
+  // like check_permissions where everything is optional) or when the
+  // required set is empty after filtering — avoid emitting {} for tools
+  // that are only valid with at least one of several mutually-optional groups.
   const exampleObj: Record<string, unknown> = {};
   for (const propName of propertyNames) {
     if (required.has(propName)) {
@@ -639,12 +648,18 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
     }
   }
 
-  lines.push('```json');
-  lines.push(JSON.stringify(exampleObj));
-  lines.push('```');
-  lines.push('');
+  if (Object.keys(exampleObj).length > 0) {
+    lines.push('```json');
+    lines.push(JSON.stringify(exampleObj));
+    lines.push('```');
+    lines.push('');
+  }
 
   return lines;
+}
+
+function escapeTableCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
 function formatPropertyType(prop: MCPPropertyDoc): string {

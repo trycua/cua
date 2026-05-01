@@ -32,10 +32,6 @@ for a purely read-only status check.
 
 - `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default true.
 
-```json
-{}
-```
-
 ### click
 
 Left-click against a target pid. Two addressing modes:
@@ -199,10 +195,6 @@ setter's units. Pure read-only — no side effects.
 
 **Arguments:** none.
 
-```json
-{}
-```
-
 ### get_config
 
 Report the current persistent driver config. Config lives
@@ -231,19 +223,11 @@ Current schema:
 
 **Arguments:** none.
 
-```json
-{}
-```
-
 ### get_cursor_position
 
 Return the current mouse cursor position in screen points (origin top-left).
 
 **Arguments:** none.
-
-```json
-{}
-```
 
 ### get_recording_state
 
@@ -261,10 +245,6 @@ armed before kicking off a session.
 
 **Arguments:** none.
 
-```json
-{}
-```
-
 ### get_screen_size
 
 Return the logical size of the main display in points plus its backing scale
@@ -272,10 +252,6 @@ factor. Agents click in points; Retina displays have scale_factor 2.0.
 Requires no TCC permissions.
 
 **Arguments:** none.
-
-```json
-{}
-```
 
 ### get_window_state
 
@@ -465,10 +441,6 @@ later to resolve a target.
 - `urls` (array of string, optional): Optional file:// or http(s):// URLs (or plain paths with ~ expansion) to hand to the launched app via application(_:open:). For Finder, pass a folder URL or path to open a backgrounded Finder window rooted at that folder — no activation. Apps that don't implement application(_:open:) launch normally and ignore these.
 - `webkit_inspector_port` (integer, optional): Launch a Tauri/WKWebView app with WEBKIT_INSPECTOR_SERVER=127.0.0.1:<N> so the `page` tool can reach its WebKit inspector. Use 9226 (reserved WebKit range: 9226–9228, distinct from Electron's 9222–9225). Requires developerExtrasEnabled=true in the WKWebView config (default in Tauri debug builds).
 
-```json
-{}
-```
-
 ### list_apps
 
 List macOS apps — both currently running and installed-but-not-running —
@@ -489,10 +461,6 @@ app — running or not — call launch_app({bundle_id: ...}) directly;
 list_apps is not a prerequisite.
 
 **Arguments:** none.
-
-```json
-{}
-```
 
 ### list_windows
 
@@ -548,10 +516,6 @@ noise for every current caller.
 
 - `on_screen_only` (boolean, optional): When true, drop windows that aren't currently on the user's Space (minimized, hidden, off-Space). Default false.
 - `pid` (integer, optional): Optional pid filter. When set, only this pid's windows are returned.
-
-```json
-{}
-```
 
 ### move_cursor
 
@@ -746,10 +710,6 @@ first if unsure.
 - `quality` (integer, optional): JPEG quality 1-95; ignored for png.
 - `window_id` (integer, optional): Optional CGWindowID / kCGWindowNumber to capture just that window.
 
-```json
-{}
-```
-
 ### scroll
 
 Scroll the target pid's focused region by synthesized
@@ -782,7 +742,7 @@ established by a prior click.
 
 - `amount` (integer, optional): Number of keystroke repetitions. Default: 3.
 - `by` (string, optional): Scroll granularity. Default: line.
-- `direction` (string, required): undefined
+- `direction` (string, required): 
 - `element_index` (integer, optional): Optional element_index from the last get_window_state for the same (pid, window_id) — focuses the element before the keystrokes fire. Requires window_id.
 - `pid` (integer, required): Target process ID.
 - `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used.
@@ -866,10 +826,6 @@ dwell_after_click_ms=400, idle_hide_ms=3000.
 - `spring` (number, optional): Settle damping in [0.3, 1]. Default 0.72.
 - `start_handle` (number, optional): Start-handle fraction in [0, 1]. Default 0.3.
 
-```json
-{}
-```
-
 ### set_agent_cursor_style
 
 Customize the agent-cursor's visual appearance. All fields
@@ -900,10 +856,6 @@ Example — revert to default:
 - `bloom_color` (string, optional): CSS hex color for the bloom halo and focus rect. Empty string reverts to default.
 - `gradient_colors` (array of string, optional): CSS hex color strings for gradient stops (tip to tail). Empty array reverts to default.
 - `image_path` (string, optional): Path to PNG/JPEG/PDF/SVG cursor image. Empty string reverts to arrow.
-
-```json
-{}
-```
 
 ### set_config
 
@@ -991,8 +943,8 @@ which synthesises key events — AXValue writes are ignored by WebKit.
 
 **Arguments:**
 
-- `element_index` (integer, required): undefined
-- `pid` (integer, required): undefined
+- `element_index` (integer, required): 
+- `pid` (integer, required): 
 - `value` (string, required): New value. AX will coerce to the element's native type.
 - `window_id` (integer, required): CGWindowID for the window whose get_window_state produced the element_index. The element_index cache is scoped per (pid, window_id).
 

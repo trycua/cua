@@ -59,48 +59,56 @@ jobs:
       - name: Determine changed generators
         id: changed
         run: |
-          # Get list of changed files
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          # Diff all commits in this PR against the base branch
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" HEAD)
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
           # Check which generators need to run
           GENERATORS=""
 
-          # Cua Driver changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/Sources/"; then
+          # Source changes
+          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/Sources/\|^docs/content/docs/cua-driver/reference/"; then
             GENERATORS="$GENERATORS cua-driver"
           fi
-
-          # Lume changes
           if echo "$CHANGED_FILES" | grep -q "^libs/lume/src/"; then
             GENERATORS="$GENERATORS lume"
           fi
-
-          # Cua CLI changes
           if echo "$CHANGED_FILES" | grep -q "^libs/typescript/cua-cli/src/"; then
             GENERATORS="$GENERATORS cua-cli"
           fi
-
-          # MCP Server changes
           if echo "$CHANGED_FILES" | grep -q "^libs/python/mcp-server/src/"; then
             GENERATORS="$GENERATORS mcp-server"
           fi
-
-          # Python SDK changes (Computer and Agent)
           if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/computer/\|^libs/python/agent/agent/"; then
             GENERATORS="$GENERATORS python-sdk"
           fi
-
-          # Cua-Bot changes
           if echo "$CHANGED_FILES" | grep -q "^libs/cuabot/src/"; then
             GENERATORS="$GENERATORS cuabot"
           fi
 
-          # Generator changes should run all
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/"; then
+          # Individual generator script changes — only trigger their own generator
+          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/cua-driver\.ts"; then
+            GENERATORS="$GENERATORS cua-driver"
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/lume\.ts"; then
+            GENERATORS="$GENERATORS lume"
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/python-sdk\.ts"; then
+            GENERATORS="$GENERATORS python-sdk"
+          fi
+          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/cuabot\.ts"; then
+            GENERATORS="$GENERATORS cuabot"
+          fi
+
+          # Shared infrastructure changes (runner, config) → run all
+          if echo "$CHANGED_FILES" | grep -qE "^scripts/docs-generators/(runner|config)\.(ts|json)$"; then
             GENERATORS="all"
           fi
+
+          # Deduplicate
+          GENERATORS=$(echo "$GENERATORS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
 
           echo "generators=$GENERATORS" >> $GITHUB_OUTPUT
 

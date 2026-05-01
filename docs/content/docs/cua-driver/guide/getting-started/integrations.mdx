@@ -93,7 +93,7 @@ cua-driver mcp-config --client opencode
 Paste the output into `~/.config/opencode/config.json` (global) or `opencode.json` at the project root.
 
 <Callout type="warn">
-**Always configure cua-driver as an MCP server — never rely on the CLI fallback.** If MCP is not wired up, OpenCode will call `cua-driver` as a shell subprocess and the full `get_window_state` response (including a ~31 KB base64 screenshot) lands as raw text in the model context, consuming thousands of tokens per call.
+**Always configure cua-driver as an MCP server — never rely on the CLI fallback.** If MCP is not wired up, OpenCode calls `cua-driver` as a shell subprocess. The `get_window_state` response no longer includes base64 by default, but the screenshot image block is silently dropped — the model receives only the AX tree with no visual context. Use `--screenshot-out-file` or the `screenshot_out_file` param to preserve the image when using the CLI path.
 </Callout>
 
 ### Local vision models (Ollama)

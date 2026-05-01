@@ -278,8 +278,14 @@ public enum GetWindowStateTool {
                     let expandedPath = (outPath as NSString).expandingTildeInPath
                     if let bytes = Data(base64Encoded: b64) {
                         let url = URL(fileURLWithPath: expandedPath)
-                        try? bytes.write(to: url)
-                        resolvedScreenshotFilePath = expandedPath
+                        do {
+                            try bytes.write(to: url)
+                            resolvedScreenshotFilePath = expandedPath
+                        } catch {
+                            // Write failed — fall through so the inline image
+                            // content block is still emitted rather than silently
+                            // dropping the screenshot entirely.
+                        }
                     }
                 }
 

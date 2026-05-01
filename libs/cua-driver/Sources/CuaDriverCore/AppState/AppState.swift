@@ -54,8 +54,8 @@ public struct AppStateSnapshot: Sendable, Codable {
     public let screenshotOriginalWidth: Int?
     /// Original height before maxImageDimension resize. nil = no resize.
     public let screenshotOriginalHeight: Int?
-    /// File-system path to the saved screenshot PNG, when the caller
-    /// requested a file-backed screenshot. Absent when no path was written.
+    /// File-system path to the saved screenshot (JPEG) when the caller
+    /// passed `screenshot_out_file`. Absent when no path was written.
     public let screenshotFilePath: String?
 
     public init(

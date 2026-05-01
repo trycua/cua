@@ -436,12 +436,9 @@ In `som` mode the response carries:
   `screenshot_out_file` was passed. Absent otherwise.
 - `screenshot_width` / `_height` / `_scale_factor` — dimensions of the
   captured image. Present whenever a screenshot was taken.
-- `has_screenshot: bool` — `true` when a screenshot was captured this turn
-  (either inline via MCP image block or written to `screenshot_file_path`).
-
 **Getting the screenshot as a file (CLI and context-constrained agents):**
 
-```
+```bash
 # write to file — stdout stays readable (AX tree / summary only, no base64)
 cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
 

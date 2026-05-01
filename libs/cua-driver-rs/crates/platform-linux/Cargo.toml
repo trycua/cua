@@ -1,0 +1,23 @@
+[package]
+name = "platform-linux"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"
+mcp-server = { path = "../mcp-server" }
+cursor-overlay = { path = "../cursor-overlay" }
+# tiny-skia for cursor rendering (shared cross-platform)
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# X11 background input + window enumeration
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape"] }
+base64 = { workspace = true }
+image = { workspace = true }

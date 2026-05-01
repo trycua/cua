@@ -24,6 +24,7 @@ struct CuaDriverCommand: AsyncParsableCommand {
             UpdateCommand.self,
             DiagnoseCommand.self,
             DoctorCommand.self,
+            DumpDocsCommand.self,
         ]
     )
 }
@@ -173,6 +174,7 @@ struct CuaDriverEntryPoint {
         "update",
         "diagnose",
         "doctor",
+        "dump-docs",
         "help",
     ]
 

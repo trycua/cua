@@ -38,9 +38,10 @@ jobs:
         run: pip install cua pytest pytest-asyncio
 
       - name: Run test
-        run: python -m pytest examples/sandboxes/test_linux_cloud_vm.py
+        run: python -m pytest examples/sandboxes/test_linux_cloud_vm.py -v -s --log-cli-level=INFO
         env:
           CUA_API_KEY: ${{ secrets[matrix.secret_name] }}
+          CUA_LOG_LEVEL: DEBUG
 
       - name: Alert Alertmanager on failure
         if: failure()

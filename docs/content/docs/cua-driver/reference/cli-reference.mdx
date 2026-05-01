@@ -56,7 +56,7 @@ cua-driver <tool-name> '<JSON-args>'
 **Flags:**
 
 - `--raw` — Print the raw `CallTool.Result` JSON (content + structuredContent + isError) instead of unwrapping `structuredContent`.
-- `--image-out <path>` — Write the first image content block from the response to `path` (PNG bytes). The default text formatter would drop image content otherwise.
+- `--screenshot-out-file <path>` — Write the first image content block from the response to `path` (PNG bytes). The default text formatter would drop image content otherwise.
 - `--compact` — Emit minified JSON instead of pretty-printed.
 - `--no-daemon` — Skip the running daemon and run the tool in-process. Element-indexed workflows fail without a daemon because the per-pid cache dies between CLI invocations.
 - `--socket <path>` — Override the daemon Unix socket path.
@@ -67,7 +67,7 @@ cua-driver <tool-name> '<JSON-args>'
 cua-driver call list_apps
 cua-driver call launch_app '{"bundle_id":"com.apple.finder"}'
 echo '{"pid":844,"window_id":1234}' | cua-driver call get_window_state
-cua-driver get_window_state '{"pid":844,"window_id":1234}' --image-out /tmp/shot.png
+cua-driver get_window_state '{"pid":844,"window_id":1234}' --screenshot-out-file /tmp/shot.png
 ```
 
 ### cua-driver list-tools
@@ -380,6 +380,7 @@ The following MCP tools are callable via `cua-driver <tool>`. For input schemas 
 
 - `set_agent_cursor_enabled` — toggle the visual overlay.
 - `set_agent_cursor_motion` — tune the Bezier-arc + spring motion knobs.
+- `set_agent_cursor_style` — customize the cursor's visual appearance (gradient colors, bloom color, image path).
 - `get_agent_cursor_state` — read the current overlay configuration.
 
 **Config**

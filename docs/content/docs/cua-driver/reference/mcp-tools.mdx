@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 `cua-driver` exposes 28 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
-Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/cua-driver/reference/cli-reference) for CLI-specific flags like `--raw` and `--image-out`.
+Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/cua-driver/reference/cli-reference) for CLI-specific flags like `--raw` and `--screenshot-out-file`.
 
 <Callout type="info">
   Tool names here match the CLI form exactly. `cua-driver list_apps` and the MCP `list_apps` tool run the same code path.
@@ -81,6 +81,7 @@ Snapshot a single window: AX element tree plus a screenshot. Populates the per-p
 - `pid` (integer, required): Process ID from `list_apps`.
 - `window_id` (integer, required): CGWindowID of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array.
 - `query` (string, optional): Case-insensitive substring. When set, `tree_markdown` only contains matching lines plus their ancestor chain; element indices and `element_count` are unchanged.
+- `screenshot_out_file` (string, optional): Absolute path to write the screenshot to. When set, the screenshot bytes are written to this file, the MCP image content block is omitted, and `screenshot_file_path` is returned instead. Useful for agents that cannot consume inline base64 without saturating their context window.
 
 ```json
 {"pid": 844, "window_id": 10725, "query": "save"}

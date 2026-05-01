@@ -167,11 +167,11 @@ failure mode and it steals focus every time.
 When a cua-driver call surprises you, diagnose cua-driver first:
 
 - **Tiny screenshot / empty `tree_markdown`?** Check
-  `cua-driver get_config` → `capture_mode`. Default `"vision"` omits
-  the AX tree (PNG only), `"ax"` omits the PNG, `"som"` returns
-  both. If a snapshot lacks a tree, `capture_mode` is almost
-  certainly `"vision"` — either reason purely from the PNG or flip
-  to `"som"` / `"ax"` via `set_config`.
+  `cua-driver get_config` → `capture_mode`. Default `"som"` returns
+  both the AX tree and screenshot. `"vision"` omits the AX tree
+  (PNG only), `"ax"` omits the PNG. If a snapshot lacks a tree,
+  `capture_mode` is almost certainly `"vision"` — either reason
+  purely from the PNG or flip to `"som"` / `"ax"` via `set_config`.
 - **`has_screenshot: false`?** The window capture failed (transient
   race against a close, or the window has no backing store yet).
   Re-snapshot; if persistent, pick a different `window_id` via
@@ -414,17 +414,14 @@ single-window case you can skip `list_windows` entirely and read the
 
 Call `get_window_state({pid, window_id})` with the `window_id` from
 `launch_app`'s `windows` array (or a fresh `list_windows({pid})` if
-you're interacting with a long-lived process). In the default
-`vision` capture_mode the response carries **only the screenshot**
-— no AX tree — so the canonical loop is `list_windows →
-get_window_state → reason over PNG → pixel click`. When you need
-`element_index` dispatch (AX-addressable elements, backgrounded
-clicks), flip to `som` first: `cua-driver set_config '{"key":
-"capture_mode", "value": "som"}'`. The rest of this section walks through `som` mode, which
-is what you want once you've decided element-indexed addressing is
-required.
+you're interacting with a long-lived process). The default `som`
+capture_mode returns **both the AX tree and screenshot**, so the
+canonical loop works immediately without any config change. The rest
+of this section walks through `som` mode. If you're in `vision` mode
+(PNG only, no AX tree), flip back: `cua-driver set_config '{"key":
+"capture_mode", "value": "som"}'`.
 
-In `som` mode the response carries:
+In `som` mode (the default) the response carries:
 
 - `tree_markdown` — every actionable element tagged `[N]`. That `N`
   is the `element_index`. The tree can be very large (Finder is

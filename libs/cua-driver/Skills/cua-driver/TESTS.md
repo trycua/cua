@@ -59,7 +59,7 @@ backgrounded throughout, and Claude uses the canonical
 ### 4. Notes — native text entry
 **Prompt:** `Create a new note in Notes titled 'cua-driver test' with the body 'native text entry verification'.`
 
-**Exercises:** `type_text_in` via `kAXSelectedText` against native AppKit text fields.
+**Exercises:** `type_text` via `kAXSelectedText` against native AppKit text fields.
 
 **Success:**
 - Re-snapshot of Notes shows a note row in the sidebar whose title contains `cua-driver test`.
@@ -72,7 +72,7 @@ backgrounded throughout, and Claude uses the canonical
 ### 5. Numbers — cell-addressable UI
 **Prompt:** `Open ~/Documents/test.numbers and put 42 in cell B2.`
 
-**Exercises:** unusual AX shape (spreadsheet cells), click + `set_value` or `type_text_in` + Tab/Return.
+**Exercises:** unusual AX shape (spreadsheet cells), click + `set_value` or `type_text` + Tab/Return.
 
 **Success:**
 - Re-snapshot shows cell B2's AXValue is `42`.

@@ -51,6 +51,7 @@ struct MCPConfigCommand: ParsableCommand {
 
     func run() throws {
         let binary = resolvedBinaryPath()
+        let shellBinary = shellEscape(binary)
         // Observed Claude Code behavior: the exact config key "computer-use"
         // is reserved, so external stdio registrations use a distinct key.
         let serverName = claudeCodeComputerUseCompat ? "cua-computer-use" : "cua-driver"
@@ -69,9 +70,9 @@ struct MCPConfigCommand: ParsableCommand {
                 includeType: false
             ))
         case "claude":
-            print("claude mcp add --transport stdio \(serverName) -- \(binary) \(commandArgs)")
+            print("claude mcp add --transport stdio \(serverName) -- \(shellBinary) \(commandArgs)")
         case "codex":
-            print("codex mcp add \(serverName) -- \(binary) \(commandArgs)")
+            print("codex mcp add \(serverName) -- \(shellBinary) \(commandArgs)")
         case "cursor":
             // Cursor has no CLI — emit JSON the user pastes into
             // ~/.cursor/mcp.json (global) or .cursor/mcp.json (project).
@@ -172,6 +173,10 @@ struct MCPConfigCommand: ParsableCommand {
             return path
         }
         return CommandLine.arguments.first ?? "cua-driver"
+    }
+
+    private func shellEscape(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
     }
 }
 

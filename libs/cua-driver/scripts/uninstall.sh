@@ -146,7 +146,7 @@ def invokes_cua_driver(server):
     return "cua-driver" in joined or "CuaDriver.app" in joined
 
 def should_remove(name, server):
-    return name == "cua-driver" or invokes_cua_driver(server)
+    return name in {"cua-driver", "cua-computer-use"} or invokes_cua_driver(server)
 
 def scrub_servers(servers, scope):
     if not isinstance(servers, dict):
@@ -208,10 +208,12 @@ fi
 # .mcp.json / current-working-directory scopes when present and is harmless
 # when the entries were already removed above.
 if command -v claude >/dev/null 2>&1; then
-    for SCOPE in local project user; do
-        if claude mcp remove cua-driver -s "$SCOPE" >/dev/null 2>&1; then
-            log "removed Claude MCP server cua-driver from $SCOPE scope"
-        fi
+    for SERVER in cua-driver cua-computer-use; do
+        for SCOPE in local project user; do
+            if claude mcp remove "$SERVER" -s "$SCOPE" >/dev/null 2>&1; then
+                log "removed Claude MCP server $SERVER from $SCOPE scope"
+            fi
+        done
     done
 else
     log "claude CLI not found (skipping Claude MCP CLI cleanup)"

@@ -61,22 +61,29 @@ public enum ClaudeCodeComputerUseCompatTools {
         ),
         invoke: { arguments in
             do {
-                guard let pid = arguments?["pid"]?.intValue else {
+                guard let rawPid = arguments?["pid"]?.intValue else {
                     return errorResult("Missing required integer field `pid`.")
                 }
-                guard let windowID = arguments?["window_id"]?.intValue else {
+                guard let pid = Int32(exactly: rawPid) else {
+                    return errorResult("pid \(rawPid) is outside the supported Int32 range.")
+                }
+                guard let rawWindowID = arguments?["window_id"]?.intValue else {
                     return errorResult("Missing required integer field `window_id`.")
                 }
+                guard let windowID = UInt32(exactly: rawWindowID) else {
+                    return errorResult(
+                        "window_id \(rawWindowID) is outside the supported UInt32 range.")
+                }
                 guard let context = compatWindowContext(
-                    forPid: Int32(pid),
+                    forPid: pid,
                     windowID: windowID
                 ) else {
                     return errorResult(
-                        "No visible layer-0 window \(windowID) found for pid \(pid). Use `list_windows` to choose an on-screen target window."
+                        "No visible layer-0 window \(rawWindowID) found for pid \(rawPid). Use `list_windows` to choose an on-screen target window."
                     )
                 }
                 let shot = try await capture.captureWindow(
-                    windowID: UInt32(context.window.id),
+                    windowID: windowID,
                     format: .jpeg,
                     quality: 85
                 )
@@ -122,12 +129,12 @@ extension ToolRegistry {
 
 private func compatWindowContext(
     forPid pid: Int32,
-    windowID: Int
+    windowID: UInt32
 ) -> CompatWindowContext? {
     guard let window = WindowEnumerator.visibleWindows()
         .first(where: {
             $0.pid == pid
-                && $0.id == windowID
+                && UInt32(exactly: $0.id) == windowID
                 && $0.layer == 0
                 && $0.isOnScreen
                 && $0.bounds.width > 1

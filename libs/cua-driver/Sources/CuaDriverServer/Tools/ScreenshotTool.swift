@@ -52,7 +52,7 @@ public enum ScreenshotTool {
             let format =
                 ImageFormat(rawValue: arguments?["format"]?.stringValue ?? "png") ?? .png
             let quality = arguments?["quality"]?.intValue ?? 95
-            guard let windowID = arguments?["window_id"]?.intValue else {
+            guard let rawWindowID = arguments?["window_id"]?.intValue else {
                 return CallTool.Result(
                     content: [
                         .text(
@@ -64,17 +64,29 @@ public enum ScreenshotTool {
                     isError: true
                 )
             }
+            guard let windowID = UInt32(exactly: rawWindowID) else {
+                return CallTool.Result(
+                    content: [
+                        .text(
+                            text: "Invalid `window_id` \(rawWindowID). Use `list_windows` first, then pass a valid UInt32 window id.",
+                            annotations: nil,
+                            _meta: nil
+                        )
+                    ],
+                    isError: true
+                )
+            }
 
             do {
                 let shot = try await capture.captureWindow(
-                    windowID: UInt32(windowID),
+                    windowID: windowID,
                     format: format,
                     quality: quality
                 )
                 let base64 = shot.imageData.base64EncodedString()
                 let mime = format == .png ? "image/png" : "image/jpeg"
                 var summaryLines: [String] = [
-                    "✅ Window screenshot — \(shot.width)x\(shot.height) \(format.rawValue) [window_id: \(windowID)]"
+                    "✅ Window screenshot — \(shot.width)x\(shot.height) \(format.rawValue) [window_id: \(rawWindowID)]"
                 ]
                 let summary = summaryLines.joined(separator: "\n")
                 return CallTool.Result(

@@ -81,8 +81,7 @@ html {
 body {
   background:
     radial-gradient(circle at top, rgba(97, 188, 255, 0.08), transparent 34rem),
-    linear-gradient(180deg, rgba(97, 188, 255, 0.04), transparent 24rem),
-    var(--color-fd-background);
+    linear-gradient(180deg, rgba(97, 188, 255, 0.04), transparent 24rem), var(--color-fd-background);
   background-repeat: no-repeat;
   color: var(--color-fd-foreground);
 }
@@ -96,8 +95,7 @@ body,
 .dark body {
   background:
     radial-gradient(circle at top, rgba(97, 188, 255, 0.1), transparent 32rem),
-    linear-gradient(180deg, rgba(97, 188, 255, 0.08), transparent 24rem),
-    var(--bg-base);
+    linear-gradient(180deg, rgba(97, 188, 255, 0.08), transparent 24rem), var(--bg-base);
   background-repeat: no-repeat;
 }
 
@@ -139,7 +137,12 @@ button {
   bottom: -0.85rem;
   height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(97, 188, 255, 0), var(--brand-500), rgba(88, 200, 190, 0.9));
+  background: linear-gradient(
+    90deg,
+    rgba(97, 188, 255, 0),
+    var(--brand-500),
+    rgba(88, 200, 190, 0.9)
+  );
   opacity: 0;
   transform: scaleX(0.4);
   transform-origin: center;
@@ -215,9 +218,7 @@ button {
 
 /* Sidebar */
 .dark #nd-sidebar {
-  background:
-    linear-gradient(180deg, rgba(97, 188, 255, 0.06), transparent 12rem),
-    var(--bg-base);
+  background: linear-gradient(180deg, rgba(97, 188, 255, 0.06), transparent 12rem), var(--bg-base);
   border-color: var(--line-soft);
 }
 
@@ -383,7 +384,7 @@ button {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line-soft);
-  border-radius: 16px;
+  border-radius: 10px;
   background:
     radial-gradient(circle at top left, rgba(97, 188, 255, 0.16), transparent 30rem),
     radial-gradient(circle at bottom right, rgba(88, 200, 190, 0.1), transparent 24rem),
@@ -412,14 +413,14 @@ button {
   border-radius: 999px;
   background: rgba(97, 188, 255, 0.08);
   color: var(--brand-400);
-  letter-spacing: 0.18em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
 .github-badge {
   font-family: 'JetBrains Mono', SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0;
   line-height: 1;
 }
 
@@ -465,12 +466,14 @@ button {
 }
 
 .cds-card {
-  border-radius: 16px;
+  border-radius: 8px;
   border: 1px solid var(--line-soft);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%),
-    var(--bg-elev-1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--bg-elev-1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .cds-card:hover {
@@ -478,6 +481,7 @@ button {
   box-shadow:
     0 20px 44px rgba(0, 0, 0, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transform: translate3d(0, -1px, 0);
 }
 
 /* CopilotKit chat UI - consistent border radius */

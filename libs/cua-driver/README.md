@@ -19,3 +19,5 @@ claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-cod
 ```
 
 This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
+
+Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.

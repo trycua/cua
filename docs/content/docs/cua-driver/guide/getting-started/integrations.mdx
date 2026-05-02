@@ -37,6 +37,8 @@ claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-cod
 
 This mode still exposes the normal CuaDriver tools. The only changed tool is `screenshot`: it requires `pid` and `window_id`, captures that window only, and returns a window-local image coordinate frame. Start with `launch_app` or `list_windows`, then call `screenshot` with the target window.
 
+For this Claude Code vision/computer-use-style path, use MCP rather than shelling out to the CLI. CLI screenshots can still capture windows, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
 <Callout type="info">
   This does not call Anthropic APIs or expose Anthropic's native computer-use API tool. It is a CuaDriver MCP compatibility mode for Claude Code.
 </Callout>

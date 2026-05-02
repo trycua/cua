@@ -125,6 +125,8 @@ cua-driver mcp-config --client openclaw | sh
 
 The Claude Code compatibility mode keeps CuaDriver's normal MCP tools, but replaces `screenshot` with a window-only screenshot shim that requires `pid` and `window_id`. Use it when you want Claude Code's vision/computer-use-style flow to ground on CuaDriver window captures.
 
+Use MCP for that Claude Code vision/computer-use-style path. Shelling out to `cua-driver screenshot` can capture a window, but it does not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
 ### Clients configured via a config file
 
 Cursor, OpenCode, and Hermes all configure MCP servers via files. Use `mcp-config` to print the exact snippet, paste it into the right path:

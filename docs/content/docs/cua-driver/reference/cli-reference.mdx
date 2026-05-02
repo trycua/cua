@@ -106,6 +106,12 @@ Print a tool's full description and JSON input schema.
 
 Run the stdio MCP server.
 
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--claude-code-computer-use-compat` | Expose normal CuaDriver tools, replacing only `screenshot` with a Claude Code-friendly window-only screenshot that establishes the vision coordinate frame. |
+
 ### cua-driver serve
 
 Run cua-driver as a long-running daemon on a Unix domain socket.
@@ -157,6 +163,12 @@ Print MCP server config or a client-specific install command.
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
 | `--client` | String | — | Client to print the install command for: claude \| codex \| cursor \| openclaw \| opencode \| hermes \| pi. Omit for the generic JSON snippet. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--claude-code-computer-use-compat` | Print config for Claude Code's window-scoped screenshot compatibility mode registered as `cua-computer-use`. |
 
 ## Trajectory recording
 

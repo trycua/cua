@@ -106,7 +106,8 @@ public enum MouseInput {
         toPid pid: pid_t,
         button: Button,
         count: Int = 1,
-        modifiers: [String] = []
+        modifiers: [String] = [],
+        useFrontmostHIDPath: Bool = true
     ) throws {
         // When the target is frontmost, route via the public HID tap
         // (`CGEventPost(tap: .cghidEventTap)`) with a preceding
@@ -123,7 +124,7 @@ public enum MouseInput {
         // (Chrome/Slack/etc); they just don't work on viewports.
         let targetIsFrontmost =
             NSRunningApplication(processIdentifier: pid)?.isActive ?? false
-        if targetIsFrontmost {
+        if useFrontmostHIDPath && targetIsFrontmost {
             try clickFrontmostViaHIDTap(
                 at: point, button: button, count: count, modifiers: modifiers)
             return

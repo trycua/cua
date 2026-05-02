@@ -113,12 +113,20 @@ Cua Driver speaks MCP over stdio. Use `cua-driver mcp-config --client <name>` to
 # Claude Code (add --scope project|global as needed)
 claude mcp add --transport stdio cua-driver -- ~/.local/bin/cua-driver mcp
 
+# Claude Code computer-use compatibility mode
+claude mcp add --transport stdio cua-computer-use -- ~/.local/bin/cua-driver mcp --claude-code-computer-use-compat
+
 # Codex (OpenAI)
 codex mcp add cua-driver -- ~/.local/bin/cua-driver mcp
 
 # OpenClaw
 cua-driver mcp-config --client openclaw | sh
 ```
+
+The Claude Code compatibility mode keeps CuaDriver's normal MCP tools,
+but replaces `screenshot` with a window-only screenshot shim that
+requires `pid` and `window_id`. Use it when you want Claude Code's
+vision/computer-use-style flow to ground on CuaDriver window captures.
 
 ### Clients configured via a config file
 

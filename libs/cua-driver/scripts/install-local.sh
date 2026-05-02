@@ -232,6 +232,8 @@ Next steps:
   2. Verify the CLI:  $BIN_LINK --version
   3. Wire into an MCP client:
      $BIN_LINK mcp-config | pbcopy
+     Claude Code compatibility:
+       $BIN_LINK mcp-config --client claude --claude-code-computer-use-compat
 
 Uninstall:  $CUA_DRIVER_DIR/scripts/uninstall.sh
 

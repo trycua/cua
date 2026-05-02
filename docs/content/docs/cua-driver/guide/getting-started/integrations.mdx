@@ -29,23 +29,16 @@ claude mcp list
 
 ### Claude Code computer-use compatibility mode
 
-Claude Code vision/computer-use-style flows appear to use the presence
-of a screenshot tool as a cue for image-grounded operation. If you want
-that behavior, register the compatibility server instead:
+Claude Code vision/computer-use-style flows appear to use the presence of a screenshot tool as a cue for image-grounded operation. If you want that behavior, register the compatibility server instead:
 
 ```bash
 claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
 ```
 
-This mode still exposes the normal CuaDriver tools. The only changed
-tool is `screenshot`: it requires `pid` and `window_id`, captures that
-window only, and returns a window-local image coordinate frame. Start
-with `launch_app` or `list_windows`, then call `screenshot` with the
-target window.
+This mode still exposes the normal CuaDriver tools. The only changed tool is `screenshot`: it requires `pid` and `window_id`, captures that window only, and returns a window-local image coordinate frame. Start with `launch_app` or `list_windows`, then call `screenshot` with the target window.
 
 <Callout type="info">
-  This does not call Anthropic APIs or expose Anthropic's native computer-use API
-  tool. It is a CuaDriver MCP compatibility mode for Claude Code.
+  This does not call Anthropic APIs or expose Anthropic's native computer-use API tool. It is a CuaDriver MCP compatibility mode for Claude Code.
 </Callout>
 
 ## GitHub Copilot CLI

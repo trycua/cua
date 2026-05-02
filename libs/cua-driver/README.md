@@ -12,12 +12,10 @@ Standard Claude Code MCP registration:
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-If you want Claude Code's vision/computer-use-style flow to ground on
-CuaDriver window screenshots, register the compatibility mode:
+If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver window screenshots, register the compatibility mode:
 
 ```bash
 claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
 ```
 
-This keeps CuaDriver's normal MCP tools and changes only `screenshot`,
-which requires `pid` and `window_id` and captures that window only.
+This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.

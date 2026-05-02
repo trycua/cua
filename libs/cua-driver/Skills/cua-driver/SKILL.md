@@ -118,7 +118,7 @@ or pixel clicks — both paths are frontmost-insensitive. Full
 rationale in "Navigating native menu bars" below.
 
 **"Open \<app\>" in user speech means launch, not activate.**
-`cua-driver launch_app` is the one correct path for process
+`launch_app` is the one correct tool for process
 startup — it's idempotent (no-op on a running app), returns the
 pid, and has an internal `FocusRestoreGuard` that catches
 `NSApp.activate(ignoringOtherApps:)` calls the target makes during
@@ -128,17 +128,22 @@ was before the launch. That guard is why `launch_app` with `urls`
 is safe even for apps that normally foreground on media-load
 (Chrome, Electron, media players).
 
-## Defaults — always prefer cua-driver over shell shims
+## Defaults — use the CLI first
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name> '<JSON-args>'`. MCP tools (prefix
-`mcp__cua-driver__*`) only when the user explicitly asks for them.
-CLI wins because it picks up rebuilds instantly, failures are
-easier to diagnose, and there's no per-tool schema-load overhead.
+**Default transport is the `cua-driver` CLI** — shell out to
+`cua-driver call <tool-name> '<JSON-args>'`. MCP tools are optional
+compatibility only. CLI wins because it picks up rebuilds instantly,
+failures are easier to diagnose, and there is no per-tool schema-load
+overhead.
 
 Every reference to `click(...)`, `get_window_state(...)` etc. in this
-skill means `cua-driver click '{...}'` — translate to MCP form only
-when MCP is requested.
+skill means `cua-driver call click '{...}'` or `cua-driver call
+get_window_state '{...}'` — translate to MCP form only when MCP is
+explicitly requested.
+
+For agent loops, optionally install `libs/cua-driver/scripts/agent-cli-helper.sh`
+on PATH as `cua-driver-agent` or `cua`. It adds safe defaults such as
+`fast`, `status`, `state`, `screenshot`, and a macOS screenshot fallback.
 
 Intent → tool mapping. If you find yourself reaching for the right
 column, something has gone wrong — re-read "The no-foreground
@@ -150,7 +155,7 @@ contract" above:
 | Find a pid | `list_apps` or `launch_app`'s return | `pgrep`, `ps`, `osascript frontmost` |
 | Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `osascript 'every window of app …'` |
 | Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `osascript`, `cliclick`, raw `CGEvent`, `open <url>` |
-| Screenshot | `screenshot` or the PNG in `get_window_state` | `screencapture` |
+| Screenshot | `screenshot`, `get_window_state.screenshot_out_file`, or helper fallback | raw `screencapture` unless CUA screenshot hangs/fails |
 | Quit an app | ask the user first, then `hotkey({pid, keys:["cmd","q"]})` | `kill`, `killall`, `pkill` |
 | Hand a file/URL to an app | `launch_app({bundle_id, urls:[<path>]})` | `open -a <App> <path>`, `open <url>` |
 
@@ -166,7 +171,7 @@ failure mode and it steals focus every time.
 When a cua-driver call surprises you, diagnose cua-driver first:
 
 - **Tiny screenshot / empty `tree_markdown`?** Check
-  `cua-driver get_config` → `capture_mode`. Default `"vision"` omits
+  `cua-driver call get_config '{}'` → `capture_mode`. `vision` omits
   the AX tree (PNG only), `"ax"` omits the PNG, `"som"` returns
   both. If a snapshot lacks a tree, `capture_mode` is almost
   certainly `"vision"` — either reason purely from the PNG or flip
@@ -214,10 +219,10 @@ editor state.
 
 1. `cua-driver` is on `$PATH` (`which cua-driver`). If not, point the
    user at `scripts/install-local.sh` and stop.
-2. Run `cua-driver check_permissions`. If either grant is `false`, tell
+2. Run `cua-driver call check_permissions '{}'`. If either grant is `false`, tell
    the user to open System Settings → Privacy & Security and grant
    Accessibility and Screen Recording to `CuaDriver.app`, then stop.
-   (`cua-driver check_permissions '{"prompt":true}'` raises the system
+   (`cua-driver call check_permissions '{"prompt":true}'` raises the system
    dialogs, but only do that if the user asks — it steals focus.)
 3. Start the daemon with `open -n -g -a CuaDriver --args serve` (the
    recommended form — goes through LaunchServices so TCC attributes
@@ -246,17 +251,17 @@ Canonical multi-step workflow:
 
 ```
 open -n -g -a CuaDriver --args serve
-cua-driver launch_app '{"bundle_id":"com.apple.calculator"}'
+cua-driver call launch_app '{"bundle_id":"com.apple.calculator"}'
 # → {pid: 844, windows: [{window_id: 10725, ...}]}
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
-cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
+cua-driver call click '{"pid":844,"window_id":10725,"element_index":14}'
 cua-driver stop
 ```
 
 ## Agent cursor overlay
 
 Visual cursor overlay for demos and screen recordings. Default:
-enabled. Toggle with `cua-driver set_agent_cursor_enabled
+enabled. Toggle with `cua-driver call set_agent_cursor_enabled
 '{"enabled":true|false}'`. A triangle pointer Bezier-glides to each
 click target, ring-ripples on landing, idle-hides after ~1.5s.
 Motion knobs: `set_agent_cursor_motion` takes any subset of
@@ -310,7 +315,7 @@ Two orthogonal axes shape what the agent can do.
 |---|---|---|
 | **`som`** (default) | tree + screenshot | `element_index` preferred; pixel fallback |
 | **`ax`** | tree only (no PNG) | `element_index` only |
-| **`vision`** | PNG only (no tree) | pixel only — see [SCREENSHOT.md](./SCREENSHOT.md) |
+| **`vision`** | PNG only (no tree) | pixel only; save images with `screenshot` / `screenshot_out_file` / helper fallback |
 
 `vision` was renamed from `screenshot` — the old name still decodes
 as a deprecated alias, so an on-disk `"capture_mode": "screenshot"`
@@ -321,14 +326,13 @@ work. Note the tool named `screenshot` is separate (raw PNG, no AX
 walk) and unrelated to the capture mode.
 
 When a snapshot looks wrong (tiny screenshot / empty tree), check
-`cua-driver get_config` for `capture_mode` before anything else.
+`cua-driver call get_config '{}'` for `capture_mode` before anything else.
 
 Pure-vision mode has its own caveats — Claude Code's vision
 pipeline downsamples dense text aggressively, so pixel grounding
-takes multiple correction cycles on text-heavy UIs. Read
-[SCREENSHOT.md](./SCREENSHOT.md) before driving anything in that
-mode; it documents the iterate/annotate/verify recipe plus the
-JPEG-over-PNG finding.
+takes multiple correction cycles on text-heavy UIs. Use the screenshot
+workflow above, then iterate, annotate, and verify. JPEG often performs
+better than PNG for dense screenshots in some multimodal pipelines.
 
 **Window state → what works**
 
@@ -410,50 +414,47 @@ single-window case you can skip `list_windows` entirely and read the
 
 Call `get_window_state({pid, window_id})` with the `window_id` from
 `launch_app`'s `windows` array (or a fresh `list_windows({pid})` if
-you're interacting with a long-lived process). In the default
-`vision` capture_mode the response carries **only the screenshot**
-— no AX tree — so the canonical loop is `list_windows →
-get_window_state → reason over PNG → pixel click`. When you need
-`element_index` dispatch (AX-addressable elements, backgrounded
-clicks), flip to `som` first: `cua-driver set_config '{"key":
-"capture_mode", "value": "som"}'`, or call `get_accessibility_tree`
-directly. The rest of this section walks through `som` mode, which
-is what you want once you've decided element-indexed addressing is
-required.
+you're interacting with a long-lived process). For agent speed,
+default to `capture_mode=ax`: it returns the AX tree and populates
+the element-index cache without doing screenshot work.
 
-In `som` mode the response carries:
+Switch modes deliberately:
 
-- `tree_markdown` — every actionable element tagged `[N]`. That `N`
-  is the `element_index`. The tree can be very large (Finder is
-  ~1600 elements, ~190 KB); when it exceeds token limits the MCP
-  harness saves it to a file and returns the path. Use `Bash` +
-  `jq -r '.tree_markdown'` + `grep` to pull the section you need.
-- `screenshot_png_b64` + `screenshot_width` / `_height` /
-  `_scale_factor` — the window screenshot (actually JPEG-85 despite
-  the `_png_` field name, hard-coded in
-  `WindowCapture.captureFrontmostWindow`). Present in `som` mode
-  (spliced into the structured JSON alongside the tree). In `vision`
-  mode the image arrives as a native MCP image content block with no
-  structured wrapper. Omitted when the target has no on-screen
-  window.
-- `has_screenshot: bool` — **gate on this before piping the PNG**.
-  Otherwise `jq -r '.screenshot_png_b64'` emits the literal
-  `"null"`, base64-decodes into 3 bytes of garbage, and downstream
-  vision APIs reject it with an opaque "Could not process image"
-  error.
+- `ax` — AX tree only, fastest for element-index dispatch.
+- `vision` — screenshot only; no AX tree and no element-index cache.
+- `som` — AX tree plus screenshot; useful for visual debugging.
 
+Set the mode with:
+
+```bash
+cua-driver config set capture_mode ax
+cua-driver config set capture_mode vision
+cua-driver config set capture_mode som
 ```
-# canonical, works in every capture mode — writes the image bytes
-# wherever you point, stdout stays readable (tree in som, summary
-# in vision). stderr warns (exit 0) if the response had no image.
-cua-driver get_window_state '{"pid":N,"window_id":W}' --image-out /tmp/shot.png
 
-# som-only legacy path: pull the spliced base64 out of structuredContent.
-# Prefer --image-out above — it's one flag vs a probe + pipe.
-if [ "$(cua-driver get_window_state '{"pid":N,"window_id":W}' | jq -r '.has_screenshot')" = "true" ]; then
-  cua-driver get_window_state '{"pid":N,"window_id":W}' | jq -r '.screenshot_png_b64' | base64 -d > shot.png
-fi
+In `ax` or `som`, `tree_markdown` tags every actionable element with
+`[N]`; that `N` is the `element_index`. The tree can be very large
+(Finder is ~1600 elements, ~190 KB). Use `query` to narrow it when
+possible:
+
+```bash
+cua-driver call get_window_state '{"pid":N,"window_id":W,"query":"Save"}'
 ```
+
+For visual evidence, prefer a file-producing path:
+
+```bash
+# Raw window screenshot. Requires window_id on 0.1.2+.
+cua-driver call screenshot '{"window_id":W,"format":"png"}' --screenshot-out-file /tmp/shot.png
+
+# Or AX + screenshot together. screenshot_out_file is a JSON arg.
+cua-driver config set capture_mode som
+cua-driver call get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.png"}'
+cua-driver config set capture_mode ax
+```
+
+If ScreenCaptureKit hangs or fails, the helper script falls back to
+macOS `screencapture -l <window_id>` and verifies the output file.
 
 **Reason over both the tree AND the screenshot — they're
 complementary, not redundant.** In `som` mode every
@@ -549,13 +550,24 @@ eyeball coords from whatever your client renders — it may be
 space becomes ~80 px in the real image. Use the crosshair recipe
 below against the full-resolution file in that case.
 
-1. `get_window_state({pid, window_id})` returns an image capped
-   at 1568 long-side (default) plus its dimensions
-   (`screenshot_width` / `screenshot_height`). Write the bytes to
-   disk with `--image-out <path>` in any capture mode — works
-   identically in `vision` (where it's the only way) and `som`
-   (where it sidesteps the jq + base64 dance on the spliced
-   `screenshot_png_b64` field).
+1. `get_window_state({pid, window_id})` in `som` mode can write an image capped
+   at 1568 long-side (default) plus its dimensions. Use the JSON
+   `screenshot_out_file` argument:
+
+```bash
+cua-driver config set capture_mode som
+cua-driver call get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.png"}'
+cua-driver config set capture_mode ax
+```
+
+   For raw window screenshots, use:
+
+```bash
+cua-driver call screenshot '{"window_id":W,"format":"png"}' --screenshot-out-file /tmp/shot.png
+```
+
+   If native capture hangs/fails/no bytes, use the helper fallback or macOS
+   `screencapture -x -l W /tmp/shot.png`.
 2. You are a multimodal model — look at the PNG. Since the PNG
    matches what you see, pick the target pixel directly. No
    fractional math needed.
@@ -632,7 +644,7 @@ The working pattern:
    acceptable here — this is the carve-out the skill's osascript
    gate allows).
 2. `CGEvent.post(tap: .cghidEventTap)` with a leading `mouseMoved`
-   event (~30 ms before the click). `cua-driver click` when the
+   event (~30 ms before the click). `click` when the
    target is frontmost automatically takes this path.
 3. Accept that the real cursor visibly moves — `cghidEventTap` is
    the system HID stream, the cursor warps to the click point.
@@ -880,3 +892,4 @@ doesn't-survive-across-sessions caveat.
 If the user instead asks to navigate *within* an already-open Finder
 window, use the menu-bar flow from the "Navigating native menu bars"
 section above (click Go → pick a menu item → re-snapshot → click it).
+

@@ -621,9 +621,9 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
       const isRequired = required.has(propName);
       const requiredLabel = isRequired ? 'required' : 'optional';
       const typeLabel = formatPropertyType(prop);
-      lines.push(
-        `- \`${propName}\` (${typeLabel}, ${requiredLabel}): ${escapeMdxText(prop.description ?? '')}`
-      );
+      const description = escapeMdxText(prop.description ?? '').trimEnd();
+      const descriptionSuffix = description ? `: ${description}` : '';
+      lines.push(`- \`${propName}\` (${typeLabel}, ${requiredLabel})${descriptionSuffix}`);
     }
     lines.push('');
   }

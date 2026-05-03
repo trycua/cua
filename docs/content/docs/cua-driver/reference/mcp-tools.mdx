@@ -10,8 +10,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/cua-driver/reference/cli-reference) for CLI-specific flags like `--raw` and `--screenshot-out-file`.
 
 <Callout type="info">
-  Tool names here match the CLI form exactly. `cua-driver list_apps` and the MCP `list_apps` tool
-  run the same code path.
+  Tool names here match the CLI form exactly. `cua-driver list_apps` and the MCP `list_apps` tool run the same code path.
 </Callout>
 
 ### check_permissions
@@ -76,7 +75,7 @@ the AX path.
 - `y` (number, optional): Y in window-local screenshot pixels — same space as the PNG get_window_state returns. Top-left origin of the target's window. Must be provided together with x.
 
 ```json
-{ "pid": 844 }
+{"pid":844}
 ```
 
 ### double_click
@@ -119,7 +118,7 @@ propagate modifier keys).
 - `y` (number, optional): Y in window-local screenshot pixels — same space as the PNG get_window_state returns. Top-left origin of the target's window. Must be provided together with x.
 
 ```json
-{ "pid": 844 }
+{"pid":844}
 ```
 
 ### drag
@@ -176,7 +175,7 @@ dispatching.
 - `window_id` (integer, optional): CGWindowID for the window the pixel coordinates were measured against. Optional — when omitted the driver picks the frontmost window of `pid`. Pass when the target has multiple windows and you measured against a specific one.
 
 ```json
-{ "from_x": 100, "from_y": 200, "pid": 844, "to_x": 100, "to_y": 200 }
+{"from_x":100,"from_y":200,"pid":844,"to_x":100,"to_y":200}
 ```
 
 ### get_agent_cursor_state
@@ -202,18 +201,18 @@ at startup. Sibling to `set_config` / `cua-driver config`.
 
 Current schema:
 
-&#123;
-"schema_version": 1,
-"capture_mode": "vision" | "ax" | "som",
-"agent_cursor": &#123;
-"enabled": true,
-"motion": &#123;
-"start_handle": 0.3, "end_handle": 0.3,
-"arc_size": 0.25, "arc_flow": 0.0,
-"spring": 0.72
-&#125;
-&#125;
-&#125;
+  &#123;
+    "schema_version": 1,
+    "capture_mode": "vision" | "ax" | "som",
+    "agent_cursor": &#123;
+      "enabled": true,
+      "motion": &#123;
+        "start_handle": 0.3, "end_handle": 0.3,
+        "arc_size": 0.25, "arc_flow": 0.0,
+        "spring": 0.72
+      &#125;
+    &#125;
+  &#125;
 
 **Arguments:** none.
 
@@ -291,27 +290,26 @@ just the half of the response. Note that `vision` names
 the capture MODE; the separate `screenshot` tool (which
 captures a raw PNG without walking AX) is unrelated and
 keeps its name:
-
-- `som` — walks AX tree AND captures screenshot
-  (default). Element-indexed clicks work
-  out of the box; screenshot is there for
-  disambiguation.
-- `vision` — captures the window PNG; AX tree walk
-  is skipped entirely (no Accessibility
-  hit, no element_index cache update).
-  `tree_markdown`, `element_count`, and
-  `turn_id` omitted. Element-indexed
-  clicks will fail until a non-`vision`
-  snapshot runs — pair with pixel-addressed
-  `click({pid, x, y})`. Previously named
-  `screenshot`; the raw string
-  `"screenshot"` still decodes to `vision`
-  as a deprecated alias.
-- `ax` — walks AX tree; screen-capture call is
-  skipped entirely (no Screen Recording
-  hit). `screenshot_*` fields omitted.
-  Change with `cua-driver config set capture_mode <mode>` or
-  the `set_config` tool.
+  - `som`    — walks AX tree AND captures screenshot
+               (default). Element-indexed clicks work
+               out of the box; screenshot is there for
+               disambiguation.
+  - `vision` — captures the window PNG; AX tree walk
+               is skipped entirely (no Accessibility
+               hit, no element_index cache update).
+               `tree_markdown`, `element_count`, and
+               `turn_id` omitted. Element-indexed
+               clicks will fail until a non-`vision`
+               snapshot runs — pair with pixel-addressed
+               `click({pid, x, y})`. Previously named
+               `screenshot`; the raw string
+               `"screenshot"` still decodes to `vision`
+               as a deprecated alias.
+  - `ax`     — walks AX tree; screen-capture call is
+               skipped entirely (no Screen Recording
+               hit). `screenshot_*` fields omitted.
+Change with `cua-driver config set capture_mode <mode>` or
+the `set_config` tool.
 
 Requires Accessibility and Screen Recording permissions.
 
@@ -324,7 +322,7 @@ Requires Accessibility and Screen Recording permissions.
 - `window_id` (integer, required): CGWindowID of the target window. Must belong to `pid` and be on the user's current Space. Enumerate via `list_windows` or read from `launch_app`'s `windows` array.
 
 ```json
-{ "pid": 844, "window_id": 10725 }
+{"pid":844,"window_id":10725}
 ```
 
 ### hotkey
@@ -348,7 +346,7 @@ first, one non-modifier last.
 - `pid` (integer, required): Target process ID.
 
 ```json
-{ "keys": ["cmd", "c"], "pid": 844 }
+{"keys":["cmd","c"],"pid":844}
 ```
 
 ### launch_app
@@ -523,7 +521,7 @@ Uses CGWarpMouseCursorPosition — no drag, no click, no CGEvent.
 - `y` (integer, required): Y in screen points.
 
 ```json
-{ "x": 100, "y": 200 }
+{"x":100,"y":200}
 ```
 
 ### page
@@ -536,7 +534,7 @@ Three actions:
 
 • `get_text` — returns `document.body.innerText`. Faster than walking the AX tree for plain-text content (prices, article body, table values) that the AX tree drops or truncates.
 
-• `query_dom` — runs `querySelectorAll(css_selector)` and returns each matching element's tag, innerText, and any requested attributes as a JSON array. Useful for structured data (table rows, link hrefs, data-\* attributes) that the AX tree flattens.
+• `query_dom` — runs `querySelectorAll(css_selector)` and returns each matching element's tag, innerText, and any requested attributes as a JSON array. Useful for structured data (table rows, link hrefs, data-* attributes) that the AX tree flattens.
 
 Supported browsers: Chrome (com.google.Chrome), Brave (com.brave.Browser), Edge (com.microsoft.edgemac), Safari (com.apple.Safari). Requires "Allow JavaScript from Apple Events" enabled — see WEB_APPS.md.
 
@@ -548,7 +546,6 @@ Supported browsers: Chrome (com.google.Chrome), Brave (com.brave.Browser), Edge 
 
 • execute_javascript / get_text / query_dom — see above.
 • enable_javascript_apple_events — enable 'Allow JavaScript from Apple Events' in Chrome/Brave/Edge. Quits the browser, patches each profile's Preferences JSON, then relaunches. Requires user_has_confirmed_enabling=true — you MUST ask the user for explicit permission before calling this action.
-
 - `attributes` (array of string, optional): Element attributes to include per match (action=query_dom only). E.g. ["href", "src", "data-id"]. tag and innerText are always included.
 - `bundle_id` (string, optional): Browser bundle ID (action=enable_javascript_apple_events only). E.g. com.google.Chrome.
 - `css_selector` (string, optional): CSS selector (action=query_dom only). Passed to querySelectorAll — standard CSS syntax.
@@ -558,7 +555,7 @@ Supported browsers: Chrome (com.google.Chrome), Brave (com.brave.Browser), Edge 
 - `window_id` (integer, required): CGWindowID of the target browser window.
 
 ```json
-{ "action": "get_text", "pid": 844, "window_id": 10725 }
+{"action":"get_text","pid":844,"window_id":10725}
 ```
 
 ### press_key
@@ -599,7 +596,7 @@ cmd/shift/option/ctrl/fn. For true combinations (cmd+c),
 - `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used.
 
 ```json
-{ "key": "return", "pid": 844 }
+{"key":"return","pid":844}
 ```
 
 ### replay_trajectory
@@ -640,7 +637,7 @@ Caveats:
 - `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
 
 ```json
-{ "dir": "~/cua-trajectories/demo1" }
+{"dir":"~/cua-trajectories/demo1"}
 ```
 
 ### right_click
@@ -686,7 +683,7 @@ propagate modifier keys).
 - `y` (number, optional): Y in window-local screenshot pixels — same space as the PNG get_window_state returns. Top-left origin of the target's window. Must be provided together with x.
 
 ```json
-{ "pid": 844 }
+{"pid":844}
 ```
 
 ### screenshot
@@ -706,7 +703,7 @@ first if unsure.
 - `window_id` (integer, required): Required CGWindowID / kCGWindowNumber to capture.
 
 ```json
-{ "window_id": 10725 }
+{"window_id":10725}
 ```
 
 ### scroll
@@ -741,13 +738,13 @@ established by a prior click.
 
 - `amount` (integer, optional): Number of keystroke repetitions. Default: 3.
 - `by` (string, optional): Scroll granularity. Default: line.
-- `direction` (string, required):
+- `direction` (string, required)
 - `element_index` (integer, optional): Optional element_index from the last get_window_state for the same (pid, window_id) — focuses the element before the keystrokes fire. Requires window_id.
 - `pid` (integer, required): Target process ID.
 - `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used.
 
 ```json
-{ "direction": "down", "pid": 844 }
+{"direction":"down","pid":844}
 ```
 
 ### set_agent_cursor_enabled
@@ -771,7 +768,7 @@ fresh-CLI mode.
 - `enabled` (boolean, required): True to show the overlay cursor; false to hide.
 
 ```json
-{ "enabled": false }
+{"enabled":false}
 ```
 
 ### set_agent_cursor_motion
@@ -842,13 +839,13 @@ optional; omitted fields keep their current value.
   string) to revert to the procedural arrow.
 
 Example — brand-colored arrow:
-&#123;"gradient_colors": ["#A855F7", "#6366F1"], "bloom_color": "#A855F7"&#125;
+  &#123;"gradient_colors": ["#A855F7", "#6366F1"], "bloom_color": "#A855F7"&#125;
 
 Example — custom PNG cursor:
-&#123;"image_path": "~/cursors/my-cursor.png"&#125;
+  &#123;"image_path": "~/cursors/my-cursor.png"&#125;
 
 Example — revert to default:
-&#123;"gradient_colors": [], "bloom_color": "", "image_path": ""&#125;
+  &#123;"gradient_colors": [], "bloom_color": "", "image_path": ""&#125;
 
 **Arguments:**
 
@@ -864,14 +861,13 @@ Values survive daemon restarts AND are propagated to the
 live session state.
 
 Keys are dotted snake_case paths:
-
-- `agent_cursor.enabled` (bool)
-- `agent_cursor.motion.start_handle` (number)
-- `agent_cursor.motion.end_handle` (number)
-- `agent_cursor.motion.arc_size` (number)
-- `agent_cursor.motion.arc_flow` (number)
-- `agent_cursor.motion.spring` (number)
-- `capture_mode` (string: `vision` | `ax` | `som`)
+  - `agent_cursor.enabled` (bool)
+  - `agent_cursor.motion.start_handle` (number)
+  - `agent_cursor.motion.end_handle` (number)
+  - `agent_cursor.motion.arc_size` (number)
+  - `agent_cursor.motion.arc_flow` (number)
+  - `agent_cursor.motion.spring` (number)
+  - `capture_mode` (string: `vision` | `ax` | `som`)
 
 Arguments: `{"key": "<dotted.path>", "value": <json>}`.
 
@@ -881,7 +877,7 @@ Arguments: `{"key": "<dotted.path>", "value": <json>}`.
 - `value` (undefined, required): New value for `key`. JSON type depends on the key.
 
 ```json
-{ "key": "return", "value": "value" }
+{"key":"return","value":"value"}
 ```
 
 ### set_recording
@@ -921,7 +917,7 @@ on-disk state.
 - `video_experimental` (boolean, optional): Experimental: also capture the main display to `<output_dir>/recording.mp4` via SCStream (H.264, 30fps, no audio, no cursor). Capture-only — no zoom / post-process. Off by default. Ignored when enabled=false.
 
 ```json
-{ "enabled": false }
+{"enabled":false}
 ```
 
 ### set_value
@@ -943,13 +939,13 @@ which synthesises key events — AXValue writes are ignored by WebKit.
 
 **Arguments:**
 
-- `element_index` (integer, required):
-- `pid` (integer, required):
+- `element_index` (integer, required)
+- `pid` (integer, required)
 - `value` (string, required): New value. AX will coerce to the element's native type.
 - `window_id` (integer, required): CGWindowID for the window whose get_window_state produced the element_index. The element_index cache is scoped per (pid, window_id).
 
 ```json
-{ "element_index": 14, "pid": 844, "value": "42", "window_id": 10725 }
+{"element_index":14,"pid":844,"value":"42","window_id":10725}
 ```
 
 ### type_text
@@ -987,7 +983,7 @@ Requires Accessibility.
 - `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used.
 
 ```json
-{ "pid": 844, "text": "hello" }
+{"pid":844,"text":"hello"}
 ```
 
 ### zoom
@@ -1007,7 +1003,7 @@ The tool maps coordinates back to original (native)
 resolution by multiplying by the compression ratio z
 (original_size / scaled_size). A 500 px-wide region in
 the scaled image becomes 500 × z native pixels, so the
-returned image will be _larger_ than 500 px whenever the
+returned image will be *larger* than 500 px whenever the
 unzoomed screenshot was downscaled. This is the intended
 behaviour — the zoom undoes the compression and shows
 the region at full pixel density.
@@ -1029,5 +1025,5 @@ session so the resize ratio is known.
 - `y2` (number, required): Bottom edge of the region (resized-image pixels).
 
 ```json
-{ "pid": 844, "x1": 100, "x2": 100, "y1": 200, "y2": 200 }
+{"pid":844,"x1":100,"x2":100,"y1":200,"y2":200}
 ```

@@ -29,11 +29,11 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
-# S3 credentials for syncing databases to S3
-s3_secret = modal.Secret.from_name(
-    "docs-mcp-s3-readwrite",
-    required_keys=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
-)
+# AWS IAM role ARN for OIDC-based S3 write access (no static keys needed)
+# Role created in cloud repo: terraform/aws/docs-mcp-storage/main.tf
+S3_WRITE_ROLE_ARN = "arn:aws:iam::296062593712:role/modal-docs-mcp-write-role"
+S3_BUCKET_NAME = "trycua-docs-mcp-data"
+S3_BUCKET_REGION = "us-west-2"
 
 # Define the container image with all dependencies
 image = (
@@ -330,16 +330,16 @@ async def crawl_docs():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
-    secrets=[s3_secret],
     timeout=1800,  # 30 minutes
     cpu=1.0,
     memory=2048,
 )
-def sync_to_s3(bucket: str = "trycua-docs-mcp-data"):
+def sync_to_s3(bucket: str = S3_BUCKET_NAME):
     """Sync generated databases from Modal volumes to S3.
 
-    Uploads docs and code databases so the K8s-hosted MCP server
-    can pull fresh data on its own schedule.
+    Uses Modal OIDC federation to assume an AWS IAM role for write access.
+    No static AWS credentials needed — the IAM role trust policy is scoped
+    to this Modal workspace and app (terraform/aws/docs-mcp-storage/main.tf).
 
     Args:
         bucket: S3 bucket name to upload to
@@ -350,10 +350,23 @@ def sync_to_s3(bucket: str = "trycua-docs-mcp-data"):
 
     print(f"Syncing databases to s3://{bucket}/ ...")
 
+    # Use Modal's OIDC token (auto-injected env var) to assume AWS IAM role
+    oidc_token = os.environ["MODAL_IDENTITY_TOKEN"]
+
+    sts = boto3.client("sts", region_name=S3_BUCKET_REGION)
+    creds = sts.assume_role_with_web_identity(
+        RoleArn=S3_WRITE_ROLE_ARN,
+        RoleSessionName="modal-docs-mcp-s3-sync",
+        WebIdentityToken=oidc_token,
+        DurationSeconds=3600,
+    )["Credentials"]
+
     s3 = boto3.client(
         "s3",
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        region_name=S3_BUCKET_REGION,
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
     )
 
     uploaded = 0

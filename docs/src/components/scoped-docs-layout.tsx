@@ -1,5 +1,6 @@
 'use client';
 
+import { CustomHeader } from '@/components/custom-header';
 import { usePathname } from 'next/navigation';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import type { Root, Node, Folder } from 'fumadocs-core/page-tree';
@@ -74,6 +75,9 @@ export function ScopedDocsLayout({ tree, children }: Props) {
       nav={{ enabled: false }}
       searchToggle={{ enabled: false }}
       themeSwitch={{ enabled: false }}
+      slots={{
+        header: () => <CustomHeader showSidebarToggle />,
+      }}
       sidebar={{
         tabs: false,
         collapsible: false,

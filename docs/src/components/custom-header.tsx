@@ -4,10 +4,10 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { cn } from 'fumadocs-ui/utils/cn';
-import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
+import { cn } from '@/lib/cn';
+import { SearchTrigger } from 'fumadocs-ui/layouts/shared/slots/search-trigger';
 import { ChevronsUpDown, Check, Menu } from 'lucide-react';
-import { useSidebar } from 'fumadocs-ui/provider';
+import { useSidebar } from 'fumadocs-ui/layouts/docs/slots/sidebar';
 import LogoBlack from '@/assets/cuala-icon-black.svg';
 import LogoWhite from '@/assets/cuala-icon-white.svg';
 import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
@@ -157,11 +157,28 @@ const docsSites = [
   },
 ];
 
-export function CustomHeader() {
+function SidebarMenuButton() {
+  const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
+
+  return (
+    <button
+      onClick={() => setSidebarOpen(!sidebarOpen)}
+      className="cds-icon-button inline-flex h-9 w-9 items-center justify-center rounded-xl md:hidden"
+      aria-label="Toggle sidebar"
+    >
+      <Menu className="h-5 w-5" />
+    </button>
+  );
+}
+
+interface CustomHeaderProps {
+  showSidebarToggle?: boolean;
+}
+
+export function CustomHeader({ showSidebarToggle = false }: CustomHeaderProps) {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
 
   // Determine current docs site based on pathname
   const currentSite =
@@ -186,13 +203,7 @@ export function CustomHeader() {
         {/* Left: Logo and Nav */}
         <div className="flex items-center gap-4 md:gap-6">
           {/* Hamburger Menu Button - visible on mobile only, opens native fumadocs sidebar */}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="cds-icon-button inline-flex h-9 w-9 items-center justify-center rounded-xl md:hidden"
-            aria-label="Toggle sidebar"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
+          {showSidebarToggle && <SidebarMenuButton />}
 
           {/* Docs Switcher - logo links home, chevron opens dropdown */}
           <div className="relative flex items-center" ref={dropdownRef}>
@@ -331,7 +342,7 @@ export function CustomHeader() {
 
         {/* Right: Search, Theme, Icons */}
         <div className="flex items-center gap-2">
-          <SearchToggle className="cds-icon-button inline-flex h-9 items-center justify-center rounded-xl px-3" />
+          <SearchTrigger className="cds-icon-button inline-flex h-9 items-center justify-center rounded-xl px-3" />
 
           {/* MCP - hidden on mobile */}
           <Link

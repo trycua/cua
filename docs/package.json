@@ -25,9 +25,9 @@
     "@copilotkit/react-core": "1.50.1",
     "@copilotkit/react-ui": "1.50.1",
     "@copilotkit/runtime": "1.50.1",
-    "fumadocs-core": "16.0.8",
-    "fumadocs-mdx": "13.0.8",
-    "fumadocs-ui": "16.0.8",
+    "fumadocs-core": "16.8.5",
+    "fumadocs-mdx": "14.3.2",
+    "fumadocs-ui": "16.8.5",
     "lucide-react": "^0.525.0",
     "mermaid": "^11.12.1",
     "next": "16.0.7",
@@ -43,11 +43,12 @@
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-mdx": "^3.1.0",
+    "shiki": "4.0.2",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.8",
+    "@tailwindcss/postcss": "^4.2.4",
     "@types/mdx": "^2.0.13",
     "@types/node": "22.15.28",
     "@types/react": "^19.1.6",
@@ -56,7 +57,7 @@
     "next-validate-link": "^1.6.4",
     "postcss": "^8.5.4",
     "prettier": "^3.6.2",
-    "tailwindcss": "^4.1.8",
+    "tailwindcss": "^4.2.4",
     "tsx": "^4.7.0",
     "typescript": "^5.8.3"
   },
@@ -67,7 +68,8 @@
       "sharp"
     ],
     "overrides": {
-      "js-yaml@>=4.0.0 <4.1.1": ">=4.1.1"
+      "js-yaml@>=4.0.0 <4.1.1": ">=4.1.1",
+      "shiki": "4.0.2"
     }
   }
 }

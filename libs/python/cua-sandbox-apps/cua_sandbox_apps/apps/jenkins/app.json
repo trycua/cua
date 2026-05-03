@@ -1,0 +1,39 @@
+{
+  "id": "jenkins",
+  "name": "Jenkins",
+  "description": "The leading open-source automation server. Jenkins enables developers to build, deploy, and automate projects at any scale. It provides a flexible, extensible platform for continuous integration and continuous delivery with hundreds of plugins for integration with virtually any tool in the CI/CD toolchain.",
+  "website": "https://www.jenkins.io",
+  "icon_url": "https://jenkins.io/images/logos/jenkins/256.png",
+  "categories": [
+    "CI/CD",
+    "DevOps",
+    "Automation"
+  ],
+  "tags": [
+    "continuous-integration",
+    "continuous-deployment",
+    "automation",
+    "pipeline",
+    "plugin-ecosystem",
+    "distributed",
+    "java",
+    "open-source"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/jenkinsci/jenkins",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "jenkins",
+    "snap": "jenkins",
+    "brew": "jenkins"
+  },
+  "download_url": "https://www.jenkins.io/download/",
+  "app_type": "standalone"
+}

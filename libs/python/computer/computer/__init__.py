@@ -11,7 +11,7 @@ logger = logging.getLogger("computer")
 # Initialize telemetry when the package is imported
 try:
     # Import from core telemetry
-    from core.telemetry import (
+    from cua_core.telemetry import (
         is_telemetry_enabled,
         record_event,
     )
@@ -44,4 +44,7 @@ from .computer import Computer
 # Provider components
 from .providers.base import VMProviderType
 
-__all__ = ["Computer", "VMProviderType"]
+# PTY client
+from .pty import PtyHandle, PtyInterface
+
+__all__ = ["Computer", "PtyHandle", "PtyInterface", "VMProviderType"]

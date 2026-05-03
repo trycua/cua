@@ -1,0 +1,35 @@
+{
+  "id": "ansible",
+  "name": "Ansible",
+  "description": "A radically simple IT automation system for infrastructure as code. Handles configuration management, application deployment, cloud provisioning, ad-hoc task execution, network automation, and multi-node orchestration with an agentless architecture using SSH.",
+  "website": "https://www.ansible.com",
+  "icon_url": "https://raw.githubusercontent.com/ansible/ansible/devel/.github/ansible-logo.svg",
+  "categories": [
+    "Configuration Management"
+  ],
+  "tags": [
+    "automation",
+    "infrastructure-as-code",
+    "deployment",
+    "provisioning",
+    "orchestration",
+    "agentless",
+    "ssh"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/ansible/ansible",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "ansible",
+    "brew": "ansible"
+  },
+  "download_url": "https://pypi.org/project/ansible/",
+  "app_type": "standalone"
+}

@@ -1,0 +1,32 @@
+name: "CI: Cua Driver"
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/**"
+      - ".github/workflows/ci-swift-cua-driver.yml"
+
+concurrency:
+  group: cua-driver-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Runner images: https://github.com/actions/runner-images
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: uname -a
+      - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
+      - run: swift test
+        working-directory: ./libs/cua-driver
+  build:
+    name: Release build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: uname -a
+      - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
+      - run: swift build --configuration release
+        working-directory: ./libs/cua-driver

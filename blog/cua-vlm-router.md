@@ -55,7 +55,7 @@ Use it with the Agent SDK (make sure to set your environment variable):
 
 ```python
 import asyncio
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 from computer import Computer
 
 async def main():

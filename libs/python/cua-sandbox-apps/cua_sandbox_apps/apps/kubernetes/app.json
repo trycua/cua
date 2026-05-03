@@ -1,0 +1,46 @@
+{
+  "id": "kubernetes",
+  "name": "Kubernetes",
+  "description": "An open-source system for automating deployment, scaling, and management of containerized applications. Groups containers that make up an application into logical units for easy management and discovery.",
+  "website": "https://kubernetes.io",
+  "icon_url": "https://kubernetes.io/images/favicon.png",
+  "categories": [
+    "Container Orchestration",
+    "DevOps",
+    "Cloud Infrastructure"
+  ],
+  "tags": [
+    "container",
+    "orchestration",
+    "kubernetes",
+    "k8s",
+    "deployment",
+    "scaling",
+    "docker",
+    "containerized-applications",
+    "cloud-native",
+    "microservices",
+    "service-discovery",
+    "load-balancing"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/kubernetes/kubernetes",
+  "self_hostable": true,
+  "requires_hardware": true,
+  "package_managers": {
+    "apt": "kubectl",
+    "yum": "kubectl",
+    "zypper": "kubectl",
+    "brew": "kubectl",
+    "choco": "kubernetes-cli",
+    "winget": "Kubernetes.kubectl"
+  },
+  "download_url": "https://kubernetes.io/releases/download/",
+  "app_type": "standalone"
+}

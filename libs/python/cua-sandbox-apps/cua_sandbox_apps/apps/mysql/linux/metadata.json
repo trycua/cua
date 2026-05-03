@@ -1,0 +1,19 @@
+{
+  "binary_path": "/usr/sbin/mysqld",
+  "binary_name": "mysqld",
+  "display_name": "MySQL database",
+  "desktop_entry": "",
+  "icon_paths": [
+    "/usr/share/icons/Adwaita/scalable/places/network-server-symbolic.svg",
+    "/usr/share/icons/Humanity/mimes/128/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/16/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/256/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/32/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/48/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/48/text-x-sql.svg",
+    "/usr/share/icons/Humanity/places/22/network-server.svg",
+    "/usr/share/icons/Humanity/places/24/network-server.svg",
+    "/usr/share/icons/Humanity/places/48/network-server.svg"
+  ],
+  "version": "8.0.45-0ubuntu0.22.04.1"
+}

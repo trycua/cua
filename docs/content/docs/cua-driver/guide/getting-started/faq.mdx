@@ -1,0 +1,190 @@
+---
+title: FAQ
+description: Frequently asked questions about Cua Driver
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Common gotchas and questions. For the full action loop and tool semantics, see the [CLI reference](/cua-driver/reference/cli-reference) and [MCP tools reference](/cua-driver/reference/mcp-tools).
+
+## The action loop
+
+### Why do I get `No cached AX state`?
+
+Element-indexed actions read an in-memory cache keyed on `(pid, window_id)`. The cache is populated by `get_window_state` and replaced on every snapshot.
+
+Two common causes:
+
+1. You didn't call `get_window_state` in the current turn.
+2. You called it with a different `window_id` than the one in the action.
+
+```bash
+# Populate the cache for this exact (pid, window_id).
+cua-driver get_window_state '{"pid":844,"window_id":10725}'
+
+# Then act with the same window_id.
+cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
+```
+
+If you're running one-shot CLI invocations without a daemon, the cache lives for one process lifetime. Start the daemon first:
+
+```bash
+open -n -g -a CuaDriver --args serve
+```
+
+### Why did my screenshot come back empty (`has_screenshot: false`)?
+
+The window capture raced against a close, or the window has no backing store yet. Re-snapshot. If it persists, pick a different `window_id` via `list_windows`.
+
+### The AX tree is tiny. What's happening?
+
+Check the capture mode:
+
+```bash
+cua-driver config get capture_mode
+```
+
+Default is `som` (tree + screenshot). If it reads `vision`, `get_window_state` omits the tree by design (PNG only). Switch back to `som` to get both:
+
+```bash
+cua-driver config set capture_mode som
+```
+
+If the mode is `som` or `ax` and the tree is still small, the target uses custom rendering (Blender, Unity, Electron with AX disabled). For Chromium/Electron, retry `get_window_state` once — the tree populates on the second call. For canvas-backed apps, reach for pixel clicks instead.
+
+## Window state
+
+### My keyboard commit (Return, Space, Tab) on a minimized window silently no-ops.
+
+Minimized windows receive AX reads and AX-dispatched clicks normally, but keyboard commits fail because AX focus doesn't propagate to renderer focus on a minimized window. You hear the macOS system-alert beep, or nothing happens.
+
+Workarounds in order of preference:
+
+1. **Use `set_value` to write the field's entire value directly.** Bypasses keyboard commits.
+2. **AX-click a commit-equivalent button** (Go, Submit, checkbox). Clicks route through `AXPress` and don't need renderer focus.
+3. **Last resort: ask the user to un-minimize the window.** Don't deminiaturize programmatically — layout-disrupting on many apps.
+
+### My backgrounded SwiftUI app (System Settings) returns an almost-empty AX tree.
+
+Windows on another Space often strip their AX tree to the menu bar on SwiftUI apps. AppKit apps are usually fine.
+
+`get_window_state` returns `off_space: true` plus `window_space_ids` when this happens, so you can detect it. Solutions:
+
+- Ask the user to Mission-Control back to the Space that holds the target.
+- Drive the app through in-window toolbar buttons (which often stay exposed) rather than deep nested controls.
+- Accept the limitation for the current session.
+
+## Browsers and Electron
+
+### Right-click on Chromium web content fires as a left-click.
+
+A known Chromium renderer-IPC limit: the filter coerces synthetic right-click subtype to left on every non-HID-tap path. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). For web content itself (right-clicking an image or selection), there is no backgrounded path today. See [Limits](/cua-driver/reference/limits) for the full note.
+
+### Pixel click on a YouTube video doesn't play or pause.
+
+HTML5's click-to-play handler rejects some synthetic click paths. Use keyboard instead:
+
+```bash
+cua-driver press_key '{"pid":<pid>,"key":"k"}'     # YouTube play/pause
+cua-driver press_key '{"pid":<pid>,"key":"space"}' # generic video play/pause
+```
+
+Keyboard events travel through a different auth envelope and reach the page.
+
+### How do I navigate to a URL in Chrome without stealing focus?
+
+Pass the URL to `launch_app`:
+
+```bash
+cua-driver launch_app '{"bundle_id":"com.google.Chrome","urls":["https://trycua.com"]}'
+```
+
+The URL opens in a new window via Chrome's `application(_:open:)` delegate. The driver's focus-restore guard catches Chrome's internal activation and clobbers the frontmost back to what it was before the call.
+
+<Callout type="warn">
+  Don't use `hotkey ⌘L` to focus the omnibox. Even when delivered to a backgrounded pid, `⌘L` steals
+  focus because the receiving app interprets "user wants to type here" as activation intent.
+</Callout>
+
+## The agent cursor
+
+### How do I disable the visual cursor overlay?
+
+```bash
+cua-driver set_agent_cursor_enabled '{"enabled":false}'
+```
+
+Or via config:
+
+```bash
+cua-driver config set agent_cursor.enabled false
+```
+
+The overlay only renders when the driver has an AppKit run loop (inside `cua-driver serve` or `cua-driver mcp`). One-shot CLI invocations skip it entirely.
+
+### Can I make the cursor move faster?
+
+Tune the motion knobs:
+
+```bash
+cua-driver set_agent_cursor_motion '{"glide_duration_ms":300}'
+```
+
+See `set_agent_cursor_motion` in the [MCP tools reference](/cua-driver/reference/mcp-tools) for every knob.
+
+## Permissions
+
+### `check_permissions` says `NOT granted` but I granted both.
+
+TCC checks the calling process, not `CuaDriver.app`. Inside IDE terminals (Claude Code, Cursor, VS Code, Conductor), the shell inherits the IDE's TCC responsibility chain. So running `cua-driver check_permissions` in one of those shells reads against the IDE's bundle, not `com.trycua.driver`.
+
+Start the daemon first, which runs through LaunchServices under the CuaDriver bundle:
+
+```bash
+open -n -g -a CuaDriver --args serve
+cua-driver check_permissions   # forwards to the daemon — authoritative answer
+```
+
+### I keep seeing the permissions dialog on every launch.
+
+macOS is attributing the process to a different bundle id than the one you granted. Run `cua-driver diagnose` and share the output when filing an issue. It reports cdhash, team id, and which bundle TCC matched against.
+
+## Config and telemetry
+
+### Where does config live?
+
+```
+~/Library/Application Support/Cua Driver/config.json
+```
+
+Read and write via `cua-driver config`:
+
+```bash
+cua-driver config                        # show full config
+cua-driver config get capture_mode
+cua-driver config set capture_mode som
+cua-driver config reset                  # overwrite with defaults
+```
+
+### How do I opt out of telemetry?
+
+```bash
+cua-driver config telemetry disable
+```
+
+Or set `CUA_DRIVER_TELEMETRY_ENABLED=0` in the environment for a one-off override.
+
+Telemetry records anonymous subcommand usage (`cua_driver_api_click`, `cua_driver_serve`, etc). No command arguments, file paths, or personal information are collected.
+
+## Testing
+
+### Are there tests I can run against my install?
+
+The project includes Python integration tests under `libs/cua-driver/tests/` that exercise the real `cua-driver` stdio server against `unittest`. They run as part of `scripts/test.sh`:
+
+```bash
+cd libs/cua-driver
+./scripts/test.sh
+```
+
+For a quick manual smoke check, the Calculator test from `libs/cua-driver/Skills/cua-driver/TESTS.md` is a good five-minute run: launch Calculator hidden, snapshot, click 17 × 23 by element index, re-snapshot, verify the display reads `391` and Calculator never came to the foreground.

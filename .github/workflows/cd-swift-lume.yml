@@ -31,6 +31,8 @@ on:
         required: true
       DEVELOPER_NAME:
         required: true
+      PROVISIONING_PROFILE_BASE64:
+        required: true
 
 permissions:
   contents: write
@@ -43,6 +45,7 @@ env:
   TEAM_ID: ${{ secrets.TEAM_ID }}
   APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
   DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+  PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
 
 jobs:
   notarize:
@@ -53,9 +56,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      - name: Select Xcode 16.3
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.app
+          sudo xcode-select -s /Applications/Xcode_16.3.app
           xcodebuild -version
 
       - name: Install dependencies
@@ -137,6 +140,14 @@ jobs:
           # Clean up certificate files
           rm application.p12 installer.p12
 
+      - name: Install Provisioning Profile
+        env:
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          echo "Installing provisioning profile..."
+          echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > libs/lume/resources/embedded.provisionprofile
+          echo "Provisioning profile installed successfully"
+
       - name: Build and Notarize
         id: build_notarize
         env:
@@ -182,6 +193,14 @@ jobs:
           # Output paths for later use
           echo "tarball_path=.release/lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" >> $GITHUB_OUTPUT
           echo "pkg_path=.release/lume-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" >> $GITHUB_OUTPUT
+
+      - name: Upload build log on failure
+        if: failure() && steps.build_notarize.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-build-log
+          path: ./libs/lume/build.log
+          retention-days: 7
 
       - name: Generate SHA256 Checksums
         id: generate_checksums

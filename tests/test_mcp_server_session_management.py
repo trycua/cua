@@ -101,7 +101,7 @@ def server_module():
     _install_stub_module("computer", computer_module, stubbed_modules)
 
     # Stub agent module
-    agent_module = types.ModuleType("agent")
+    agent_module = types.ModuleType("cua_agent")
 
     class _StubComputerAgent:
         def __init__(self, *args, **kwargs):
@@ -121,7 +121,7 @@ def server_module():
 
     agent_module.ComputerAgent = _StubComputerAgent
 
-    _install_stub_module("agent", agent_module, stubbed_modules)
+    _install_stub_module("cua_agent", agent_module, stubbed_modules)
 
     # Stub session manager module
     session_manager_module = types.ModuleType("mcp_server.session_manager")

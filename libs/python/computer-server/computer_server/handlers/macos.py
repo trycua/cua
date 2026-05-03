@@ -3,6 +3,7 @@ import base64
 import copy
 import json
 import logging
+import os
 import re
 import time
 from ctypes import POINTER, byref, c_void_p
@@ -48,7 +49,11 @@ from pynput.mouse import Controller as MouseController
 from Quartz.CoreGraphics import *  # type: ignore
 from Quartz.CoreGraphics import CGPoint, CGSize  # type: ignore
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    normalize_screenshot_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,32 @@ try:
     ImageGrab.grab()
 except Exception as e:
     logger.debug(f"Failed to trigger screenshot permissions prompt: {e}")
+
+
+# Fix: pynput's MouseController.position setter uses CGEventPost with
+# kCGEventMouseMoved internally, which silently fails in macOS VMs running
+# under Apple's Virtualization.framework (Tart, Lume, or any VZVirtualMachine-
+# based hypervisor). The cursor doesn't move but no error is raised.
+#
+# CGWarpMouseCursorPosition works reliably in both VM and bare-metal environments.
+# This descriptor replaces pynput's default position property with a CGWarp-based
+# implementation. See: https://github.com/trycua/cua/issues/1162
+class _CGWarpPosition:
+    """Descriptor that uses CGWarpMouseCursorPosition instead of pynput's default."""
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        pos = CGEventGetLocation(CGEventCreate(None))
+        return (int(pos.x), int(pos.y))
+
+    def __set__(self, obj, value):
+        x, y = value
+        CGWarpMouseCursorPosition((float(x), float(y)))
+        CGAssociateMouseAndMouseCursorPosition(True)
+
+
+MouseController.position = _CGWarpPosition()
 
 
 # Constants for accessibility API
@@ -972,6 +1003,24 @@ class MacOSAutomationHandler(BaseAutomationHandler):
     mouse = MouseController()
     keyboard = KeyboardController()
 
+    @staticmethod
+    def _resolve_pynput_key(key: str):
+        """Resolve incoming key name to a pynput Key value.
+
+        The client Key enum uses 'command' as the value for Key.COMMAND, but
+        pynput expects 'cmd'. This method resolves the alias before lookup.
+        """
+        normalized = key.lower().strip()
+        key_aliases = {
+            "command": "cmd",
+        }
+        resolved_name = key_aliases.get(normalized, normalized)
+        if hasattr(Key, resolved_name):
+            return getattr(Key, resolved_name)
+        if len(key) == 1:
+            return key
+        return None
+
     async def mouse_down(
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
@@ -1054,6 +1103,18 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             self.mouse.click(Button.right, 1)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Perform a middle mouse click at the specified coordinates."""
+        try:
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+            self.mouse.click(Button.middle, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1183,12 +1244,14 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._resolve_pynput_key(key)
             if k is None:
+                logger.warning("key_down: unknown key %r", key)
                 return {"success": False, "error": f"Unknown key: {key}"}
             self.keyboard.press(k)
             return {"success": True}
         except Exception as e:
+            logger.error("key_down failed for key %r: %s", key, e)
             return {"success": False, "error": str(e)}
 
     async def key_up(self, key: str) -> Dict[str, Any]:
@@ -1201,12 +1264,14 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._resolve_pynput_key(key)
             if k is None:
+                logger.warning("key_up: unknown key %r", key)
                 return {"success": False, "error": f"Unknown key: {key}"}
             self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
+            logger.error("key_up failed for key %r: %s", key, e)
             return {"success": False, "error": str(e)}
 
     async def type_text(self, text: str) -> Dict[str, Any]:
@@ -1234,13 +1299,15 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._resolve_pynput_key(key)
             if k is None:
+                logger.warning("press_key: unknown key %r", key)
                 return {"success": False, "error": f"Unknown key: {key}"}
             self.keyboard.press(k)
             self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
+            logger.error("press_key failed for key %r: %s", key, e)
             return {"success": False, "error": str(e)}
 
     async def hotkey(self, keys: List[str]) -> Dict[str, Any]:
@@ -1255,8 +1322,9 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         try:
             seq = []
             for k in keys:
-                kk = getattr(Key, k) if hasattr(Key, k) else (k if len(k) == 1 else None)
+                kk = self._resolve_pynput_key(k)
                 if kk is None:
+                    logger.warning("hotkey: unknown key %r in keys %r", k, keys)
                     return {"success": False, "error": f"Unknown key in hotkey: {k}"}
                 seq.append(kk)
             for k in seq[:-1]:
@@ -1268,6 +1336,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
                 self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
+            logger.error("hotkey failed for keys %r: %s", keys, e)
             return {"success": False, "error": str(e)}
 
     # Scrolling Actions
@@ -1318,12 +1387,17 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     # Screen Actions
-    async def screenshot(self) -> Dict[str, Any]:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
         """Capture a screenshot of the current screen.
 
-        Returns:
-            Dictionary containing success status and base64-encoded image data or error message
+        Args:
+            format: "png" (lossless, default), "jpeg" or "jpg" (lossy, smaller).
+            quality: JPEG quality 1-95 (clamped); ignored for PNG.
         """
+        try:
+            fmt, quality = normalize_screenshot_format(format, quality)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         try:
             screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
@@ -1337,11 +1411,15 @@ class MacOSAutomationHandler(BaseAutomationHandler):
                 screenshot = screenshot.resize((max_width, new_height), Image.Resampling.LANCZOS)
 
             buffered = BytesIO()
-            # Use PNG format with optimization to reduce file size
-            screenshot.save(buffered, format="PNG", optimize=True)
+            if fmt == "jpeg":
+                screenshot.convert("RGB").save(
+                    buffered, format="JPEG", quality=quality, optimize=True
+                )
+            else:
+                screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()
-            return {"success": True, "image_data": image_data}
+            return {"success": True, "image_data": image_data, "format": fmt}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 
@@ -1369,60 +1447,4 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Clipboard Actions
-    async def copy_to_clipboard(self) -> Dict[str, Any]:
-        """Get the current content of the system clipboard.
-
-        Returns:
-            Dictionary containing success status and clipboard content or error message
-        """
-        try:
-            import pyperclip
-
-            content = pyperclip.paste()
-            return {"success": True, "content": content}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        """Set the content of the system clipboard.
-
-        Args:
-            text: Text to copy to the clipboard
-
-        Returns:
-            Dictionary containing success status and error message if failed
-        """
-        try:
-            import pyperclip
-
-            pyperclip.copy(text)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a shell command and return its output.
-
-        Args:
-            command: Shell command to execute
-
-        Returns:
-            Dictionary containing success status, stdout, stderr, and return code
-        """
-        try:
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            # Wait for the subprocess to finish
-            stdout, stderr = await process.communicate()
-            # Return decoded output
-            return {
-                "success": True,
-                "stdout": stdout.decode() if stdout else "",
-                "stderr": stderr.decode() if stderr else "",
-                "return_code": process.returncode,
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+    # Clipboard and run_command inherited from BaseAutomationHandler

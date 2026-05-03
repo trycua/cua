@@ -1,0 +1,37 @@
+{
+  "id": "redis",
+  "name": "Redis",
+  "description": "Redis is a fast, open-source, in-memory data structure store used as a database, cache, message broker, and real-time analytics engine. It supports various data structures including strings, lists, sets, hashes, streams, and vectors, with features like persistence, replication, clustering, and Lua scripting.",
+  "website": "https://redis.io",
+  "icon_url": "https://cdn.worldvectorlogo.com/logos/redis.svg",
+  "categories": [
+    "Database",
+    "Cache"
+  ],
+  "tags": [
+    "in-memory",
+    "key-value",
+    "data-structures",
+    "real-time",
+    "streaming",
+    "vector-database",
+    "NoSQL"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/redis/redis",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "redis",
+    "snap": "redis",
+    "brew": "redis",
+    "choco": "redis-64"
+  },
+  "download_url": "https://redis.io/downloads/"
+}

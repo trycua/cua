@@ -99,6 +99,7 @@ def list_agents(config_loader: "ConfigLoader | None" = None) -> list[str]:
 # Import agents (they will self-register via decorators)
 from .cua_agent import CuaAgent  # noqa: E402
 from .gemini import GeminiAgent  # noqa: E402
+from .qwen35_agent import Qwen35Agent  # noqa: E402
 
 __all__ = [
     "BaseAgent",
@@ -106,6 +107,7 @@ __all__ = [
     "FailureMode",
     "CuaAgent",
     "GeminiAgent",
+    "Qwen35Agent",
     "register_agent",
     "get_agent",
     "list_agents",

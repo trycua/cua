@@ -1,0 +1,31 @@
+{
+  "id": "github-actions",
+  "name": "GitHub Actions",
+  "description": "A cloud-based CI/CD automation platform that enables developers to build, test, and deploy code directly from GitHub repositories. Supports multiple languages, matrix testing across OS versions, and offers both GitHub-hosted runners and self-hosted runner options.",
+  "website": "https://github.com/features/actions",
+  "icon_url": "https://github.githubassets.com/images/modules/site/features/actions-icon-actions.svg",
+  "categories": [
+    "CI/CD",
+    "DevOps",
+    "Automation"
+  ],
+  "tags": [
+    "continuous-integration",
+    "continuous-deployment",
+    "workflow-automation",
+    "testing",
+    "github-native"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/actions/runner",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {},
+  "download_url": "https://github.com/actions/runner/releases"
+}

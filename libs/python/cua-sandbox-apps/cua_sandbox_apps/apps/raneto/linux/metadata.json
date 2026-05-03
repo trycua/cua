@@ -1,0 +1,19 @@
+{
+  "binary_path": "/home/cua/raneto/server.js",
+  "binary_name": "raneto",
+  "display_name": "Markdown powered Knowledgebase",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/home/cua/raneto/logo/logo.png",
+    "/home/cua/raneto/logo/logo_readme.png",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/src/static/v0.5.0/icons/favicon-16x16.png",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/src/static/v0.5.0/icons/apple-touch-icon.png",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/src/static/v0.5.0/icons/favicon-32x32.png",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/src/static/v0.5.0/icons/favicon.ico",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/src/static/favicon.ico",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/dist/public/v0.5.0/icons/favicon-16x16.png",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/dist/public/v0.5.0/icons/apple-touch-icon.png",
+    "/home/cua/raneto/node_modules/@raneto/theme-default/dist/public/v0.5.0/icons/favicon-32x32.png"
+  ],
+  "version": "0.18.1"
+}

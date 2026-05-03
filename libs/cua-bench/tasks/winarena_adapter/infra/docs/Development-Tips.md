@@ -73,7 +73,7 @@ cd scripts
 
 ```bash
 curl -v -X GET http://20.20.20.21:5000/screenshot
-# you should get a HTTP/1.1 200 OK respose
+# you should get a HTTP/1.1 200 OK response
 ```
 
 ### Connecting with the Python server from outside the docker:

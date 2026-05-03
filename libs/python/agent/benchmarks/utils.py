@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 # Add parent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from agent.agent import ComputerAgent
+from cua_agent.agent import ComputerAgent
 from models.base import ModelProtocol
 
 

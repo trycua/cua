@@ -1,6 +1,7 @@
 ---
 title: Laminar
 description: Trace Cua execution steps and sessions
+icon: laminar
 ---
 
 Cua has a native integration with [Laminar](https://laminar.sh/) – an open-source platform for tracing, evals, and labeling of autonomous AI agents. Read more about Laminar in the [Laminar docs](https://docs.lmnr.ai/).
@@ -23,14 +24,13 @@ import os
 
 import litellm
 
-from agent import ComputerAgent
-from computer import Computer
+from cua import ComputerAgent, Sandbox, Image
 from lmnr import Laminar, LaminarLiteLLMCallback # [!code highlight]
 
 Laminar.initialize() # [!code highlight]
 litellm.callbacks.append(LaminarLiteLLMCallback()) # [!code highlight]
 
-computer = Computer(
+computer = await Sandbox.create(
     os_type="linux",
     provider_type="cloud",
     name=os.getenv("CUA_CONTAINER_NAME"),

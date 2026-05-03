@@ -2,7 +2,7 @@
 
 Usage:
     cb trace view <id>   # View a single trace (run_id or session_id)
-    cb trace grid <id>   # View all traces in a run as a grid
+    cb trace traj <id>   # View agent trajectories from a run in cua.ai/trajectory-viewer
 """
 
 from __future__ import annotations
@@ -10,9 +10,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
+import tempfile
 import threading
 import urllib.parse
 import webbrowser
+import zipfile as _zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
@@ -125,9 +128,18 @@ def register_parser(subparsers):
         help='Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0")',
     )
 
-    # cb trace grid <id>
-    grid_parser = trace_subparsers.add_parser("grid", help="View all traces in a run as a grid")
-    grid_parser.add_argument("identifier", help='Run ID (e.g., "30c12572")')
+    # cb trace traj <run_id>
+    traj_parser = trace_subparsers.add_parser(
+        "traj", help="View agent trajectories from a run in cua.ai/trajectory-viewer"
+    )
+    traj_parser.add_argument("identifier", help='Run ID (e.g., "30c12572")')
+    traj_parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        default=8090,
+        help="Local file server port (default: 8090)",
+    )
 
 
 def execute(args):
@@ -136,13 +148,13 @@ def execute(args):
 
     if trace_command == "view":
         return cmd_view(args)
-    elif trace_command == "grid":
-        return cmd_grid(args)
+    elif trace_command == "traj":
+        return cmd_traj(args)
     else:
         print(f"{YELLOW}Usage: cb trace <command> <id>{RESET}")
         print(f"\n{GREY}Commands:{RESET}")
         print("  view <id>   View a single trace (run_id or session_id)")
-        print("  grid <id>   View all traces in a run as a grid")
+        print("  traj <id>   View agent trajectories in cua.ai/trajectory-viewer")
         return 1
 
 
@@ -153,6 +165,10 @@ def execute(args):
 
 def _html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _html_attr_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def cmd_view(args) -> int:
@@ -276,16 +292,16 @@ def cmd_view(args) -> int:
             """
             <tr>
               <td>
-                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true">{meta_json}</andypf-json-viewer>
+                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true" data="{meta_json}"></andypf-json-viewer>
               </td>
               <td>
-                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true">{data}</andypf-json-viewer>
+                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true" data="{data}"></andypf-json-viewer>
               </td>
               <td>{images}</td>
             </tr>
             """.format(
-                meta_json=_html_escape(json.dumps(meta, ensure_ascii=False, indent=2)),
-                data=_html_escape(data_str),
+                meta_json=_html_attr_escape(json.dumps(meta, ensure_ascii=False)),
+                data=_html_attr_escape(data_str),
                 images="<br/>".join(imgs_html) if imgs_html else "",
             )
         )
@@ -337,242 +353,187 @@ def cmd_view(args) -> int:
 
 
 # ============================================================================
-# cmd_grid - View multiple traces in a grid
+# cmd_traj - View agent trajectories via cua.ai/trajectory-viewer
 # ============================================================================
 
 
-def cmd_grid(args) -> int:
-    """View all traces in a run as a grid layout."""
+def _collect_run_trajectories(run_dir: Path) -> List[Tuple[str, Path]]:
+    """Collect all cua-agent trajectory sessions in a run directory.
+
+    Scans for task_*_agent_logs/trajectories/<session>/ inside each task dir.
+
+    Returns:
+        List of (task_name, session_dir) tuples sorted by task name.
+    """
+    sessions: List[Tuple[str, Path]] = []
+    if not run_dir.exists():
+        return sessions
+
+    for task_dir in sorted(run_dir.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        for agent_logs_dir in sorted(task_dir.glob("task_*_agent_logs")):
+            traj_root = agent_logs_dir / "trajectories"
+            if not traj_root.exists():
+                continue
+            for session_dir in sorted(traj_root.iterdir()):
+                if session_dir.is_dir():
+                    sessions.append((task_dir.name, session_dir))
+
+    return sessions
+
+
+def cmd_traj(args) -> int:
+    """View cua-agent trajectories from a run using the cua.ai trajectory viewer."""
     identifier = args.identifier
+    port = getattr(args, "port", 8090)
 
-    # Resolve identifier to run directory
-    run_dir = _resolve_trace_path(identifier)
-
-    if run_dir is None:
+    run_path = _resolve_trace_path(identifier)
+    if run_path is None:
         print(f"{RED}Run not found: {identifier}{RESET}")
         print(f"{GREY}Try:{RESET}")
         print(f"  cb run list  {GREY}# List all runs{RESET}")
         return 1
 
-    # If it's a specific trace (session_id), error - grid needs a run_id
-    if (run_dir / "dataset_info.json").exists():
-        print(f"{YELLOW}Grid view requires a run_id, not a session_id.{RESET}")
-        print(f"{GREY}To view a single trace:{RESET}")
-        print(f"  cb trace view {identifier}")
+    if (run_path / "dataset_info.json").exists():
+        print(f"{YELLOW}traj requires a run_id, not a session_id.{RESET}")
+        print(f"{GREY}To view a single trace: cb trace view {identifier}{RESET}")
         return 1
 
-    # Collect all traces in the run
-    traces = _collect_run_traces(run_dir)
-    if not traces:
-        print(f"{YELLOW}No traces found in run: {identifier}{RESET}")
+    sessions = _collect_run_trajectories(run_path)
+    if not sessions:
+        print(f"{YELLOW}No agent trajectories found in run: {identifier}{RESET}")
+        print(f"{GREY}(Trajectories are saved when tasks run with cua-agent){RESET}")
         return 1
 
-    cards_html: List[str] = []
-    for name, p in traces:
-        ds = load_from_disk(str(p))
-        preview_b64 = ""
-        for row in ds:
-            imgs = row.get("data_images") or []
-            if not imgs:
-                continue
-            img0 = imgs[0]
-            if hasattr(img0, "save"):
-                import io
+    tmp_dir = Path(tempfile.mkdtemp(prefix="cb-traj-"))
+    try:
+        # Zip each session into the temp dir
+        zip_entries: List[Tuple[str, str, str]] = []  # (task_name, session_name, zip_name)
+        for task_name, session_dir in sessions:
+            zip_name = f"{task_name}__{session_dir.name}.zip"
+            zip_path = tmp_dir / zip_name
+            with _zipfile.ZipFile(zip_path, "w", _zipfile.ZIP_DEFLATED) as zf:
+                for child in sorted(session_dir.rglob("*")):
+                    if child.is_file():
+                        zf.write(child, child.relative_to(session_dir))
+            zip_entries.append((task_name, session_dir.name, zip_name))
 
-                buf = io.BytesIO()
-                img0.save(buf, format="PNG")
-                preview_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            elif isinstance(img0, dict):
-                data = img0.get("bytes")
-                if data:
-                    preview_b64 = base64.b64encode(data).decode("ascii")
-                else:
-                    pth = img0.get("path")
-                    if pth and Path(pth).exists():
-                        data = Path(pth).read_bytes()
-                        preview_b64 = base64.b64encode(data).decode("ascii")
-            if preview_b64:
-                break
-        row_count = len(ds)
-        href = "/trace?path=" + urllib.parse.quote(str(p))
-        img_html = (
-            f'<img src="data:image/png;base64,{preview_b64}" style="width:100%;height:160px;object-fit:contain;background:#111;border-bottom:1px solid #333;"/>'
-            if preview_b64
-            else '<div style="height:160px;background:#111;border-bottom:1px solid #333;display:flex;align-items:center;justify-content:center;color:#888;">(no image)</div>'
-        )
-        cards_html.append(
-            f"""
-            <a href="#" onclick=\"window.open('{href}','trace','width=1200,height=800'); return false;\" style="text-decoration:none;color:inherit;">
-                <div class="card">
-                {img_html}
-                <div class="card-body">
-                    <div class="title">{name}</div>
-                    <div class="meta">{row_count} rows</div>
-                    <div class="path">{p}</div>
-                </div>
-                </div>
-            </a>
-            """
-        )
+        viewer_base = "https://cua.ai/trajectory-viewer"
+        zip_names = {e[2] for e in zip_entries}
 
-    index_html = f"""
-<!doctype html>
+        # Build index page
+        items_html = ""
+        for task_name, session_name, zip_name in zip_entries:
+            zip_url = f"http://localhost:{port}/{zip_name}"
+            viewer_url = f"{viewer_base}?zip={urllib.parse.quote(zip_url, safe='')}"
+            items_html += f"""
+      <div class="item">
+        <div>
+          <div class="item-name">{task_name}</div>
+          <div class="item-meta">{session_name}</div>
+        </div>
+        <a class="btn" href="{viewer_url}" target="_blank">Open Viewer</a>
+      </div>"""
+
+        index_html = f"""<!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\" />
-  <title>Trace Grid - Run {identifier}</title>
+  <meta charset="utf-8"/>
+  <title>Trajectories \u2014 Run {identifier}</title>
   <style>
-    body {{ margin: 16px; background:#0e0e0c; color:#e5e7eb; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, \"Apple Color Emoji\", \"Segoe UI Emoji\"; }}
-    h1 {{ font-size: 18px; margin:0 0 12px 0; }}
-    .grid {{ display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }}
-    .card {{ background:#1b1b18; border:1px solid #333; border-radius: 6px; overflow:hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }}
-    .card-body {{ padding: 10px; }}
-    .title {{ font-weight:600; margin-bottom: 4px; }}
-    .meta {{ color:#cbd5e1; font-size: 12px; }}
-    .path {{ color:#94a3b8; font-size: 11px; margin-top: 6px; word-break: break-all; }}
+    body{{margin:24px;background:#0e0e0c;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica Neue,Arial;}}
+    h1{{font-size:18px;margin:0 0 16px 0;font-weight:600;}}
+    .list{{display:flex;flex-direction:column;gap:8px;}}
+    .item{{background:#1b1b18;border:1px solid #333;border-radius:6px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;}}
+    .item-name{{font-weight:600;margin-bottom:3px;}}
+    .item-meta{{color:#94a3b8;font-size:12px;}}
+    .btn{{background:#2563eb;color:#fff;border:none;border-radius:5px;padding:8px 14px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block;}}
+    .btn:hover{{background:#1d4ed8;}}
   </style>
 </head>
 <body>
-  <h1>Trace Grid - Run {identifier}</h1>
-  <div class="grid">
-    {''.join(cards_html)}
+  <h1>Trajectories \u2014 Run {identifier}</h1>
+  <div class="list">{items_html}
   </div>
 </body>
-</html>
-"""
+</html>"""
 
-    def render_single(path: Path) -> bytes:
-        """Render a single trace for the popup window."""
-        ds = load_from_disk(str(path))
-        ds = ds.cast_column("data_images", ds.features["data_images"])
-        ds.set_format(type=None, columns=None)
-        rows: List[str] = []
-        row_meta: List[dict] = []
-        row_data: List[dict] = []
-        for i, row in enumerate(ds):
-            imgs_html: List[str] = []
-            imgs = row.get("data_images") or []
-            for j, img in enumerate(imgs):
-                if hasattr(img, "save"):
-                    import io
+        index_bytes = index_html.encode("utf-8")
 
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                    imgs_html.append(
-                        f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>'
-                    )
-                elif isinstance(img, dict):
-                    data = img.get("bytes")
-                    if data:
-                        b64 = base64.b64encode(data).decode("ascii")
-                        imgs_html.append(
-                            f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>'
-                        )
-                    else:
-                        pth = img.get("path")
-                        if pth and Path(pth).exists():
-                            data = Path(pth).read_bytes()
-                            b64 = base64.b64encode(data).decode("ascii")
-                            imgs_html.append(
-                                f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>'
-                            )
-            meta = {
-                "event_name": row.get("event_name"),
-                "timestamp": row.get("timestamp"),
-                "trajectory_id": row.get("trajectory_id"),
-            }
-            row_meta.append(
-                {
-                    "timestamp": meta["timestamp"],
-                    "trajectory_id": meta["trajectory_id"],
-                }
-            )
-            data_json = row.get("data_json")
-            if isinstance(data_json, (dict, list)):
-                parsed = data_json
-            elif isinstance(data_json, str):
+        class _Handler(BaseHTTPRequestHandler):
+            def _send_cors(self):
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "*")
+
+            def do_OPTIONS(self):
+                self.send_response(204)
+                self._send_cors()
+                self.end_headers()
+
+            def do_GET(self):
                 try:
-                    parsed = json.loads(data_json)
-                except Exception:
-                    parsed = data_json
-            else:
-                parsed = data_json
-
-            row_data.append(parsed if isinstance(parsed, dict) else {})
-            (
-                json.dumps(parsed, ensure_ascii=False, indent=2)
-                if not isinstance(parsed, str)
-                else str(parsed)
-            )
-            rows.append(
-                f"""
-                <tr>
-                  <td>
-                    <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true">{json.dumps(meta, ensure_ascii=False, indent=2)}</andypf-json-viewer>
-                  </td>
-                  <td>
-                    <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true">{json.dumps(parsed, ensure_ascii=False, indent=2) if not isinstance(parsed, str) else parsed}</andypf-json-viewer>
-                  </td>
-                  <td>{'<br/>'.join(imgs_html)}</td>
-                </tr>
-                """
-            )
-        template_path = Path(__file__).resolve().parents[2] / "www" / "trace_viewer.html"
-        html_template = template_path.read_text(encoding="utf-8")
-        row_data_b64 = base64.b64encode(json.dumps(row_data).encode("utf-8")).decode("ascii")
-
-        html = (
-            html_template.replace("__PATH_NAME__", str(path.name))
-            .replace("__PATH__", str(path))
-            .replace("__ROWS__", "".join(rows))
-            .replace("__ROW_META__", json.dumps(row_meta))
-            .replace("__ROW_DATA__", f'"{row_data_b64}"')
-        )
-        return html.encode("utf-8")
-
-    class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            try:
-                if self.path.startswith("/trace?"):
-                    q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-                    p = Path(q.get("path", [""])[0])
-                    if not p.exists():
+                    path = self.path.split("?")[0].lstrip("/")
+                    if not path:
+                        body = index_bytes
+                        ct = "text/html; charset=utf-8"
+                    elif path in zip_names:
+                        body = (tmp_dir / path).read_bytes()
+                        ct = "application/zip"
+                    else:
                         self.send_response(404)
                         self.end_headers()
                         return
-                    body = render_single(p)
-                else:
-                    body = index_html.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            except Exception as e:
-                import traceback
+                    self.send_response(200)
+                    self.send_header("Content-Type", ct)
+                    self.send_header("Content-Length", str(len(body)))
+                    self._send_cors()
+                    self.end_headers()
+                    self.wfile.write(body)
+                except Exception:
+                    self.send_response(500)
+                    self.end_headers()
 
-                traceback.print_exc()
-                print(f"{RED}Error serving request: {e}{RESET}")
-                self.send_response(500)
-                self.end_headers()
+            def log_message(self, format, *args):
+                return
 
-        def log_message(self, format, *args):
-            return
+        try:
+            httpd = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
+        except OSError:
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            port = httpd.server_address[1]
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    port = httpd.server_address[1]
-    url = f"http://127.0.0.1:{port}/"
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
 
-    t = threading.Thread(target=httpd.serve_forever, daemon=True)
-    t.start()
-    webbrowser.open(url)
-    print(f"{CYAN}Serving traces viewer at:{RESET} {url}\n{GREY}Press Enter to stop...{RESET}")
-    try:
-        input()
-    except KeyboardInterrupt:
-        pass
+        # Single session → open viewer directly; multiple → open index
+        if len(zip_entries) == 1:
+            task_name, session_name, zip_name = zip_entries[0]
+            zip_url = f"http://localhost:{port}/{zip_name}"
+            open_url = f"{viewer_base}?zip={urllib.parse.quote(zip_url, safe='')}"
+        else:
+            open_url = f"http://localhost:{port}/"
+
+        webbrowser.open(open_url)
+
+        n = len(zip_entries)
+        print(f"{CYAN}Serving {n} trajectory session{'s' if n != 1 else ''}:{RESET}")
+        for task_name, session_name, zip_name in zip_entries:
+            zip_url = f"http://localhost:{port}/{zip_name}"
+            viewer_url = f"{viewer_base}?zip={urllib.parse.quote(zip_url, safe='')}"
+            print(f"  {GREY}{task_name}:{RESET} {viewer_url}")
+        print(f"\n{GREY}Press Enter to stop...{RESET}")
+
+        try:
+            input()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     finally:
-        httpd.shutdown()
-        httpd.server_close()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
     return 0

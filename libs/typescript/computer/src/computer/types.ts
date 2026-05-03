@@ -22,6 +22,11 @@ export interface BaseComputerConfig {
    * @default "macos"
    */
   osType: OSType;
+
+  /**
+   * The VM provider type
+   */
+  vmProvider?: VMProviderType;
 }
 
 export interface CloudComputerConfig extends BaseComputerConfig {
@@ -32,5 +37,10 @@ export interface CloudComputerConfig extends BaseComputerConfig {
 }
 
 export enum VMProviderType {
+  DOCKER = 'docker',
+  LUME = 'lume',
   CLOUD = 'cloud',
+  QEMU = 'qemu',
+  WINDOWS_SANDBOX = 'windows-sandbox',
+  HOST = 'host',
 }

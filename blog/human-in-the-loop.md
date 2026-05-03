@@ -46,8 +46,8 @@ The web UI will show pending completions. Click any completion to take control o
 Perfect for creating demonstrations or when you want full manual control:
 
 ```python
-from agent import ComputerAgent
-from agent.computer import computer
+from cua_agent import ComputerAgent
+from cua_agent.computer import computer
 
 agent = ComputerAgent(
     "human/human",

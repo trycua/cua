@@ -1,0 +1,33 @@
+{
+  "app_id": "vim",
+  "os": "linux",
+  "install_exit_code": 0,
+  "download_available": true,
+  "install_script": "#!/bin/bash\nset -e\n\n# Install Vim on Linux\n# This script installs both vim (CLI) and gvim (GUI) variants\n\necho \"Updating package lists...\"\nsudo apt-get update\n\necho \"Installing Vim and gvim...\"\nsudo apt-get install -y vim vim-gtk3\n\necho \"Verifying installation...\"\nvim --version | head -1\n\necho \"Installation complete!\"",
+  "install_stdout": "Updating package lists...\nGet:1 http://security.ubuntu.com/ubuntu jammy-security InRelease [129 kB]\nHit:2 http://archive.ubuntu.com/ubuntu jammy InRelease\nGet:3 http://archive.ubuntu.com/ubuntu jammy-updates InRelease [128 kB]\nInstalling Vim and gvim...\nReading package lists...\nBuilding dependency tree...\nReading state information...\nThe following additional packages will be installed:\n  fonts-lato javascript-common libjs-jquery liblua5.2-0 libpython3.10\n  libruby3.0 rake ruby ruby-net-telnet ruby-rubygems ruby-webrick ruby-xmlrpc\n  ruby3.0 rubygems-integration vim-common vim-gui-common vim-runtime xxd\nSuggested packages:\n  apache2 | lighttpd | httpd ri ruby-dev bundler ctags vim-doc vim-scripts\n  cscope fonts-dejavu gnome-icon-theme\nThe following NEW packages will be installed:\n  fonts-lato javascript-common libjs-jquery liblua5.2-0 libpython3.10\n  libruby3.0 rake ruby ruby-net-telnet ruby-rubygems ruby-webrick ruby-xmlrpc\n  ruby3.0 rubygems-integration vim vim-common vim-gtk3 vim-gui-common\n  vim-runtime xxd\n0 upgraded, 20 newly installed, 0 to remove and 42 not upgraded.\nNeed to get 21.5 MB of archives.\nAfter this operation, 87.7 MB of additional disk space will be used.\nVerification complete!",
+  "launch_script": "#!/bin/bash\n# Simple launch script - starts gvim in background\nexport DISPLAY=:0\ngvim /tmp/vim_test.txt > /dev/null 2>&1 &\nsleep 2",
+  "verification_command": "gvim --version 2>/dev/null | head -1",
+  "sandbox_name": "linux-72c26273",
+  "extract_metadata_script": "#!/bin/bash\n\n# Extract metadata for Vim installation\n\n# Find the main Vim binary\nBINARY_PATH=$(command -v gvim 2>/dev/null || command -v vim 2>/dev/null)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get full version information from vim --version\nVERSION_LINE=$(vim --version 2>/dev/null | head -1)\n# Extract version number - looks for pattern like \"8.2.3995\" or \"8.2\"\nVERSION=$(echo \"$VERSION_LINE\" | grep -oE \"[0-9]+\\.[0-9]+(\\.[0-9]+)?\")\n\n# Find .desktop files - search for vim-related .desktop files\nDESKTOP_ENTRY=\"\"\nfor desk_file in /usr/share/applications/{gvim,vim}.desktop; do\n    if [ -f \"$desk_file\" ]; then\n        DESKTOP_ENTRY=\"$desk_file\"\n        break\n    fi\ndone\n\n# If still not found, search more broadly\nif [ -z \"$DESKTOP_ENTRY\" ]; then\n    DESKTOP_ENTRY=$(find /usr/share/applications -name \"*vim*.desktop\" -type f 2>/dev/null | head -1)\nfi\n\n# Extract display name from .desktop file\nDISPLAY_NAME=\"Vim\"\nif [ -n \"$DESKTOP_ENTRY\" ] && [ -f \"$DESKTOP_ENTRY\" ]; then\n    DISPLAY_NAME=$(grep -E \"^Name=\" \"$DESKTOP_ENTRY\" 2>/dev/null | head -1 | cut -d'=' -f2)\n    if [ -z \"$DISPLAY_NAME\" ]; then\n        DISPLAY_NAME=\"Vim\"\n    fi\nfi\n\n# Find icon files - use dpkg to get all files from packages, then filter for icons\nICON_PATHS=()\nfor pkg in vim-gtk3 vim gvim; do\n    if dpkg -l 2>/dev/null | grep -q \"^ii.*$pkg\"; then\n        # For each file in the package, check if it matches icon patterns\n        while IFS= read -r file; do\n            if [ -f \"$file\" ] && [[ \"$file\" =~ \\.(png|svg|ico)$ ]]; then\n                # Check if this is a vim icon\n                if [[ \"$file\" =~ (vim|gvim) ]]; then\n                    ICON_PATHS+=(\"$file\")\n                fi\n            fi\n        done < <(dpkg -L \"$pkg\" 2>/dev/null)\n    fi\ndone\n\n# Also search standard icon directories\nwhile IFS= read -r icon; do\n    ICON_PATHS+=(\"$icon\")\ndone < <(find /usr/share/icons /usr/share/pixmaps -name \"*vim*\" -o -name \"*gvim*\" 2>/dev/null | sort -u)\n\n# Remove duplicates from ICON_PATHS\nif [ ${#ICON_PATHS[@]} -gt 0 ]; then\n    ICON_PATHS=($(printf '%s\\n' \"${ICON_PATHS[@]}\" | sort -u))\nfi\n\n# Build JSON output\nDESKTOP_JSON=\"null\"\nif [ -n \"$DESKTOP_ENTRY\" ]; then\n    DESKTOP_JSON=\"\\\"$DESKTOP_ENTRY\\\"\"\nfi\n\nICON_JSON=\"[]\"\nif [ ${#ICON_PATHS[@]} -gt 0 ]; then\n    ICON_JSON=\"[\"\n    for i in \"${!ICON_PATHS[@]}\"; do\n        ICON_JSON+=\"\\\"${ICON_PATHS[$i]}\\\"\"\n        if [ $i -lt $((${#ICON_PATHS[@]} - 1)) ]; then\n            ICON_JSON+=\", \"\n        fi\n    done\n    ICON_JSON+=\"]\"\nfi\n\ncat <<EOF\n{\n  \"binary_path\": \"$BINARY_PATH\",\n  \"binary_name\": \"$BINARY_NAME\",\n  \"display_name\": \"$DISPLAY_NAME\",\n  \"desktop_entry\": $DESKTOP_JSON,\n  \"icon_paths\": $ICON_JSON,\n  \"version\": \"$VERSION\"\n}\nEOF",
+  "metadata": {
+    "binary_path": "/usr/bin/gvim",
+    "binary_name": "gvim",
+    "display_name": "GVim",
+    "desktop_entry": "/usr/share/applications/gvim.desktop",
+    "icon_paths": [
+      "/usr/share/icons/hicolor/48x48/apps/gvim.png",
+      "/usr/share/icons/hicolor/scalable/apps/gvim.svg",
+      "/usr/share/icons/locolor/16x16/apps/gvim.png",
+      "/usr/share/icons/locolor/32x32/apps/gvim.png"
+    ],
+    "version": "8.2"
+  },
+  "screenshot_verification": "PASS: Vim is visibly open and running with two windows displayed - the main Vim Text Editor window in the background and a foreground Vim window showing a swap file recovery dialog with multiple action buttons (Open Read-Only, Edit anyway, Recover, Quit, Abort).",
+  "verification_passed": true,
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\vim\\linux\\logs\\icon-48x48.png",
+    "cua_sandbox_apps\\apps\\vim\\linux\\logs\\icon-unknownxunknown.svg",
+    "cua_sandbox_apps\\apps\\vim\\linux\\logs\\icon-16x16.png",
+    "cua_sandbox_apps\\apps\\vim\\linux\\logs\\icon-32x32.png"
+  ]
+}

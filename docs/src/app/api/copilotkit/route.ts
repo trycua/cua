@@ -4,6 +4,8 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from '@copilotkit/runtime';
 import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { awsCredentialsProvider } from '@vercel/functions/oidc';
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { PostHog } from 'posthog-node';
@@ -213,19 +215,24 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 
   run(input: any): ReturnType<BuiltInAgent['run']> {
-    const filteredMessages = this.filterEmptyMessages(input.messages || []);
+    // Don't filter messages - let CopilotKit/Anthropic handle empty messages
+    const messages = input.messages || [];
     const modifiedInput = {
       ...input,
-      messages: filteredMessages,
+      messages: messages,
     };
 
     // Fix message ordering - without unique IDs, responses get merged
     const uniqueMessageId = randomUUID();
     const conversationId = input.threadId || uniqueMessageId;
 
-    const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
+    const userMessages = messages.filter((m: any) => m.role === 'user');
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
+
+    const category = userPrompt ? categorizePrompt(userPrompt) : 'other';
+    const questionType = userPrompt ? detectQuestionType(userPrompt) : 'other';
+    const topics = userPrompt ? extractTopics(userPrompt) : [];
 
     if (posthog && userPrompt) {
       posthog.capture({
@@ -233,11 +240,11 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         event: 'copilot_user_prompt',
         properties: {
           prompt: userPrompt,
-          category: categorizePrompt(userPrompt),
-          question_type: detectQuestionType(userPrompt),
-          topics: extractTopics(userPrompt),
+          category,
+          question_type: questionType,
+          topics,
           prompt_length: userPrompt.length,
-          message_count: filteredMessages.length,
+          message_count: messages.length,
           conversation_id: conversationId,
           timestamp: new Date().toISOString(),
         },
@@ -262,9 +269,9 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             prompt: userPrompt,
             response: fullResponse,
             // Prompt categorization
-            category: categorizePrompt(userPrompt),
-            question_type: detectQuestionType(userPrompt),
-            topics: extractTopics(userPrompt),
+            category,
+            question_type: questionType,
+            topics,
             prompt_length: userPrompt.length,
             // Response analysis
             response_type: responseAnalysis.response_type,
@@ -322,8 +329,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               properties: {
                 error: err?.message || String(err),
                 prompt: userPrompt,
-                category: categorizePrompt(userPrompt),
-                question_type: detectQuestionType(userPrompt),
+                category,
+                question_type: questionType,
                 conversation_id: conversationId,
                 timestamp: new Date().toISOString(),
               },
@@ -390,9 +397,78 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 }
 
+// Default AWS role ARN for Vercel OIDC
+const AWS_ROLE_ARN =
+  process.env.AWS_ROLE_ARN || 'arn:aws:iam::296062593712:role/vercel-bedrock-role';
+
+// Cache for AWS credentials (tokens are cached for up to 45 min by Vercel)
+let cachedCredentials: {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+} | null = null;
+let credentialExpiry: number = 0;
+
+// Get Bedrock provider with Vercel OIDC support
+let credentialsRefreshPromise: Promise<{
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}> | null = null;
+
+function createBedrockProvider() {
+  return createAmazonBedrock({
+    region: 'us-east-1',
+    credentialProvider: async () => {
+      // Check for static credentials first (for local dev)
+      if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        return {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          sessionToken: process.env.AWS_SESSION_TOKEN,
+        };
+      }
+
+      // Return cached credentials if still valid (with 5 min buffer)
+      if (cachedCredentials && Date.now() < credentialExpiry - 5 * 60 * 1000) {
+        return cachedCredentials;
+      }
+
+      if (credentialsRefreshPromise) {
+        return credentialsRefreshPromise;
+      }
+
+      // Use Vercel's awsCredentialsProvider which handles OIDC token retrieval server-side
+      credentialsRefreshPromise = (async () => {
+        const credProvider = awsCredentialsProvider({
+          roleArn: AWS_ROLE_ARN,
+        });
+
+        const creds = await credProvider();
+        cachedCredentials = {
+          accessKeyId: creds.accessKeyId,
+          secretAccessKey: creds.secretAccessKey,
+          sessionToken: creds.sessionToken,
+        };
+        // Cache for 40 minutes (Vercel caches token for 45 min max)
+        credentialExpiry = Date.now() + 40 * 60 * 1000;
+        return cachedCredentials;
+      })();
+
+      try {
+        return await credentialsRefreshPromise;
+      } finally {
+        credentialsRefreshPromise = null;
+      }
+    },
+  });
+}
+
+const bedrock = createBedrockProvider();
+
 const docsAgent = new AnthropicSafeBuiltInAgent({
   maxSteps: 100,
-  model: 'anthropic/claude-haiku-4-5-20251001',
+  model: bedrock('us.anthropic.claude-haiku-4-5-20251001-v1:0'),
   prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.
 

@@ -29,7 +29,7 @@ final class MockVNCService: VNCService {
         return nil
     }
 
-    func start(port: Int, virtualMachine: Any?) async throws {
+    func start(port: Int, password: String? = nil, virtualMachine: Any?) async throws {
         isRunning = true
         url = "vnc://localhost:\(port)"
         _attachedVM = virtualMachine

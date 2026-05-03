@@ -1,0 +1,38 @@
+{
+  "id": "wireshark",
+  "name": "Wireshark",
+  "description": "The world's foremost network protocol analyzer. Wireshark enables users to capture and examine traffic flowing across computer networks with deep inspection capabilities across hundreds of protocols. It provides live packet capture and offline analysis with advanced filtering, VoIP analysis, and protocol decryption capabilities for network troubleshooting, security analysis, and protocol development.",
+  "website": "https://www.wireshark.org",
+  "download_url": "https://www.wireshark.org/download/win64/Wireshark-4.6.4-x64.exe",
+  "icon_url": "https://gitlab.com/uploads/-/system/project/avatar/7898047/wsicon256.png",
+  "categories": [
+    "Network Analysis",
+    "Network Tools",
+    "Security"
+  ],
+  "tags": [
+    "packet-sniffer",
+    "network-analyzer",
+    "protocol-analyzer",
+    "wiretap",
+    "network-troubleshooting",
+    "network-security",
+    "open-source"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://gitlab.com/wireshark/wireshark",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "wireshark",
+    "brew": "wireshark",
+    "choco": "wireshark",
+    "winget": "WiresharkFoundation.Wireshark"
+  }
+}

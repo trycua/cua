@@ -1,0 +1,77 @@
+---
+title: Cloud Sandbox
+description: Run Claude Code in a Cua cloud sandbox
+---
+
+A complete script that hands off a coding task to Claude Code running inside a Cua cloud sandbox.
+
+## Prerequisites
+
+```bash
+pip install cua-sandbox
+export CUA_API_KEY="your-cua-key"
+export ANTHROPIC_API_KEY="your-anthropic-key"
+```
+
+## Script
+
+```python
+"""Run Claude Code inside a Cua cloud sandbox."""
+
+import asyncio
+import os
+
+from cua_sandbox import Image, Sandbox
+
+image = Image.linux("ubuntu", "24.04")
+
+
+async def run(sb, cmd, **kwargs):
+    """Run a command and print its output."""
+    print(f"$ {cmd}")
+    result = await sb.shell.run(cmd, **kwargs)
+    if result.stdout:
+        print(result.stdout.strip())
+    if result.stderr:
+        print(result.stderr.strip())
+    return result
+
+
+async def main():
+    api_key = os.environ["ANTHROPIC_API_KEY"]
+
+    async with Sandbox.ephemeral(image) as sb:
+        # Install Node.js 20 + Claude Code (skip if already present)
+        check = await sb.shell.run("which claude", timeout=10)
+        if check.returncode != 0:
+            sudo = "sudo " if (await sb.shell.run("whoami")).stdout.strip() != "root" else ""
+            await run(sb, f"{sudo}apt-get update && {sudo}apt-get install -y curl git", timeout=120)
+            await run(sb, f"curl -fsSL https://deb.nodesource.com/setup_20.x | {sudo}bash -", timeout=60)
+            await run(sb, f"{sudo}apt-get install -y nodejs", timeout=60)
+            await run(sb, f"{sudo}npm install -g @anthropic-ai/claude-code", timeout=120)
+
+        # Run Claude Code
+        result = await run(
+            sb,
+            f"ANTHROPIC_API_KEY='{api_key}' claude "
+            f"--dangerously-skip-permissions "
+            f"-p 'Create a hello world index.html file' "
+            f"--output-format stream-json --verbose",
+            timeout=300,
+        )
+
+        # Verify the result
+        await run(sb, "cat index.html", timeout=10)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Run it
+
+```bash
+python test_claude_code_cloud.py
+```
+
+See the [Claude Code guide](/cua/guide/agents-in-sandbox/claude-code) for more patterns like working on repositories, resuming sessions, and custom system prompts.

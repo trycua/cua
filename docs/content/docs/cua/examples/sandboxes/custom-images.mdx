@@ -1,0 +1,148 @@
+---
+title: Custom Images
+description: Run sandboxes from OCI registry images, local disk files, and OSWorld benchmarks
+# test-sources:
+#   examples/sandboxes/test_linux_local_registry_vm.py
+#   examples/sandboxes/test_macos_local_registry_vm.py
+#   examples/sandboxes/test_linux_local_osworld_vm.py
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Beyond the built-in `Image.linux()` / `Image.macos()` / `Image.windows()` constructors, the SDK supports pulling from OCI registries and running local disk images directly.
+
+---
+
+## OCI Registry — Linux VM via Tart
+
+Pull a Linux OCI VM image from `ghcr.io` and run it locally with `TartRuntime`. Tart uses Apple Virtualization framework and only works on macOS.
+
+<Callout type="info">Requires macOS host with [Tart](https://github.com/cirruslabs/tart) installed.</Callout>
+
+```python
+# source: examples/sandboxes/test_linux_local_registry_vm.py
+import asyncio
+from cua import Image, Sandbox
+from cua.runtime import TartRuntime
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/trycua/cua-xfce:latest"),
+        local=True,
+        runtime=TartRuntime(),
+        name="example-linux-local-registry-vm",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        print(result.stdout.strip())  # "Linux"
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## OCI Registry — macOS VM
+
+Pull a macOS OCI image. The SDK reads the OCI manifest to auto-select Lume as the runtime.
+
+<Callout type="info">Requires macOS host with Lume installed. For cloud macOS, use `Image.macos()` without `local=True` instead.</Callout>
+
+```python
+# source: examples/sandboxes/test_macos_local_registry_vm.py
+import asyncio
+from cua import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/trycua/macos-tahoe-cua:latest"),
+        local=True,
+        name="example-macos-local-registry-vm",
+    ) as sb:
+        result = await sb.shell.run("sw_vers")
+        print(result.stdout.strip())
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+---
+
+## Local disk image — qcow2 / vhdx / iso
+
+Run any local disk image directly. Supported formats: `.qcow2`, `.vhdx`, `.raw`, `.img`, `.iso`.
+
+```python
+import asyncio
+from cua import Image, Sandbox
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.from_file("/path/to/disk.qcow2", os_type="linux"),
+        local=True,
+    ) as sb:
+        result = await sb.shell.run("uname -a")
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+URLs are downloaded and cached automatically in `~/.cua/cua-sandbox/image-cache/`:
+
+```python
+Image.from_file("https://example.com/custom-linux.qcow2", os_type="linux")
+```
+
+---
+
+## OSWorld benchmark image
+
+Run the standard [OSWorld](https://os-world.github.io/) Ubuntu image using the OSWorld Flask transport (`agent_type="osworld"`). The SDK downloads and caches the image from HuggingFace automatically.
+
+<Callout type="info">
+  Requires QEMU. The first run downloads the ~8GB Ubuntu.qcow2 image — subsequent runs use the local cache at `~/.cua/cua-sandbox/image-cache/`.
+</Callout>
+
+```python
+# source: examples/sandboxes/test_linux_local_osworld_vm.py
+import asyncio
+from cua import Image, Sandbox
+from cua.runtime import QEMURuntime
+
+OSWORLD_IMAGE = (
+    "https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip"
+)
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.from_file(OSWORLD_IMAGE, os_type="linux", agent_type="osworld"),
+        local=True,
+        runtime=QEMURuntime(
+            mode="bare-metal",
+            api_port=18020,
+            vnc_display=20,
+            memory_mb=4096,
+            cpu_count=4,
+        ),
+        name="example-linux-local-osworld-vm",
+    ) as sb:
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+        w, h = await sb.get_dimensions()
+        print(f"Screen: {w}x{h}")  # 1920x1080
+
+
+asyncio.run(main())
+```
+
+The `agent_type="osworld"` flag tells the SDK to use the OSWorld Flask API (`/screenshot`, `/execute_action`) instead of the standard computer-server transport. This matches the interface expected by the [OSWorld benchmark harness](/cua/guide/integrations/benchmarks/introduction).

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -13,7 +14,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import aiohttp
 import uvicorn
-from core.telemetry import record_event
+from cua_core.telemetry import record_event
 from fastapi import (
     FastAPI,
     Header,
@@ -36,11 +37,41 @@ try:
 except ImportError:
     HAS_MCP = False
 
-# Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
-AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
+# Status code returned when UNAVAILABLE_WITHOUT_CONTAINER_NAME is set and CONTAINER_NAME is missing.
+DEFAULT_UNAVAILABLE_STATUS_CODE: int = 503
+
+
+def _parse_bool_env(name: str) -> bool:
+    return os.environ.get(name, "").lower().strip() in ("1", "true", "yes", "y", "on")
+
+
+def _unavailable_status_code() -> Optional[int]:
+    """Return the HTTP status code to use when CONTAINER_NAME is required but unset.
+
+    When ``UNAVAILABLE_WITHOUT_CONTAINER_NAME`` is truthy and ``CONTAINER_NAME`` is not
+    set, the server should reject requests with the configured status code
+    (``UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE``, default 503) rather
+    than passing through to local dev mode. Returns ``None`` when the server should
+    proceed normally (either because ``CONTAINER_NAME`` is set, or because the
+    unavailable-without-container flag is not enabled).
+    """
+    if os.environ.get("CONTAINER_NAME"):
+        return None
+    if not _parse_bool_env("UNAVAILABLE_WITHOUT_CONTAINER_NAME"):
+        return None
+    try:
+        return int(
+            os.environ.get(
+                "UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE",
+                str(DEFAULT_UNAVAILABLE_STATUS_CODE),
+            )
+        )
+    except ValueError:
+        return DEFAULT_UNAVAILABLE_STATUS_CODE
+
 
 try:
-    from agent import ComputerAgent
+    from cua_agent import ComputerAgent
 
     HAS_AGENT = True
 except ImportError:
@@ -74,6 +105,78 @@ app = FastAPI(
     lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
     redirect_slashes=False,
 )
+
+
+class UnavailableWithoutContainerMiddleware:
+    """ASGI middleware that rejects all requests when CONTAINER_NAME is required but unset.
+
+    Controlled by env vars (read per-request so tests and dynamic config work):
+    - ``UNAVAILABLE_WITHOUT_CONTAINER_NAME``: if truthy and ``CONTAINER_NAME`` is unset,
+      every HTTP and WebSocket request is rejected.
+    - ``UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE``: HTTP status code for
+      rejections (default 503).
+
+    When disabled (either env var not set), requests pass through unchanged, preserving
+    the original "local development mode" behavior for backwards compatibility.
+    """
+
+    _DETAIL = "Service unavailable: CONTAINER_NAME is required but not configured"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        scope_type = scope.get("type")
+        if scope_type in ("http", "websocket"):
+            status_code = _unavailable_status_code()
+            if status_code is not None:
+                if scope_type == "http":
+                    await self._reject_http(send, status_code)
+                else:
+                    await self._reject_websocket(receive, send, status_code)
+                return
+        await self.app(scope, receive, send)
+
+    @classmethod
+    async def _reject_http(cls, send, status_code):
+        body = json.dumps({"detail": cls._DETAIL}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    @classmethod
+    async def _reject_websocket(cls, receive, send, status_code):
+        # Accept first so we can send a structured JSON error before closing — this
+        # preserves the existing error shape that clients already handle.
+        event = await receive()
+        if event.get("type") != "websocket.connect":
+            return
+        await send({"type": "websocket.accept"})
+        await send(
+            {
+                "type": "websocket.send",
+                "text": json.dumps(
+                    {
+                        "success": False,
+                        "error": cls._DETAIL,
+                        "status_code": status_code,
+                    }
+                ),
+            }
+        )
+        # 1008 = Policy Violation
+        await send({"type": "websocket.close", "code": 1008})
+
+
+app.add_middleware(UnavailableWithoutContainerMiddleware)
 
 # CORS configuration
 origins = ["*"]
@@ -218,27 +321,29 @@ handlers = {
     "set_clipboard": automation_handler.set_clipboard,
 }
 
+# Android-only commands — registered only when the Android handler is active
+# so non-Android server instances don't fail at startup with AttributeError.
+if hasattr(automation_handler, "multitouch_gesture"):
+    handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
 
 class AuthenticationManager:
     def __init__(self):
-        self.sessions: Dict[str, Dict[str, Any]] = {}
         self.container_name = os.environ.get("CONTAINER_NAME")
-
-    def _hash_credentials(self, container_name: str, api_key: str) -> str:
-        """Create a hash of container name and API key for session identification"""
-        combined = f"{container_name}:{api_key}"
-        return hashlib.sha256(combined.encode()).hexdigest()
-
-    def _is_session_valid(self, session_data: Dict[str, Any]) -> bool:
-        """Check if a session is still valid based on expiration time"""
-        if not session_data.get("valid", False):
-            return False
-
-        expires_at = session_data.get("expires_at", 0)
-        return time.time() < expires_at
+        self.api_base_url = os.environ.get("CUA_BASE_URL_AUTH", "https://www.cua.ai").rstrip("/")
 
     async def auth(self, container_name: str, api_key: str) -> bool:
-        """Authenticate container name and API key, using cached sessions when possible"""
+        """Authenticate container name and API key against the TryCUA API.
+
+        Every call hits the API directly — results are not cached.  The
+        previous implementation cached both successes and failures with a
+        60 s TTL (``CUA_AUTH_TTL_SECONDS``), but that caused transient
+        network/DNS errors immediately after VM boot to lock out legitimate
+        clients for the full TTL window.  Since the gate sits in front of
+        every SDK request on a freshly provisioned VM, a single cold-start
+        DNS hiccup would flip the VM into a perpetually-401 state until
+        the TTL expired.
+        """
         # If no CONTAINER_NAME is set, always allow access (local development)
         if not self.container_name:
             logger.info(
@@ -253,37 +358,19 @@ class AuthenticationManager:
             )
             return False
 
-        # Create hash for session lookup
-        session_hash = self._hash_credentials(container_name, api_key)
-
-        # Check if we have a valid cached session
-        if session_hash in self.sessions:
-            session_data = self.sessions[session_hash]
-            if self._is_session_valid(session_data):
-                logger.info(f"Using cached authentication for container: {container_name}")
-                return session_data["valid"]
-            else:
-                # Remove expired session
-                del self.sessions[session_hash]
-
-        # No valid cached session, authenticate with API
         logger.info(f"Authenticating with TryCUA API for container: {container_name}")
 
         try:
+            from cua_core.http import cua_version_headers
+
             async with aiohttp.ClientSession() as session:
-                headers = {"Authorization": f"Bearer {api_key}"}
+                headers = {"Authorization": f"Bearer {api_key}", **cua_version_headers()}
 
                 async with session.get(
-                    f"https://www.cua.ai/api/vm/auth?container_name={container_name}",
+                    f"{self.api_base_url}/api/vm/auth?container_name={container_name}",
                     headers=headers,
                 ) as resp:
                     is_valid = resp.status == 200 and bool((await resp.text()).strip())
-
-                    # Cache the result with configurable expiration
-                    self.sessions[session_hash] = {
-                        "valid": is_valid,
-                        "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
-                    }
 
                     if is_valid:
                         logger.info(f"Authentication successful for container: {container_name}")
@@ -296,19 +383,9 @@ class AuthenticationManager:
 
         except aiohttp.ClientError as e:
             logger.error(f"Failed to validate API key with TryCUA API: {str(e)}")
-            # Cache failed result to avoid repeated requests
-            self.sessions[session_hash] = {
-                "valid": False,
-                "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
-            }
             return False
         except Exception as e:
             logger.error(f"Unexpected error during authentication: {str(e)}")
-            # Cache failed result to avoid repeated requests
-            self.sessions[session_hash] = {
-                "valid": False,
-                "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
-            }
             return False
 
 
@@ -326,6 +403,11 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 auth_manager = AuthenticationManager()
+
+# PTY session manager (lazy-initialised)
+from .pty_manager import PtyManager
+
+pty_manager = PtyManager()
 
 
 def _resolve_command(command: str) -> str:
@@ -640,6 +722,249 @@ async def cmd_endpoint(
     )
 
 
+async def _require_auth(
+    container_name: Optional[str],
+    api_key: Optional[str],
+) -> None:
+    """Raise HTTPException(401) when cloud auth is configured and credentials are invalid."""
+    server_container_name = os.environ.get("CONTAINER_NAME")
+    if not server_container_name:
+        return  # local development — no auth required
+    if not container_name:
+        raise HTTPException(status_code=401, detail="Container name required")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    if not await auth_manager.auth(container_name, api_key):
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+# ---------------------------------------------------------------------------
+# PTY endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/pty")
+async def pty_create(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Spawn a new PTY session.
+
+    Body (JSON, all fields optional):
+    ``{"command": str, "cols": int, "rows": int, "cwd": str, "envs": dict}``
+
+    Returns: ``{"pid": int, "cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    # On Android, always use adb shell regardless of any caller-supplied command,
+    # so that PTY sessions run inside the emulator rather than on the host.
+    if os.environ.get("IS_CUA_ANDROID") == "true":
+        command = "adb shell"
+    else:
+        command = body.get("command")
+    info = await pty_manager.create(
+        command=command,
+        cols=int(body.get("cols", 80)),
+        rows=int(body.get("rows", 24)),
+        cwd=body.get("cwd"),
+        envs=body.get("envs"),
+    )
+    return info
+
+
+@app.get("/pty/{pid}")
+async def pty_info(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Return metadata for PTY session *pid*.
+
+    Returns: ``{"pid": int, "cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    info = pty_manager.get_info(pid)
+    if info is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=f"PTY session {pid} not found")
+    return info
+
+
+@app.delete("/pty/{pid}")
+async def pty_kill(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Kill PTY session *pid*.
+
+    Returns: ``{"killed": bool}``
+    """
+    await _require_auth(container_name, api_key)
+    killed = await pty_manager.kill(pid)
+    return {"killed": killed}
+
+
+@app.post("/pty/{pid}/stdin")
+async def pty_stdin(
+    pid: int,
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Write data to stdin of PTY session *pid*.
+
+    Body: ``{"data": "<base64-encoded bytes>"}``
+    """
+    await _require_auth(container_name, api_key)
+    body = await request.json()
+    raw = base64.b64decode(body.get("data", ""))
+    await pty_manager.send_stdin(pid, raw)
+    return {"ok": True}
+
+
+@app.post("/pty/{pid}/resize")
+async def pty_resize(
+    pid: int,
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Resize the terminal for PTY session *pid*.
+
+    Body: ``{"cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    body = await request.json()
+    await pty_manager.resize(pid, int(body.get("cols", 80)), int(body.get("rows", 24)))
+    return {"ok": True}
+
+
+@app.get("/pty/{pid}/stream")
+async def pty_stream(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """SSE stream for PTY session *pid*.
+
+    Events:
+    - ``data: {"type": "output", "data": "<base64>"}``
+    - ``data: {"type": "exit", "code": <int>}``
+    """
+    await _require_auth(container_name, api_key)
+
+    q = pty_manager.subscribe(pid)
+
+    async def _generate():
+        try:
+            while True:
+                msg = await q.get()
+                if msg["type"] == "output":
+                    payload = {"type": "output", "data": base64.b64encode(msg["data"]).decode()}
+                else:
+                    payload = {"type": "exit", "code": msg.get("code", 0)}
+                yield f"data: {json.dumps(payload)}\n\n"
+                if msg["type"] == "exit":
+                    break
+        finally:
+            pty_manager.unsubscribe(pid, q)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.websocket("/pty/{pid}/ws")
+async def pty_ws(
+    pid: int,
+    websocket: WebSocket,
+):
+    """WebSocket endpoint for interactive PTY session *pid*.
+
+    Auth (when CONTAINER_NAME is set): pass ``api_key`` and
+    ``container_name`` as query parameters, e.g.
+    ``/pty/123/ws?api_key=…&container_name=…``.
+
+    Client → Server messages (JSON):
+    - ``{"type": "stdin",   "data": "<base64>"}``
+    - ``{"type": "resize",  "cols": N, "rows": N}``
+    - ``{"type": "disconnect"}``
+
+    Server → Client messages (JSON):
+    - ``{"type": "output", "data": "<base64>"}``
+    - ``{"type": "exit",   "code": N}``
+    """
+    container_name = websocket.query_params.get("container_name")
+    api_key = websocket.query_params.get("api_key")
+    try:
+        await _require_auth(container_name, api_key)
+    except HTTPException:
+        await websocket.close(code=1008)  # 1008 = Policy Violation
+        return
+
+    await websocket.accept()
+
+    q = pty_manager.subscribe(pid)
+
+    async def _send_output():
+        """Forward PTY output to the WebSocket client."""
+        try:
+            while True:
+                msg = await q.get()
+                if msg["type"] == "output":
+                    payload = {"type": "output", "data": base64.b64encode(msg["data"]).decode()}
+                else:
+                    payload = {"type": "exit", "code": msg.get("code", 0)}
+                await websocket.send_text(json.dumps(payload))
+                if msg["type"] == "exit":
+                    break
+        except Exception:
+            pass
+        finally:
+            pty_manager.unsubscribe(pid, q)
+
+    output_task = asyncio.create_task(_send_output())
+
+    try:
+        while True:
+            try:
+                raw = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = msg.get("type")
+            if msg_type == "stdin":
+                data = base64.b64decode(msg.get("data", ""))
+                await pty_manager.send_stdin(pid, data)
+            elif msg_type == "resize":
+                await pty_manager.resize(pid, int(msg.get("cols", 80)), int(msg.get("rows", 24)))
+            elif msg_type == "disconnect":
+                break
+    finally:
+        output_task.cancel()
+        pty_manager.unsubscribe(pid, q)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @app.post("/responses")
 async def agent_response_endpoint(
     request: Request,
@@ -723,7 +1048,7 @@ async def agent_response_endpoint(
 
     # Define a direct computer tool that implements the AsyncComputerHandler protocol
     # and delegates to our existing automation/file/accessibility handlers.
-    from agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
+    from cua_agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
     class DirectComputerInterface:
         """Interface wrapper providing BrowserTool compatibility.

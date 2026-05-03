@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/bin/nmap",
+  "binary_name": "nmap",
+  "display_name": "Nmap",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "7.80"
+}

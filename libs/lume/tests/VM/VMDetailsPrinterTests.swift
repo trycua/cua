@@ -76,12 +76,12 @@ struct VMDetailsPrinterTests {
         let headerParts = printedLines[0].split(whereSeparator: \.isWhitespace)
         #expect(
             headerParts == [
-                "name", "os", "cpu", "memory", "disk", "display", "status", "storage", "shared_dirs", "ip", "ssh", "vnc",
+                "name", "os", "cpu", "memory", "disk", "display", "status", "network", "storage", "shared_dirs", "ip", "ssh", "vnc",
             ])
 
         #expect(
             printedLines[1].split(whereSeparator: \.isWhitespace).map(String.init) == [
-                "name", "os", "2", "0.00G", "24.0B/30.0B", "1024x768", "status", "mockLocation",
+                "name", "os", "2", "0.00G", "24.0B/30.0B", "1024x768", "status", "nat", "mockLocation",
                 "-",
                 "0.0.0.0",
                 "-",

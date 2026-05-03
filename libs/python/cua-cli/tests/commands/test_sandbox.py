@@ -440,3 +440,232 @@ class TestCmdVnc:
                 result = sandbox.cmd_vnc(args)
 
         assert result == 1
+
+
+class TestCmdShell:
+    """Tests for cmd_shell function."""
+
+    def test_shell_parser_registration(self):
+        """Test that shell command is registered with correct arguments."""
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        # Test basic shell command
+        args = parser.parse_args(["sb", "shell", "my-sandbox"])
+        assert args.name == "my-sandbox"
+        assert args.sandbox_command == "shell"
+
+    def test_shell_with_command(self):
+        """Test shell command with a command to execute."""
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        args = parser.parse_args(["sb", "shell", "my-sandbox", "ls", "-la"])
+        assert args.name == "my-sandbox"
+        assert args.shell_command == ["ls", "-la"]
+
+    def test_shell_with_cols_rows(self):
+        """Test shell command with terminal size options.
+
+        Options must come before name due to argparse REMAINDER behavior.
+        Usage: cua sb shell --cols 120 --rows 40 mybox [command...]
+        """
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        args = parser.parse_args(
+            ["sb", "shell", "--cols", "120", "--rows", "40", "my-sandbox", "ls"]
+        )
+        assert args.cols == 120
+        assert args.rows == 40
+        assert args.name == "my-sandbox"
+        assert args.shell_command == ["ls"]
+
+    def test_shell_sandbox_not_found(self, args_namespace, mock_api_key):
+        """Test shell with nonexistent sandbox."""
+        args = args_namespace(
+            name="nonexistent",
+            shell_command=[],
+            cols=None,
+            rows=None,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
+        mock_provider.__aexit__ = AsyncMock(return_value=None)
+        mock_provider.get_vm = AsyncMock(return_value={"status": "not_found"})
+
+        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+            with patch.object(sandbox, "print_error") as mock_error:
+                with patch("sys.stdin") as mock_stdin:
+                    mock_stdin.isatty.return_value = False
+                    result = sandbox.cmd_shell(args)
+
+        assert result == 1
+        mock_error.assert_called()
+
+    def test_shell_no_api_url(self, args_namespace, mock_api_key):
+        """Test shell when sandbox has no API URL."""
+        args = args_namespace(
+            name="test-sandbox",
+            shell_command=["echo", "hello"],
+            cols=None,
+            rows=None,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
+        mock_provider.__aexit__ = AsyncMock(return_value=None)
+        mock_provider.get_vm = AsyncMock(return_value={"status": "stopped", "api_url": None})
+
+        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+            with patch.object(sandbox, "print_error") as mock_error:
+                with patch("sys.stdin") as mock_stdin:
+                    mock_stdin.isatty.return_value = False
+                    result = sandbox.cmd_shell(args)
+
+        assert result == 1
+        mock_error.assert_called()
+
+
+class TestCmdExec:
+    """Tests for cmd_exec function."""
+
+    def test_exec_parser_registration(self):
+        """Test that exec command is registered with correct arguments."""
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        args = parser.parse_args(["sb", "exec", "my-sandbox", "echo", "hello"])
+        assert args.name == "my-sandbox"
+        assert args.sandbox_command == "exec"
+        assert args.exec_command == ["echo", "hello"]
+
+    def test_exec_with_json_flag(self):
+        """Test exec command with --json flag.
+
+        --json must come before name due to argparse REMAINDER behavior.
+        Usage: cua sb exec --json mybox <command...>
+        """
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers()
+        sandbox.register_parser(subparsers)
+
+        args = parser.parse_args(["sb", "exec", "--json", "my-sandbox", "echo", "hello"])
+        assert args.json is True
+        assert args.name == "my-sandbox"
+        assert args.exec_command == ["echo", "hello"]
+
+    def test_exec_no_command_error(self, args_namespace, mock_api_key):
+        """Test exec with no command returns error."""
+        args = args_namespace(
+            name="test-sandbox",
+            exec_command=[],
+            json=False,
+        )
+
+        with patch.object(sandbox, "print_error") as mock_error:
+            result = sandbox.cmd_exec(args)
+
+        assert result == 1
+        mock_error.assert_called_with("No command provided")
+
+    def test_exec_sandbox_not_found(self, args_namespace, mock_api_key):
+        """Test exec with nonexistent sandbox."""
+        args = args_namespace(
+            name="nonexistent",
+            exec_command=["echo", "hello"],
+            json=False,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
+        mock_provider.__aexit__ = AsyncMock(return_value=None)
+        mock_provider.get_vm = AsyncMock(return_value={"status": "not_found"})
+
+        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_exec(args)
+
+        assert result == 1
+        mock_error.assert_called()
+
+    def test_exec_success(self, args_namespace, mock_api_key, capsys):
+        """Test successful command execution."""
+        args = args_namespace(
+            name="test-sandbox",
+            exec_command=["echo", "hello"],
+            json=False,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
+        mock_provider.__aexit__ = AsyncMock(return_value=None)
+        mock_provider.get_vm = AsyncMock(
+            return_value={"status": "running", "api_url": "https://sandbox.example.com:8443"}
+        )
+
+        async def mock_exec(*a, **kw):
+            return {"success": True, "stdout": "hello\n", "stderr": "", "returncode": 0}
+
+        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+            with patch.object(sandbox, "_exec_noninteractive", side_effect=mock_exec):
+                result = sandbox.cmd_exec(args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "hello" in captured.out
+
+    def test_exec_json_output(self, args_namespace, mock_api_key):
+        """Test exec with JSON output."""
+        args = args_namespace(
+            name="test-sandbox",
+            exec_command=["echo", "hello"],
+            json=True,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
+        mock_provider.__aexit__ = AsyncMock(return_value=None)
+        mock_provider.get_vm = AsyncMock(
+            return_value={"status": "running", "api_url": "https://sandbox.example.com:8443"}
+        )
+
+        async def mock_exec(*a, **kw):
+            return {"success": True, "stdout": "hello\n", "stderr": "", "returncode": 0}
+
+        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+            with patch.object(sandbox, "_exec_noninteractive", side_effect=mock_exec):
+                with patch.object(sandbox, "print_json") as mock_json:
+                    result = sandbox.cmd_exec(args)
+
+        assert result == 0
+        mock_json.assert_called_once()
+
+    def test_exec_command_failure(self, args_namespace, mock_api_key, capsys):
+        """Test exec when command returns non-zero exit code."""
+        args = args_namespace(
+            name="test-sandbox",
+            exec_command=["false"],
+            json=False,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.__aenter__ = AsyncMock(return_value=mock_provider)
+        mock_provider.__aexit__ = AsyncMock(return_value=None)
+        mock_provider.get_vm = AsyncMock(
+            return_value={"status": "running", "api_url": "https://sandbox.example.com:8443"}
+        )
+
+        async def mock_exec(*a, **kw):
+            return {"success": True, "stdout": "", "stderr": "error", "returncode": 1}
+
+        with patch.object(sandbox, "_get_provider", return_value=mock_provider):
+            with patch.object(sandbox, "_exec_noninteractive", side_effect=mock_exec):
+                result = sandbox.cmd_exec(args)
+
+        assert result == 1

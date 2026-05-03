@@ -1,0 +1,43 @@
+{
+  "app_id": "wireshark",
+  "os": "linux",
+  "install_exit_code": 0,
+  "install_script": "#!/bin/bash\nset -e\n\necho \"Installing Wireshark on Linux...\"\n\n# Update package index\nsudo apt-get update\n\n# Install wireshark package\n# Use DEBIAN_FRONTEND=noninteractive to skip prompts about packet capture setup\nsudo DEBIAN_FRONTEND=noninteractive apt-get install -y wireshark\n\necho \"\u2705 Wireshark installed successfully\"",
+  "install_stdout": "Successfully installed Wireshark with all dependencies",
+  "launch_script": "#!/bin/bash\n# Launch Wireshark\nwireshark &",
+  "verification_command": "which wireshark && wireshark --version",
+  "extract_metadata_script": "#!/bin/bash\n\n# Find wireshark binary\nBINARY_PATH=$(which wireshark)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get version - extract from first line \"Wireshark X.Y.Z\"\nVERSION=$(wireshark --version 2>&1 | head -1 | sed 's/Wireshark //' | awk '{print $1}')\n\n# Find desktop file\nDESKTOP_FILE=$(find /usr/share/applications -name \"*wireshark*\" 2>/dev/null | head -1)\n\n# Extract display name from desktop file\nDISPLAY_NAME=$(grep \"^Name=\" \"$DESKTOP_FILE\" 2>/dev/null | cut -d= -f2 | head -1)\n\n# Find all app icons (not mimetypes)\nICON_PATHS=($(find /usr/share/icons -path \"*/apps/*ireshark*\" 2>/dev/null | sort -u))\n\n# Build icon array for JSON\nICON_JSON=\"[\"\ncount=0\nfor icon in \"${ICON_PATHS[@]}\"; do\n  if [ $count -gt 0 ]; then\n    ICON_JSON+=\",\"\n  fi\n  ICON_JSON+=\"\\\"$icon\\\"\"\n  count=$((count+1))\ndone\nICON_JSON+=\"]\"\n\n# Output JSON\ncat <<EOF\n{\n  \"binary_path\": \"$BINARY_PATH\",\n  \"binary_name\": \"$BINARY_NAME\",\n  \"display_name\": \"$DISPLAY_NAME\",\n  \"desktop_entry\": \"$DESKTOP_FILE\",\n  \"icon_paths\": $ICON_JSON,\n  \"version\": \"$VERSION\"\n}\nEOF",
+  "metadata": {
+    "binary_path": "/usr/bin/wireshark",
+    "binary_name": "wireshark",
+    "display_name": "Wireshark",
+    "desktop_entry": "/usr/share/applications/org.wireshark.Wireshark.desktop",
+    "icon_paths": [
+      "/usr/share/icons/hicolor/128x128/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/16x16/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/24x24/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/256x256/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/32x32/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/48x48/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/64x64/apps/org.wireshark.Wireshark.png",
+      "/usr/share/icons/hicolor/scalable/apps/org.wireshark.Wireshark.svg"
+    ],
+    "version": "3.6.2"
+  },
+  "sandbox_name": "linux-ddd1514b",
+  "download_available": true,
+  "is_cli": false,
+  "notes": "Wireshark successfully installed via apt and launched. The application window is visible showing the Welcome screen with network interfaces available for packet capture.",
+  "screenshot_verification": "PASS: Wireshark 3.6.2 is visibly open and running, showing the main application window with the \"Welcome to Wireshark\" screen, capture interface options, and menu bar.",
+  "verification_passed": true,
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-128x128.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-16x16.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-24x24.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-256x256.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-32x32.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-48x48.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-64x64.png",
+    "cua_sandbox_apps\\apps\\wireshark\\linux\\logs\\icon-unknownxunknown.svg"
+  ]
+}

@@ -77,7 +77,7 @@ await computer.run()
 ### Make an agent that drives this desktop
 
 ```python
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 # assumes `computer` is the instance created above
 agent = ComputerAgent("openrouter/z-ai/glm-4.5v", tools=[computer])
@@ -121,7 +121,7 @@ A compact pattern for running multiple desktops and agents side-by-side:
 ```python
 import asyncio
 from computer import Computer
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 # Create multiple computer instances (each gets its own desktop)
 computers = []

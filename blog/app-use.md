@@ -83,7 +83,7 @@ python -m agent.ui.gradio.app
 ```python
 import asyncio
 from computer import Computer
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def main():
     computer = Computer()

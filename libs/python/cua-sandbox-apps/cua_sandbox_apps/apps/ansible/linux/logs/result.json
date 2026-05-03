@@ -1,0 +1,36 @@
+{
+  "app_id": "ansible",
+  "os": "linux",
+  "install_exit_code": 0,
+  "install_script": "#!/bin/bash\nset -e\n\necho \"Installing Ansible...\"\n\n# Update package lists\nsudo apt-get update -qq\n\n# Try to install from apt repository first\nif sudo apt-get install -y -qq ansible 2>/dev/null; then\n    echo \"\u2713 Ansible installed via apt\"\n    exit 0\nfi\n\n# Fallback: install via pip\necho \"Installing via pip...\"\nsudo apt-get install -y -qq python3-pip\npip install -q ansible-core ansible\n\necho \"\u2713 Ansible installed via pip\"",
+  "install_stdout": "Installing Ansible...\n[...dependency installation output...]\n\u2713 Ansible installed via apt",
+  "launch_script": "#!/bin/bash\n\n# Launch Ansible with version and help information\n# This script runs ansible commands in a terminal for visibility\n\nxfce4-terminal --title=\"Ansible\" --geometry=120x40 -x bash /tmp/ansible_demo.sh &\n\nsleep 2",
+  "extract_metadata_script": "#!/bin/bash\nset -e\n\n# Find the ansible binary\nBINARY_PATH=$(which ansible)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get version\nVERSION=$(ansible --version 2>/dev/null | head -1 | awk '{print $2}')\n\n# Extract display_name and icon from package metadata first\nDISPLAY_NAME=\"\"\nICON_PATHS=()\n\n# Try to get display name from apt/dpkg package metadata\nif command -v apt-cache &>/dev/null; then\n    # Get the short description from package\n    PKG_DESC=$(apt-cache show ansible 2>/dev/null | grep \"^Description:\" | cut -d':' -f2- | sed 's/^ *//g' | head -1 || echo \"\")\n    if [ ! -z \"$PKG_DESC\" ]; then\n        DISPLAY_NAME=\"$PKG_DESC\"\n    fi\nfi\n\n# If we have a display_name, extract icon paths from package files\nif [ ! -z \"$DISPLAY_NAME\" ]; then\n    # Try to find icon files within the package\n    while IFS= read -r icon_file; do\n        if [ ! -z \"$icon_file\" ]; then\n            ICON_PATHS+=(\"\\\"$icon_file\\\"\")\n        fi\n    done < <(dpkg -L ansible 2>/dev/null | grep -E \\\"\\\\.(png|svg|ico)$\\\" | head -5 || true)\nfi\n\n# Find desktop file\nDESKTOP_ENTRY=$(find /usr/share/applications -name \"*ansible*\" 2>/dev/null | head -1 || echo \"\")\n\n# If desktop file exists, prefer its name and icons\nif [ ! -z \"$DESKTOP_ENTRY\" ] && [ -f \"$DESKTOP_ENTRY\" ]; then\n    EXTRACTED_NAME=$(grep \"^Name=\" \"$DESKTOP_ENTRY\" 2>/dev/null | cut -d'=' -f2 | head -1 || echo \"\")\n    if [ ! -z \"$EXTRACTED_NAME\" ]; then\n        DISPLAY_NAME=\"$EXTRACTED_NAME\"\n    fi\n    \n    # Try to extract icon from desktop file\n    ICON_NAME=$(grep \"^Icon=\" \"$DESKTOP_ENTRY\" 2>/dev/null | cut -d'=' -f2 | head -1 || echo \"\")\n    if [ ! -z \"$ICON_NAME\" ]; then\n        ICON_PATHS=()\n        ICON_PATHS+=(\"\\\"$ICON_NAME\\\"\")\n    fi\nfi\n\n# If no icon found from desktop or package, search system icon directories\nif [ ${#ICON_PATHS[@]} -eq 0 ]; then\n    # First try ansible-specific icons\n    for icon_dir in /usr/share/icons /usr/share/pixmaps; do\n        if [ -d \"$icon_dir\" ]; then\n            while IFS= read -r icon_file; do\n                if [ ! -z \"$icon_file\" ]; then\n                    ICON_PATHS+=(\"\\\"$icon_file\\\"\")\n                fi\n            done < <(find \"$icon_dir\" -name \"*ansible*\" 2>/dev/null | head -5)\n        fi\n    done\n    \n    # If still no icon, try terminal icon as fallback\n    if [ ${#ICON_PATHS[@]} -eq 0 ]; then\n        TERMINAL_ICON=$(find /usr/share/icons -name \"*terminal*\" -type f 2>/dev/null | head -1 || echo \"\")\n        if [ ! -z \"$TERMINAL_ICON\" ]; then\n            ICON_PATHS+=(\"\\\"$TERMINAL_ICON\\\"\")\n        fi\n    fi\nfi\n\n# Build icon array JSON\nICON_JSON=\"[\"\nif [ ${#ICON_PATHS[@]} -gt 0 ]; then\n    ICON_JSON+=$(IFS=,; echo \"${ICON_PATHS[*]}\")\nfi\nICON_JSON+=\"]\"\n\n# Format desktop_entry\nif [ -z \"$DESKTOP_ENTRY\" ]; then\n    DESKTOP_ENTRY_JSON=\"null\"\nelse\n    DESKTOP_ENTRY_JSON=\"\\\"$DESKTOP_ENTRY\\\"\"\nfi\n\n# Format display_name (ensure it's not empty)\nif [ -z \"$DISPLAY_NAME\" ]; then\n    DISPLAY_NAME=\"ansible\"\nfi\n\n# Output JSON metadata\ncat << EOF\n{\n  \"binary_path\": \"$BINARY_PATH\",\n  \"binary_name\": \"$BINARY_NAME\",\n  \"display_name\": \"$DISPLAY_NAME\",\n  \"desktop_entry\": $DESKTOP_ENTRY_JSON,\n  \"icon_paths\": $ICON_JSON,\n  \"version\": \"$VERSION\"\n}\nEOF",
+  "metadata": {
+    "binary_path": "/usr/bin/ansible",
+    "binary_name": "ansible",
+    "display_name": "Configuration management, deployment, and task execution system",
+    "desktop_entry": null,
+    "icon_paths": [
+      "/usr/lib/python3/dist-packages/ansible_collections/amazon/aws/tests/integration/targets/aws_s3/files/test.png",
+      "/usr/lib/python3/dist-packages/ansible_collections/azure/azcollection/tests/integration/targets/azure_rm_storageblob/files/Ratings.png",
+      "/usr/lib/python3/dist-packages/ansible_collections/dellemc/os10/playbooks/vxlan_evpn/vxlan_evpn_topology.png",
+      "/usr/lib/python3/dist-packages/ansible_collections/netbox/netbox/docs/getting_started/how-to-use/media/advanced_dict.png",
+      "/usr/lib/python3/dist-packages/ansible_collections/netbox/netbox/docs/getting_started/how-to-use/media/advanced_dns_name.png"
+    ],
+    "version": "2.10.8"
+  },
+  "sandbox_name": "linux-d7b97dfe",
+  "verification_command": "ansible --version",
+  "is_cli": true,
+  "notes": "Ansible is a CLI infrastructure automation tool. Successfully installed via apt package manager. Version 2.10.8 running with Python 3.10.12. Verified working in terminal emulator showing version info and available commands.",
+  "screenshot_verification": "PASS: Terminal window displaying Ansible Installation Verification output showing Ansible version 2.10.8, configuration details, Python version, and available Ansible commands with usage examples.",
+  "verification_passed": true,
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\ansible\\linux\\logs\\icon-8x8.png",
+    "cua_sandbox_apps\\apps\\ansible\\linux\\logs\\icon-654x654.png",
+    "cua_sandbox_apps\\apps\\ansible\\linux\\logs\\icon-1657x1657.png",
+    "cua_sandbox_apps\\apps\\ansible\\linux\\logs\\icon-1908x1908.png",
+    "cua_sandbox_apps\\apps\\ansible\\linux\\logs\\icon-2306x2306.png"
+  ]
+}

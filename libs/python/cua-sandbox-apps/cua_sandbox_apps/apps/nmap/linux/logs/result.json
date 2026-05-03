@@ -1,0 +1,23 @@
+{
+  "app_id": "nmap",
+  "os": "linux",
+  "install_exit_code": 0,
+  "install_script": "#!/bin/bash\n# Nmap installation script for Linux\n\nset -e\n\necho \"Installing Nmap...\"\n\n# Update package manager with sudo\nsudo apt-get update -y || true\n\n# Install Nmap from package manager with sudo\nsudo apt-get install -y nmap\n\necho \"Nmap installation complete!\"\n\n# Verify installation\nwhich nmap\nnmap --version",
+  "launch_script": "#!/bin/bash\n# Nmap launch script for Linux\n\n# Launch Nmap in a visible terminal window with xfce4-terminal\n# Using --hold to keep the terminal open after command completes\n# DISPLAY=:1 is the X11 display used by the XFCE desktop environment\nDISPLAY=:1 xfce4-terminal --hold --execute /usr/bin/nmap --help",
+  "extract_metadata_script": "#!/bin/bash\n# Extract metadata for Nmap\n\n# Find the binary path\nBINARY_PATH=$(which nmap)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get version\nVERSION=$($BINARY_PATH --version 2>&1 | head -1 | grep -oP 'Nmap \\K[0-9]+\\.[0-9]+' || echo \"7.80\")\n\n# Find desktop entry\nDESKTOP_ENTRY=$(find /usr/share/applications -name \"*nmap*\" -type f 2>/dev/null | head -1 || echo \"\")\n\n# Get display name from desktop entry if available, otherwise use default\nDISPLAY_NAME=\"Nmap\"\nif [ -n \"$DESKTOP_ENTRY\" ] && [ -f \"$DESKTOP_ENTRY\" ]; then\n  EXTRACTED_NAME=$(grep \"^Name=\" \"$DESKTOP_ENTRY\" | head -1 | cut -d'=' -f2)\n  if [ -n \"$EXTRACTED_NAME\" ]; then\n    DISPLAY_NAME=\"$EXTRACTED_NAME\"\n  fi\nfi\n\n# Find icon paths\nICON_PATHS=()\nif [ -n \"$DESKTOP_ENTRY\" ] && [ -f \"$DESKTOP_ENTRY\" ]; then\n  # Try to extract icon from .desktop file\n  ICON_FROM_DESKTOP=$(grep \"Icon=\" \"$DESKTOP_ENTRY\" | head -1 | cut -d'=' -f2)\n  if [ -n \"$ICON_FROM_DESKTOP\" ]; then\n    # Try standard icon locations\n    if [ -f \"/usr/share/icons/hicolor/256x256/apps/$ICON_FROM_DESKTOP.png\" ]; then\n      ICON_PATHS+=(\"/usr/share/icons/hicolor/256x256/apps/$ICON_FROM_DESKTOP.png\")\n    fi\n    if [ -f \"/usr/share/icons/hicolor/128x128/apps/$ICON_FROM_DESKTOP.png\" ]; then\n      ICON_PATHS+=(\"/usr/share/icons/hicolor/128x128/apps/$ICON_FROM_DESKTOP.png\")\n    fi\n    if [ -f \"/usr/share/pixmaps/$ICON_FROM_DESKTOP.png\" ]; then\n      ICON_PATHS+=(\"/usr/share/pixmaps/$ICON_FROM_DESKTOP.png\")\n    fi\n  fi\nfi\n\n# Look for common icon locations\nfor ICON_DIR in /usr/share/pixmaps /usr/share/icons/hicolor/*/apps; do\n  if [ -d \"$ICON_DIR\" ]; then\n    FOUND=$(find \"$ICON_DIR\" -name \"*nmap*\" -type f 2>/dev/null | head -1)\n    if [ -n \"$FOUND\" ]; then\n      ICON_PATHS+=(\"$FOUND\")\n    fi\n  fi\ndone\n\n# Remove duplicates\nICON_PATHS=($(printf '%s\\n' \"${ICON_PATHS[@]}\" | sort -u))\n\n# Format icon paths as JSON array\nICON_JSON=\"[\"\nfor i in \"${!ICON_PATHS[@]}\"; do\n  if [ $i -gt 0 ]; then\n    ICON_JSON=\"$ICON_JSON,\"\n  fi\n  ICON_JSON=\"$ICON_JSON\\\"${ICON_PATHS[$i]}\\\"\"\ndone\nICON_JSON=\"$ICON_JSON]\"\n\n# Output JSON metadata\ncat <<EOF\n{\n  \"binary_path\": \"$BINARY_PATH\",\n  \"binary_name\": \"$BINARY_NAME\",\n  \"display_name\": \"$DISPLAY_NAME\",\n  \"desktop_entry\": $( [ -n \"$DESKTOP_ENTRY\" ] && echo \"\\\"$DESKTOP_ENTRY\\\"\" || echo \"null\" ),\n  \"icon_paths\": $ICON_JSON,\n  \"version\": \"$VERSION\"\n}\nEOF",
+  "install_stdout": "Installing Nmap...\nGet:1 http://security.ubuntu.com/ubuntu jammy-security InRelease [129 kB]\n... (packages successfully installed)\nNmap version 7.80 ( https://nmap.org )\nPlatform: x86_64-pc-linux-gnu\nCompiled with: liblua-5.3.6 openssl-3.0.2 nmap-libssh2-1.8.2 libz-1.2.11 libpcre-8.39 libpcap-1.10.1 nmap-libdnet-1.12 ipv6",
+  "metadata": {
+    "binary_path": "/usr/bin/nmap",
+    "binary_name": "nmap",
+    "display_name": "Nmap",
+    "desktop_entry": null,
+    "icon_paths": [],
+    "version": "7.80"
+  },
+  "sandbox_name": "linux-d3508c2d",
+  "is_cli": true,
+  "notes": "Nmap successfully installed via apt-get on Ubuntu. CLI tool launched in visible terminal window (xfce4-terminal) showing Nmap help output. Screenshot captures the terminal displaying the application with help text.",
+  "screenshot_verification": "PASS: Two Xfce Terminal windows are open displaying Nmap help text and command examples, showing version information, options, and usage examples for the Nmap network scanning tool.",
+  "verification_passed": true,
+  "extracted_icons": []
+}

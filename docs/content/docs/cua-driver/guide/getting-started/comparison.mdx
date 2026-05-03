@@ -1,0 +1,80 @@
+---
+title: Comparison
+description: How Cua Driver compares to other macOS computer-use tools
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This page compares Cua Driver with other macOS computer-use tools. All are quality projects. The best choice depends on your workload.
+
+## Quick comparison
+
+| Feature              | Cua Driver              | Codex Computer Use   | Claude Computer Use  | Lume                    |
+| -------------------- | ----------------------- | -------------------- | -------------------- | ----------------------- |
+| **License**          | MIT                     | Closed source        | Closed source        | MIT                     |
+| **Drives host Mac**  | Yes                     | Yes                  | No (sandbox only)    | No (hosts VMs)          |
+| **Sandbox / VM**     | No                      | No                   | Yes (Cowork VM)      | Yes (macOS + Linux VMs) |
+| **Backgrounded**     | Default                 | Default              | N/A (sandbox)        | N/A                     |
+| **MCP server**       | Yes (stdio)             | No                   | No                   | Yes                     |
+| **Agent-agnostic**   | Yes (any MCP client)    | Codex-only           | Claude-only          | Yes (HTTP API)          |
+| **Capture modes**    | vision / ax / som       | Vision               | Vision               | N/A                     |
+| **Primary use case** | Agent automation        | Agent automation     | Safe agent execution | Ephemeral VMs           |
+
+## Codex Computer Use
+
+[Codex](https://openai.com/codex) describes its macOS computer-use feature as: "With computer use on macOS, Codex can now use any app by seeing, clicking, and typing with its own cursor. It runs in the background without taking over your computer, working on tasks like frontend iteration, app testing, or any workflow that doesn't expose an API."
+
+That's a fair description of what Codex does on macOS. Cua Driver differs on four axes:
+
+- **Agent-agnostic.** Cua Driver works with any agent that speaks MCP or shells out. Codex's computer-use is Codex-only.
+- **Open source, MIT licensed.** Codex is a closed product.
+- **MCP-native.** Cua Driver speaks MCP over stdio. Paste `cua-driver mcp-config` into your client and it's wired up. Codex has no MCP surface.
+- **Three capture modalities.** Codex is vision-only. Cua Driver ships `vision` (PNG only), `ax` (tree only), and `som` (both). AX mode skips Screen Recording entirely and gives deterministic element addressing; `som` gives both halves for disambiguation when labels repeat.
+
+**When to choose Codex**: if you're already inside Codex and the bundled computer-use covers your task.
+
+**When to choose Cua Driver**: if you want the same no-foreground contract across any agent, any modality, with an open source license.
+
+## Claude Computer Use (Cowork)
+
+[Claude Cowork](https://support.claude.com/en/articles/13345190-getting-started-with-cowork) runs Claude Code inside a sandboxed VM. The VM boots a Linux root filesystem where Claude can execute commands and drive a virtualized desktop without access to your host system.
+
+This is a different product shape. Cowork is sandbox-first: Claude operates an isolated environment. Cua Driver is host-first: it operates your real Mac with a background-drive contract.
+
+**When to choose Cowork**: if you want Claude to operate a disposable environment where destructive actions are contained by default.
+
+**When to choose Cua Driver**: if you want an agent to operate your real, running apps (the editor, the browser, Finder) without taking focus away from you.
+
+<Callout type="info">
+  The two aren't mutually exclusive. An agent running in Cowork could drive Cua Driver on a host via MCP
+  if you expose the stdio server through the sandbox boundary, but that's not a supported configuration
+  today.
+</Callout>
+
+## Lume
+
+[Lume](/lume/guide/getting-started/introduction) is a macOS VM runtime that spins up Apple Virtualization Framework guests. Cua Driver operates your host Mac; Lume hosts isolated VMs.
+
+**Key differences:**
+
+- Lume boots a macOS or Linux VM and hands it to you. Cua Driver does not host any VMs.
+- Cua Driver drives apps on your current machine without changing which one is frontmost. Lume has nothing to do with the host's foreground state.
+- Both are agent-useful, for different reasons. Lume gives you a disposable macOS environment for CI, sandboxing, or cross-version testing. Cua Driver gives you backgrounded control over the real thing.
+
+**When to choose Lume**: if you need an isolated macOS VM for automation, testing, or sandboxing untrusted workloads.
+
+**When to choose Cua Driver**: if you want an agent to drive real apps on your host without stealing focus.
+
+## Summary
+
+Cua Driver fits when all of these are true:
+
+- You want an agent to drive real apps on your own Mac (not a VM).
+- The user needs to keep working in another app while the agent operates.
+- You're building against any MCP-capable agent, not locked to one vendor.
+- MIT licensing matters.
+
+The trade-offs you accept:
+
+- Destructive actions hit your real filesystem. Confirm user intent before deleting, overwriting, or sending.
+- A handful of app classes (Chromium web-content right-click, canvas viewports like Blender or Unity) need known workarounds. See [Limits](/cua-driver/reference/limits).

@@ -12,16 +12,21 @@ interface VNCViewerProps {
  */
 const VNCViewer = React.memo(
   ({ src, width, height }: VNCViewerProps) => {
-    // Use provided dimensions or fall back to 16:9 aspect ratio
-    const aspectRatio = width && height ? width / height : 16 / 9;
+    // When explicit dimensions are provided, use their aspect ratio.
+    // Otherwise, let the iframe fill its container naturally.
+    const hasExplicitDimensions = width && height;
 
     return (
       <div
-        className="w-full"
-        style={{
-          aspectRatio: aspectRatio.toString(),
-          maxHeight: height ? `${height}px` : undefined,
-        }}
+        className={hasExplicitDimensions ? 'w-full' : 'w-full h-full'}
+        style={
+          hasExplicitDimensions
+            ? {
+                aspectRatio: (width / height).toString(),
+                maxHeight: `${height}px`,
+              }
+            : undefined
+        }
       >
         <iframe
           key={src}

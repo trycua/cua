@@ -35,8 +35,8 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    from agent import ComputerAgent
     from computer import Computer
+    from cua_agent import ComputerAgent
 
     logger.debug("Successfully imported Computer and Agent modules")
 except ImportError as e:

@@ -1,0 +1,39 @@
+{
+  "id": "neovim",
+  "name": "Neovim",
+  "description": "A hyperextensible Vim-based text editor that maintains compatibility with Vim's editing model while offering modern enhancements. Features include first-class API, built-in LSP client, Tree-sitter parsing, Lua support, and a 30% smaller codebase than Vim.",
+  "website": "https://neovim.io",
+  "icon_url": "https://neovim.io/logo.png",
+  "categories": [
+    "Code Editor"
+  ],
+  "tags": [
+    "vim",
+    "text-editor",
+    "development",
+    "extensible",
+    "open-source",
+    "lua",
+    "lsp",
+    "terminal"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/neovim/neovim",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "neovim",
+    "snap": "nvim",
+    "flatpak": "io.neovim.nvim",
+    "brew": "neovim",
+    "choco": "neovim",
+    "winget": "Neovim.Neovim"
+  },
+  "download_url": "https://github.com/neovim/neovim/releases/latest"
+}

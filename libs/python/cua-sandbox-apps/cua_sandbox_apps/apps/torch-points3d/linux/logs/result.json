@@ -1,0 +1,9 @@
+{
+  "app_id": "torch-points3d",
+  "os": "linux",
+  "install_exit_code": -1,
+  "app_type_detected": "library",
+  "download_available": null,
+  "notes": "Torch-Points3D is a PyTorch deep learning framework and library for point cloud analysis. It is a development library/SDK meant for researchers and developers to import and use in their own projects, not a standalone end-user application or CLI tool. While it includes training scripts (train.py, eval.py), these are utility scripts for developers using the framework, not a primary application to be launched.",
+  "verification_passed": false
+}

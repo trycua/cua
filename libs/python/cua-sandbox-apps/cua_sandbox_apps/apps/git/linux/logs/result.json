@@ -1,0 +1,34 @@
+{
+  "app_id": "git",
+  "os": "linux",
+  "install_exit_code": 0,
+  "install_script": "#!/bin/bash\nset -e\n\necho \"Installing Git on Linux...\"\n\n# Update package manager with sudo\nsudo apt-get update\n\n# Install Git using apt package manager\nsudo apt-get install -y git\n\n# Verify installation\ngit --version\n\necho \"Git installation completed successfully!\"",
+  "install_stdout": "Installing Git on Linux...\nHit:1 http://archive.ubuntu.com/ubuntu jammy InRelease\nGet:2 http://security.ubuntu.com/ubuntu jammy-security InRelease [129 kB]\nGet:3 http://archive.ubuntu.com/ubuntu jammy-updates InRelease [128 kB]\nGet:4 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease [18.1 kB]\nGet:5 https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu jammy InRelease [24.6 kB]\nGet:6 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy/main amd64 Packages [38.8 kB]\nGet:7 http://security.ubuntu.com/ubuntu jammy-security/main amd64 Packages [3889 kB]\nGet:8 http://archive.ubuntu.com/ubuntu jammy-backports InRelease [127 kB]\nGet:9 https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu jammy/main acd64 Packages [45.0 kB]\nGet:10 http://archive.ubuntu.com/ubuntu jammy-updates/restricted amd64 Packages [7143 kB]\nGet:11 http://security.ubuntu.com/ubuntu jammy-security/restricted amd64 Packages [6917 kB]\nGet:12 http://archive.ubuntu.com/ubuntu jammy-updates/main amd64 Packages [4226 kB]\nGet:13 http://security.ubuntu.com/ubuntu jammy-security/universe amd64 Packages [1311 kB]\nGet:14 http://archive.ubuntu.com/ubuntu jammy-updates/universe amd64 Packages [1622 kB]\nFetched 25.6 MB in 3s (8203 kB/s)\nReading package lists...\nReading package lists...\nBuilding dependency tree...\nReading state information...\ngit is already the newest version (1:2.34.1-1ubuntu1.17).\n0 upgraded, 0 newly installed, 0 to remove and 42 not upgraded.\ngit version 2.34.1\nGit installation completed successfully!",
+  "launch_script": "#!/bin/bash\n\n# Launch Git by displaying version and help info\necho \"=== Git Version ===\"\ngit --version\n\necho \"\"\necho \"=== Git Configuration Example ===\"\ngit config --list --show-scope 2>/dev/null | head -20 || echo \"Git configured and ready to use\"\n\necho \"\"\necho \"=== Git Help ===\"\ngit --help 2>&1 | head -30\n\necho \"\"\necho \"Git is successfully installed and ready for use!\"",
+  "extract_metadata_script": "#!/bin/bash\n\n# Find Git binary path\nBINARY_PATH=$(which git)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get Git version\nVERSION=$($BINARY_PATH --version | awk '{print $3}')\n\n# Extract display name from package metadata\nDISPLAY_NAME=$(dpkg -s git 2>/dev/null | grep -E '^Description:' | sed 's/^Description: //' | head -1)\nif [ -z \"$DISPLAY_NAME\" ]; then\n  DISPLAY_NAME=\"Git\"\nfi\n\n# Find .desktop file\nDESKTOP_FILE=$(find /usr/share/applications -name \"*git*\" -type f 2>/dev/null | head -1)\n\n# Find icon files from package data or filesystem\nICON_PATHS=()\n\n# Try to find icons in /usr/share/icons\nfor icon_dir in /usr/share/icons /usr/share/pixmaps /usr/share/app-install/icons; do\n  if [ -d \"$icon_dir\" ]; then\n    icons=$(find \"$icon_dir\" -name \"*git*\" \\( -type f -o -type l \\) 2>/dev/null | head -5)\n    if [ ! -z \"$icons\" ]; then\n      while IFS= read -r icon; do\n        if [ ! -z \"$icon\" ]; then\n          ICON_PATHS+=(\"$icon\")\n        fi\n      done <<< \"$icons\"\n    fi\n  fi\ndone\n\n# If no git-specific icons, try generic vcs/scm icons\nif [ ${#ICON_PATHS[@]} -eq 0 ]; then\n  for icon_dir in /usr/share/icons /usr/share/pixmaps; do\n    if [ -d \"$icon_dir\" ]; then\n      icons=$(find \"$icon_dir\" -type f \\( -name \"*vcs*\" -o -name \"*scm*\" -o -name \"*version*\" \\) 2>/dev/null | head -3)\n      if [ ! -z \"$icons\" ]; then\n        while IFS= read -r icon; do\n          if [ ! -z \"$icon\" ]; then\n            ICON_PATHS+=(\"$icon\")\n          fi\n        done <<< \"$icons\"\n      fi\n    fi\n  done\nfi\n\n# Build JSON output\necho \"{\"\necho \"  \\\"binary_path\\\": \\\"$BINARY_PATH\\\",\"\necho \"  \\\"binary_name\\\": \\\"$BINARY_NAME\\\",\"\necho \"  \\\"display_name\\\": \\\"$DISPLAY_NAME\\\",\"\necho \"  \\\"desktop_entry\\\": $([ -z \\\"$DESKTOP_FILE\\\" ] && echo 'null' || echo \\\"\\\"$DESKTOP_FILE\\\")\",\"\necho \"  \\\"icon_paths\\\": [\"\nif [ ${#ICON_PATHS[@]} -gt 0 ]; then\n  for i in \\\"${!ICON_PATHS[@]}\\\"; do\n    if [ $i -lt $((${#ICON_PATHS[@]} - 1)) ]; then\n      echo \"    \\\"${ICON_PATHS[$i]}\\\",\"\n    else\n      echo \"    \\\"${ICON_PATHS[$i]}\\\"\"\n    fi\n  done\nfi\necho \"  ],\"\necho \"  \\\"version\\\": \\\"$VERSION\\\"\"\necho \"}\"",
+  "metadata": {
+    "binary_path": "/usr/bin/git",
+    "binary_name": "git",
+    "display_name": "fast, scalable, distributed revision control system",
+    "desktop_entry": null,
+    "icon_paths": [
+      "/usr/share/icons/elementary-xfce/emblems/symbolic/emblem-git-modified-symbolic.svg",
+      "/usr/share/icons/elementary-xfce/emblems/symbolic/emblem-git-new-symbolic.svg",
+      "/usr/share/icons/elementary-xfce/emblems/16/emblem-git-modified.png",
+      "/usr/share/icons/elementary-xfce/emblems/16/emblem-git-new.png"
+    ],
+    "version": "2.34.1"
+  },
+  "sandbox_name": "linux-f3047b06",
+  "is_cli": true,
+  "verification_command": "git --version",
+  "notes": "Git installed successfully on Ubuntu 22.04 using apt package manager. Terminal screenshot shows Git help output demonstrating successful installation and functionality.",
+  "screenshot_verification": "PASS: Terminal window displaying git help documentation with commands like bisect, diff, grep, log, show, status, branch, commit, merge, rebase, reset, switch, tag, fetch, pull, and push with their descriptions.",
+  "verification_passed": true,
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\git\\linux\\logs\\icon-unknownxunknown.svg",
+    "cua_sandbox_apps\\apps\\git\\linux\\logs\\icon-unknownxunknown.svg",
+    "cua_sandbox_apps\\apps\\git\\linux\\logs\\icon-16x16.png",
+    "cua_sandbox_apps\\apps\\git\\linux\\logs\\icon-16x16.png"
+  ]
+}

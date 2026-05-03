@@ -1,14 +1,14 @@
 ---
 title: Vibe Coding MCP
-description: Connect your AI agents to CUA documentation and source code
+description: Connect your AI agents to Cua documentation and source code
 ---
 
-The CUA MCP server equips AI coding agents with deep knowledge about CUA's APIs, patterns, source code, and best practices. When connected to your development environment, it enables AI assistants to:
+The Cua MCP server equips AI coding agents with deep knowledge about Cua's APIs, patterns, source code, and best practices. When connected to your development environment, it enables AI assistants to:
 
 - **Search documentation** with full-text and semantic search
 - **Explore source code** across all versions and components
 - **Generate accurate code** with context from the actual codebase
-- **Understand CUA internals** by querying versioned implementations
+- **Understand Cua internals** by querying versioned implementations
 
 ## Server URL
 
@@ -41,12 +41,12 @@ The MCP server exposes four read-only query tools:
 1. Press `Shift+Command+J` (Mac) or `Shift+Ctrl+J` (Windows/Linux) to open settings
 2. Find "MCP Tools" in the left sidebar
 3. Click "Add Custom MCP" to open `mcp.json`
-4. Add the CUA MCP server configuration:
+4. Add the Cua MCP server configuration:
 
 ```json
 {
   "mcpServers": {
-    "CUA MCP": {
+    "Cua MCP": {
       "url": "https://vk-mcp.cua.ai/mcp"
     }
   }
@@ -89,7 +89,7 @@ claude mcp remove cua-mcp -s local
 1. Go to **Settings** > **Connectors**
 2. Click **Add custom connector**
 3. Enter the following:
-   - **Name**: `CUA MCP`
+   - **Name**: `Cua MCP`
    - **URL**: `https://vk-mcp.cua.ai/mcp`
 4. Click **Add**
 
@@ -112,7 +112,7 @@ Configuration file location:
 3. Select **MCP Servers**
 4. Click **Remote Servers** tab
 5. Enter:
-   - **Server Name**: `CUA MCP`
+   - **Server Name**: `Cua MCP`
    - **Server URL**: `https://vk-mcp.cua.ai/mcp`
 6. Click **Add Server**
 
@@ -124,7 +124,7 @@ Configuration file location:
 ```json
 {
   "servers": {
-    "CUA MCP": {
+    "Cua MCP": {
       "url": "https://vk-mcp.cua.ai/mcp"
     }
   }
@@ -146,7 +146,7 @@ https://vk-mcp.cua.ai/mcp
 ```json
 {
   "servers": {
-    "CUA MCP": {
+    "Cua MCP": {
       "url": "https://vk-mcp.cua.ai/mcp"
     }
   }

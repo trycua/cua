@@ -1,0 +1,10 @@
+{
+  "binary_path": "/usr/local/bin/github-actions-runner",
+  "binary_name": "github-actions-runner",
+  "display_name": "GitHub Actions Runner",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/usr/share/icons/hicolor/32x32/apps/org.xfce.panel.actions.png"
+  ],
+  "version": "2.333.1"
+}

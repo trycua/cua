@@ -1,0 +1,16 @@
+{
+  "binary_path": "/usr/bin/emacs",
+  "binary_name": "emacs",
+  "display_name": "Emacs (Terminal)",
+  "desktop_entry": "/usr/share/applications/emacs-term.desktop",
+  "icon_paths": [
+    "/usr/share/icons/hicolor/128x128/apps/emacs.png",
+    "/usr/share/icons/hicolor/16x16/apps/emacs.png",
+    "/usr/share/icons/hicolor/24x24/apps/emacs.png",
+    "/usr/share/icons/hicolor/32x32/apps/emacs.png",
+    "/usr/share/icons/hicolor/48x48/apps/emacs.png",
+    "/usr/share/icons/hicolor/scalable/apps/emacs.svg",
+    "/usr/share/icons/hicolor/scalable/mimetypes/emacs-document.svg"
+  ],
+  "version": "27.1"
+}

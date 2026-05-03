@@ -17,15 +17,14 @@ An **agent loop** runs iteratively until a task is complete:
 To run an agent loop simply do:
 
 ```python
-from agent import ComputerAgent
+from cua import ComputerAgent
 import asyncio
-from computer import Computer
+from cua import Sandbox, Image
 
 
 async def take_screenshot():
-    async with Computer(
-        os_type="linux",
-        provider_type="cloud",
+    async with Sandbox.create(
+        Image.linux(),
         name="your-sandbox-name",
         api_key="your-api-key"
     ) as computer:
@@ -125,7 +124,7 @@ async for result in agent.run(messages, stream=True):
 The agent respects the `max_trajectory_budget` you set. When the budget is exceeded, the agent raises an exception:
 
 ```python
-from agent.exceptions import BudgetExceededException
+from cua_agent.exceptions import BudgetExceededException
 
 agent = ComputerAgent(
     model="anthropic/claude-sonnet-4-5-20250929",

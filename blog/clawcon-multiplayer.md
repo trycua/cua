@@ -4,7 +4,7 @@ _Published on February 6, 2026 by Francesco Bonacci and Dillon DuPont_
 
 ClawCon brought over 700 attendees to Frontier Tower, with a waitlist that had people lining up down Market Street, and another 20k tuned into the livestream. It was the first community event for OpenClaw, and we had the 2nd demo session.
 
-We're early OpenClaw contributors and sponsors (we documented [how to deploy OpenClaw to macOS sandboxes with Lume](https://docs.trycua.com/lume/guides/openclaw)), and we genuinely believe computer-use works best as a tool inside more general agentic systems like OpenClaw rather than as standalone screen-takeover agents.
+We're early OpenClaw contributors and sponsors (we documented [how to deploy OpenClaw to macOS sandboxes with Lume](https://docs.trycua.com/lume/examples/openclaw)), and we genuinely believe computer-use works best as a tool inside more general agentic systems like OpenClaw rather than as standalone screen-takeover agents.
 
 So we deferred our Hacker News launch to ship something big live on stage.
 

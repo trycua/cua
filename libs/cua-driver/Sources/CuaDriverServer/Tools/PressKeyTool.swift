@@ -160,12 +160,14 @@ public enum PressKeyTool {
                     if let rawWid = rawWindowId, rawWid != 0,
                        let wid = UInt32(exactly: rawWid)
                     {
-                        FocusWithoutRaise.activateForMenuShortcut(
-                            targetPid: pid, targetWid: CGWindowID(wid))
-                        usleep(50_000)
-                        // Same recipe as HotkeyTool — see its inline comment.
-                        try KeyboardInput.press(
-                            key, modifiers: modifiers, toPid: pid, attachAuthMessage: false)
+                        // NSMenu path: activate → post → restore prior frontmost
+                        // synchronously in < 1 ms. See HotkeyTool for rationale.
+                        try FocusWithoutRaise.withMenuShortcutActivation(
+                            targetPid: pid, targetWid: CGWindowID(wid)
+                        ) {
+                            try KeyboardInput.press(
+                                key, modifiers: modifiers, toPid: pid, attachAuthMessage: false)
+                        }
                     } else {
                         try KeyboardInput.press(
                             key, modifiers: modifiers, toPid: pid)

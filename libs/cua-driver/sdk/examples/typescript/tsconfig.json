@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@cua/driver-sdk": ["../../typescript/src/index.ts"]
+    }
+  },
+  "include": ["./**/*.ts", "../../typescript/src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

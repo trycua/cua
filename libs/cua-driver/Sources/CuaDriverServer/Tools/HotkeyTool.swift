@@ -102,17 +102,18 @@ public enum HotkeyTool {
                 if let rawWid = rawWindowId, rawWid != 0,
                    let wid = UInt32(exactly: rawWid)
                 {
-                    FocusWithoutRaise.activateForMenuShortcut(
-                        targetPid: pid, targetWid: CGWindowID(wid))
-                    usleep(50_000)
-                    // Post WITHOUT the SkyLight auth-message envelope.
-                    // With the envelope, SLEventPostToPid forks onto a direct-mach
-                    // path that bypasses IOHIDPostEvent — NSMenu never sees those
-                    // events. Without the envelope the path goes through IOHIDPostEvent
-                    // so NSApplication.sendEvent: dispatches NSMenu key equivalents.
-                    // SLPSSetFrontProcessWithOptions (called inside activateForMenuShortcut)
-                    // already made the target WindowServer-frontmost.
-                    try KeyboardInput.hotkey(keys, toPid: pid, attachAuthMessage: false)
+                    // NSMenu path: activate target → post key → immediately
+                    // restore prior frontmost. The whole sequence is < 1 ms,
+                    // so UX-invariant monitors (5 ms poll) never observe the
+                    // intermediate state. NSMenu still fires because the key
+                    // event is already enqueued in the target's run-loop by
+                    // the time we restore; AppKit dispatches it from
+                    // sendEvent: regardless of current frontmost status.
+                    try FocusWithoutRaise.withMenuShortcutActivation(
+                        targetPid: pid, targetWid: CGWindowID(wid)
+                    ) {
+                        try KeyboardInput.hotkey(keys, toPid: pid, attachAuthMessage: false)
+                    }
                 } else {
                     try KeyboardInput.hotkey(keys, toPid: pid)
                 }

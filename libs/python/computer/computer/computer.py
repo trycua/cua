@@ -117,6 +117,7 @@ class Computer:
         vnc_port: int = 5900,
         vnc_password: str = "",
         run_opts: Optional[Dict[str, Any]] = None,
+        instance_type: str = "vm",
     ):
         """Initialize a new Computer instance.
 
@@ -152,6 +153,11 @@ class Computer:
             vnc_port: VNC server port (default: 5900)
             vnc_password: VNC server password
             run_opts: Optional dictionary of provider-specific run options.
+            instance_type: For CloudV2 with a user-supplied image, controls the
+                          provisioning back-end: "vm" (default) provisions a KubeVirt
+                          VMI using the image as a containerDisk; "container" provisions
+                          a gVisor/Incus container using the image as spec.image.
+                          Ignored when no image is supplied or for non-CloudV2 providers.
         """
 
         self.logger = Logger("computer", verbosity)
@@ -189,6 +195,9 @@ class Computer:
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
+        # instance_type controls VM vs container provisioning for CloudV2 + user image.
+        # Normalise to lowercase; default "vm".
+        self.instance_type: str = (instance_type or "vm").lower()
         self.api_key = (
             api_key
             if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
@@ -529,6 +538,7 @@ class Computer:
                                 os="linux",
                                 region="us-east-1",
                                 docker_image=self.image,
+                                instance_type=self.instance_type,
                             )
                             self.logger.info(f"VM creation response: {create_resp}")
                             # The API assigns a new name via petname; update our tracking name

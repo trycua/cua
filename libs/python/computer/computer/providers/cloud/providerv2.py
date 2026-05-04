@@ -180,24 +180,31 @@ class CloudV2Provider(BaseVMProvider):
         os: str = "linux",
         region: str = "us-east-1",
         docker_image: Optional[str] = None,
+        instance_type: str = "vm",
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Create a new VMI instance via POST /v1/vms.
+        """Create a new instance via POST /v1/vms.
 
         Args:
             os: Operating system type (default: "linux")
             region: Region to create the VM in (default: "us-east-1")
-            docker_image: Optional public Docker image to use as the containerDisk.
-                         Only public images are supported. When provided, this image
-                         will be used instead of the default CUA image.
+            docker_image: Optional public Docker image to use. Only public images
+                         are supported. When provided, instance_type determines
+                         the provisioning back-end.
+            instance_type: Controls the provisioning back-end when docker_image is set:
+                          "vm" (default) → KubeVirt VMI (containerDisk)
+                          "container"    → gVisor/Incus container (spec.image)
+                          Ignored when docker_image is None.
             cpu: Optional CPU count override
             memory_mb: Optional memory in MB override
             disk_gb: Optional disk size in GB override
 
         Returns:
             Dictionary with VM creation status and information including the VM name.
+            The ``source`` key indicates the provisioning back-end used:
+            ``"kubevirt-ubuntu"`` for VMI, ``"incus-container"`` for container.
 
         Raises:
             RuntimeError: If the creation request fails.
@@ -208,6 +215,8 @@ class CloudV2Provider(BaseVMProvider):
         payload: Dict[str, Any] = {"os": os, "region": region}
         if docker_image:
             payload["dockerImage"] = docker_image
+            # Only send instanceType when an image is provided.
+            payload["instanceType"] = instance_type or "vm"
         if cpu is not None:
             payload["cpu"] = cpu
         if memory_mb is not None:

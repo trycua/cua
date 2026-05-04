@@ -168,6 +168,10 @@ class Computer:
         if api_key is None:
             api_key = os.environ.get("CUA_API_KEY")
 
+        # Track whether the user explicitly supplied an image (used by CloudV2 to
+        # decide whether to create a new VMI with a custom docker image).
+        self._user_supplied_image = bool(image)
+
         if not image:
             if os_type == "macos":
                 image = "macos-sequoia-cua:latest"
@@ -495,9 +499,67 @@ class Computer:
                     if self.config.vm_provider is None:
                         raise RuntimeError(f"VM provider not initialized for {self.config.name}")
 
-                    vm = await self.config.vm_provider.get_vm(self.config.name)
-                    self.logger.verbose(f"Found existing VM: {self.config.name}")
-                    is_running = vm.get("status") == "running"
+                    # For CloudV2: if no name was given and the user supplied a docker image,
+                    # skip the get_vm probe and go straight to creating a new VMI instance.
+                    if (
+                        self.provider_type == VMProviderType.CLOUDV2
+                        and self._user_supplied_image
+                        and not self.config.name
+                    ):
+                        vm = {"status": "not_found"}
+                    else:
+                        vm = await self.config.vm_provider.get_vm(self.config.name)
+                    vm_status = vm.get("status", "unknown")
+                    self.logger.verbose(f"Found existing VM: {self.config.name} (status={vm_status})")
+
+                    # For CloudV2: if the VM doesn't exist yet but a docker image was
+                    # explicitly provided by the user, create a new VMI instance with that image.
+                    if (
+                        vm_status == "not_found"
+                        and self.provider_type == VMProviderType.CLOUDV2
+                        and self._user_supplied_image
+                    ):
+                        from .providers.cloud.providerv2 import CloudV2Provider
+                        if isinstance(self.config.vm_provider, CloudV2Provider):
+                            self.logger.info(
+                                f"VM {self.config.name!r} not found — creating VMI with "
+                                f"docker image {self.image!r}"
+                            )
+                            create_resp = await self.config.vm_provider.create_vm(
+                                os="linux",
+                                region="us-east-1",
+                                docker_image=self.image,
+                            )
+                            self.logger.info(f"VM creation response: {create_resp}")
+                            # The API assigns a new name via petname; update our tracking name
+                            # if the response includes one.
+                            new_name = create_resp.get("name")
+                            if new_name and isinstance(new_name, str):
+                                self.logger.info(
+                                    f"Cloud assigned VM name: {new_name!r} "
+                                    f"(was: {self.config.name!r})"
+                                )
+                                self.config.name = new_name
+                            is_running = False  # Still need to wait for it to be ready
+                        else:
+                            raise RuntimeError(
+                                f"VM {self.config.name} not found and could not be created."
+                            )
+                    elif vm_status == "not_found":
+                        if self.provider_type == VMProviderType.CLOUDV2:
+                            raise RuntimeError(
+                                f"VM {self.config.name!r} not found. "
+                                "To launch a new VMI instance with a custom Docker image, "
+                                "pass image='your/image:tag' to Computer(). "
+                                "Only public images are supported."
+                            )
+                        raise RuntimeError(
+                            f"VM {self.config.name} not found."
+                        )
+                    else:
+                        is_running = vm_status == "running"
+                except RuntimeError:
+                    raise
                 except Exception as e:
                     self.logger.error(f"VM not found: {self.config.name}")
                     self.logger.error(f"Error: {e}")

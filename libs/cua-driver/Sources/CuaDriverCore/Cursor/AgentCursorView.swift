@@ -28,16 +28,11 @@ public struct AgentCursorView: View {
     }
 
     /// Draw a glowing highlight rectangle around the currently targeted AX
-    /// element (if `renderer.focusRect` is set). The rect is in screen-point
-    /// coordinates; the overlay window's frame is the full screen, so we
-    /// convert from screen-point to canvas-local by subtracting the screen's
-    /// origin. Uses a cyan-glow border with a faint fill to mark the target.
+    /// element (if `renderer.focusRect` is set). Color is derived from the
+    /// current cursor style's bloom color so the focus rect always matches
+    /// the cursor's visual identity.
     private func drawFocusRect(in ctx: GraphicsContext, canvasSize: CGSize) {
         guard let screenRect = renderer.focusRect else { return }
-        // The overlay window covers the whole screen, and the canvas's
-        // coordinate origin is the top-left of the screen. Screen-point
-        // coordinates (CoreGraphics, top-left origin on macOS) map
-        // directly to canvas coordinates — no offset needed.
         let r = CGRect(
             x: screenRect.minX,
             y: screenRect.minY,
@@ -46,92 +41,77 @@ public struct AgentCursorView: View {
         )
         let cornerRadius: CGFloat = 4
         let rounded = Path(roundedRect: r, cornerRadius: cornerRadius)
+        let baseColor = Color(nsColor: renderer.style.bloomColor)
 
-        // Faint fill — shows the full extent of the target.
-        ctx.fill(
-            rounded,
-            with: .color(
-                Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255).opacity(0.08)
-            )
-        )
-
-        // Solid bright border.
-        ctx.stroke(
-            rounded,
-            with: .color(
-                Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255).opacity(0.90)
-            ),
-            lineWidth: 2
-        )
-
-        // Wide soft glow stroke for the neon halo effect.
-        ctx.stroke(
-            rounded,
-            with: .color(
-                Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255).opacity(0.30)
-            ),
-            lineWidth: 8
-        )
+        ctx.fill(rounded, with: .color(baseColor.opacity(0.08)))
+        ctx.stroke(rounded, with: .color(baseColor.opacity(0.90)), lineWidth: 2)
+        ctx.stroke(rounded, with: .color(baseColor.opacity(0.30)), lineWidth: 8)
     }
 
-    /// Draw the cursor arrow centered on `renderer.position`, rotated to
-    /// `renderer.heading`. The shape is a 4-vertex pointer arrow with
-    /// the tip along +x before rotation, which the caller rotates by
-    /// `heading + π` (so the visible tip trails opposite the motion
-    /// vector — matching macOS cursor convention).
+    /// Draw the cursor centered on `renderer.position`, rotated to
+    /// `renderer.heading`. When `renderer.style.image` is set, draws that
+    /// image instead of the default gradient arrow.
     private func drawCursor(in ctx: GraphicsContext) {
         let p = renderer.position
         guard p.x > -100 else { return }   // skip until first moveTo
 
-        // Arrow path — tip at (14, 0), tail extends to the left.
-        var shape = Path()
-        shape.move(to: CGPoint(x: 14, y: 0))
-        shape.addLine(to: CGPoint(x: -8, y: -9))
-        shape.addLine(to: CGPoint(x: -3, y: 0))
-        shape.addLine(to: CGPoint(x: -8, y: 9))
-        shape.closeSubpath()
-
-        // `renderer.heading` is the visual heading = motion_direction + π.
-        // The arrow path has its tip at +x, so we rotate by heading + π
-        // to make the tip point in the motion direction (standard cursor
-        // convention where the pointer leads rather than trails).
-        let transform = CGAffineTransform(translationX: p.x, y: p.y)
-            .rotated(by: CGFloat(renderer.heading + .pi))
-
-        let transformed = shape.applying(transform)
-
-        // Ice-blue gradient fill (matches existing agent-cursor palette).
-        ctx.fill(
-            transformed,
-            with: .linearGradient(
-                Gradient(colors: [
-                    Color(red: 0xDB/255, green: 0xEE/255, blue: 0xFF/255),
-                    Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255),
-                    Color(red: 0x54/255, green: 0xCD/255, blue: 0xA0/255),
-                ]),
-                startPoint: CGPoint(x: p.x + 14, y: p.y - 9),
-                endPoint: CGPoint(x: p.x - 8, y: p.y + 9)
-            )
-        )
-        // White outline for legibility on any background.
-        ctx.stroke(transformed, with: .color(.white), lineWidth: 1.5)
-
-        // Cyan bloom halo — radial glow that reads as agent presence.
+        let style = renderer.style
+        let bloomColor = Color(nsColor: style.bloomColor)
         let bloomR: CGFloat = 22
         let bloomRect = CGRect(x: p.x - bloomR, y: p.y - bloomR,
                                width: bloomR * 2, height: bloomR * 2)
+
+        // Bloom halo — drawn first (underneath) regardless of cursor mode.
         ctx.fill(
             Path(ellipseIn: bloomRect),
             with: .radialGradient(
                 Gradient(colors: [
-                    Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255).opacity(0.45),
-                    Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255).opacity(0.10),
-                    Color(red: 0x5E/255, green: 0xC0/255, blue: 0xE8/255).opacity(0.0),
+                    bloomColor.opacity(style.bloomCenterAlpha),
+                    bloomColor.opacity(style.bloomMidAlpha),
+                    bloomColor.opacity(0),
                 ]),
                 center: p,
                 startRadius: 0,
                 endRadius: bloomR
             )
         )
+
+        if let nsImage = style.image {
+            // Custom image mode: draw the image centered on `p`, rotated
+            // to heading. GraphicsContext is a value type — copy before
+            // applying the transform so the bloom above is unaffected.
+            var imgCtx = ctx
+            imgCtx.translateBy(x: p.x, y: p.y)
+            imgCtx.rotate(by: Angle(radians: renderer.heading + .pi))
+            let s = style.shapeSize
+            imgCtx.draw(Image(nsImage: nsImage),
+                        in: CGRect(x: -s / 2, y: -s / 2, width: s, height: s))
+        } else {
+            // Procedural arrow mode: 4-vertex pointer shape with gradient fill.
+            var shape = Path()
+            shape.move(to: CGPoint(x: 14, y: 0))
+            shape.addLine(to: CGPoint(x: -8, y: -9))
+            shape.addLine(to: CGPoint(x: -3, y: 0))
+            shape.addLine(to: CGPoint(x: -8, y: 9))
+            shape.closeSubpath()
+
+            let transform = CGAffineTransform(translationX: p.x, y: p.y)
+                .rotated(by: CGFloat(renderer.heading + .pi))
+            let transformed = shape.applying(transform)
+
+            let gradientColors = style.strokeGradientStops.isEmpty
+                ? AgentCursorStyle.defaultGradientStops.map { Color(nsColor: $0.color) }
+                : style.strokeGradientStops.map { Color(nsColor: $0.color) }
+
+            ctx.fill(
+                transformed,
+                with: .linearGradient(
+                    Gradient(colors: gradientColors),
+                    startPoint: CGPoint(x: p.x + 14, y: p.y - 9),
+                    endPoint: CGPoint(x: p.x - 8, y: p.y + 9)
+                )
+            )
+            ctx.stroke(transformed, with: .color(.white), lineWidth: style.strokeWidth)
+        }
     }
 }

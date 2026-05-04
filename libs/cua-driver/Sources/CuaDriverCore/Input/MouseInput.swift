@@ -432,6 +432,209 @@ public enum MouseInput {
         )
     }
 
+    /// Synthesize a press-drag-release gesture from `start` to `end` in
+    /// screen points. Emits one `mouseDown` at `start`, `steps`
+    /// linearly-interpolated `mouseDragged` events along the path, and
+    /// one `mouseUp` at `end`. `durationMs` is the wall-clock budget
+    /// for the path between down and up; the time is split evenly
+    /// across the drag steps.
+    ///
+    /// Frontmost target: posts via `.cghidEventTap` with a leading
+    /// `mouseMoved` so the recipient sees a real HID-origin gesture
+    /// (matches what AppKit drag sources, Finder selection, and
+    /// canvas-backed viewports expect). The user's real cursor
+    /// follows the drag path — unavoidable, since `cghidEventTap` is
+    /// the system input stream.
+    ///
+    /// Backgrounded target: posts via `postBoth` (auth-signed
+    /// SkyLight + public `CGEvent.postToPid`). Cursor-neutral. Some
+    /// surfaces filter pid-routed mouseDragged events at the
+    /// event-source level (same OpenGL/GHOST-style filter that
+    /// affects pid-routed clicks); those targets need to be frontmost
+    /// for drags to land.
+    ///
+    /// `modifiers` are held across every event in the gesture (down,
+    /// every dragged step, up), enabling option-drag (duplicate),
+    /// shift-drag (constrained axis), etc.
+    public static func drag(
+        from start: CGPoint,
+        to end: CGPoint,
+        toPid pid: pid_t,
+        button: Button = .left,
+        durationMs: Int = 500,
+        steps: Int = 20,
+        modifiers: [String] = []
+    ) throws {
+        let clampedSteps = max(1, min(200, steps))
+        let clampedDuration = max(0, min(10_000, durationMs))
+        // Split the wall-clock budget across the dragged-step gaps.
+        // `clampedSteps` intermediate points produce `clampedSteps`
+        // gaps between down → first-drag → … → last-drag → up.
+        let perStepUs = useconds_t((clampedDuration * 1_000) / clampedSteps)
+
+        let targetIsFrontmost =
+            NSRunningApplication(processIdentifier: pid)?.isActive ?? false
+        if targetIsFrontmost {
+            try dragFrontmostViaHIDTap(
+                from: start,
+                to: end,
+                button: button,
+                steps: clampedSteps,
+                perStepUs: perStepUs,
+                modifiers: modifiers
+            )
+            return
+        }
+
+        let (downType, upType) = nsEventTypes(for: button)
+        let draggedType = nsDraggedType(for: button)
+        let modifierFlags = modifierMask(for: modifiers)
+        let winNum = Int(
+            WindowEnumerator.frontmostWindow(forPid: pid)
+                .map { Int64(CGWindowID($0.id)) } ?? 0)
+
+        let down = try buildCGEvent(
+            type: downType,
+            location: cocoaLocation(fromScreenPoint: start),
+            modifierFlags: modifierFlags,
+            clickCount: 1,
+            button: button,
+            windowNumber: winNum
+        )
+        down.setIntegerValueField(.mouseEventClickState, value: 1)
+        postBoth(down, toPid: pid)
+
+        for step in 1...clampedSteps {
+            let progress = Double(step) / Double(clampedSteps)
+            let point = CGPoint(
+                x: start.x + (end.x - start.x) * progress,
+                y: start.y + (end.y - start.y) * progress
+            )
+            let drag = try buildCGEvent(
+                type: draggedType,
+                location: cocoaLocation(fromScreenPoint: point),
+                modifierFlags: modifierFlags,
+                clickCount: 1,
+                button: button,
+                windowNumber: winNum
+            )
+            drag.setIntegerValueField(.mouseEventClickState, value: 1)
+            usleep(perStepUs)
+            postBoth(drag, toPid: pid)
+        }
+
+        let up = try buildCGEvent(
+            type: upType,
+            location: cocoaLocation(fromScreenPoint: end),
+            modifierFlags: modifierFlags,
+            clickCount: 1,
+            button: button,
+            windowNumber: winNum
+        )
+        up.setIntegerValueField(.mouseEventClickState, value: 1)
+        usleep(perStepUs)
+        postBoth(up, toPid: pid)
+    }
+
+    /// Frontmost-target drag: route through `.cghidEventTap` so the
+    /// gesture originates from the system input stream — matches what
+    /// AppKit drag sources / Finder selection rect / canvas viewports
+    /// expect. The real cursor visibly traces the drag path; we
+    /// accept that for frontmost gestures.
+    private static func dragFrontmostViaHIDTap(
+        from start: CGPoint,
+        to end: CGPoint,
+        button: Button,
+        steps: Int,
+        perStepUs: useconds_t,
+        modifiers: [String]
+    ) throws {
+        let (downType, upType) = cgEventTypes(for: button)
+        let draggedType = cgDraggedType(for: button)
+        let mouseButton: CGMouseButton = {
+            switch button {
+            case .left: return .left
+            case .right: return .right
+            case .middle: return .center
+            }
+        }()
+        let modifierFlags = cgEventFlags(for: modifiers)
+        let src = CGEventSource(stateID: .hidSystemState)
+
+        guard
+            let move = CGEvent(
+                mouseEventSource: src,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: start,
+                mouseButton: mouseButton
+            )
+        else { throw MouseInputError.eventCreationFailed("drag hid-tap move") }
+        move.flags = modifierFlags
+        move.post(tap: .cghidEventTap)
+        usleep(30_000)
+
+        guard
+            let down = CGEvent(
+                mouseEventSource: src,
+                mouseType: downType,
+                mouseCursorPosition: start,
+                mouseButton: mouseButton
+            )
+        else { throw MouseInputError.eventCreationFailed("drag hid-tap down") }
+        down.flags = modifierFlags
+        down.setIntegerValueField(.mouseEventClickState, value: 1)
+        down.post(tap: .cghidEventTap)
+
+        for step in 1...steps {
+            let progress = Double(step) / Double(steps)
+            let point = CGPoint(
+                x: start.x + (end.x - start.x) * progress,
+                y: start.y + (end.y - start.y) * progress
+            )
+            guard
+                let drag = CGEvent(
+                    mouseEventSource: src,
+                    mouseType: draggedType,
+                    mouseCursorPosition: point,
+                    mouseButton: mouseButton
+                )
+            else { throw MouseInputError.eventCreationFailed("drag hid-tap step") }
+            drag.flags = modifierFlags
+            drag.setIntegerValueField(.mouseEventClickState, value: 1)
+            usleep(perStepUs)
+            drag.post(tap: .cghidEventTap)
+        }
+
+        guard
+            let up = CGEvent(
+                mouseEventSource: src,
+                mouseType: upType,
+                mouseCursorPosition: end,
+                mouseButton: mouseButton
+            )
+        else { throw MouseInputError.eventCreationFailed("drag hid-tap up") }
+        up.flags = modifierFlags
+        up.setIntegerValueField(.mouseEventClickState, value: 1)
+        usleep(perStepUs)
+        up.post(tap: .cghidEventTap)
+    }
+
+    private static func nsDraggedType(for button: Button) -> NSEvent.EventType {
+        switch button {
+        case .left: return .leftMouseDragged
+        case .right: return .rightMouseDragged
+        case .middle: return .otherMouseDragged
+        }
+    }
+
+    private static func cgDraggedType(for button: Button) -> CGEventType {
+        switch button {
+        case .left: return .leftMouseDragged
+        case .right: return .rightMouseDragged
+        case .middle: return .otherMouseDragged
+        }
+    }
+
     // MARK: - Private helpers
 
     private static func buildCGEvent(

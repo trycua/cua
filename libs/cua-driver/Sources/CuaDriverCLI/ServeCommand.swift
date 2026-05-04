@@ -27,7 +27,7 @@ struct ServeCommand: ParsableCommand {
             Responses: {"ok":true,"result":...} or
                        {"ok":false,"error":"...","exitCode":64|65|70|1}.
 
-            TCC responsibility chain: when invoked via the `/usr/local/bin/cua-driver`
+            TCC responsibility chain: when invoked via the `~/.local/bin/cua-driver`
             symlink from a shell that itself lacks Accessibility + Screen Recording
             grants (any IDE terminal — Claude Code, Cursor, VS Code, Conductor),
             macOS attributes the serve process to the parent shell/IDE, not to
@@ -143,6 +143,10 @@ struct ServeCommand: ParsableCommand {
             // defaults inside `ConfigStore.load()` — no failure here.
             let config = await ConfigStore.shared.load()
 
+            // Non-blocking version hint — prints to stderr if a newer release
+            // exists on GitHub. Fails silently when offline.
+            VersionCheck.warnIfOutdated()
+
             // Propagate persisted agent-cursor preferences into the live
             // singleton so the daemon boots in the same state the user
             // last wrote. `setAgentCursorEnabled` / `setAgentCursorMotion`
@@ -168,7 +172,7 @@ extension ServeCommand {
     ///     truthy in the environment.
     ///   - `Bundle.main.bundlePath` does NOT end in `.app`. That's the
     ///     signal we were invoked as a bare binary — almost always the
-    ///     `/usr/local/bin/cua-driver` symlink from a shell — rather
+    ///     `~/.local/bin/cua-driver` symlink from a shell — rather
     ///     than as the main executable of a loaded `.app` bundle. The
     ///     `open -n -g -a` path always lands in the second form
     ///     (bundlePath ends in `/CuaDriver.app`), so checking for its
@@ -307,7 +311,7 @@ extension ServeCommand {
     /// True when the argv[0] / executablePath resolves (through any
     /// symlinks) to a binary physically living inside some
     /// `CuaDriver.app/Contents/MacOS/` directory. That's the "installed
-    /// via install-local.sh / install.sh" shape — `/usr/local/bin/cua-driver`
+    /// via install-local.sh / install.sh" shape — `~/.local/bin/cua-driver`
     /// is a symlink into `/Applications/CuaDriver.app`, and `realpath`
     /// walks into the bundle.
     ///

@@ -9,7 +9,8 @@ import Foundation
 /// in `src/window_manager.c`):
 ///
 /// 1. `_SLPSGetFrontProcess(&prevPSN)` — capture current front.
-/// 2. `GetProcessForPID(targetPid, &targetPSN)`.
+/// 2. `SLSGetWindowOwner + SLSGetConnectionPSN` → target PSN from window ID
+///    (replaces the deprecated `GetProcessForPID` on macOS 15+).
 /// 3. `SLPSPostEventRecordTo(prevPSN, 248-byte-buf)` with `bytes[0x8a] = 0x02`
 ///    (defocus marker) → tells WindowServer the previous front's window
 ///    has lost focus without asking for a raise of anything else.
@@ -63,7 +64,7 @@ public enum FocusWithoutRaise {
         guard prevOk else { return false }
 
         let targetOk = targetPSN.withUnsafeMutableBytes { raw in
-            SkyLightEventPost.getProcessPSN(forPid: targetPid, into: raw.baseAddress!)
+            SkyLightEventPost.getProcessPSN(forWindowId: targetWid, into: raw.baseAddress!)
         }
         guard targetOk else { return false }
 
@@ -95,5 +96,50 @@ public enum FocusWithoutRaise {
         }
 
         return defocusOk && focusOk
+    }
+
+    /// Full-activate variant for the keyboard → NSMenu shortcut path.
+    ///
+    /// Unlike `activateWithoutRaise` (which only changes AppKit-active state via
+    /// the PSN defocus/focus recipe), this calls `SLPSSetFrontProcessWithOptions`
+    /// with `kCPSNoWindows (0x400)` directly, which makes the target both
+    /// **AppKit-active** AND **WindowServer-level frontmost** in a single step —
+    /// without raising windows or triggering Space follow.
+    ///
+    /// Why the full-frontmost step is required for NSMenu key equivalents:
+    /// - HID-tap events (`CGEvent.post(tap: .cghidEventTap)`) route to the
+    ///   **WindowServer-level frontmost** process, not the AppKit-active one.
+    ///   `activateWithoutRaise` only changes AppKit-active, so HID-tap events
+    ///   still go to the sentinel foreground app (e.g., the terminal), not the
+    ///   backgrounded target.
+    /// - After `SLPSSetFrontProcessWithOptions(kCPSNoWindows)`, the target IS the
+    ///   WindowServer frontmost, so the HID-tap reaches its event queue where
+    ///   `NSApplication.sendEvent:` dispatches NSMenu key equivalents.
+    ///
+    /// **Trade-off**: causes exactly 1 focus loss on the sentinel foreground app
+    /// (same as the click path). Using `kCPSNoWindows` rather than the default
+    /// `kCPSUserGenerated = 0x100` avoids window raise and Space follow.
+    ///
+    /// This is NOT used for the click/mouse path because Chrome's user-activation
+    /// gate rejects synthetic clicks after `SLPSSetFrontProcessWithOptions` — the
+    /// PSN-only recipe in `activateWithoutRaise` is sufficient for clicks.
+    @discardableResult
+    public static func activateForMenuShortcut(
+        targetPid: pid_t, targetWid: CGWindowID
+    ) -> Bool {
+        // Resolve target PSN from window ID (modern path via SLSGetWindowOwner +
+        // SLSGetConnectionPSN; fallback GetProcessForPID on older macOS).
+        var targetPSN = [UInt32](repeating: 0, count: 2)
+        let targetOk = targetPSN.withUnsafeMutableBytes { raw in
+            SkyLightEventPost.getProcessPSN(forWindowId: targetWid, into: raw.baseAddress!)
+        }
+        guard targetOk else { return false }
+
+        // One call makes the target both AppKit-active and WindowServer-frontmost
+        // without raising windows. HID-tap events will now route to this process.
+        return targetPSN.withUnsafeBytes { psnRaw in
+            SkyLightEventPost.setFrontProcessNoWindows(
+                psn: psnRaw.baseAddress!, windowID: UInt32(targetWid))
+        }
     }
 }

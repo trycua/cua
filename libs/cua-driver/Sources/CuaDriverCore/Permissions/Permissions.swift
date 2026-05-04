@@ -54,7 +54,11 @@ public enum Permissions {
 
     private static func probeScreenRecording() async -> Bool {
         do {
-            _ = try await SCShareableContent.current
+            // excludingDesktopWindows is much faster than .current when the
+            // window server has many off-screen entries (e.g. a crashed
+            // CursorUIViewService with thousands of ghost windows).
+            _ = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true)
             return true
         } catch {
             return false

@@ -5,7 +5,7 @@ import SwiftUI
 /// Named color stop for the agent-cursor's axial stroke gradient.
 /// Pairing color + location keeps the spec's lavender stops grep-able
 /// in one place — touch these values to retint the pointer.
-public struct AgentCursorGradientStop: Sendable {
+public struct AgentCursorGradientStop: @unchecked Sendable {
     public let color: NSColor
     public let location: CGFloat
     public init(color: NSColor, location: CGFloat) {
@@ -14,53 +14,72 @@ public struct AgentCursorGradientStop: Sendable {
     }
 }
 
-/// Visual constants for the agent cursor — shape sizing, gradient
-/// stops, bloom falloff, stroke widths. Hard-coded and grep-able per
-/// the design spec (see `docs/_local/agent-cursor-redesign.md`). Not
-/// exposed via `set_agent_cursor_motion`; a separate
-/// `set_agent_cursor_style` tool can land later if per-session theming
-/// becomes a real ask.
-public struct AgentCursorStyle: Sendable {
-    /// Container layer size. Grew 25pt → 60pt to hold the bloom
-    /// without clipping. Window frame is unchanged — the container is
-    /// visual only, no hit-test implication.
+/// Visual constants for the agent cursor — shape sizing, gradient stops,
+/// bloom falloff, stroke widths, and an optional custom image.
+///
+/// ## Custom cursor image
+///
+/// Set `image` to an `NSImage` (PNG, JPEG, PDF, or SVG loaded via
+/// `NSImage(contentsOf:)`) to replace the default procedural arrow with
+/// your own graphic. The image is drawn at `shapeSize × shapeSize` points,
+/// rotated to track the motion heading. The bloom halo is still rendered
+/// underneath — set `bloomCenterAlpha: 0` to suppress it.
+///
+/// ## Custom colors
+///
+/// Override `strokeGradientStops` to change the arrow fill, and
+/// `bloomColor` / `bloomCenterAlpha` to change the glow hue. Parse hex
+/// strings with `NSColor(hex:)`.
+///
+/// ## `@unchecked Sendable`
+///
+/// NSColor and NSImage are reference types without formal Sendable
+/// conformance in Swift 6. All fields are `let` (immutable after init),
+/// so concurrent reads are safe — hence `@unchecked`.
+public struct AgentCursorStyle: @unchecked Sendable {
+    /// Container layer size (points). Default 60.
     public let containerSize: CGFloat
 
-    /// Rounded-arrow shape size (tip-to-base). Unchanged from the
-    /// previous triangle: 15pt reads as a cursor tip without feeling
-    /// chunky.
+    /// Drawn size of the cursor shape (points). Default 22.
     public let shapeSize: CGFloat
 
-    /// Axial stroke gradient — lavender family. 135° rotation (set via
-    /// `strokeGradientAngleDegrees`) puts the near-white stop at the
-    /// top-left (tip) and the indigo stop at the bottom-right (tail).
+    /// Axial stroke gradient stops for the procedural arrow. Ignored when
+    /// `image` is set.
     public let strokeGradientStops: [AgentCursorGradientStop]
     public let strokeGradientAngleDegrees: CGFloat
 
     public let strokeWidth: CGFloat
     public let highlightStrokeWidth: CGFloat
 
-    /// Lavender bloom — single radial `CAGradientLayer` below the
-    /// stroke. The hex stays constant; the envelope is an opacity
-    /// curve. `bloomCenterAlpha` is the resting center alpha;
-    /// `bloomBreathPeak` is the max the glide animation breathes up
-    /// to. `bloomMidAlpha` is the alpha at the 50% color-stop.
+    /// Bloom halo color. Also used for the focus-rect highlight.
     public let bloomColor: NSColor
     public let bloomCenterAlpha: CGFloat
     public let bloomMidAlpha: CGFloat
     public let bloomBreathPeak: CGFloat
 
+    /// Optional custom cursor image. When non-nil, the procedural arrow
+    /// is replaced by this image rendered at `shapeSize × shapeSize`
+    /// points, rotated to track the motion heading. Accepts any format
+    /// NSImage can load: PNG, JPEG, PDF, SVG (macOS 12+).
+    ///
+    /// Load from a file path:
+    /// ```swift
+    /// AgentCursorStyle(image: NSImage(contentsOf: URL(fileURLWithPath: "/path/to/cursor.png")))
+    /// ```
+    public let image: NSImage?
+
     public init(
-        containerSize: CGFloat,
-        shapeSize: CGFloat,
-        strokeGradientStops: [AgentCursorGradientStop],
-        strokeGradientAngleDegrees: CGFloat,
-        strokeWidth: CGFloat,
-        highlightStrokeWidth: CGFloat,
-        bloomColor: NSColor,
-        bloomCenterAlpha: CGFloat,
-        bloomMidAlpha: CGFloat,
-        bloomBreathPeak: CGFloat
+        containerSize: CGFloat = 60,
+        shapeSize: CGFloat = 22,
+        strokeGradientStops: [AgentCursorGradientStop] = AgentCursorStyle.defaultGradientStops,
+        strokeGradientAngleDegrees: CGFloat = 135,
+        strokeWidth: CGFloat = 2,
+        highlightStrokeWidth: CGFloat = 0.5,
+        bloomColor: NSColor = NSColor(red: 0x5E / 255, green: 0xC0 / 255, blue: 0xE8 / 255, alpha: 1),
+        bloomCenterAlpha: CGFloat = 0.55,
+        bloomMidAlpha: CGFloat = 0.15,
+        bloomBreathPeak: CGFloat = 0.75,
+        image: NSImage? = nil
     ) {
         self.containerSize = containerSize
         self.shapeSize = shapeSize
@@ -72,49 +91,60 @@ public struct AgentCursorStyle: Sendable {
         self.bloomCenterAlpha = bloomCenterAlpha
         self.bloomMidAlpha = bloomMidAlpha
         self.bloomBreathPeak = bloomBreathPeak
+        self.image = image
     }
 
-    /// The single locked-in style. Values per the design spec. Edit
-    /// these to retint / resize the pointer — no other call sites
-    /// should be reading them directly.
-    public static let `default` = AgentCursorStyle(
-        containerSize: 60,
-        // SVG content fills ~18/24 of the shape frame (has built-in
-        // padding), so the effective drawn size is 75% of `shapeSize`.
-        // 22pt gives a visible cursor around 16-17pt — comparable to the
-        // macOS system cursor.
-        shapeSize: 22,
-        // cua-driver heritage gradient: ice-blue tip → cyan body → mint
-        // tail. Axial 135° (from upper-left to lower-right) traces the
-        // cursor's own tip-to-tail axis, so the tip reads brightest.
-        strokeGradientStops: [
-            AgentCursorGradientStop(
-                color: NSColor(red: 0xDB / 255, green: 0xEE / 255, blue: 0xFF / 255, alpha: 1),
-                location: 0.0
-            ),
-            AgentCursorGradientStop(
-                color: NSColor(red: 0x5E / 255, green: 0xC0 / 255, blue: 0xE8 / 255, alpha: 1),
-                location: 0.53
-            ),
-            AgentCursorGradientStop(
-                color: NSColor(red: 0x54 / 255, green: 0xCD / 255, blue: 0xA0 / 255, alpha: 1),
-                location: 1.0
-            ),
-        ],
-        strokeGradientAngleDegrees: 135,
-        // 2pt white outline wraps the gradient-filled shape. Highlight
-        // stroke field is retained in the style struct for back-compat
-        // but not used by the current renderer (the layer tree has
-        // gradient-fill + white-border, no separate highlight stroke).
-        strokeWidth: 2,
-        highlightStrokeWidth: 0.5,
-        // Bloom matches the gradient's mid stop (cyan) so the halo reads
-        // as the cursor "exhaling color" rather than an unrelated hue.
-        bloomColor: NSColor(red: 0x5E / 255, green: 0xC0 / 255, blue: 0xE8 / 255, alpha: 1),
-        bloomCenterAlpha: 0.55,
-        bloomMidAlpha: 0.15,
-        bloomBreathPeak: 0.75
-    )
+    // cua-driver heritage gradient: ice-blue tip → cyan body → mint tail.
+    public static let defaultGradientStops: [AgentCursorGradientStop] = [
+        AgentCursorGradientStop(
+            color: NSColor(red: 0xDB / 255, green: 0xEE / 255, blue: 0xFF / 255, alpha: 1),
+            location: 0.0
+        ),
+        AgentCursorGradientStop(
+            color: NSColor(red: 0x5E / 255, green: 0xC0 / 255, blue: 0xE8 / 255, alpha: 1),
+            location: 0.53
+        ),
+        AgentCursorGradientStop(
+            color: NSColor(red: 0x54 / 255, green: 0xCD / 255, blue: 0xA0 / 255, alpha: 1),
+            location: 1.0
+        ),
+    ]
+
+    public static let `default` = AgentCursorStyle()
+}
+
+// MARK: - NSColor hex parsing
+
+extension NSColor {
+    /// Parse a CSS hex color string: `#RGB`, `#RRGGBB`, or `#RRGGBBAA`.
+    /// Returns nil when the string is not a valid hex color.
+    public convenience init?(hex: String) {
+        var str = hex.trimmingCharacters(in: .whitespaces)
+        if str.hasPrefix("#") { str = String(str.dropFirst()) }
+        if str.count == 3 {
+            str = str.map { "\($0)\($0)" }.joined()
+        }
+        var value: UInt64 = 0
+        guard Scanner(string: str).scanHexInt64(&value) else { return nil }
+        switch str.count {
+        case 6:
+            self.init(
+                red: CGFloat((value >> 16) & 0xFF) / 255,
+                green: CGFloat((value >> 8) & 0xFF) / 255,
+                blue: CGFloat(value & 0xFF) / 255,
+                alpha: 1
+            )
+        case 8:
+            self.init(
+                red: CGFloat((value >> 24) & 0xFF) / 255,
+                green: CGFloat((value >> 16) & 0xFF) / 255,
+                blue: CGFloat((value >> 8) & 0xFF) / 255,
+                alpha: CGFloat(value & 0xFF) / 255
+            )
+        default:
+            return nil
+        }
+    }
 }
 
 /// The agent cursor overlay — a purely visual floating arrow that
@@ -273,6 +303,39 @@ public final class AgentCursor {
             arcFlow: CGFloat(config.motion.arcFlow),
             spring: CGFloat(config.motion.spring)
         )
+        applyStyleConfig(config.style)
+    }
+
+    /// Apply a custom visual style to the cursor overlay. Takes effect
+    /// immediately — the next rendered frame picks up the new style.
+    /// Swift dep users call this directly; MCP users go through
+    /// `set_agent_cursor_style`.
+    public func setStyle(_ style: AgentCursorStyle) {
+        AgentCursorRenderer.shared.style = style
+    }
+
+    public func applyStyleConfig(_ styleConfig: AgentCursorConfig.Style) {
+        let gradientStops: [AgentCursorGradientStop]
+        if let hexColors = styleConfig.gradientColors, !hexColors.isEmpty {
+            gradientStops = hexColors.enumerated().compactMap { i, hex -> AgentCursorGradientStop? in
+                guard let color = NSColor(hex: hex) else { return nil }
+                let loc = CGFloat(i) / CGFloat(max(hexColors.count - 1, 1))
+                return AgentCursorGradientStop(color: color, location: loc)
+            }
+        } else {
+            gradientStops = AgentCursorStyle.defaultGradientStops
+        }
+        let bloomColor = styleConfig.bloomColor.flatMap { NSColor(hex: $0) }
+            ?? NSColor(red: 0x5E / 255, green: 0xC0 / 255, blue: 0xE8 / 255, alpha: 1)
+        var nsImage: NSImage? = nil
+        if let path = styleConfig.imagePath {
+            nsImage = NSImage(contentsOf: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
+        }
+        setStyle(AgentCursorStyle(
+            strokeGradientStops: gradientStops,
+            bloomColor: bloomColor,
+            image: nsImage
+        ))
     }
 
     /// Show the overlay window. Idempotent — successive calls are

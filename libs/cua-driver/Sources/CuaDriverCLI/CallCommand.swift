@@ -83,13 +83,13 @@ struct CallCommand: AsyncParsableCommand {
             file path. `vision` and `screenshot` capture modes return a
             PNG as a native MCP image block with no accompanying
             structuredContent, so the CLI's text formatter would otherwise
-            drop the bytes silently. With `--image-out /tmp/shot.png` the
-            raw PNG lands on disk and downstream tooling (PIL, sips,
+            drop the bytes silently. With `--screenshot-out-file /tmp/shot.jpg`
+            the raw image lands on disk and downstream tooling (PIL, sips,
             ffprobe) can read it directly. Silently warns (no error exit)
             when the response carries no image.
             """
     )
-    var imageOut: String?
+    var screenshotOutFile: String?
 
     @OptionGroup var output: JSONOutputOptions
     @OptionGroup var daemon: DaemonForwardingOptions
@@ -113,7 +113,7 @@ struct CallCommand: AsyncParsableCommand {
                 arguments: arguments,
                 socketPath: daemon.resolvedSocketPath,
                 raw: raw,
-                imageOut: imageOut,
+                screenshotOutFile: screenshotOutFile,
                 output: output
             )
             return
@@ -124,6 +124,7 @@ struct CallCommand: AsyncParsableCommand {
 
     private func runInProcess(arguments: [String: Value]?) async throws {
         let registry = ToolRegistry.default
+        var arguments = arguments
 
         guard let handler = registry.handlers[toolName] else {
             printUnknownTool(toolName, registry: registry)
@@ -152,7 +153,10 @@ struct CallCommand: AsyncParsableCommand {
         // "NOT granted" even when the user has granted both permissions
         // to CuaDriver.app. If the daemon were up we'd already have
         // forwarded in run(); reaching this branch means no daemon is
-        // listening. Warn the user that the fallback answer is unreliable.
+        // listening. Warn the user that the fallback answer is unreliable,
+        // and force `prompt: false` — the tool's default would otherwise
+        // raise a TCC dialog attributed to the calling shell/IDE bundle,
+        // not CuaDriver.app, so the user would grant the wrong identity.
         if toolName == "check_permissions" {
             printToStderr(
                 """
@@ -160,6 +164,9 @@ struct CallCommand: AsyncParsableCommand {
                 For authoritative results, start the daemon first: `open -n -g -a CuaDriver --args serve`, then re-run this check.
                 """
             )
+            var coerced = arguments ?? [:]
+            coerced["prompt"] = .bool(false)
+            arguments = coerced
         }
 
         let result: CallTool.Result
@@ -177,7 +184,7 @@ struct CallCommand: AsyncParsableCommand {
             throw ExitCode(Exit.software)
         }
 
-        if let path = imageOut {
+        if let path = screenshotOutFile {
             writeFirstImageContent(result.content, to: path)
         }
 
@@ -244,10 +251,7 @@ struct CallCommand: AsyncParsableCommand {
             let encoder = JSONEncoder()
             encoder.outputFormatting = output.encoderOutputFormatting
             let encoded = try encoder.encode(structured)
-            let merged = mergeImageContentIntoJSON(
-                encoded, content: result.content, output: output
-            )
-            printDataLine(merged)
+            printDataLine(encoded)
             return
         }
 
@@ -345,7 +349,7 @@ func forwardCallToDaemon(
     arguments: [String: Value]?,
     socketPath: String,
     raw: Bool,
-    imageOut: String?,
+    screenshotOutFile: String?,
     output: JSONOutputOptions
 ) async throws {
     let request = DaemonRequest(method: "call", name: toolName, args: arguments)
@@ -374,7 +378,7 @@ func forwardCallToDaemon(
             throw ExitCode(Exit.software)
         }
 
-        if let path = imageOut {
+        if let path = screenshotOutFile {
             writeFirstImageContent(result.content, to: path)
         }
 
@@ -419,10 +423,7 @@ private func emitUnwrappedResultForDaemon(
         let encoder = JSONEncoder()
         encoder.outputFormatting = output.encoderOutputFormatting
         let encoded = try encoder.encode(structured)
-        let merged = mergeImageContentIntoJSON(
-            encoded, content: result.content, output: output
-        )
-        FileHandle.standardOutput.write(merged)
+        FileHandle.standardOutput.write(encoded)
         FileHandle.standardOutput.write(Data("\n".utf8))
         return
     }
@@ -480,70 +481,23 @@ enum DaemonCLIError: Error {
     case protocolMismatch
 }
 
-/// MCP delivers screenshot bytes as a native `.image()` content block
-/// separate from `structuredContent`, so shell consumers of
-/// `cua-driver <tool>` only see the metadata half ("has_screenshot",
-/// dimensions) and the base64 pixels silently vanish. This reunites them
-/// at CLI emit time: if any image block is present in `content`, splice
-/// its base64 into the outgoing JSON as `screenshot_png_b64` (plus
-/// `screenshot_mime_type`) alongside the existing fields. The MCP wire
-/// contract is unchanged — only the CLI's pretty-printed output gains
-/// the pixels that downstream `jq -r '.screenshot_png_b64' | base64 -d`
-/// pipelines expect.
-///
-/// Returns the input `encoded` unchanged when there's no image block to
-/// splice OR when the structured content didn't decode as a JSON object
-/// (e.g. a bare array / scalar from some other tool). Never throws —
-/// merge failures fall through silently so a malformed structured
-/// response still emits its original bytes.
-private func mergeImageContentIntoJSON(
-    _ encoded: Data,
-    content: [Tool.Content],
-    output: JSONOutputOptions
-) -> Data {
-    var imageBase64: String? = nil
-    var imageMime: String? = nil
-    for item in content {
-        if case let .image(data, mime, _, _) = item {
-            imageBase64 = data
-            imageMime = mime
-            break
-        }
-    }
-    guard let imageBase64, let imageMime else { return encoded }
-
-    guard
-        var object = (try? JSONSerialization.jsonObject(with: encoded))
-            as? [String: Any]
-    else { return encoded }
-    object["screenshot_png_b64"] = imageBase64
-    object["screenshot_mime_type"] = imageMime
-
-    var writingOptions: JSONSerialization.WritingOptions = [
-        .sortedKeys, .withoutEscapingSlashes,
-    ]
-    if !output.compact { writingOptions.insert(.prettyPrinted) }
-    return (try? JSONSerialization.data(
-        withJSONObject: object, options: writingOptions
-    )) ?? encoded
-}
 
 /// Write the first `.image(...)` content block from a tool result to
-/// `path`, decoded from base64. Used by the `--image-out` flag so
+/// `path`, decoded from base64. Used by the `--screenshot-out-file` flag so
 /// vision-mode screenshots land on disk without callers needing to
 /// speak the raw daemon protocol or the MCP bridge.
 ///
 /// Never throws — an empty/malformed image, a write failure, or a
 /// response that carries no image at all each emit a stderr warning
 /// and return. The exit code is NOT affected: callers have already
-/// gotten the textual result on stdout, and `--image-out` is
+/// gotten the textual result on stdout, and `--screenshot-out-file` is
 /// advisory ("if the tool returned a PNG, put it here"), not a hard
 /// contract.
 func writeFirstImageContent(_ content: [Tool.Content], to path: String) {
     for item in content {
         if case let .image(base64, mime, _, _) = item {
             guard let bytes = Data(base64Encoded: base64) else {
-                printToStderr("--image-out: base64 decode failed for \(mime) block")
+                printToStderr("--screenshot-out-file: base64 decode failed for \(mime) block")
                 return
             }
             let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
@@ -551,7 +505,7 @@ func writeFirstImageContent(_ content: [Tool.Content], to path: String) {
                 try bytes.write(to: url)
             } catch {
                 printToStderr(
-                    "--image-out: failed to write \(url.path): \(error.localizedDescription)"
+                    "--screenshot-out-file: failed to write \(url.path): \(error.localizedDescription)"
                 )
             }
             return
@@ -561,7 +515,7 @@ func writeFirstImageContent(_ content: [Tool.Content], to path: String) {
     // tools legitimately return nothing (hidden/minimized windows,
     // `ax` capture mode, list operations). Warn so the user notices
     // the file they expected didn't get written.
-    printToStderr("--image-out: no image content in tool response; file not written")
+    printToStderr("--screenshot-out-file: no image content in tool response; file not written")
 }
 
 private func printUnknownTool(_ name: String, registry: ToolRegistry) {

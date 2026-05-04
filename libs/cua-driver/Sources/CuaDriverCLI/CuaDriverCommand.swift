@@ -23,6 +23,8 @@ struct CuaDriverCommand: AsyncParsableCommand {
             MCPConfigCommand.self,
             UpdateCommand.self,
             DiagnoseCommand.self,
+            DoctorCommand.self,
+            DumpDocsCommand.self,
         ]
     )
 }
@@ -34,26 +36,99 @@ struct CuaDriverCommand: AsyncParsableCommand {
 struct MCPConfigCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mcp-config",
-        abstract: "Print an MCP client config snippet pointing at this binary."
+        abstract: "Print MCP server config or a client-specific install command."
     )
 
+    @Option(name: .customLong("client"),
+            help: "Client to print the install command for: claude | codex | cursor | openclaw | opencode | hermes | pi. Omit for the generic JSON snippet.")
+    var client: String?
+
     func run() throws {
-        // Resolve the binary path. Prefer the running executable's
-        // path so the snippet references the bundled binary in
-        // `/Applications/CuaDriver.app/...` even when `cua-driver`
-        // itself was invoked via a `/usr/local/bin/` symlink.
         let binary = resolvedBinaryPath()
-        let snippet = """
+        switch client?.lowercased() {
+        case nil, "":
+            print(genericMcpServersSnippet(binary: binary, includeType: false))
+        case "claude":
+            print("claude mcp add --transport stdio cua-driver -- \(binary) mcp")
+        case "codex":
+            print("codex mcp add cua-driver -- \(binary) mcp")
+        case "cursor":
+            // Cursor has no CLI — emit JSON the user pastes into
+            // ~/.cursor/mcp.json (global) or .cursor/mcp.json (project).
+            print(genericMcpServersSnippet(binary: binary, includeType: true))
+        case "openclaw":
+            // OpenClaw has a CLI registry — set with a JSON arg.
+            print("openclaw mcp set cua-driver '{\"command\":\"\(binary)\",\"args\":[\"mcp\"]}'")
+        case "opencode":
+            // OpenCode (sst/opencode) uses opencode.json with type:"local"
+            // and command as a single merged array.
+            let snippet = """
+            // paste under "mcp" in opencode.json (or opencode.jsonc):
+            {
+              "$schema": "https://opencode.ai/config.json",
+              "mcp": {
+                "cua-driver": {
+                  "type": "local",
+                  "command": ["\(binary)", "mcp"],
+                  "enabled": true
+                }
+              }
+            }
+            """
+            print(snippet)
+        case "hermes":
+            // Hermes (NousResearch) — YAML at ~/.hermes/config.yaml.
+            // Reload inside Hermes with /reload-mcp after editing.
+            let snippet = """
+            # paste under mcp_servers in ~/.hermes/config.yaml,
+            # then run /reload-mcp inside Hermes:
+            mcp_servers:
+              cua-driver:
+                command: "\(binary)"
+                args: ["mcp"]
+            """
+            print(snippet)
+        case "pi":
+            // Pi (badlogic/pi-mono) intentionally rejects MCP. Skip MCP and
+            // point at the shell-tool path — Pi can shell-out to cua-driver
+            // directly the same way it would call any other CLI tool.
+            print("""
+            Pi (badlogic/pi-mono) does not support MCP natively — the author
+            has stated MCP support will not be added for context-budget reasons.
+
+            Use cua-driver as a plain CLI from inside Pi instead:
+
+                \(binary) list_apps
+                \(binary) click  '{"pid": 1234, "x": 100, "y": 200}'
+                \(binary) --help        # full tool catalog
+
+            Each call is one-shot and returns JSON / text on stdout, which is
+            exactly the shape Pi is designed around.
+
+            Community MCP shims also exist if you really need MCP semantics
+            (0xKobold/pi-mcp, nicobailon/pi-mcp-adapter) — these are not
+            supported by us.
+            """)
+        default:
+            FileHandle.standardError.write(Data(
+                ("Unknown client '\(client!)'. Valid: claude, codex, cursor, openclaw, opencode, hermes, pi.\n").utf8
+            ))
+            throw ExitCode(2)
+        }
+    }
+
+    private func genericMcpServersSnippet(binary: String, includeType: Bool) -> String {
+        let typeLine = includeType ? ",\n      \"type\": \"stdio\"" : ""
+        return """
         {
           "mcpServers": {
             "cua-driver": {
               "command": "\(binary)",
-              "args": ["mcp"]
+              "args": ["mcp"]\(typeLine)
             }
           }
         }
         """
-        print(snippet)
     }
 
     private func resolvedBinaryPath() -> String {
@@ -98,6 +173,8 @@ struct CuaDriverEntryPoint {
         "config",
         "update",
         "diagnose",
+        "doctor",
+        "dump-docs",
         "help",
     ]
 
@@ -327,65 +404,133 @@ enum AppKitBootstrap {
     }
 }
 
-/// `cua-driver update` — trigger a manual update check and optionally apply updates.
-/// Respects the auto-update config flag: if disabled, this command will refuse to run.
+/// `cua-driver update` — check for a newer release and optionally apply it.
 struct UpdateCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "update",
-        abstract: "Check for and apply updates to cua-driver."
+        abstract: "Check for a newer cua-driver release and apply it."
     )
 
-    @Flag(name: .long, help: "Apply updates silently without prompting.")
-    var silent = false
+    @Flag(name: .long, help: "Download and apply the update without prompting.")
+    var apply = false
 
     func run() async throws {
-        let config = await ConfigStore.shared.load()
-        let envOverride = ProcessInfo.processInfo.environment["CUA_DRIVER_AUTO_UPDATE_ENABLED"]
-        
-        var autoUpdateEnabled = config.autoUpdateEnabled
-        if let envValue = envOverride {
-            let lower = envValue.lowercased()
-            if ["0", "false", "no", "off"].contains(lower) {
-                autoUpdateEnabled = false
-            } else if ["1", "true", "yes", "on"].contains(lower) {
-                autoUpdateEnabled = true
+        let current = CuaDriverCore.version
+        print("Current version: \(current)")
+        print("Checking for updates…")
+
+        guard let latest = await VersionCheck.fetchLatest() else {
+            print("Could not reach GitHub — check your connection and try again.")
+            throw ExitCode(1)
+        }
+
+        guard VersionCheck.isNewer(latest, than: current) else {
+            print("Already up to date.")
+            return
+        }
+
+        print("New version available: \(latest)")
+
+        if !apply {
+            print("")
+            print("Run with --apply to download and install it:")
+            print("  cua-driver update --apply")
+            print("")
+            print("Or reinstall directly:")
+            print("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash")
+            return
+        }
+
+        print("Downloading and installing cua-driver \(latest)…")
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+        proc.arguments = ["-c",
+            "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash"]
+        try proc.run()
+        proc.waitUntilExit()
+        if proc.terminationStatus != 0 {
+            print("Installation failed — run the command above manually for details.")
+            throw ExitCode(Int32(proc.terminationStatus))
+        }
+    }
+}
+
+/// `cua-driver doctor` — clean up stale install bits left from older versions.
+///
+/// v0.0.5 and earlier installed a weekly LaunchAgent at
+/// `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` and a companion
+/// `/usr/local/bin/cua-driver-update` script. v0.0.6 dropped both in favor of
+/// the explicit `cua-driver update` command, but users who upgraded via the
+/// legacy auto-updater path still have these dead files lingering.
+///
+/// Removing the LaunchAgent stops the weekly cron from firing the stale
+/// update script. The plist lives under `$HOME` (no sudo). The companion
+/// script under `/usr/local/bin` is root-owned, so we print the exact
+/// `sudo rm` command for the user to run if it still exists.
+struct DoctorCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "doctor",
+        abstract: "Clean up stale install bits left from older cua-driver versions."
+    )
+
+    func run() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let legacyPlist = "\(home)/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
+        let legacyScript = "/usr/local/bin/cua-driver-update"
+
+        var removedCount = 0
+        var manualSteps: [String] = []
+
+        // LaunchAgent — no sudo needed, lives under $HOME.
+        if FileManager.default.fileExists(atPath: legacyPlist) {
+            // Best-effort unload before removal — tolerate failure since the
+            // agent may not be loaded.
+            let unload = Process()
+            unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            unload.arguments = ["unload", legacyPlist]
+            unload.standardOutput = Pipe()
+            unload.standardError = Pipe()
+            try? unload.run()
+            unload.waitUntilExit()
+
+            do {
+                try FileManager.default.removeItem(atPath: legacyPlist)
+                print("✓ removed legacy LaunchAgent: \(legacyPlist)")
+                removedCount += 1
+            } catch {
+                print("✗ could not remove \(legacyPlist): \(error)")
             }
         }
-        
-        if !autoUpdateEnabled {
-            print("Auto-update is disabled. Enable it with:")
-            print("  cua-driver config updates enable")
-            throw ExitCode(1)
-        }
-        
-        // Find and execute the update script
-        let updateScriptPath = "/usr/local/bin/cua-driver-update"
-        let fileManager = FileManager.default
-        
-        if !fileManager.fileExists(atPath: updateScriptPath) {
-            print("Error: update script not found at \(updateScriptPath)")
-            throw ExitCode(1)
-        }
-        
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        var args = [updateScriptPath]
-        if silent {
-            args.append("--silent")
-        }
-        process.arguments = args
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            if process.terminationStatus != 0 {
-                print("Update check failed. See /tmp/cua_driver_updater.log for details.")
-                throw ExitCode(Int32(process.terminationStatus))
+
+        // Update script — root-owned. Try without sudo first; on failure,
+        // surface the exact command for the user to run manually.
+        if FileManager.default.fileExists(atPath: legacyScript) {
+            if FileManager.default.isWritableFile(atPath: legacyScript)
+               && FileManager.default.isWritableFile(atPath: "/usr/local/bin")
+            {
+                do {
+                    try FileManager.default.removeItem(atPath: legacyScript)
+                    print("✓ removed legacy update script: \(legacyScript)")
+                    removedCount += 1
+                } catch {
+                    manualSteps.append("sudo rm -f \(legacyScript)")
+                }
+            } else {
+                manualSteps.append("sudo rm -f \(legacyScript)")
             }
-        } catch {
-            print("Error running update script: \(error)")
-            throw ExitCode(1)
+        }
+
+        if removedCount == 0 && manualSteps.isEmpty {
+            print("Nothing to clean — install is up to date.")
+            return
+        }
+
+        if !manualSteps.isEmpty {
+            print("")
+            print("The following needs to be removed manually (root-owned):")
+            for step in manualSteps {
+                print("  \(step)")
+            }
         }
     }
 }

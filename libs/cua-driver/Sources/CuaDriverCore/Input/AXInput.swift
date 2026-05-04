@@ -166,6 +166,16 @@ public enum AXInput {
         return attributeString(element, name)
     }
 
+    /// Read a boolean attribute from an element. Returns nil when the attribute
+    /// is absent or unreadable.
+    public static func boolAttribute(_ name: String, of element: AXUIElement) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
+              let v = value else { return nil }
+        guard CFGetTypeID(v) == CFBooleanGetTypeID() else { return nil }
+        return CFBooleanGetValue((v as! CFBoolean))
+    }
+
     /// The element's on-screen center in screen-point coordinates
     /// (top-left origin). Returns nil when the element has no
     /// position / size (menus, offscreen elements, hidden rows).

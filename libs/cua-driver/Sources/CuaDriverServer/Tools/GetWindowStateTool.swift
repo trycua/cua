@@ -94,6 +94,32 @@ public enum GetWindowStateTool {
                         "description":
                             "Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged.",
                     ],
+                    "javascript": [
+                        "type": "string",
+                        "description": """
+                            Optional JavaScript to execute in the browser tab and return \
+                            alongside the AX snapshot — one round-trip instead of two. \
+                            Only works for Chromium-family browsers (Chrome, Brave, Edge) \
+                            and Safari; requires 'Allow JavaScript from Apple Events' to be \
+                            enabled first (see WEB_APPS.md). The result is appended to the \
+                            response as a `## JavaScript result` section. Use for read-only \
+                            queries (document.title, innerText, querySelectorAll, etc.). \
+                            For mutations or side effects use the `page` tool instead.
+                            """,
+                    ],
+                    "screenshot_out_file": [
+                        "type": "string",
+                        "description": """
+                            Optional absolute path to write the screenshot to (e.g. \
+                            "/tmp/shot.jpg"). When set, the screenshot bytes are written \
+                            to this file and the MCP image content block is omitted from \
+                            the response — `screenshot_file_path` is returned instead of \
+                            `screenshot_png_b64`. Useful for CLI callers and agents that \
+                            cannot consume inline base64 without saturating their context \
+                            window (e.g. OpenCode with a local Ollama model). The directory \
+                            must already exist; the file is created or overwritten.
+                            """,
+                    ],
                 ],
                 "additionalProperties": false,
             ],
@@ -123,6 +149,8 @@ public enum GetWindowStateTool {
                     "window_id \(rawWindowId) is outside the supported UInt32 range.")
             }
             let query = arguments?["query"]?.stringValue
+            let javascript = arguments?["javascript"]?.stringValue
+            let screenshotOutFile = arguments?["screenshot_out_file"]?.stringValue
 
             // Validate that the window belongs to this pid. The driver
             // never guesses which window to snapshot — the caller names
@@ -218,13 +246,80 @@ public enum GetWindowStateTool {
                 if captureMode != .vision && !snapshot.treeMarkdown.isEmpty {
                     textContent += "\n\n" + snapshot.treeMarkdown
                 }
+                // If the caller passed a javascript snippet, run it in the
+                // browser tab and append the result — one round-trip instead
+                // of two separate tool calls.
+                if let js = javascript {
+                    let bundleId = snapshot.bundleId ?? ""
+                    do {
+                        let jsResult: String
+                        if BrowserJS.supports(bundleId: bundleId) {
+                            jsResult = try await BrowserJS.execute(
+                                javascript: js, bundleId: bundleId, windowId: windowId)
+                        } else if ElectronJS.isElectron(pid: pid) {
+                            jsResult = try await ElectronJS.execute(
+                                javascript: js, pid: pid)
+                        } else {
+                            throw BrowserJS.Error.unsupportedBrowser(bundleId)
+                        }
+                        textContent += "\n\n## JavaScript result\n\n```\n\(jsResult)\n```"
+                    } catch {
+                        textContent += "\n\n## JavaScript result\n\n❌ \(error)"
+                    }
+                }
+
+                // When the caller supplied screenshot_out_file, write the bytes
+                // to disk and omit the MCP image content block entirely — the
+                // path is surfaced via structuredContent.screenshot_file_path
+                // so the caller knows where to find the image without paying
+                // the base64-in-context token cost.
+                var resolvedScreenshotFilePath: String? = nil
+                if let outPath = screenshotOutFile, let b64 = snapshot.screenshotPngBase64 {
+                    let expandedPath = (outPath as NSString).expandingTildeInPath
+                    if let bytes = Data(base64Encoded: b64) {
+                        let url = URL(fileURLWithPath: expandedPath)
+                        do {
+                            try bytes.write(to: url)
+                            resolvedScreenshotFilePath = expandedPath
+                        } catch {
+                            // Write failed — fall through so the inline image
+                            // content block is still emitted rather than silently
+                            // dropping the screenshot entirely.
+                        }
+                    }
+                }
+
                 var content: [Tool.Content] = []
-                if let b64 = snapshot.screenshotPngBase64 {
+                if resolvedScreenshotFilePath == nil, let b64 = snapshot.screenshotPngBase64 {
                     content.append(
                         .image(data: b64, mimeType: "image/jpeg", annotations: nil, _meta: nil)
                     )
                 }
                 content.append(.text(text: textContent, annotations: nil, _meta: nil))
+                // Strip the b64 bytes from the structured snapshot — the image
+                // is already the first content block (or on disk) and tests
+                // just need the metadata fields.
+                let structuredSnapshot = AppStateSnapshot(
+                    pid: snapshot.pid,
+                    bundleId: snapshot.bundleId,
+                    name: snapshot.name,
+                    treeMarkdown: snapshot.treeMarkdown,
+                    elementCount: snapshot.elementCount,
+                    turnId: snapshot.turnId,
+                    screenshotPngBase64: nil,
+                    screenshotWidth: snapshot.screenshotWidth,
+                    screenshotHeight: snapshot.screenshotHeight,
+                    screenshotScaleFactor: snapshot.screenshotScaleFactor,
+                    screenshotOriginalWidth: snapshot.screenshotOriginalWidth,
+                    screenshotOriginalHeight: snapshot.screenshotOriginalHeight,
+                    screenshotFilePath: resolvedScreenshotFilePath
+                )
+                if let result = try? CallTool.Result(
+                    content: content,
+                    structuredContent: structuredSnapshot
+                ) {
+                    return result
+                }
                 return CallTool.Result(content: content)
             } catch let error as AppStateError {
                 return errorResult(error.description)

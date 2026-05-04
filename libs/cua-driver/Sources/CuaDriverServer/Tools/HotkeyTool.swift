@@ -1,3 +1,4 @@
+import CoreGraphics
 import CuaDriverCore
 import Foundation
 import MCP
@@ -12,6 +13,17 @@ public enum HotkeyTool {
                 screenshot selection. The combo is posted directly to
                 the target pid's event queue via `CGEvent.postToPid`;
                 the target does NOT need to be frontmost.
+
+                **`window_id`** (optional): when supplied, the driver
+                calls `FocusWithoutRaise.activateWithoutRaise` before
+                posting — making the target AppKit-active without
+                raising its window. This is required for shortcuts that
+                are dispatched via NSMenu key equivalents (Cmd+S,
+                Cmd+N, Cmd+W, Cmd+Shift+N, …) because AppKit only
+                routes menu key equivalents to the active app. Omit
+                `window_id` for shortcuts handled by the renderer
+                (e.g. Cmd+C in a Chromium text field). Trade-off: the
+                sentinel foreground app will lose focus once.
 
                 Recognized modifiers: cmd/command, shift, option/alt,
                 ctrl/control, fn. Non-modifier keys use the same
@@ -34,6 +46,11 @@ public enum HotkeyTool {
                         "minItems": 2,
                         "description":
                             "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"].",
+                    ],
+                    "window_id": [
+                        "type": "integer",
+                        "description":
+                            "CGWindowID of the target window. When provided, the driver calls FocusWithoutRaise before posting so NSMenu key equivalents (Cmd+S, Cmd+N, …) reach the backgrounded app.",
                     ],
                 ],
                 "additionalProperties": false,
@@ -60,8 +77,45 @@ public enum HotkeyTool {
                 return errorResult(
                     "pid \(rawPid) is outside the supported Int32 range.")
             }
+            let rawWindowId = arguments?["window_id"]?.intValue
             do {
-                try KeyboardInput.hotkey(keys, toPid: pid)
+                // Two delivery paths, selected by whether window_id is set:
+                //
+                // window_id present → NSMenu/native-AppKit path:
+                //   1. FocusWithoutRaise makes the target AppKit-active
+                //      without raising its window.
+                //   2. Post via SLEventPostToPid WITHOUT the auth-message
+                //      envelope (attachAuthMessage: false). Without the
+                //      envelope the event routes SLEventPostToPid →
+                //      SLEventPostToPSN → IOHIDPostEvent → target event queue
+                //      where NSApplication.sendEvent: dispatches NSMenu key
+                //      equivalents. With the envelope SLEventPostToPid forks
+                //      onto a direct-mach path that bypasses IOHIDPostEvent
+                //      and therefore NSMenu — which is why Cmd+Shift+N was
+                //      silently swallowed.
+                //
+                // window_id absent → Chromium/renderer path (default):
+                //   Post via SLEventPostToPid WITH the auth-message envelope.
+                //   Chromium's keyboard pipeline requires it to accept
+                //   synthetic keystrokes; NSMenu is irrelevant here since
+                //   Chromium handles shortcuts inside its renderer.
+                if let rawWid = rawWindowId, rawWid != 0,
+                   let wid = UInt32(exactly: rawWid)
+                {
+                    FocusWithoutRaise.activateForMenuShortcut(
+                        targetPid: pid, targetWid: CGWindowID(wid))
+                    usleep(50_000)
+                    // Post WITHOUT the SkyLight auth-message envelope.
+                    // With the envelope, SLEventPostToPid forks onto a direct-mach
+                    // path that bypasses IOHIDPostEvent — NSMenu never sees those
+                    // events. Without the envelope the path goes through IOHIDPostEvent
+                    // so NSApplication.sendEvent: dispatches NSMenu key equivalents.
+                    // SLPSSetFrontProcessWithOptions (called inside activateForMenuShortcut)
+                    // already made the target WindowServer-frontmost.
+                    try KeyboardInput.hotkey(keys, toPid: pid, attachAuthMessage: false)
+                } else {
+                    try KeyboardInput.hotkey(keys, toPid: pid)
+                }
                 return CallTool.Result(
                     content: [
                         .text(

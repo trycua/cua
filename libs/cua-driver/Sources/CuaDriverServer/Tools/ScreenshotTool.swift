@@ -14,8 +14,7 @@ public enum ScreenshotTool {
                 image data in the requested format (default png).
 
                 Without `window_id`, captures the full main display. With `window_id`,
-                captures just that window (pair with `get_accessibility_tree` which
-                returns window ids).
+                captures just that window (get the id from `list_windows`).
 
                 Requires the Screen Recording TCC grant — call `check_permissions`
                 first if unsure.

@@ -7,10 +7,10 @@
 # Installs to the same paths as scripts/install.sh (the production
 # installer), so TCC grants made against one install survive the other:
 #   app bundle  → /Applications/CuaDriver.app
-#   CLI symlink → /usr/local/bin/cua-driver
+#   CLI symlink → ~/.local/bin/cua-driver
 #
 # The script prompts for sudo only on the specific steps that need it
-# (moving the .app into /Applications, symlinking into /usr/local/bin)
+# (moving the .app into /Applications)
 # — do NOT run the whole script with `sudo`.
 #
 # --release builds the release configuration (default is debug — faster).
@@ -36,7 +36,7 @@ YELLOW=$(tput setaf 3 2>/dev/null || true)
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
     echo "${RED}Error: do not run this script with sudo or as root.${NORMAL}"
     echo "The script will prompt for sudo on the specific operations that"
-    echo "need it (writing to /Applications + /usr/local/bin); running the"
+    echo "need it (writing to /Applications); running the"
     echo "whole thing as root puts the LaunchAgent plist under /var/root"
     echo "and breaks telemetry / config paths."
     exit 1
@@ -81,20 +81,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 APP_INSTALL_DIR="/Applications"
-BIN_INSTALL_DIR="/usr/local/bin"
+BIN_INSTALL_DIR="$HOME/.local/bin"
 APP_DEST="$APP_INSTALL_DIR/CuaDriver.app"
 BIN_LINK="$BIN_INSTALL_DIR/cua-driver"
 
 # Conditional sudo — matches install.sh. /Applications is usually
-# group-writable by the admin group, so most users won't be prompted;
-# /usr/local/bin typically requires sudo on a fresh machine.
+# group-writable by the admin group, so most users won't be prompted.
 SUDO_APP=""
 if [ ! -w "$APP_INSTALL_DIR" ]; then
     SUDO_APP="sudo"
-fi
-SUDO_BIN=""
-if [ ! -w "$BIN_INSTALL_DIR" ]; then
-    SUDO_BIN="sudo"
 fi
 
 echo "${BOLD}${BLUE}cua-driver local installer${NORMAL}"
@@ -131,17 +126,14 @@ fi
 # --- Remove stale dev-install paths -------------------------------------
 #
 # Older revisions of this script (and ad-hoc `install-cli.sh`, since
-# removed) installed to `~/Applications/CuaDriver.app` and
-# `~/.local/bin/cua-driver`. Both paths leak a second bundle that
-# LaunchServices keys off `CFBundleIdentifier=com.trycua.driver` —
-# which can silently re-route `cua-driver serve` (invoked through the
-# canonical `/usr/local/bin/cua-driver` symlink) to the *stale*
-# `~/Applications` copy, so rebuilds look like they do nothing.
+# removed) installed to `~/Applications/CuaDriver.app`. That leaks a
+# second bundle that LaunchServices keys off
+# `CFBundleIdentifier=com.trycua.driver`, which can silently re-route
+# `cua-driver serve` to the stale `~/Applications` copy.
 # Proactively remove them here so there is exactly one registered
 # CuaDriver.app on the machine after every install.
 STALE_APP="$HOME/Applications/CuaDriver.app"
-STALE_CLI="$HOME/.local/bin/cua-driver"
-for stale in "$STALE_APP" "$STALE_CLI"; do
+for stale in "$STALE_APP"; do
     if [ -e "$stale" ] || [ -L "$stale" ]; then
         echo "Removing stale dev-install leftover: $stale"
         rm -rf "$stale"
@@ -164,24 +156,14 @@ echo "${GREEN}Installed $APP_DEST${NORMAL}"
 
 echo ""
 echo "${BOLD}Linking cua-driver CLI into $BIN_INSTALL_DIR...${NORMAL}"
-# Non-fatal symlink step: the `.app` bundle is already installed and usable
-# via its absolute path; the /usr/local/bin symlink is a convenience.
-# In non-TTY shells (agent sandboxes, CI) sudo can't prompt for a password
-# and fails — without this guard `set -e` would abort the whole script with
-# exit 1, making the caller think the build itself failed. Warn and exit 0.
-set +e
-$SUDO_BIN mkdir -p "$BIN_INSTALL_DIR" \
-    && $SUDO_BIN ln -sf "$APP_DEST/Contents/MacOS/cua-driver" "$BIN_LINK"
-SYMLINK_STATUS=$?
-set -e
-if [ "$SYMLINK_STATUS" -eq 0 ]; then
-    echo "${GREEN}Linked $BIN_LINK → $APP_DEST/Contents/MacOS/cua-driver${NORMAL}"
-else
-    echo "${YELLOW}Warning: could not create $BIN_LINK (sudo may have failed in a non-TTY shell).${NORMAL}"
-    echo "${YELLOW}The .app bundle is installed and functional at $APP_DEST.${NORMAL}"
-    echo "${YELLOW}To add the CLI symlink manually, run:${NORMAL}"
-    echo "    sudo ln -sf $APP_DEST/Contents/MacOS/cua-driver $BIN_LINK"
+mkdir -p "$BIN_INSTALL_DIR"
+if [ ! -w "$BIN_INSTALL_DIR" ]; then
+    echo "${RED}Error: $BIN_INSTALL_DIR is not writable.${NORMAL}"
+    echo "Pick a user-writable bin directory or fix ownership before rerunning."
+    exit 1
 fi
+ln -sf "$APP_DEST/Contents/MacOS/cua-driver" "$BIN_LINK"
+echo "${GREEN}Linked $BIN_LINK → $APP_DEST/Contents/MacOS/cua-driver${NORMAL}"
 
 # --- Daemon (optional) --------------------------------------------------
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import CuaDriverCore
 import Foundation
 import MCP
@@ -75,7 +76,7 @@ public enum PressKeyTool {
                     "window_id": [
                         "type": "integer",
                         "description":
-                            "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used.",
+                            "CGWindowID for the window. Required when element_index is used. When supplied without element_index, triggers FocusWithoutRaise before the key fires — use this for NSMenu key equivalents (Cmd+S, Cmd+N, …) on backgrounded apps.",
                     ],
                 ],
                 "additionalProperties": false,
@@ -151,8 +152,24 @@ public enum PressKeyTool {
                         ]
                     )
                 } else {
-                    try KeyboardInput.press(
-                        key, modifiers: modifiers, toPid: pid)
+                    // Same two-path recipe as HotkeyTool — see its inline
+                    // comment for the full rationale.  Short version:
+                    // window_id → FocusWithoutRaise + postToPid without
+                    // auth-message (IOHIDPostEvent path, NSMenu fires);
+                    // no window_id → postToPid with auth-message (Chromium).
+                    if let rawWid = rawWindowId, rawWid != 0,
+                       let wid = UInt32(exactly: rawWid)
+                    {
+                        FocusWithoutRaise.activateForMenuShortcut(
+                            targetPid: pid, targetWid: CGWindowID(wid))
+                        usleep(50_000)
+                        // Same recipe as HotkeyTool — see its inline comment.
+                        try KeyboardInput.press(
+                            key, modifiers: modifiers, toPid: pid, attachAuthMessage: false)
+                    } else {
+                        try KeyboardInput.press(
+                            key, modifiers: modifiers, toPid: pid)
+                    }
                     return CallTool.Result(
                         content: [
                             .text(

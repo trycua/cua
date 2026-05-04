@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # cua-driver installer — download the latest signed + notarized tarball
 # from GitHub Releases, move CuaDriver.app to /Applications, and symlink
-# the `cua-driver` binary into /usr/local/bin so shell users can invoke
-# it without typing the bundle path.
+# the `cua-driver` binary into ~/.local/bin so shell users can invoke
+# it without typing the bundle path. Sudo-free.
 #
 # Usage (from README + release body):
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 #
-# Override the release tag with $CUA_DRIVER_VERSION:
-#   CUA_DRIVER_VERSION=0.1.0 /bin/bash -c "$(curl -fsSL .../install.sh)"
+# Flags:
+#   --bin-dir <path>     install the cua-driver wrapper to <path> instead of
+#                        ~/.local/bin (e.g. /usr/local/bin — that target needs sudo)
+#   --no-modify-path     skip auto-appending an `export PATH=...` line to your
+#                        shell rc when ~/.local/bin is missing from PATH
 #
-# Skip the auto-updater setup:
-#   CUA_DRIVER_NO_UPDATER=1 /bin/bash -c "$(curl -fsSL .../install.sh)"
+# Env overrides:
+#   CUA_DRIVER_VERSION=0.1.0   pin a specific release tag
+#   CUA_DRIVER_BIN_DIR=PATH    same as --bin-dir
+#   CUA_DRIVER_NO_MODIFY_PATH=1  same as --no-modify-path
 #
 # Uninstall:
-#   sudo rm -rf /Applications/CuaDriver.app /usr/local/bin/cua-driver
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
 set -euo pipefail
 
 REPO="trycua/cua"
@@ -22,17 +27,22 @@ APP_NAME="CuaDriver.app"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-v"
 APP_DEST="/Applications/$APP_NAME"
-BIN_LINK="/usr/local/bin/$BINARY_NAME"
+BIN_DIR="${CUA_DRIVER_BIN_DIR:-$HOME/.local/bin}"
+NO_MODIFY_PATH="${CUA_DRIVER_NO_MODIFY_PATH:-0}"
+
+# Lightweight flag parsing (avoid getopt; macOS getopt is GNU-incompatible).
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bin-dir) BIN_DIR="$2"; shift 2 ;;
+        --bin-dir=*) BIN_DIR="${1#*=}"; shift ;;
+        --no-modify-path) NO_MODIFY_PATH=1; shift ;;
+        *) shift ;;
+    esac
+done
+
+BIN_LINK="$BIN_DIR/$BINARY_NAME"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
-
-# Whether to install the auto-updater (default: true)
-INSTALL_AUTO_UPDATER="${CUA_DRIVER_NO_UPDATER:-0}"
-if [[ "$INSTALL_AUTO_UPDATER" == "1" ]]; then
-    INSTALL_AUTO_UPDATER=false
-else
-    INSTALL_AUTO_UPDATER=true
-fi
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
@@ -60,8 +70,10 @@ else
     log "resolving latest $TAG_PREFIX* release via GitHub API"
     TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=40" \
         | grep -Eo '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' \
+        | sed -E 's/.*"'"${TAG_PREFIX}"'([0-9]+[.][0-9]+[.][0-9]+)"/\1/' \
+        | sort -t. -k1,1nr -k2,2nr -k3,3nr \
         | head -n 1 \
-        | sed -E 's/.*"'"${TAG_PREFIX}"'([^"]+)"/'"${TAG_PREFIX}"'\1/')
+        | sed -E 's/^/'"${TAG_PREFIX}"'/')
     if [[ -z "$TAG" ]]; then
         err "no release matching ${TAG_PREFIX}* found on $REPO"
         exit 1
@@ -90,6 +102,25 @@ if [[ ! -d "$TMP_DIR/$APP_NAME" ]]; then
     exit 1
 fi
 
+# --- Clean up legacy bits from ≤ v0.0.5 ---------------------------------
+#
+# v0.0.5 and earlier installed a weekly LaunchAgent. v0.0.6 dropped it in
+# favor of an explicit `cua-driver update` command. The companion
+# /usr/local/bin/cua-driver-update script is root-owned and removed by
+# `cua-driver doctor` (sudo prompt) — we keep install.sh fully sudo-free.
+
+LEGACY_UPDATER_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
+LEGACY_UPDATE_SCRIPT="/usr/local/bin/cua-driver-update"
+
+if [[ -f "$LEGACY_UPDATER_PLIST" ]]; then
+    launchctl unload "$LEGACY_UPDATER_PLIST" 2>/dev/null || true
+    rm -f "$LEGACY_UPDATER_PLIST"
+    log "removed legacy LaunchAgent $LEGACY_UPDATER_PLIST"
+fi
+if [[ -f "$LEGACY_UPDATE_SCRIPT" ]]; then
+    log "legacy $LEGACY_UPDATE_SCRIPT still present (run \`cua-driver doctor\` to remove — needs sudo)"
+fi
+
 # --- Install .app bundle ------------------------------------------------
 
 if [[ -e "$APP_DEST" ]]; then
@@ -100,7 +131,11 @@ fi
 log "installing $APP_DEST"
 ditto "$TMP_DIR/$APP_NAME" "$APP_DEST"
 
-# --- Symlink CLI --------------------------------------------------------
+# --- Wrapper / symlink for CLI ------------------------------------------
+#
+# Default install location is ~/.local/bin/cua-driver — no sudo. Power
+# users can override via --bin-dir or $CUA_DRIVER_BIN_DIR. We refuse to
+# write to root-owned dirs (e.g. /usr/local/bin) without an explicit opt-in.
 
 APP_BINARY="$APP_DEST/Contents/MacOS/$BINARY_NAME"
 if [[ ! -x "$APP_BINARY" ]]; then
@@ -108,252 +143,189 @@ if [[ ! -x "$APP_BINARY" ]]; then
     exit 1
 fi
 
-SUDO=""
-if [[ ! -w "$(dirname "$BIN_LINK")" ]]; then
-    SUDO="sudo"
-    log "/usr/local/bin requires elevated write; prompting for sudo"
+mkdir -p "$BIN_DIR"
+if [[ ! -w "$BIN_DIR" ]]; then
+    err "$BIN_DIR is not writable. Pick a user-writable --bin-dir, or pre-create the dir with sudo."
+    exit 1
 fi
-
-$SUDO mkdir -p "$(dirname "$BIN_LINK")"
-$SUDO ln -sf "$APP_BINARY" "$BIN_LINK"
+ln -sf "$APP_BINARY" "$BIN_LINK"
 log "symlinked $BIN_LINK -> $APP_BINARY"
 
-# --- Install Claude Code skill pack -------------------------------------
+# Existing /usr/local/bin/cua-driver from older installs stays in place
+# so MCP client configs that reference it keep working — its target is the
+# same /Applications/CuaDriver.app/.../cua-driver binary that we just
+# refreshed, so the link is still valid post-upgrade.
+LEGACY_BIN_LINK="/usr/local/bin/$BINARY_NAME"
+if [[ "$BIN_LINK" != "$LEGACY_BIN_LINK" ]] && [[ -L "$LEGACY_BIN_LINK" ]]; then
+    log "kept legacy $LEGACY_BIN_LINK in place for backwards compatibility"
+fi
+
+# --- Install agent skill pack -------------------------------------------
 #
-# Detect Claude Code users (via ~/.claude/skills/ presence) and drop a
-# symlink pointing at the skill we shipped inside the bundle. Auto-updates
-# atomically replace /Applications/CuaDriver.app, so the symlink stays
-# valid across every release. Never overwrites an existing link or
-# directory — dev users with their own ~/.claude/skills/cua-driver symlink
-# pointing at a working copy of the repo keep theirs.
+# Drop a symlink for each detected agent that auto-loads Anthropic-format
+# SKILL.md skills from a folder. Auto-updates atomically replace
+# /Applications/CuaDriver.app so the symlinks stay valid across releases.
+# We never overwrite an existing link or directory — dev users with a
+# symlink pointing at a working copy of the repo keep theirs.
+#
+# Supported (folder-of-skills, frontmatter compatible):
+#   - Claude Code: scans ~/.claude/skills/ on startup
+#   - Codex     : scans ~/.agents/skills/ on startup
+#   - OpenClaw  : scans ~/.openclaw/skills/
+#   - OpenCode  : scans ~/.config/opencode/skills/ (also reads ~/.claude/skills/
+#                 natively, so the Claude Code symlink covers OpenCode for users
+#                 who have both)
+#
+# Not auto-wired (different file format / would clobber user state):
+#   - Cursor: rules use a different frontmatter shape (description/globs/
+#             alwaysApply) — paste manually into ~/.cursor/rules/.
+#   - Hermes: SOUL.md replaces the system prompt — overwriting would destroy
+#             user customisations.
+#   - Pi    : SYSTEM.md / AGENTS.md are single-file replacements; same risk.
 
-SKILL_LINK="$HOME/.claude/skills/cua-driver"
 SKILL_TARGET="$APP_DEST/Contents/Resources/Skills/cua-driver"
-if [[ -d "$HOME/.claude/skills" ]]; then
-    if [[ -e "$SKILL_LINK" ]] || [[ -L "$SKILL_LINK" ]]; then
-        log "skill link already exists at $SKILL_LINK (skipping)"
-    elif [[ -d "$SKILL_TARGET" ]]; then
-        ln -s "$SKILL_TARGET" "$SKILL_LINK"
-        log "symlinked Claude Code skill at $SKILL_LINK"
-    else
+
+link_skill_into() {
+    local parent_dir="$1"        # e.g. $HOME/.claude/skills
+    local label="$2"             # e.g. "Claude Code"
+    local link_path="$parent_dir/cua-driver"
+
+    if [[ ! -d "$parent_dir" ]]; then
+        return 0
+    fi
+    if [[ -e "$link_path" ]] || [[ -L "$link_path" ]]; then
+        log "$label skill link already exists at $link_path (skipping)"
+        return 0
+    fi
+    if [[ ! -d "$SKILL_TARGET" ]]; then
         log "skill pack missing at $SKILL_TARGET (skipping; older release?)"
+        return 0
     fi
-fi
-
-# --- Install auto-updater -----------------------------------------------
-
-if [[ "$INSTALL_AUTO_UPDATER" == "true" ]]; then
-    log "setting up auto-updater"
-
-    # Matches lume's pattern — emit the update script as a heredoc
-    # from inside install.sh rather than shipping a sibling
-    # update.sh file. Keeps the installer self-contained and means a
-    # user who runs just `curl | bash` has everything they need with
-    # no second fetch. Contents are identical to what an external
-    # update.sh would be.
-    UPDATER_SCRIPT="/usr/local/bin/cua-driver-update"
-    $SUDO tee "$UPDATER_SCRIPT" > /dev/null << 'UPDATER_EOF'
-#!/bin/bash
-# cua-driver auto-updater. Installed by scripts/install.sh; invoked
-# weekly by the com.trycua.cua_driver_updater LaunchAgent or on demand
-# via `cua-driver update`. Reads the opt-out flag from the persisted
-# config + the CUA_DRIVER_AUTO_UPDATE_ENABLED env var, fetches the
-# latest cua-driver-v* release from GitHub, and atomically replaces
-# /Applications/CuaDriver.app when a newer version is available.
-set -e
-
-LOG_FILE="/tmp/cua_driver_updater.log"
-GITHUB_REPO="trycua/cua"
-TAG_PREFIX="cua-driver-v"
-APP_NAME="CuaDriver.app"
-APP_INSTALL_DIR="/Applications/$APP_NAME"
-BIN_LINK="/usr/local/bin/cua-driver"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+    ln -s "$SKILL_TARGET" "$link_path"
+    log "symlinked $label skill at $link_path"
 }
 
-log "Starting cua-driver update check..."
+# Claude Code — only when ~/.claude/skills already exists (Claude installed).
+link_skill_into "$HOME/.claude/skills" "Claude Code"
 
-# Env override wins over config.
-if [ -n "${CUA_DRIVER_AUTO_UPDATE_ENABLED:-}" ]; then
-    case "${CUA_DRIVER_AUTO_UPDATE_ENABLED,,}" in
-        0|false|no|off)
-            log "Auto-update disabled via CUA_DRIVER_AUTO_UPDATE_ENABLED; exiting."
-            exit 0
-            ;;
-    esac
+# Codex — create ~/.agents/skills if Codex is installed (~/.codex present)
+# but the agents skills dir hasn't been initialized yet, then link.
+if [[ -d "$HOME/.codex" ]] && [[ ! -d "$HOME/.agents/skills" ]]; then
+    mkdir -p "$HOME/.agents/skills"
 fi
+link_skill_into "$HOME/.agents/skills" "Codex"
 
-# Otherwise consult the persisted config.
-CONFIG_FILE="$HOME/Library/Application Support/Cua Driver/config.json"
-if [ -f "$CONFIG_FILE" ] && grep -q '"auto_update_enabled":[[:space:]]*false' "$CONFIG_FILE"; then
-    log "Auto-update disabled in config; exiting."
-    exit 0
+# OpenClaw — create ~/.openclaw/skills if OpenClaw is installed but the
+# skills dir hasn't been initialized yet, then link.
+if [[ -d "$HOME/.openclaw" ]] && [[ ! -d "$HOME/.openclaw/skills" ]]; then
+    mkdir -p "$HOME/.openclaw/skills"
 fi
+link_skill_into "$HOME/.openclaw/skills" "OpenClaw"
 
-if [ ! -x "$BIN_LINK" ]; then
-    log "ERROR: cua-driver binary not found at $BIN_LINK"
-    exit 1
+# OpenCode (sst/opencode) — create ~/.config/opencode/skills if OpenCode is
+# installed but the skills dir hasn't been initialized yet, then link.
+if [[ -d "$HOME/.config/opencode" ]] && [[ ! -d "$HOME/.config/opencode/skills" ]]; then
+    mkdir -p "$HOME/.config/opencode/skills"
 fi
+link_skill_into "$HOME/.config/opencode/skills" "OpenCode"
 
-CURRENT_VERSION=$("$BIN_LINK" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
-log "Current version: $CURRENT_VERSION"
+# --- PATH setup ---------------------------------------------------------
+#
+# If $BIN_DIR is not on the user's PATH (common for ~/.local/bin on macOS,
+# which is not on the system default), append an export line to the right
+# shell rc file unless --no-modify-path was passed. We never edit a file
+# without the user's $SHELL pointing at it (avoids surprise edits to bash
+# rc files for a zsh user, etc.).
 
-get_latest_tag() {
-    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=40")
-    [ -z "$response" ] && return 1
-    echo "$response" | grep -oE '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' | head -n 1 | sed -E 's/.*"('"${TAG_PREFIX}"'[^"]+)".*/\1/'
-}
+PATH_NEEDS_FIX=1
+case ":$PATH:" in
+    *":$BIN_DIR:"*) PATH_NEEDS_FIX=0 ;;
+esac
 
-LATEST_TAG=$(get_latest_tag)
-if [ -z "$LATEST_TAG" ]; then
-    log "ERROR: Could not fetch latest release tag"
-    exit 1
-fi
+if [[ "$PATH_NEEDS_FIX" == "1" ]]; then
+    if [[ "$NO_MODIFY_PATH" == "1" ]]; then
+        log "$BIN_DIR is not on PATH (skipping rc edit; --no-modify-path set)"
+    else
+        # Pick the rc file for the user's login shell.
+        SHELL_NAME="$(basename "${SHELL:-/bin/zsh}")"
+        case "$SHELL_NAME" in
+            zsh)  RC_FILE="$HOME/.zshrc" ;;
+            bash) RC_FILE="$HOME/.bash_profile" ;;
+            fish) RC_FILE="$HOME/.config/fish/config.fish" ;;
+            *)    RC_FILE="" ;;
+        esac
 
-LATEST_VERSION="${LATEST_TAG#${TAG_PREFIX}}"
-log "Latest version: $LATEST_VERSION"
+        if [[ -n "$RC_FILE" ]]; then
+            mkdir -p "$(dirname "$RC_FILE")"
+            EXPORT_LINE='export PATH="$HOME/.local/bin:$PATH"'
+            [[ "$SHELL_NAME" == "fish" ]] && EXPORT_LINE='set -gx PATH $HOME/.local/bin $PATH'
 
-version_gt() {
-    [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
-}
-
-apply_update() {
-    log "Downloading and applying update..."
-    local temp_dir=$(mktemp -d)
-    trap 'rm -rf "$temp_dir"' EXIT
-
-    local arch=$(uname -m)
-    local version="${LATEST_TAG#${TAG_PREFIX}}"
-    local tarball="cua-driver-${version}-darwin-${arch}.tar.gz"
-    local download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/$tarball"
-
-    if ! curl -fsSL -o "$temp_dir/$tarball" "$download_url"; then
-        log "ERROR: Failed to download $tarball"
-        exit 1
-    fi
-    if ! tar -tzf "$temp_dir/$tarball" > /dev/null 2>&1; then
-        log "ERROR: Downloaded file is not a valid tar.gz archive"
-        exit 1
-    fi
-    if ! tar -xzf "$temp_dir/$tarball" -C "$temp_dir"; then
-        log "ERROR: Failed to extract tarball"
-        exit 1
-    fi
-    if [ ! -d "$temp_dir/$APP_NAME" ]; then
-        log "ERROR: $APP_NAME not found inside tarball"
-        exit 1
-    fi
-
-    # ditto preserves code signatures and xattrs; cp -R strips
-    # Gatekeeper metadata on some macOS versions.
-    [ -e "$APP_INSTALL_DIR" ] && rm -rf "$APP_INSTALL_DIR"
-    ditto "$temp_dir/$APP_NAME" "$APP_INSTALL_DIR"
-
-    local app_binary="$APP_INSTALL_DIR/Contents/MacOS/cua-driver"
-    if [ ! -x "$app_binary" ]; then
-        log "ERROR: Binary missing at $app_binary after extraction"
-        exit 1
-    fi
-
-    local sudo=""
-    [ ! -w "$(dirname "$BIN_LINK")" ] && sudo="sudo"
-    $sudo mkdir -p "$(dirname "$BIN_LINK")"
-    $sudo ln -sf "$app_binary" "$BIN_LINK"
-
-    log "Successfully updated cua-driver to version $version"
-    osascript -e "display notification \"Updated to version $version\" with title \"cua-driver Updated\"" 2>/dev/null || true
-}
-
-if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
-    log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
-    case "${1:-}" in
-        --silent|--apply)
-            # LaunchAgent path: no dialog.
-            apply_update
-            ;;
-        *)
-            # Interactive path (user ran `cua-driver update` in a terminal):
-            # prompt via osascript before downloading.
-            response=$(osascript -e "display dialog \"cua-driver $LATEST_VERSION is available (current: $CURRENT_VERSION).\" buttons {\"Later\", \"Update Now\"} default button \"Update Now\" with title \"cua-driver Update\"" 2>/dev/null || echo "")
-            if echo "$response" | grep -q "Update Now"; then
-                log "User chose to update"
-                apply_update
+            if [[ -f "$RC_FILE" ]] && grep -qF "$BIN_DIR" "$RC_FILE"; then
+                log "$BIN_DIR already referenced in $RC_FILE (skipping rc edit)"
             else
-                log "User chose to skip update"
+                {
+                    printf '\n# Added by cua-driver installer — see https://github.com/trycua/cua\n'
+                    printf '%s\n' "$EXPORT_LINE"
+                } >> "$RC_FILE"
+                log "appended PATH entry to $RC_FILE — restart your shell or run: source $RC_FILE"
             fi
-            ;;
-    esac
-else
-    log "Already up to date (version $CURRENT_VERSION)"
-fi
-
-log "Update check complete"
-UPDATER_EOF
-
-    $SUDO chmod +x "$UPDATER_SCRIPT"
-    log "installed updater at $UPDATER_SCRIPT"
-
-    AGENT_LABEL="com.trycua.cua_driver_updater"
-    AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
-
-    mkdir -p "$HOME/Library/LaunchAgents"
-
-    cat > "$AGENT_PLIST" << 'PLIST_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.trycua.cua_driver_updater</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/cua-driver-update</string>
-        <string>--silent</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StartInterval</key>
-    <integer>604800</integer>
-    <key>StandardOutPath</key>
-    <string>/tmp/cua_driver_updater.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/cua_driver_updater.error.log</string>
-</dict>
-</plist>
-PLIST_EOF
-    
-    chmod 644 "$AGENT_PLIST"
-    launchctl load "$AGENT_PLIST" 2>/dev/null || true
-    
-    log "auto-updater installed (checks weekly)"
-    echo ""
-    echo "To disable auto-updates later, run:"
-    echo "  cua-driver config updates disable"
-else
-    log "skipping auto-updater setup (CUA_DRIVER_NO_UPDATER=1)"
+        else
+            log "unrecognised shell '$SHELL_NAME' — add $BIN_DIR to PATH manually"
+        fi
+    fi
 fi
 
 # --- Done ---------------------------------------------------------------
 
 log "cua-driver $VERSION installed"
-cat << 'FINALEOF'
+cat <<FINALEOF
 
 Next steps:
-  1. Start the daemon so TCC attributes requests to CuaDriver.app:
+
+  1. Grant macOS permissions (required either way):
        open -n -g -a CuaDriver --args serve
-
-  2. Trigger the Accessibility + Screen Recording prompts:
        cua-driver check_permissions
-     macOS will raise the system dialogs. Grant both, then re-run
-     the command to confirm it reports all green.
+     macOS raises the Accessibility + Screen Recording dialogs.
+     Grant both, then re-run check_permissions to confirm.
 
-  3. Wire into your MCP client (Claude Code, Cursor, etc.):
-       cua-driver mcp-config | pbcopy
+  2. Pick how you want to use cua-driver — pick ONE, both, or switch later:
 
-  4. Or drive directly from the shell:
-       cua-driver list_apps
+     A. As a CLI from the shell (no extra config needed):
+          cua-driver list_apps
+          cua-driver --help
+
+     B. As an MCP server — run the one matching your client. Each is also
+        available via 'cua-driver mcp-config --client <name>':
+
+        • Claude Code:
+            claude mcp add --transport stdio cua-driver -- $BIN_LINK mcp
+
+        • Codex (OpenAI):
+            codex mcp add cua-driver -- $BIN_LINK mcp
+
+        • OpenClaw:
+            cua-driver mcp-config --client openclaw
+
+        • GitHub Copilot CLI (paste into ~/.copilot/mcp-config.json):
+            {
+              "mcpServers": {
+                "cua-driver": {
+                  "type": "local",
+                  "command": "$BIN_LINK",
+                  "args": ["mcp"],
+                  "tools": ["*"]
+                }
+              }
+            }
+            Or inside gh copilot chat: /mcp add → type=STDIO, command=$BIN_LINK, args=mcp
+
+        • Cursor / OpenCode / Hermes (no add CLI — paste config):
+            cua-driver mcp-config --client cursor     # JSON for ~/.cursor/mcp.json
+            cua-driver mcp-config --client opencode   # JSON for opencode.json
+            cua-driver mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
+
+        For other clients accepting the generic mcpServers shape:
+            cua-driver mcp-config
 
 Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver
 FINALEOF

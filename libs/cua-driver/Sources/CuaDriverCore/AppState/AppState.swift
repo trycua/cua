@@ -54,6 +54,9 @@ public struct AppStateSnapshot: Sendable, Codable {
     public let screenshotOriginalWidth: Int?
     /// Original height before maxImageDimension resize. nil = no resize.
     public let screenshotOriginalHeight: Int?
+    /// File-system path to the saved screenshot (JPEG) when the caller
+    /// passed `screenshot_out_file`. Absent when no path was written.
+    public let screenshotFilePath: String?
 
     public init(
         pid: Int32,
@@ -67,7 +70,8 @@ public struct AppStateSnapshot: Sendable, Codable {
         screenshotHeight: Int? = nil,
         screenshotScaleFactor: Double? = nil,
         screenshotOriginalWidth: Int? = nil,
-        screenshotOriginalHeight: Int? = nil
+        screenshotOriginalHeight: Int? = nil,
+        screenshotFilePath: String? = nil
     ) {
         self.pid = pid
         self.bundleId = bundleId
@@ -81,6 +85,7 @@ public struct AppStateSnapshot: Sendable, Codable {
         self.screenshotScaleFactor = screenshotScaleFactor
         self.screenshotOriginalWidth = screenshotOriginalWidth
         self.screenshotOriginalHeight = screenshotOriginalHeight
+        self.screenshotFilePath = screenshotFilePath
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -95,6 +100,7 @@ public struct AppStateSnapshot: Sendable, Codable {
         case screenshotScaleFactor = "screenshot_scale_factor"
         case screenshotOriginalWidth = "screenshot_original_width"
         case screenshotOriginalHeight = "screenshot_original_height"
+        case screenshotFilePath = "screenshot_file_path"
     }
 
     /// Encodes the struct with ``screenshot_*`` keys omitted when nil.
@@ -116,6 +122,7 @@ public struct AppStateSnapshot: Sendable, Codable {
         try container.encodeIfPresent(screenshotScaleFactor, forKey: .screenshotScaleFactor)
         try container.encodeIfPresent(screenshotOriginalWidth, forKey: .screenshotOriginalWidth)
         try container.encodeIfPresent(screenshotOriginalHeight, forKey: .screenshotOriginalHeight)
+        try container.encodeIfPresent(screenshotFilePath, forKey: .screenshotFilePath)
     }
 
     public init(from decoder: Decoder) throws {
@@ -132,6 +139,7 @@ public struct AppStateSnapshot: Sendable, Codable {
         screenshotScaleFactor = try container.decodeIfPresent(Double.self, forKey: .screenshotScaleFactor)
         screenshotOriginalWidth = try container.decodeIfPresent(Int.self, forKey: .screenshotOriginalWidth)
         screenshotOriginalHeight = try container.decodeIfPresent(Int.self, forKey: .screenshotOriginalHeight)
+        screenshotFilePath = try container.decodeIfPresent(String.self, forKey: .screenshotFilePath)
     }
 }
 

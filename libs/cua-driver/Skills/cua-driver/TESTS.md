@@ -59,7 +59,7 @@ backgrounded throughout, and Claude uses the canonical
 ### 4. Notes — native text entry
 **Prompt:** `Create a new note in Notes titled 'cua-driver test' with the body 'native text entry verification'.`
 
-**Exercises:** `type_text_in` via `kAXSelectedText` against native AppKit text fields.
+**Exercises:** `type_text` via `kAXSelectedText` against native AppKit text fields.
 
 **Success:**
 - Re-snapshot of Notes shows a note row in the sidebar whose title contains `cua-driver test`.
@@ -72,7 +72,7 @@ backgrounded throughout, and Claude uses the canonical
 ### 5. Numbers — cell-addressable UI
 **Prompt:** `Open ~/Documents/test.numbers and put 42 in cell B2.`
 
-**Exercises:** unusual AX shape (spreadsheet cells), click + `set_value` or `type_text_in` + Tab/Return.
+**Exercises:** unusual AX shape (spreadsheet cells), click + `set_value` or `type_text` + Tab/Return.
 
 **Success:**
 - Re-snapshot shows cell B2's AXValue is `42`.
@@ -116,11 +116,11 @@ These are where CuaDriver's AX-activation trio matters:
 ### 8. Slack — sparse Electron, hotkey fallback
 **Prompt:** `In Slack, jump to the #pr-reviews channel using the quick switcher (⌘K).`
 
-**Exercises:** "retry snapshot once, then `hotkey` + `type_text_chars`" fallback path.
+**Exercises:** "retry snapshot once, then `hotkey` + `type_text`" fallback path.
 
 **Success:**
 - Re-snapshot shows Slack's channel title area (AX role `AXStaticText` or similar) contains `pr-reviews`.
-- Claude uses `hotkey` and `type_text_chars` — NOT `simulate_click` / pixel coords.
+- Claude uses `hotkey` and `type_text` — NOT `simulate_click` / pixel coords.
 
 **Fail signals:** Claude drops to `simulate_click` (guardrail violation — pixel fallback is not allowed on sparse AX trees), wrong channel joined, typed text echoes into the message composer instead of the switcher.
 
@@ -168,7 +168,7 @@ These are where CuaDriver's AX-activation trio matters:
 ### 12. Chrome proper — omnibox
 **Prompt:** `In Google Chrome, open a new tab and navigate to https://trycua.com.`
 
-**Exercises:** `hotkey(["cmd","t"])` + `type_text_chars` + Return. Chrome's omnibox typically isn't AX-exposed even after activation.
+**Exercises:** `hotkey(["cmd","t"])` + `type_text` + Return. Chrome's omnibox typically isn't AX-exposed even after activation; `type_text` automatically falls back to CGEvent synthesis for Chromium/Electron inputs.
 
 **Success:**
 - A new Chrome tab whose AX title contains `Cua` or `trycua` is present.

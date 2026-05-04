@@ -8,8 +8,10 @@ public enum CheckPermissionsTool {
             name: "check_permissions",
             description: """
                 Report TCC permission status for Accessibility and Screen Recording.
-                Pass {"prompt": true} to raise the system permission dialogs for any
-                missing grants — otherwise the call is purely read-only.
+                By default also raises the system permission dialogs for any missing
+                grants — Apple's request APIs are no-ops when the grant is already
+                active, so this is safe to call repeatedly. Pass {"prompt": false}
+                for a purely read-only status check.
                 """,
             inputSchema: [
                 "type": "object",
@@ -17,13 +19,13 @@ public enum CheckPermissionsTool {
                     "prompt": [
                         "type": "boolean",
                         "description":
-                            "If true, raise the system permission prompts for missing grants.",
+                            "Raise the system permission prompts for missing grants. Default true.",
                     ]
                 ],
                 "additionalProperties": false,
             ],
             annotations: .init(
-                // Not readOnly when prompt=true (it may raise a modal dialog).
+                // Not readOnly because the default path may raise a modal dialog.
                 readOnlyHint: false,
                 destructiveHint: false,
                 idempotentHint: true,
@@ -31,7 +33,13 @@ public enum CheckPermissionsTool {
             )
         ),
         invoke: { arguments in
-            if arguments?["prompt"]?.boolValue == true {
+            // Default to prompting. The point of `check_permissions` is to
+            // surface and resolve missing grants — a read-only status check
+            // that leaves the user hunting for `CuaDriver.app` in System
+            // Settings is the wrong default. Apple's request APIs no-op
+            // when the grant is already active, so prompting is safe.
+            let shouldPrompt = arguments?["prompt"]?.boolValue ?? true
+            if shouldPrompt {
                 _ = Permissions.requestAccessibility()
                 _ = Permissions.requestScreenRecording()
             }

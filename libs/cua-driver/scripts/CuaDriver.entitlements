@@ -4,5 +4,9 @@
 <dict>
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+    <!-- com.apple.private.webinspector.remote-inspection-debugger would go here,
+         but AMFI kills any binary claiming it on macOS 15+ unless Apple-provisioned.
+         WebInspectorXPC.swift implements the full protocol; it works if Apple ever
+         grants this entitlement to third-party tooling. -->
 </dict>
 </plist>

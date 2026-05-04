@@ -56,6 +56,11 @@ public final class AgentCursorRenderer {
     /// Nil when no element is targeted or the cursor is hidden.
     public var focusRect: CGRect? = nil
 
+    /// Visual style applied to the cursor overlay. Changing this property
+    /// takes effect on the next rendered frame — `AgentCursorView` reads
+    /// it via `@Observable`. Set via `AgentCursor.shared.setStyle(_:)`.
+    public var style: AgentCursorStyle = .default
+
     // -------- Internal state ---------------------------------------------
 
     private var path: PlannedPath?

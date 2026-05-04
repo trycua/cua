@@ -38,9 +38,17 @@ public enum ListAppsTool {
         ),
         invoke: { _ in
             let apps = AppEnumerator.apps()
-            return CallTool.Result(
-                content: [.text(text: summary(apps), annotations: nil, _meta: nil)]
+            let textContent: Tool.Content = .text(
+                text: summary(apps), annotations: nil, _meta: nil
             )
+            let output = Output(apps: apps)
+            if let result = try? CallTool.Result(
+                content: [textContent],
+                structuredContent: output
+            ) {
+                return result
+            }
+            return CallTool.Result(content: [textContent])
         }
     )
 

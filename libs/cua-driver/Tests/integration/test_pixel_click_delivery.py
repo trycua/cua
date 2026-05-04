@@ -57,19 +57,33 @@ def _build_focus_app() -> None:
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
+    # Run the binary directly so we can read FOCUS_PID from its stdout, but
+    # follow up with `osascript ... to activate` because direct subprocess
+    # launches don't go through LaunchServices and so NSApp.activate() in
+    # the app itself is rejected as a non-user-initiated activation.
     proc = subprocess.Popen(
         [_FOCUS_APP_EXE],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
     )
+    pid: int | None = None
     for _ in range(40):
         line = proc.stdout.readline().strip()
         if line.startswith("FOCUS_PID="):
-            return proc, int(line.split("=", 1)[1])
+            pid = int(line.split("=", 1)[1])
+            break
         time.sleep(0.1)
-    proc.terminate()
-    raise RuntimeError("FocusMonitorApp did not print FOCUS_PID in time")
+    if pid is None:
+        proc.terminate()
+        raise RuntimeError("FocusMonitorApp did not print FOCUS_PID in time")
+    # Explicitly activate — this is the routine that "open -a" performs and
+    # subprocess.Popen does not.
+    subprocess.run(
+        ["osascript", "-e", 'tell application "FocusMonitorApp" to activate'],
+        check=False, timeout=3,
+    )
+    return proc, pid
 
 
 def _read_focus_losses() -> int:

@@ -170,7 +170,7 @@ export abstract class BaseComputerInterface {
       return this.authenticate();
     }
 
-    // If the WebSocket is closed or closing, reinitialize it
+    // If the WebSocket is closed or closing, reinitialize it and wait for open
     if (this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
       this.logger.info('Websocket is closed. Reinitializing connection.');
       const headers: { [key: string]: string } = {};
@@ -179,10 +179,10 @@ export abstract class BaseComputerInterface {
         headers['X-VM-Name'] = this.vmName;
       }
       this.ws = new WebSocket(this.wsUri, { headers });
-      return this.authenticate();
+      // Fall through to wait for the new WebSocket to open
     }
 
-    // Connect and authenticate
+    // Wait for the WebSocket to open, then authenticate
     return new Promise((resolve, reject) => {
       const onOpen = async () => {
         try {
@@ -194,27 +194,16 @@ export abstract class BaseComputerInterface {
         }
       };
 
-      // If already connecting, wait for it to complete then authenticate
-      if (this.ws.readyState === WebSocket.CONNECTING) {
-        this.ws.addEventListener('open', onOpen, { once: true });
-        this.ws.addEventListener('error', (error) => reject(error), {
-          once: true,
-        });
+      if (this.ws.readyState === WebSocket.OPEN) {
+        // Already open (shouldn't happen here but handle gracefully)
+        onOpen();
         return;
       }
 
-      // Set up event handlers
-      this.ws.on('open', onOpen);
-
-      this.ws.on('error', (error: Error) => {
-        reject(error);
-      });
-
-      this.ws.on('close', () => {
-        if (!this.closed) {
-          // Attempt to reconnect
-          setTimeout(() => this.connect(), 1000);
-        }
+      // Wait for the WebSocket to open
+      this.ws.addEventListener('open', onOpen, { once: true });
+      this.ws.addEventListener('error', (error) => reject(error), {
+        once: true,
       });
     });
   }

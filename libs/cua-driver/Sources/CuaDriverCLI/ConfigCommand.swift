@@ -18,6 +18,8 @@ import MCP
 ///
 /// Keys are dotted snake_case paths:
 ///   - `schema_version`
+///   - `capture_mode`
+///   - `max_image_dimension`
 ///   - `agent_cursor.enabled`
 ///   - `agent_cursor.motion.{start_handle,end_handle,arc_size,arc_flow,spring}`
 struct ConfigCommand: AsyncParsableCommand {
@@ -31,6 +33,8 @@ struct ConfigCommand: AsyncParsableCommand {
 
             Examples:
               cua-driver config                                    # print full config
+              cua-driver config get capture_mode
+              cua-driver config set capture_mode vision
               cua-driver config get agent_cursor.enabled
               cua-driver config set agent_cursor.enabled false
               cua-driver config set agent_cursor.motion.arc_size 0.4
@@ -147,6 +151,10 @@ struct ConfigGetCommand: AsyncParsableCommand {
         switch key {
         case "schema_version":
             print(config.schemaVersion)
+        case "capture_mode":
+            print(config.captureMode.rawValue)
+        case "max_image_dimension":
+            print(config.maxImageDimension)
         case "agent_cursor.enabled":
             print(config.agentCursor.enabled)
         case "agent_cursor.motion.start_handle":

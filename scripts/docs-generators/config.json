@@ -2,6 +2,32 @@
   "$schema": "./config.schema.json",
   "description": "Configuration for auto-generating documentation from source code",
   "generators": {
+    "cua-driver": {
+      "name": "Cua Driver",
+      "language": "swift",
+      "sourcePath": "libs/cua-driver/Sources",
+      "docsOutputPath": "docs/content/docs/cua-driver/reference",
+      "generatorScript": "scripts/docs-generators/cua-driver.ts",
+      "watchPaths": [
+        "libs/cua-driver/Sources/**/*.swift"
+      ],
+      "buildCommand": "swift build --configuration release",
+      "buildDirectory": "libs/cua-driver",
+      "extractionMethod": "dump-docs",
+      "outputs": [
+        {
+          "type": "mcp",
+          "outputFile": "mcp-tools.mdx",
+          "extractCommand": ".build/release/cua-driver dump-docs --type mcp"
+        },
+        {
+          "type": "cli",
+          "outputFile": "cli-reference.mdx",
+          "extractCommand": ".build/release/cua-driver dump-docs --type cli"
+        }
+      ],
+      "enabled": true
+    },
     "lume": {
       "name": "Lume VM Manager",
       "language": "swift",

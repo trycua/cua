@@ -1,0 +1,182 @@
+---
+title: Integrations
+description: Connect cua-driver to your AI coding agent
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver mcp` is a stdio MCP server. Any agent that supports MCP can use it — no extra setup beyond adding it to the agent's MCP config.
+
+<Callout type="warn">
+  Grant Accessibility and Screen Recording permissions to cua-driver before connecting any agent.
+  Run `cua-driver check_permissions` to verify.
+</Callout>
+
+## Claude Code
+
+Standard MCP registration:
+
+```bash
+claude mcp add --transport stdio cua-driver -- cua-driver mcp
+```
+
+Verify:
+
+```bash
+claude mcp list
+# cua-driver: cua-driver mcp (stdio) - ✓ Connected
+```
+
+### Claude Code computer-use compatibility mode
+
+Claude Code vision/computer-use-style flows appear to use the presence of a screenshot tool as a cue for image-grounded operation. If you want that behavior, register the compatibility server instead:
+
+```bash
+claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
+```
+
+This mode still exposes the normal CuaDriver tools. The only changed tool is `screenshot`: it requires `pid` and `window_id`, captures that window only, and returns a window-local image coordinate frame. Start with `launch_app` or `list_windows`, then call `screenshot` with the target window.
+
+For this Claude Code vision/computer-use-style path, use MCP rather than shelling out to the CLI. CLI screenshots can still capture windows, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
+<Callout type="info">
+  This does not call Anthropic APIs or expose Anthropic's native computer-use API tool. It is a CuaDriver MCP compatibility mode for Claude Code.
+</Callout>
+
+## GitHub Copilot CLI
+
+Add to `~/.copilot/mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "type": "local",
+      "command": "cua-driver",
+      "args": ["mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+Or interactively inside `gh copilot` chat:
+
+```
+/mcp add
+```
+
+Fill in: name=`cua-driver`, type=STDIO, command=`cua-driver`, args=`mcp`. Press **Ctrl+S** to save.
+
+## Codex (OpenAI)
+
+```bash
+codex mcp add cua-driver -- cua-driver mcp
+```
+
+## Cursor
+
+Generate the config snippet and paste it into `~/.cursor/mcp.json`:
+
+```bash
+cua-driver mcp-config --client cursor
+```
+
+## Gemini CLI
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "cua-driver": {
+        "type": "stdio",
+        "command": "cua-driver",
+        "args": ["mcp"]
+      }
+    }
+  }
+}
+```
+
+Tools appear prefixed as `mcp_cua-driver_*`.
+
+## OpenCode
+
+```bash
+cua-driver mcp-config --client opencode
+```
+
+Paste the output into `~/.config/opencode/config.json` (global) or `opencode.json` at the project root.
+
+<Callout type="warn">
+**Always configure cua-driver as an MCP server — never rely on the CLI fallback.** If MCP is not wired up, OpenCode calls `cua-driver` as a shell subprocess. The `get_window_state` response no longer includes base64 by default, but the screenshot image block is silently dropped — the model receives only the AX tree with no visual context. Use `--screenshot-out-file` or the `screenshot_out_file` param to preserve the image when using the CLI path.
+</Callout>
+
+### Local vision models (Ollama)
+
+If you are using a vision-capable model via Ollama, you must also declare its input modalities in `config.json` — otherwise OpenCode strips images before they reach the model:
+
+```json
+{
+  "mcp": {
+    "cua-driver": {
+      "type": "local",
+      "command": ["/Users/you/.local/bin/cua-driver", "mcp"],
+      "enabled": true
+    }
+  },
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "http://localhost:11434/v1" },
+      "models": {
+        "gemma4:26b": {
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The `modalities` field is required because OpenCode's `@ai-sdk/openai-compatible` provider defaults to text-only when no capabilities are declared. Without it, screenshots are replaced with an error string and never reach the model.
+
+## Hermes (NousResearch)
+
+```bash
+cua-driver mcp-config --client hermes
+```
+
+Paste the output into `~/.hermes/config.yaml`.
+
+## OpenClaw
+
+```bash
+cua-driver mcp-config --client openclaw
+```
+
+## Other clients
+
+For any client that accepts the standard `mcpServers` shape:
+
+```bash
+cua-driver mcp-config
+```
+
+Output:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```

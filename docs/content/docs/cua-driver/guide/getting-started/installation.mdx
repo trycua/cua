@@ -11,17 +11,21 @@ Install Cua Driver with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
 
-The installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `/usr/local/bin/cua-driver`. Both are signed with the same bundle id (`com.trycua.driver`) so TCC grants survive rebuilds.
+The installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `~/.local/bin/cua-driver`. The bundle is signed under `com.trycua.driver`, so TCC grants survive every release.
 
-<Callout type="warn">
-**First-time install?** If `/usr/local/bin` isn't in your PATH, add it and reload:
+The install runs **without sudo**: `/Applications` is user-writable on personal Macs, and the CLI symlink lives under `$HOME`. If `~/.local/bin` is not on your PATH, the installer detects your shell (`zsh` / `bash` / `fish`) and appends an `export PATH=...` line to the right rc file. Reload with `source ~/.zshrc` (or restart your terminal).
+
+<Callout type="info">
+**Power users:** override the install path with `--bin-dir` (or `CUA_DRIVER_BIN_DIR`). Use `--no-modify-path` if you'd rather edit your shell rc yourself.
 
 ```bash
-echo 'export PATH="$PATH:/usr/local/bin"' >> ~/.zshrc
-source ~/.zshrc
+/bin/bash -c "$(curl -fsSL .../install.sh)" -- --bin-dir=/usr/local/bin    # legacy system path (needs sudo)
+/bin/bash -c "$(curl -fsSL .../install.sh)" -- --no-modify-path            # don't touch shell rc
 ```
+</Callout>
 
-Or restart your terminal after the first command.
+<Callout type="warn">
+**Upgrading from v0.0.x?** The new installer puts the CLI at `~/.local/bin/cua-driver`. Any existing `/usr/local/bin/cua-driver` symlink is left in place so existing MCP client configs (Claude Code, Codex, etc.) keep working. Re-register them at your leisure to use the new path.
 </Callout>
 
 ### Verify it worked
@@ -97,28 +101,89 @@ cua-driver stop
 
 `open -n -g -a CuaDriver --args serve` is the recommended form because LaunchServices attributes the process to `CuaDriver.app`'s bundle id, which is what the user actually granted TCC against. `cua-driver serve &` also works and auto-relaunches itself via `open` when it detects the wrong TCC context.
 
-## Register with an MCP client
+## Register with an MCP client (optional)
 
-Cua Driver speaks MCP over stdio. Generate a client config snippet:
+The MCP server is one of two ways to use cua-driver — skip this section if you only want the CLI (`cua-driver list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
+
+Cua Driver speaks MCP over stdio. Use `cua-driver mcp-config --client <name>` to print the right command for your client, or copy one of the snippets below directly:
+
+### Clients with a CLI add command
 
 ```bash
-cua-driver mcp-config
+# Claude Code (add --scope project|global as needed)
+claude mcp add --transport stdio cua-driver -- ~/.local/bin/cua-driver mcp
+
+# Claude Code computer-use compatibility mode
+claude mcp add --transport stdio cua-computer-use -- ~/.local/bin/cua-driver mcp --claude-code-computer-use-compat
+
+# Codex (OpenAI)
+codex mcp add cua-driver -- ~/.local/bin/cua-driver mcp
+
+# OpenClaw
+cua-driver mcp-config --client openclaw | sh
 ```
 
-Output:
+The Claude Code compatibility mode keeps CuaDriver's normal MCP tools, but replaces `screenshot` with a window-only screenshot shim that requires `pid` and `window_id`. Use it when you want Claude Code's vision/computer-use-style flow to ground on CuaDriver window captures.
 
-```json
-{
-  "mcpServers": {
-    "cua-driver": {
-      "command": "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
-      "args": ["mcp"]
-    }
-  }
-}
+Use MCP for that Claude Code vision/computer-use-style path. Shelling out to `cua-driver screenshot` can capture a window, but it does not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
+### Clients configured via a config file
+
+Cursor, OpenCode, and Hermes all configure MCP servers via files. Use `mcp-config` to print the exact snippet, paste it into the right path:
+
+```bash
+# Cursor — paste into ~/.cursor/mcp.json (or .cursor/mcp.json for project scope)
+cua-driver mcp-config --client cursor | pbcopy
+
+# OpenCode (sst/opencode) — paste into opencode.json at the project root
+cua-driver mcp-config --client opencode | pbcopy
+
+# Hermes (NousResearch) — paste into ~/.hermes/config.yaml,
+# then run `/reload-mcp` inside Hermes
+cua-driver mcp-config --client hermes | pbcopy
 ```
 
-Paste into `~/.claude/mcp.json` (Claude Code) or the equivalent config for your client. The client spawns `cua-driver mcp` on demand.
+For any other client that accepts the standard `mcpServers` JSON shape:
+
+```bash
+cua-driver mcp-config | pbcopy
+```
+
+<Callout type="info">
+**Pi (badlogic/pi-mono)** does not support MCP natively. Use cua-driver as a plain CLI from inside Pi instead — `cua-driver list_apps`, `cua-driver click '{...}'`, etc. — which is exactly the shape Pi is built around. Run `cua-driver mcp-config --client pi` for the full guidance, or see the [Quickstart](/cua-driver/guide/getting-started/quickstart) for CLI usage.
+</Callout>
+
+The client spawns `cua-driver mcp` on demand once registered.
+
+## Agent skills (auto-wired)
+
+The bundle ships an Anthropic-format SKILL.md pack at `/Applications/CuaDriver.app/Contents/Resources/Skills/cua-driver/`. The installer detects the agents you have and creates symlinks pointing them at the bundle so the skill auto-loads:
+
+| Agent | Skills directory | Auto-wired by installer |
+|---|---|---|
+| Claude Code | `~/.claude/skills/cua-driver` | when `~/.claude/skills/` exists |
+| Codex | `~/.agents/skills/cua-driver` | when `~/.codex/` exists |
+| OpenClaw | `~/.openclaw/skills/cua-driver` | when `~/.openclaw/` exists |
+| OpenCode | `~/.config/opencode/skills/cua-driver` | when `~/.config/opencode/` exists |
+
+The installer creates the `skills/` subdirectory if missing, then drops the symlink. Symlinks survive auto-updates because `/Applications/CuaDriver.app` is replaced atomically — the link target stays valid across releases.
+
+<Callout type="info">
+OpenCode also reads `~/.claude/skills/` natively, so users who have both Claude Code and OpenCode get the skill via the Claude path automatically.
+</Callout>
+
+### Agents without a SKILL.md auto-loader
+
+Cursor, Hermes, and Pi each use a single-file system prompt (different format) instead of a skills directory. We don't auto-wire these because:
+
+- **Cursor** (`~/.cursor/rules/*.mdc`): rules expect a different frontmatter shape (`description`/`globs`/`alwaysApply`), not Anthropic's `name`/`description`. Symlinking the SKILL.md as `.mdc` works but the frontmatter renders as a noisy comment block.
+- **Hermes** (`~/.hermes/SOUL.md`) and **Pi** (`~/.pi/agent/SYSTEM.md`): replace the entire system prompt — symlinking would clobber any custom prompt you've set.
+
+For these, paste the skill content manually into whatever instructions file the agent uses:
+
+```bash
+cat /Applications/CuaDriver.app/Contents/Resources/Skills/cua-driver/SKILL.md | pbcopy
+```
 
 ## Uninstall
 
@@ -128,21 +193,23 @@ cua-driver stop 2>/dev/null
 
 # Remove the app and the CLI symlink.
 rm -rf /Applications/CuaDriver.app
-rm -f /usr/local/bin/cua-driver
+rm -f ~/.local/bin/cua-driver
+# legacy install path (only present on installs from before v0.1.0)
+sudo rm -f /usr/local/bin/cua-driver 2>/dev/null || true
 
 # Optional: remove config + telemetry state.
 rm -rf ~/.cua-driver
 rm -rf ~/Library/Application\ Support/Cua\ Driver
 rm -rf ~/Library/Caches/cua-driver
 
-# Optional: remove the updater LaunchAgent.
+# Optional: remove legacy LaunchAgent from older installs (≤ v0.0.5).
 launchctl unload ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist 2>/dev/null
 rm -f ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist
 ```
 
 ## Troubleshooting
 
-**`cua-driver: command not found`** — `/usr/local/bin` isn't on your PATH. Add it and reload (see the first-time install callout above).
+**`cua-driver: command not found`** — `~/.local/bin` isn't on your PATH. Add it and reload (see the first-time install callout above).
 
 **Permissions dialogs reappear after every launch** — macOS is attributing the process to a different bundle id than the one you granted. Run `cua-driver diagnose` and paste the output when filing an issue; it reports cdhash, team id, and which bundle TCC is checking against.
 

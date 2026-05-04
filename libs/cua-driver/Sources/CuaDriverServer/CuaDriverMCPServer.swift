@@ -7,11 +7,12 @@ public enum CuaDriverMCPServer {
     /// The caller is responsible for calling ``Server/start(transport:initializeHook:)``
     /// and ``Server/waitUntilCompleted()``.
     public static func make(
+        serverName: String = "cua-driver",
         version: String = CuaDriverCore.version,
         registry: ToolRegistry = .default
     ) async -> Server {
         let server = Server(
-            name: "cua-driver",
+            name: serverName,
             version: version,
             capabilities: Server.Capabilities(tools: .init(listChanged: false))
         )

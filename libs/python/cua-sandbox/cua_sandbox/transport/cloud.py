@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 0.5  # seconds between status polls
 _POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
+_CREATE_MAX_RETRIES = 5  # retry POST /v1/vms on 503 (no capacity)
+_CREATE_RETRY_BASE_S = 2.0  # exponential backoff base (2, 4, 8, 16, 32s)
 
 
 class CloudTransport(Transport):
@@ -373,9 +375,26 @@ class CloudTransport(Transport):
             body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
         else:
             body["configuration"] = "small"
-        resp = await self._api_client.post("/v1/vms", json=body)
+        resp = await self._post_with_retry("/v1/vms", body)
         resp.raise_for_status()
         return resp.json()
+
+    async def _post_with_retry(self, path: str, body: dict) -> httpx.Response:
+        """POST with exponential backoff retry on 503 (no capacity)."""
+        assert self._api_client
+        for attempt in range(_CREATE_MAX_RETRIES):
+            resp = await self._api_client.post(path, json=body)
+            if resp.status_code != 503:
+                return resp
+            if attempt == _CREATE_MAX_RETRIES - 1:
+                break
+            delay = _CREATE_RETRY_BASE_S * (2 ** attempt)
+            logger.warning(
+                "No sandbox capacity (503), retrying in %.1fs (attempt %d/%d)",
+                delay, attempt + 1, _CREATE_MAX_RETRIES,
+            )
+            await asyncio.sleep(delay)
+        return resp  # return last 503 response, caller will raise_for_status
 
     async def _wait_for_running(self, vm_info: dict) -> dict:
         """Poll until the VM status is 'running' (or 'ready')."""

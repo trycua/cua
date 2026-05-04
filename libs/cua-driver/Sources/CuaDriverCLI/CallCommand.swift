@@ -1,3 +1,4 @@
+import AppKit
 import ArgumentParser
 import CuaDriverServer
 import Foundation
@@ -171,6 +172,7 @@ struct CallCommand: AsyncParsableCommand {
 
         let result: CallTool.Result
         do {
+            await bootstrapAppKitForInProcessCallIfNeeded(toolName: toolName)
             // Route through `registry.call(...)` so the recording hook
             // (and any future cross-cutting wrapper) fires consistently
             // with the MCP and daemon paths. The in-process one-shot
@@ -261,6 +263,35 @@ struct CallCommand: AsyncParsableCommand {
         if !text.isEmpty {
             FileHandle.standardOutput.write(Data((text + "\n").utf8))
         }
+    }
+}
+
+private func bootstrapAppKitForInProcessCallIfNeeded(toolName: String) async {
+    let appKitBackedTools: Set<String> = [
+        "check_permissions",
+        "click",
+        "double_click",
+        "drag",
+        "get_accessibility_tree",
+        "get_cursor_position",
+        "get_window_state",
+        "hotkey",
+        "launch_app",
+        "list_apps",
+        "list_windows",
+        "move_cursor",
+        "press_key",
+        "right_click",
+        "screenshot",
+        "scroll",
+        "set_value",
+        "type_text",
+        "type_text_chars",
+        "zoom",
+    ]
+    guard appKitBackedTools.contains(toolName) else { return }
+    await MainActor.run {
+        _ = NSApplication.shared.setActivationPolicy(.accessory)
     }
 }
 

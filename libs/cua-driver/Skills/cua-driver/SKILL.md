@@ -140,6 +140,18 @@ Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
 when MCP is requested.
 
+### Claude Code computer-use compatibility mode
+
+For normal Claude Code use, keep the default CLI or `cua-driver` MCP server path above. If the user explicitly wants Claude Code's vision/computer-use-style flow, they can register:
+
+```bash
+claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
+```
+
+Observation: Claude Code vision flows appear to treat a screenshot MCP tool as the image-grounding anchor. This compatibility mode keeps the normal CuaDriver tools and changes only `screenshot`. The compatibility `screenshot` requires `pid` and `window_id`, captures only that target window, and returns the window-local pixel coordinate frame. Start with `launch_app` or `list_windows`, then call `screenshot({pid, window_id})`; do not assume desktop coordinates or a full-screen capture.
+
+Use MCP for this Claude Code vision/computer-use-style path. Do not shell out to `cua-driver screenshot` as a substitute: CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
 Intent → tool mapping. If you find yourself reaching for the right
 column, something has gone wrong — re-read "The no-foreground
 contract" above:

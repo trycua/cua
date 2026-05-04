@@ -43,33 +43,62 @@ struct MCPConfigCommand: ParsableCommand {
             help: "Client to print the install command for: claude | codex | cursor | openclaw | opencode | hermes | pi. Omit for the generic JSON snippet.")
     var client: String?
 
+    @Flag(
+        name: .long,
+        help: "Print config for Claude Code's window-scoped screenshot compatibility mode registered as `cua-computer-use`."
+    )
+    var claudeCodeComputerUseCompat: Bool = false
+
     func run() throws {
         let binary = resolvedBinaryPath()
+        let shellBinary = shellEscape(binary)
+        // Observed Claude Code behavior: the exact config key "computer-use"
+        // is reserved, so external stdio registrations use a distinct key.
+        let serverName = claudeCodeComputerUseCompat ? "cua-computer-use" : "cua-driver"
+        let args = claudeCodeComputerUseCompat
+            ? "[\"mcp\", \"--claude-code-computer-use-compat\"]"
+            : "[\"mcp\"]"
+        let commandArgs = claudeCodeComputerUseCompat
+            ? "mcp --claude-code-computer-use-compat"
+            : "mcp"
         switch client?.lowercased() {
         case nil, "":
-            print(genericMcpServersSnippet(binary: binary, includeType: false))
+            print(genericMcpServersSnippet(
+                serverName: serverName,
+                binary: binary,
+                args: args,
+                includeType: false
+            ))
         case "claude":
-            print("claude mcp add --transport stdio cua-driver -- \(binary) mcp")
+            print("claude mcp add --transport stdio \(serverName) -- \(shellBinary) \(commandArgs)")
         case "codex":
-            print("codex mcp add cua-driver -- \(binary) mcp")
+            print("codex mcp add \(serverName) -- \(shellBinary) \(commandArgs)")
         case "cursor":
             // Cursor has no CLI — emit JSON the user pastes into
             // ~/.cursor/mcp.json (global) or .cursor/mcp.json (project).
-            print(genericMcpServersSnippet(binary: binary, includeType: true))
+            print(genericMcpServersSnippet(
+                serverName: serverName,
+                binary: binary,
+                args: args,
+                includeType: true
+            ))
         case "openclaw":
             // OpenClaw has a CLI registry — set with a JSON arg.
-            print("openclaw mcp set cua-driver '{\"command\":\"\(binary)\",\"args\":[\"mcp\"]}'")
+            print("openclaw mcp set \(serverName) '{\"command\":\"\(binary)\",\"args\":\(args)}'")
         case "opencode":
             // OpenCode (sst/opencode) uses opencode.json with type:"local"
             // and command as a single merged array.
+            let commandArray = claudeCodeComputerUseCompat
+                ? "[\"\(binary)\", \"mcp\", \"--claude-code-computer-use-compat\"]"
+                : "[\"\(binary)\", \"mcp\"]"
             let snippet = """
             // paste under "mcp" in opencode.json (or opencode.jsonc):
             {
               "$schema": "https://opencode.ai/config.json",
               "mcp": {
-                "cua-driver": {
+                "\(serverName)": {
                   "type": "local",
-                  "command": ["\(binary)", "mcp"],
+                  "command": \(commandArray),
                   "enabled": true
                 }
               }
@@ -83,9 +112,9 @@ struct MCPConfigCommand: ParsableCommand {
             # paste under mcp_servers in ~/.hermes/config.yaml,
             # then run /reload-mcp inside Hermes:
             mcp_servers:
-              cua-driver:
+              \(serverName):
                 command: "\(binary)"
-                args: ["mcp"]
+                args: \(args)
             """
             print(snippet)
         case "pi":
@@ -117,14 +146,19 @@ struct MCPConfigCommand: ParsableCommand {
         }
     }
 
-    private func genericMcpServersSnippet(binary: String, includeType: Bool) -> String {
+    private func genericMcpServersSnippet(
+        serverName: String,
+        binary: String,
+        args: String,
+        includeType: Bool
+    ) -> String {
         let typeLine = includeType ? ",\n      \"type\": \"stdio\"" : ""
         return """
         {
           "mcpServers": {
-            "cua-driver": {
+            "\(serverName)": {
               "command": "\(binary)",
-              "args": ["mcp"]\(typeLine)
+              "args": \(args)\(typeLine)
             }
           }
         }
@@ -139,6 +173,10 @@ struct MCPConfigCommand: ParsableCommand {
             return path
         }
         return CommandLine.arguments.first ?? "cua-driver"
+    }
+
+    private func shellEscape(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
     }
 }
 
@@ -307,6 +345,17 @@ struct MCPCommand: ParsableCommand {
         abstract: "Run the stdio MCP server."
     )
 
+    @Flag(
+        name: .long,
+        help: """
+            Expose normal CuaDriver tools, replacing only `screenshot` with a \
+            Claude Code-friendly window-only screenshot that establishes the \
+            vision coordinate frame. This does not use Anthropic's native \
+            computer_2025 API tool.
+            """
+    )
+    var claudeCodeComputerUseCompat: Bool = false
+
     func run() throws {
         // MCP stdio runs for the lifetime of the host process, so we
         // bootstrap AppKit here — the agent cursor overlay (disabled
@@ -342,7 +391,12 @@ struct MCPCommand: ParsableCommand {
                 AgentCursor.shared.apply(config: config.agentCursor)
             }
 
-            let server = await CuaDriverMCPServer.make()
+            let server = await CuaDriverMCPServer.make(
+                serverName: claudeCodeComputerUseCompat ? "computer-use" : "cua-driver",
+                registry: claudeCodeComputerUseCompat
+                    ? .claudeCodeComputerUseCompat
+                    : .default
+            )
             let transport = StdioTransport()
             try await server.start(transport: transport)
             await server.waitUntilCompleted()

@@ -94,7 +94,9 @@ enum CLIDocExtractor {
             discussion: nil,
             arguments: [],
             options: [],
-            flags: [],
+            flags: [
+                FlagDoc(name: "claude-code-computer-use-compat", shortName: nil, help: "Expose normal CuaDriver tools, replacing only `screenshot` with a Claude Code-friendly window-only screenshot that establishes the vision coordinate frame.", defaultValue: false),
+            ],
             subcommands: []
         )
     }
@@ -412,7 +414,9 @@ enum CLIDocExtractor {
             options: [
                 OptionDoc(name: "client", shortName: nil, help: "Client to print the install command for: claude | codex | cursor | openclaw | opencode | hermes | pi. Omit for the generic JSON snippet.", type: "String", defaultValue: nil, isOptional: true),
             ],
-            flags: [],
+            flags: [
+                FlagDoc(name: "claude-code-computer-use-compat", shortName: nil, help: "Print config for Claude Code's window-scoped screenshot compatibility mode registered as `cua-computer-use`.", defaultValue: false),
+            ],
             subcommands: []
         )
     }

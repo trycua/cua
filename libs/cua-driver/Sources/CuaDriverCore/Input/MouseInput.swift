@@ -98,15 +98,21 @@ public enum MouseInput {
     /// screen points (top-left origin) and deliver them to `pid`.
     /// `modifiers` accepts the same names as `KeyboardInput`
     /// (`cmd` / `command`, `shift`, `option` / `alt`, `ctrl` /
-    /// `control`, `fn`); unknown names are ignored. Events are
-    /// posted via auth-signed `SLEventPostToPid` AND the public HID
-    /// tap — see the file-level doc for the rationale.
+    /// `control`, `fn`); unknown names are ignored.
+    ///
+    /// When `useFrontmostHIDPath` is true (the default) and `pid` is
+    /// frontmost, events are posted through the public HID tap, which
+    /// can move the global cursor and is required for some viewport
+    /// apps. When false, the function skips that path and uses only
+    /// pid-routed delivery, preserving the system cursor for callers
+    /// that rely on background-style dispatch.
     public static func click(
         at point: CGPoint,
         toPid pid: pid_t,
         button: Button,
         count: Int = 1,
-        modifiers: [String] = []
+        modifiers: [String] = [],
+        useFrontmostHIDPath: Bool = true
     ) throws {
         // When the target is frontmost, route via the public HID tap
         // (`CGEventPost(tap: .cghidEventTap)`) with a preceding
@@ -123,7 +129,7 @@ public enum MouseInput {
         // (Chrome/Slack/etc); they just don't work on viewports.
         let targetIsFrontmost =
             NSRunningApplication(processIdentifier: pid)?.isActive ?? false
-        if targetIsFrontmost {
+        if useFrontmostHIDPath && targetIsFrontmost {
             try clickFrontmostViaHIDTap(
                 at: point, button: button, count: count, modifiers: modifiers)
             return

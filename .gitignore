@@ -162,6 +162,7 @@ playground.xcworkspace
 # hence it is not needed unless you have added a package configuration file to your project
 .swiftpm/
 .build/
+/Package.resolved
 # CocoaPods
 #
 # We recommend against adding the Pods directory to your .gitignore. However

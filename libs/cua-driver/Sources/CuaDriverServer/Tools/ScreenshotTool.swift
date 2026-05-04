@@ -11,16 +11,17 @@ public enum ScreenshotTool {
             name: "screenshot",
             description: """
                 Capture a screenshot using ScreenCaptureKit. Returns base64-encoded
-                image data in the requested format (default png).
+                image data for a single window in the requested format (default png).
 
-                Without `window_id`, captures the full main display. With `window_id`,
-                captures just that window (get the id from `list_windows`).
+
+                                `window_id` is required. Get window ids from `list_windows`.
 
                 Requires the Screen Recording TCC grant — call `check_permissions`
                 first if unsure.
                 """,
             inputSchema: [
                 "type": "object",
+                "required": ["window_id"],
                 "properties": [
                     "format": [
                         "type": "string",
@@ -36,7 +37,7 @@ public enum ScreenshotTool {
                     "window_id": [
                         "type": "integer",
                         "description":
-                            "Optional CGWindowID / kCGWindowNumber to capture just that window.",
+                            "Required CGWindowID / kCGWindowNumber to capture.",
                     ],
                 ],
                 "additionalProperties": false,
@@ -52,36 +53,42 @@ public enum ScreenshotTool {
             let format =
                 ImageFormat(rawValue: arguments?["format"]?.stringValue ?? "png") ?? .png
             let quality = arguments?["quality"]?.intValue ?? 95
-            let windowID = arguments?["window_id"]?.intValue
+            guard let rawWindowID = arguments?["window_id"]?.intValue else {
+                return CallTool.Result(
+                    content: [
+                        .text(
+                            text: "Missing required `window_id`. Use `list_windows` first, then call `screenshot` for one window.",
+                            annotations: nil,
+                            _meta: nil
+                        )
+                    ],
+                    isError: true
+                )
+            }
+            guard let windowID = UInt32(exactly: rawWindowID) else {
+                return CallTool.Result(
+                    content: [
+                        .text(
+                            text: "Invalid `window_id` \(rawWindowID). Use `list_windows` first, then pass a valid UInt32 window id.",
+                            annotations: nil,
+                            _meta: nil
+                        )
+                    ],
+                    isError: true
+                )
+            }
 
             do {
-                let shot: Screenshot
-                if let windowID {
-                    shot = try await capture.captureWindow(
-                        windowID: UInt32(windowID),
-                        format: format,
-                        quality: quality
-                    )
-                } else {
-                    shot = try await capture.captureMainDisplay(
-                        format: format,
-                        quality: quality
-                    )
-                }
+                let shot = try await capture.captureWindow(
+                    windowID: windowID,
+                    format: format,
+                    quality: quality
+                )
                 let base64 = shot.imageData.base64EncodedString()
                 let mime = format == .png ? "image/png" : "image/jpeg"
-                let visibleWindows = WindowEnumerator.visibleWindows().filter { $0.layer == 0 }
                 var summaryLines: [String] = [
-                    "✅ Screenshot — \(shot.width)x\(shot.height) \(format.rawValue)"
+                    "✅ Window screenshot — \(shot.width)x\(shot.height) \(format.rawValue) [window_id: \(rawWindowID)]"
                 ]
-                if !visibleWindows.isEmpty {
-                    summaryLines.append("\nOn-screen windows:")
-                    for w in visibleWindows {
-                        let title = w.name.isEmpty ? "(no title)" : "\"\(w.name)\""
-                        summaryLines.append("- \(w.owner) (pid \(w.pid)) \(title) [window_id: \(w.id)]")
-                    }
-                    summaryLines.append("→ Call get_window_state(pid, window_id) to inspect a window's UI.")
-                }
                 let summary = summaryLines.joined(separator: "\n")
                 return CallTool.Result(
                     content: [

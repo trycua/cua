@@ -103,7 +103,7 @@ Pixel clicks are for surfaces the AX tree doesn't reach: canvases, video players
 
 ```bash
 # Write the screenshot to disk. Works in every capture mode.
-cua-driver get_window_state '{"pid":844,"window_id":10725}' --image-out /tmp/shot.png
+cua-driver get_window_state '{"pid":844,"window_id":10725}' --screenshot-out-file /tmp/shot.png
 
 # Look at /tmp/shot.png, pick a target pixel, then:
 cua-driver click '{"pid":844,"window_id":10725,"x":120,"y":240}'

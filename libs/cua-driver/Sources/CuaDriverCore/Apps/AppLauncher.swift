@@ -147,40 +147,39 @@ public enum AppLauncher {
             runningApp.unhide()
         }
 
-        // If there are still no on-screen windows (app was already running
-        // with windows on a different Space), open the app URL with a new
-        // `oapp` event to trigger window creation on the current Space.
-        // This is what happens when you click Finder in the Dock on a Space
-        // where it has no windows — macOS creates a new window here.
-        // We only do this when no URLs were provided (the URL path already
-        // opens a window via `application(_:open:)`).
+        // For Finder and Safari: if no on-screen windows appeared after
+        // unhide (e.g. already running with windows on a different Space),
+        // open the home directory via the URL-handoff path. This calls
+        // `application(_:open:)` which creates a new window on the current
+        // Space without activation — Finder opens ~/, Safari opens it as a
+        // local file URL. Scoped to these two apps only to avoid unintended
+        // side effects on other apps (document pickers, unexpected behavior).
         if urls.isEmpty {
-            let onScreen = WindowEnumerator.visibleWindows().filter { $0.pid == info.pid }
-            if onScreen.isEmpty {
-                // Re-open without activating to create a window on this Space.
-                let reopenConfig = NSWorkspace.OpenConfiguration()
-                reopenConfig.activates = false
-                reopenConfig.addsToRecentItems = false
-                if let resolvedBundleId = Bundle(url: appURL)?.bundleIdentifier
-                    ?? bundleId
-                {
-                    let target = NSAppleEventDescriptor(
-                        bundleIdentifier: resolvedBundleId)
-                    let openEvent = NSAppleEventDescriptor(
-                        eventClass: AEEventClass(kCoreEventClass),
-                        eventID: AEEventID(kAEOpenApplication),
-                        targetDescriptor: target,
-                        returnID: AEReturnID(kAutoGenerateReturnID),
-                        transactionID: AETransactionID(kAnyTransactionID)
-                    )
-                    reopenConfig.appleEvent = openEvent
-                }
-                _ = try? await withCheckedThrowingContinuation {
-                    (cont: CheckedContinuation<AppInfo, Error>) in
-                    NSWorkspace.shared.open(
-                        appURL, configuration: reopenConfig
-                    ) { app, error in
-                        Self.resumeWithResult(cont: cont, app: app, error: error)
+            let resolvedBundleId =
+                Bundle(url: appURL)?.bundleIdentifier ?? bundleId ?? ""
+            let wantsFallback =
+                resolvedBundleId == "com.apple.finder"
+                || resolvedBundleId == "com.apple.Safari"
+            if wantsFallback {
+                let onScreen = WindowEnumerator.visibleWindows().filter { $0.pid == info.pid }
+                if onScreen.isEmpty {
+                    // Finder gets its home directory; Safari gets a blank page.
+                    let fallbackURL: URL =
+                        resolvedBundleId == "com.apple.Safari"
+                        ? URL(string: "about:blank")!
+                        : FileManager.default.homeDirectoryForCurrentUser
+                    let fallbackConfig = NSWorkspace.OpenConfiguration()
+                    fallbackConfig.activates = false
+                    fallbackConfig.addsToRecentItems = false
+                    _ = try? await withCheckedThrowingContinuation {
+                        (cont: CheckedContinuation<AppInfo, Error>) in
+                        NSWorkspace.shared.open(
+                            [fallbackURL],
+                            withApplicationAt: appURL,
+                            configuration: fallbackConfig
+                        ) { app, error in
+                            Self.resumeWithResult(cont: cont, app: app, error: error)
+                        }
                     }
                 }
             }

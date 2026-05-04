@@ -822,7 +822,7 @@ class MacOSAccessibilityHandler(BaseAccessibilityHandler):
                 if isinstance(windows, Foundation.NSArray):  # type: ignore
                     return windows
             return []
-        except:
+        except Exception:
             return []
 
     def get_all_windows(self):
@@ -856,11 +856,11 @@ class MacOSAccessibilityHandler(BaseAccessibilityHandler):
                             "windows": app_windows,
                         }
                     )
-                except:
+                except Exception:
                     continue
 
             return windows
-        except:
+        except Exception:
             return []
 
     def get_running_apps(self):
@@ -1192,7 +1192,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             try:
                 self.mouse.release(btn)
-            except:
+            except Exception:
                 pass
             return {"success": False, "error": str(e)}
 
@@ -1229,7 +1229,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             try:
                 self.mouse.release(btn)
-            except:
+            except Exception:
                 pass
             return {"success": False, "error": str(e)}
 

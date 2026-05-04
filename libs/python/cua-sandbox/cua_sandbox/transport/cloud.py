@@ -375,6 +375,19 @@ class CloudTransport(Transport):
             body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
         else:
             body["configuration"] = "small"
+
+        # User-defined Docker registry image support.
+        # When Image.from_registry("myorg/myimage:tag") is used, pass the
+        # registry ref as dockerImage and the image kind as instanceType.
+        # kind="vm"        → KubeVirt VMI   (containerDisk)
+        # kind="container" → gVisor/Incus   (spec.image)
+        registry_ref = getattr(self._image, "_registry", None)
+        if registry_ref:
+            body["dockerImage"] = registry_ref
+            # Respect image.kind if set; default to "vm" for VMI provisioning.
+            kind = getattr(self._image, "kind", None) or "vm"
+            body["instanceType"] = kind
+
         resp = await self._post_with_retry("/v1/vms", body)
         resp.raise_for_status()
         return resp.json()

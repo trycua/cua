@@ -20,23 +20,15 @@ public enum AppLauncher {
         }
     }
 
-    /// Launch a macOS app in the background — no focus steal, no window
-    /// visible on screen.
+    /// Launch a macOS app in the background — window visible on screen,
+    /// no focus steal.
     ///
-    /// Uses `NSWorkspace.openApplication(at:configuration:)` with both
-    /// `configuration.activates = false` and `configuration.hides = true`.
-    /// The `hides = true` flag is the key to a fully-populated AX tree on
-    /// a pure background launch: LaunchServices lets the target finish
-    /// `applicationDidFinishLaunching` and create its window, then hides
-    /// the app back immediately. The target's AX tree is fully populated
-    /// (Calculator on macOS 14+ goes from a 13-element menu-bar-only tree
-    /// to a 41-element tree with the keypad) and there's no visible
-    /// focus flash because the window never draws on screen.
-    ///
-    /// To bring a hidden-launched app onto the screen, the caller (or
-    /// the user) must explicitly unhide it — either via
-    /// `NSRunningApplication.unhide()` from their own code or through
-    /// regular macOS UI (Dock click, Cmd-Tab, etc.).
+    /// Uses `NSWorkspace.open(_:configuration:)` with
+    /// `configuration.activates = false` so the target never becomes the
+    /// frontmost app. After the launch callback, `NSRunningApplication.unhide()`
+    /// is called so the target's windows appear on screen behind the current
+    /// foreground app. The AX tree is fully populated and automation can
+    /// start immediately via `click`, `hotkey`, `get_window_state`, etc.
     ///
     /// When `urls` is non-empty, dispatches through
     /// `NSWorkspace.open(_:withApplicationAt:configuration:)` instead so
@@ -139,15 +131,60 @@ public enum AppLauncher {
             }
         }
 
-        // We intentionally do NOT call `NSRunningApplication.unhide()` here.
+        // Unhide the app so its windows are visible on screen in the
+        // background. `activates = false` already prevents focus steal;
+        // `unhide()` only makes existing windows drawable — it does not
+        // activate the app or raise it above the current foreground.
         //
-        // `unhide()` bumps the target's CPS activation count away from 0,
-        // which lets a target like Chrome's subsequent self-activation
-        // succeed and raise its window on top of the user's work —
-        // exactly the focus-steal we're trying to avoid. Leaving the
-        // activation count at 0 keeps self-activation attempts as the
-        // softer "presents 0 windows, is frontable" rejection, which
-        // resolves on its own once the target creates a window.
+        // If the app self-activates after unhide (Chrome occasionally does
+        // during its launch lifecycle), the focus-steal preventer in
+        // LaunchAppTool re-activates the previous frontmost app. Calling
+        // unhide() here is safe because by the time we reach this point
+        // the launch-lifecycle self-activation window has closed.
+        if let runningApp = NSRunningApplication(
+            processIdentifier: info.pid)
+        {
+            runningApp.unhide()
+        }
+
+        // If there are still no on-screen windows (app was already running
+        // with windows on a different Space), open the app URL with a new
+        // `oapp` event to trigger window creation on the current Space.
+        // This is what happens when you click Finder in the Dock on a Space
+        // where it has no windows — macOS creates a new window here.
+        // We only do this when no URLs were provided (the URL path already
+        // opens a window via `application(_:open:)`).
+        if urls.isEmpty {
+            let onScreen = WindowEnumerator.visibleWindows().filter { $0.pid == info.pid }
+            if onScreen.isEmpty {
+                // Re-open without activating to create a window on this Space.
+                let reopenConfig = NSWorkspace.OpenConfiguration()
+                reopenConfig.activates = false
+                reopenConfig.addsToRecentItems = false
+                if let resolvedBundleId = Bundle(url: appURL)?.bundleIdentifier
+                    ?? bundleId
+                {
+                    let target = NSAppleEventDescriptor(
+                        bundleIdentifier: resolvedBundleId)
+                    let openEvent = NSAppleEventDescriptor(
+                        eventClass: AEEventClass(kCoreEventClass),
+                        eventID: AEEventID(kAEOpenApplication),
+                        targetDescriptor: target,
+                        returnID: AEReturnID(kAutoGenerateReturnID),
+                        transactionID: AETransactionID(kAnyTransactionID)
+                    )
+                    reopenConfig.appleEvent = openEvent
+                }
+                _ = try? await withCheckedThrowingContinuation {
+                    (cont: CheckedContinuation<AppInfo, Error>) in
+                    NSWorkspace.shared.open(
+                        appURL, configuration: reopenConfig
+                    ) { app, error in
+                        Self.resumeWithResult(cont: cont, app: app, error: error)
+                    }
+                }
+            }
+        }
 
         return info
     }

@@ -264,8 +264,22 @@ class Image:
         fields.update(kwargs)
         return Image(**fields)
 
-    # Valid runtime hints
-    _VALID_RUNTIME_HINTS: Tuple[str, ...] = ("qemu/cloud", "qemu/local", "oci/cloud", "oci/local")
+    # Valid runtime hints — format: "<engine>/<location>"
+    # "oci/local" and "oci/cloud" are retained as aliases for backward compat.
+    _VALID_RUNTIME_HINTS: Tuple[str, ...] = (
+        "qemu/cloud",
+        "qemu/local",
+        "docker/cloud",
+        "docker/local",
+        # Aliases kept for backward compat
+        "oci/cloud",
+        "oci/local",
+    )
+    # Canonical forms for the aliases above (resolved in .runtime())
+    _HINT_ALIASES: Dict[str, str] = {
+        "oci/cloud": "docker/cloud",
+        "oci/local": "docker/local",
+    }
 
     def runtime(self, hint: str) -> "Image":
         """Pin the execution engine and deployment location for this image.
@@ -273,53 +287,71 @@ class Image:
         Format: ``"<engine>/<location>"``
 
         Engines:
-          * ``"qemu"``  — QEMU/KVM virtualisation (full VM, hardware-level isolation)
-          * ``"oci"``   — OCI/Docker container runtime (process-level isolation)
+          * ``"qemu"``   — QEMU/KVM virtualisation via basalt (full VM, local) or
+                           KubeVirt VMI (cloud)
+          * ``"docker"`` — Docker/OCI container runtime; ``DockerRuntime`` locally,
+                           gVisor/Incus on cloud (aliases: ``"oci/…"``)
 
         Locations:
           * ``"cloud"`` — run on the CUA cloud (remote provisioning via POST /v1/vms)
           * ``"local"`` — run on the local host machine
 
+        Accepted values (aliases in parentheses):
+
+        +-----------------+--------------------------------------------+
+        | hint            | maps to                                    |
+        +=================+============================================+
+        | ``qemu/cloud``  | KubeVirt VMI (instanceType: ``"vm"``)      |
+        +-----------------+--------------------------------------------+
+        | ``qemu/local``  | basalt + QEMUBaremetalRuntime              |
+        +-----------------+--------------------------------------------+
+        | ``docker/cloud``| gVisor/Incus (instanceType: ``"container"``)|
+        | (``oci/cloud``) |                                            |
+        +-----------------+--------------------------------------------+
+        | ``docker/local``| DockerRuntime                              |
+        | (``oci/local``) |                                            |
+        +-----------------+--------------------------------------------+
+
         Examples::
 
-            # Cloud VMI (KubeVirt containerDisk) — default for from_registry()
+            # Cloud VMI (KubeVirt containerDisk)
             image = Image.from_registry("myorg/myimage:latest").runtime("qemu/cloud")
 
             # Cloud container (gVisor/Incus)
-            image = Image.from_registry("myorg/myapp:latest").runtime("oci/cloud")
+            image = Image.from_registry("myorg/myapp:latest").runtime("docker/cloud")
 
-            # Local QEMU VM
+            # Local QEMU VM (built via basalt)
             image = Image.from_registry("myorg/myimage:latest").runtime("qemu/local")
 
-            # Local OCI container
-            image = Image.from_registry("myorg/myapp:latest").runtime("oci/local")
-
-        When the location is ``"cloud"``, :meth:`Sandbox.create` routes to the
-        CUA cloud API regardless of the ``local=`` parameter.  When the location
-        is ``"local"``, the image runs on the current host.
-
-        For QEMU images the engine also determines the ``instanceType`` sent to
-        the cloud API: ``"qemu"`` → ``"vm"`` (KubeVirt VMI),
-        ``"oci"`` → ``"container"`` (gVisor/Incus container).
+            # Local Docker container
+            image = Image.from_registry("myorg/myapp:latest").runtime("docker/local")
 
         Args:
-            hint: Runtime hint string in ``"<engine>/<location>"`` format.
+            hint: Runtime hint string. ``"oci/…"`` is accepted as an alias for
+                ``"docker/…"`` for backward compatibility.
 
         Returns:
-            A new :class:`Image` with the runtime hint set.
+            A new :class:`Image` with the runtime hint set (normalised to
+            canonical form).
 
         Raises:
             ValueError: If ``hint`` is not one of the recognised values.
         """
         if hint not in self._VALID_RUNTIME_HINTS:
-            valid_str = ", ".join(f'"{v}"' for v in self._VALID_RUNTIME_HINTS)
+            # Build a user-friendly list of the canonical (non-alias) hints
+            canonical = [h for h in self._VALID_RUNTIME_HINTS if h not in self._HINT_ALIASES]
+            valid_str = ", ".join(f'"{v}"' for v in canonical)
             raise ValueError(
-                f"Unknown runtime hint {hint!r}. Valid values: {valid_str}"
+                f"Unknown runtime hint {hint!r}. "
+                f"Valid values: {valid_str} "
+                f"(aliases: \"oci/cloud\" → \"docker/cloud\", \"oci/local\" → \"docker/local\")"
             )
+        # Normalise aliases to canonical form
+        canonical_hint = self._HINT_ALIASES.get(hint, hint)
         # Derive kind from the engine part so _auto_runtime() can use it.
-        engine, location = hint.split("/", 1)
+        engine = canonical_hint.split("/", 1)[0]
         derived_kind = "vm" if engine == "qemu" else "container"
-        return self._with(_runtime_hint=hint, kind=derived_kind)
+        return self._with(_runtime_hint=canonical_hint, kind=derived_kind)
 
     def apt_install(self, *packages: str) -> Image:
         """Install packages via apt (Linux only)."""

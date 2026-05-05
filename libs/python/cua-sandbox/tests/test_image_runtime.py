@@ -19,8 +19,8 @@ class TestImageRuntimeMethod:
         assert img.kind == "vm"
 
     def test_oci_cloud_sets_hint_and_kind(self):
-        img = self._registry_image().runtime("oci/cloud")
-        assert img._runtime_hint == "oci/cloud"
+        img = self._registry_image().runtime("docker/cloud")
+        assert img._runtime_hint == "docker/cloud"
         assert img.kind == "container"
 
     def test_qemu_local_sets_hint_and_kind(self):
@@ -29,8 +29,8 @@ class TestImageRuntimeMethod:
         assert img.kind == "vm"
 
     def test_oci_local_sets_hint_and_kind(self):
-        img = self._registry_image().runtime("oci/local")
-        assert img._runtime_hint == "oci/local"
+        img = self._registry_image().runtime("docker/local")
+        assert img._runtime_hint == "docker/local"
         assert img.kind == "container"
 
     # ── Invalid hints ─────────────────────────────────────────────────────
@@ -63,15 +63,15 @@ class TestImageRuntimeMethod:
         img = (
             self._registry_image()
             .apt_install("curl")
-            .runtime("oci/cloud")
+            .runtime("docker/cloud")
         )
         assert len(img._layers) == 1
         assert img._layers[0]["type"] == "apt_install"
-        assert img._runtime_hint == "oci/cloud"
+        assert img._runtime_hint == "docker/cloud"
 
     def test_chaining_overrides_previous_hint(self):
-        img = self._registry_image().runtime("qemu/cloud").runtime("oci/cloud")
-        assert img._runtime_hint == "oci/cloud"
+        img = self._registry_image().runtime("qemu/cloud").runtime("docker/cloud")
+        assert img._runtime_hint == "docker/cloud"
         assert img.kind == "container"
 
     # ── Serialization ─────────────────────────────────────────────────────
@@ -88,10 +88,10 @@ class TestImageRuntimeMethod:
 
     def test_from_dict_restores_runtime_hint(self):
         from cua_sandbox import Image
-        original = self._registry_image().runtime("oci/cloud")
+        original = self._registry_image().runtime("docker/cloud")
         d = original.to_dict()
         restored = Image.from_dict(d)
-        assert restored._runtime_hint == "oci/cloud"
+        assert restored._runtime_hint == "docker/cloud"
         assert restored.kind == "container"
         assert restored._registry == "myorg/myimage:latest"
 
@@ -151,7 +151,7 @@ class TestCloudTransportRuntimeHint:
 
     def test_oci_cloud_sends_container(self):
         from cua_sandbox import Image
-        img = Image.from_registry("myorg/app:latest").runtime("oci/cloud")
+        img = Image.from_registry("myorg/app:latest").runtime("docker/cloud")
         assert self._extract_instance_type(img) == "container"
 
     def test_no_hint_defaults_to_vm(self):
@@ -163,3 +163,32 @@ class TestCloudTransportRuntimeHint:
         from cua_sandbox import Image
         img = Image.linux("ubuntu", "24.04", kind="container")._with(_registry="myorg/app:latest")
         assert self._extract_instance_type(img) == "container"
+
+
+class TestRuntimeHintAliases:
+    """Tests that oci/* aliases are normalised to docker/*."""
+
+    def test_oci_cloud_alias_normalised_to_docker_cloud(self):
+        from cua_sandbox import Image
+        img = Image.from_registry("myorg/app:latest").runtime("oci/cloud")
+        assert img._runtime_hint == "docker/cloud"
+        assert img.kind == "container"
+
+    def test_oci_local_alias_normalised_to_docker_local(self):
+        from cua_sandbox import Image
+        img = Image.from_registry("myorg/app:latest").runtime("oci/local")
+        assert img._runtime_hint == "docker/local"
+        assert img.kind == "container"
+
+    def test_alias_repr_shows_canonical_hint(self):
+        from cua_sandbox import Image
+        img = Image.from_registry("myorg/app:latest").runtime("oci/cloud")
+        assert "docker/cloud" in repr(img)
+        assert "oci/cloud" not in repr(img)
+
+    def test_alias_roundtrips_correctly(self):
+        from cua_sandbox import Image
+        original = Image.from_registry("myorg/app:latest").runtime("oci/cloud")
+        d = original.to_dict()
+        restored = Image.from_dict(d)
+        assert restored._runtime_hint == "docker/cloud"

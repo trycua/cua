@@ -128,6 +128,45 @@ class _ConnectResult:
             await self._instance.disconnect()
 
 
+async def _basalt_build_for_local(image: Image) -> Image:
+    """Run basalt to build the disk for a ``qemu/local`` image.
+
+    Resolves (or downloads) the base qcow2 from the registry, then calls
+    :class:`~cua_sandbox.builder.basalt.BasaltQEMUBuilder` to apply the
+    image's layers incrementally.  Returns a new ``Image`` with
+    ``_disk_path`` pointing to the built qcow2 (and ``_layers`` cleared so
+    the runtime boots it directly).
+    """
+    from pathlib import Path
+
+    from cua_sandbox.builder.basalt import BasaltQEMUBuilder
+    from cua_sandbox.registry.resolve import pull_image
+
+    logger.info(
+        "_basalt_build_for_local: pulling base image %s and building %d layers",
+        image._registry, len(image._layers),
+    )
+
+    # Pull the base image from the registry (returns path to local qcow2 / disk)
+    resolved, local_path = pull_image(image)
+    base_disk = local_path / "disk.qcow2"
+    if not base_disk.exists():
+        # Fall back to disk.img
+        base_disk = local_path / "disk.img"
+    if not base_disk.exists():
+        raise FileNotFoundError(
+            f"Could not find disk.qcow2 or disk.img in {local_path} "
+            f"after pulling {image._registry}. "
+            f"Is this a VM image (qemu format)?"
+        )
+
+    builder = BasaltQEMUBuilder()
+    built_disk = await builder.build(image, base_qcow2=base_disk)
+
+    # Return a new Image pointing directly at the built disk (layers already applied)
+    return image._with(_disk_path=str(built_disk), _layers=(), _registry=None)
+
+
 def _auto_runtime(image: Image) -> "Runtime":
     """Pick a runtime automatically based on image._runtime_hint, os_type, and kind."""
     import platform as _plat
@@ -136,11 +175,15 @@ def _auto_runtime(image: Image) -> "Runtime":
     # Only the "local" hints reach this function — "/cloud" hints are handled
     # upstream in _create() before _auto_runtime is called.
     hint = getattr(image, "_runtime_hint", None)
+
     if hint == "qemu/local":
+        # qemu/local → basalt-backed QEMU builder + QEMUBaremetalRuntime.
+        # BasaltQEMURuntime wraps both so the build step runs before the VM boots.
         from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
 
-        return QEMUBaremetalRuntime()
-    if hint == "oci/local":
+        return QEMUBaremetalRuntime()  # build step handled separately in _create()
+
+    if hint in ("docker/local", "oci/local"):
         from cua_sandbox.runtime.docker import DockerRuntime
 
         return DockerRuntime(ephemeral=True)
@@ -1108,6 +1151,14 @@ class Sandbox:
             runtime = _auto_runtime(image)
         if image and runtime:
             sb_name = name or _random_name()
+
+            # For qemu/local: run basalt to build the disk image before starting
+            # the VM.  The runtime receives the built disk via Image._disk_path so
+            # it boots the built qcow2 instead of the (unmodified) base image.
+            _hint = getattr(image, "_runtime_hint", None)
+            if _hint == "qemu/local" and image._layers and image._registry:
+                image = await _basalt_build_for_local(image)
+
             rt_info = await runtime.start(image, sb_name)
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:

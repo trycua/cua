@@ -27,6 +27,17 @@ boot_commands:
   - "<enter>"
   - "<delay 2>"
 
+  # NEW (macOS 26): Terms and Conditions / Software License Agreement screen
+  # was added between language selection and Country/Region.
+  - "<wait 'Agree'>"
+  - "<delay 1>"
+  - "<click 'Agree'>"
+  - "<delay 2>"
+  # Possible confirmation popup ("By clicking Agree...") — second Agree click
+  # advances if the popup is present, otherwise no-op until next wait.
+  - "<click 'Agree'>"
+  - "<delay 2>"
+
   # Country/Region selection
   - "<wait 'Country or Region'>"
   - "<delay 1>"
@@ -108,10 +119,14 @@ boot_commands:
   # Wait for "Email or Phone Number" to appear (indicates page is fully loaded and buttons are clickable)
   - "<wait 'Email or Phone Number'>"
   - "<delay 1>"
-  - "<click 'Set Up Later'>"
+  # NEW (macOS 26): the direct "Set Up Later" button is gone; the skip option is
+  # now under a bottom-left "Other Sign-In Options" dropdown labeled "Sign in
+  # Later in Settings".
+  - "<click 'Other Sign-In Options'>"
+  - "<delay 2>"
+  - "<click 'Sign in Later in Settings'>"
   - "<delay 1>"
   # Confirmation popup: "Are you sure you want to skip signing in with an Apple Account?"
-  # Tab to move focus to "Skip" button, then press Enter
   - '<wait "Don''t Skip">'
   - "<delay 1>"
   - "<tab>"
@@ -130,6 +145,14 @@ boot_commands:
   - "<wait 'I have read and agree'>"
   - "<delay 1>"
   - "<click 'Agree', index=0>"
+  - "<delay 2>"
+
+  # NEW (macOS 26): Age Range screen for parental-controls / safety features.
+  # Three rows (Child / Teen / Adult); each row is a chevron-link that advances
+  # directly when clicked (no separate Continue button).
+  - "<wait 'Age Range'>"
+  - "<delay 1>"
+  - "<click 'Adult'>"
   - "<delay 2>"
 
   # Enable Location Services (skip it)

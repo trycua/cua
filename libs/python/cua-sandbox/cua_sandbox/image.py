@@ -121,6 +121,10 @@ class Image:
     _disk_path: Optional[str] = None  # local disk file path (qcow2, vhdx, raw)
     _agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
     _snapshot_source: Optional[Dict[str, Any]] = None  # set by Sandbox.snapshot()
+    # Runtime hint — set via .runtime("qemu/cloud") etc.  Format: "<engine>/<location>"
+    # engine:   "qemu" | "oci"
+    # location: "cloud" | "local"
+    _runtime_hint: Optional[str] = None
 
     # ── Constructors ─────────────────────────────────────────────────────
 
@@ -199,6 +203,7 @@ class Image:
             version=data["version"],
             kind=data.get("kind"),
             _registry=data.get("registry"),
+            _runtime_hint=data.get("runtime_hint"),
         )
         # Replay layers
         for layer in data.get("layers", []):
@@ -236,6 +241,7 @@ class Image:
             _disk_path=self._disk_path,
             _agent_type=self._agent_type,
             _snapshot_source=self._snapshot_source,
+            _runtime_hint=self._runtime_hint,
         )
 
     def _with(self, **kwargs) -> Image:
@@ -253,9 +259,67 @@ class Image:
             "_disk_path": self._disk_path,
             "_agent_type": self._agent_type,
             "_snapshot_source": self._snapshot_source,
+            "_runtime_hint": self._runtime_hint,
         }
         fields.update(kwargs)
         return Image(**fields)
+
+    # Valid runtime hints
+    _VALID_RUNTIME_HINTS: Tuple[str, ...] = ("qemu/cloud", "qemu/local", "oci/cloud", "oci/local")
+
+    def runtime(self, hint: str) -> "Image":
+        """Pin the execution engine and deployment location for this image.
+
+        Format: ``"<engine>/<location>"``
+
+        Engines:
+          * ``"qemu"``  — QEMU/KVM virtualisation (full VM, hardware-level isolation)
+          * ``"oci"``   — OCI/Docker container runtime (process-level isolation)
+
+        Locations:
+          * ``"cloud"`` — run on the CUA cloud (remote provisioning via POST /v1/vms)
+          * ``"local"`` — run on the local host machine
+
+        Examples::
+
+            # Cloud VMI (KubeVirt containerDisk) — default for from_registry()
+            image = Image.from_registry("myorg/myimage:latest").runtime("qemu/cloud")
+
+            # Cloud container (gVisor/Incus)
+            image = Image.from_registry("myorg/myapp:latest").runtime("oci/cloud")
+
+            # Local QEMU VM
+            image = Image.from_registry("myorg/myimage:latest").runtime("qemu/local")
+
+            # Local OCI container
+            image = Image.from_registry("myorg/myapp:latest").runtime("oci/local")
+
+        When the location is ``"cloud"``, :meth:`Sandbox.create` routes to the
+        CUA cloud API regardless of the ``local=`` parameter.  When the location
+        is ``"local"``, the image runs on the current host.
+
+        For QEMU images the engine also determines the ``instanceType`` sent to
+        the cloud API: ``"qemu"`` → ``"vm"`` (KubeVirt VMI),
+        ``"oci"`` → ``"container"`` (gVisor/Incus container).
+
+        Args:
+            hint: Runtime hint string in ``"<engine>/<location>"`` format.
+
+        Returns:
+            A new :class:`Image` with the runtime hint set.
+
+        Raises:
+            ValueError: If ``hint`` is not one of the recognised values.
+        """
+        if hint not in self._VALID_RUNTIME_HINTS:
+            valid_str = ", ".join(f'"{v}"' for v in self._VALID_RUNTIME_HINTS)
+            raise ValueError(
+                f"Unknown runtime hint {hint!r}. Valid values: {valid_str}"
+            )
+        # Derive kind from the engine part so _auto_runtime() can use it.
+        engine, location = hint.split("/", 1)
+        derived_kind = "vm" if engine == "qemu" else "container"
+        return self._with(_runtime_hint=hint, kind=derived_kind)
 
     def apt_install(self, *packages: str) -> Image:
         """Install packages via apt (Linux only)."""
@@ -390,6 +454,8 @@ class Image:
             d["files"] = [list(f) for f in self._files]
         if self._registry:
             d["registry"] = self._registry
+        if self._runtime_hint:
+            d["runtime_hint"] = self._runtime_hint
         return d
 
     def to_cloud_init(self) -> str:
@@ -473,7 +539,8 @@ class Image:
 
     def __repr__(self) -> str:
         reg = f", registry={self._registry!r}" if self._registry else ""
+        hint = f", runtime={self._runtime_hint!r}" if self._runtime_hint else ""
         return (
             f"Image({self.os_type}/{self.distro}:{self.version}, "
-            f"kind={self.kind}, {len(self._layers)} layers{reg})"
+            f"kind={self.kind}, {len(self._layers)} layers{reg}{hint})"
         )

@@ -391,7 +391,7 @@ class CloudTransport(Transport):
             body["dockerImage"] = registry_ref
             runtime_hint = getattr(self._image, "_runtime_hint", None)
             if runtime_hint:
-                # "qemu/cloud" → "vm", "oci/cloud" → "container"
+                # "qemu/cloud" → "vm", "docker/cloud" / "oci/cloud" → "container"
                 engine = runtime_hint.split("/", 1)[0]
                 instance_type = "vm" if engine == "qemu" else "container"
             else:

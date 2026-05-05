@@ -184,3 +184,84 @@ class TestCloudBuilderStubs:
         builder = DockerCloudBuilder()
         with pytest.raises(NotImplementedError, match="docker/cloud"):
             await builder.build(Image.from_registry("myorg/app:latest"))
+
+
+class TestBasaltWasmRunnerMock:
+    """Tests for _BasaltWasmRunner using a mock host_exec (no WASM binary needed).
+
+    These tests verify the host_exec wiring and step-file → WASM pipeline
+    contract by substituting a real WASM binary with a pre-recorded fixture
+    that replays canned responses.  Requires wasmtime-py and a built WASM
+    artifact; skipped if either is unavailable.
+    """
+
+    @pytest.fixture
+    def wasm_path(self, tmp_path):
+        """Return the basalt_wasmtime.wasm path, or skip if not available."""
+        from cua_sandbox.builder.basalt import BasaltWasmLoader
+        try:
+            return BasaltWasmLoader.load(build_if_missing=False)
+        except RuntimeError:
+            pytest.skip("basalt_wasmtime.wasm not available")
+
+    @pytest.mark.integration
+    def test_wasm_runner_runs_echo_pipeline(self, wasm_path):
+        """Run a trivial echo pipeline through the real WASM module."""
+        import pytest
+        pytest.importorskip("wasmtime")
+
+        from cua_sandbox.builder.basalt import _BasaltWasmRunner
+
+        executed = []
+
+        def host_exec(cmd):
+            executed.append(cmd)
+            stdout = b"hello from wasm\n"
+            return 0, stdout, b""
+
+        runner = _BasaltWasmRunner(wasm_path, host_exec)
+        step_file = {
+            "targets": ["step-a"],
+            "steps": {
+                "step-a": {
+                    "run": {"program": "echo", "args": ["hello"]},
+                    "deps": [],
+                }
+            },
+        }
+        result = runner.run_pipeline(step_file)
+        assert result["success"], f"Pipeline failed: {result['error']}"
+        assert len(executed) >= 1
+        assert executed[0]["program"] == "echo"
+
+
+class TestBasaltWasmLoaderSearchPaths:
+    """Tests for BasaltWasmLoader path discovery (no I/O except env var)."""
+
+    def test_env_var_respected(self, tmp_path, monkeypatch):
+        from cua_sandbox.builder.basalt import BasaltWasmLoader
+
+        fake_wasm = tmp_path / "fake.wasm"
+        fake_wasm.write_bytes(b"\x00asm")  # valid-looking magic
+        monkeypatch.setenv("BASALT_WASM", str(fake_wasm))
+
+        result = BasaltWasmLoader.load(build_if_missing=False)
+        assert result == fake_wasm
+
+    def test_env_var_missing_file_raises(self, tmp_path, monkeypatch):
+        from cua_sandbox.builder.basalt import BasaltWasmLoader
+        monkeypatch.setenv("BASALT_WASM", str(tmp_path / "nonexistent.wasm"))
+        with pytest.raises(RuntimeError, match="non-existent file"):
+            BasaltWasmLoader.load(build_if_missing=False)
+
+    def test_not_found_raises_without_build(self, tmp_path, monkeypatch):
+        from cua_sandbox.builder.basalt import BasaltWasmLoader, _WASM_SEARCH_PATHS
+        # Patch all search paths to tmp_path (nothing there)
+        monkeypatch.setenv("BASALT_WASM", "")
+        monkeypatch.delenv("BASALT_WASM")
+        monkeypatch.setattr(
+            "cua_sandbox.builder.basalt._WASM_SEARCH_PATHS",
+            [tmp_path / "nonexistent.wasm"]
+        )
+        with pytest.raises(RuntimeError, match="not found"):
+            BasaltWasmLoader.load(build_if_missing=False)

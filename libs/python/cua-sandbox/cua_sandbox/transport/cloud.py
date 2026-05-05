@@ -381,12 +381,23 @@ class CloudTransport(Transport):
         # registry ref as dockerImage and the image kind as instanceType.
         # kind="vm"        → KubeVirt VMI   (containerDisk)
         # kind="container" → gVisor/Incus   (spec.image)
+        #
+        # Priority order for instanceType:
+        #   1. _runtime_hint (set via image.runtime("qemu/cloud") / "oci/cloud")
+        #   2. image.kind ("vm" | "container")
+        #   3. default "vm"
         registry_ref = getattr(self._image, "_registry", None)
         if registry_ref:
             body["dockerImage"] = registry_ref
-            # Respect image.kind if set; default to "vm" for VMI provisioning.
-            kind = getattr(self._image, "kind", None) or "vm"
-            body["instanceType"] = kind
+            runtime_hint = getattr(self._image, "_runtime_hint", None)
+            if runtime_hint:
+                # "qemu/cloud" → "vm", "oci/cloud" → "container"
+                engine = runtime_hint.split("/", 1)[0]
+                instance_type = "vm" if engine == "qemu" else "container"
+            else:
+                # Fall back to image.kind, default "vm"
+                instance_type = getattr(self._image, "kind", None) or "vm"
+            body["instanceType"] = instance_type
 
         resp = await self._post_with_retry("/v1/vms", body)
         resp.raise_for_status()

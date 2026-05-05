@@ -129,8 +129,21 @@ class _ConnectResult:
 
 
 def _auto_runtime(image: Image) -> "Runtime":
-    """Pick a runtime automatically based on image.os_type and image.kind."""
+    """Pick a runtime automatically based on image._runtime_hint, os_type, and kind."""
     import platform as _plat
+
+    # Honor an explicit runtime hint set via image.runtime("engine/location").
+    # Only the "local" hints reach this function — "/cloud" hints are handled
+    # upstream in _create() before _auto_runtime is called.
+    hint = getattr(image, "_runtime_hint", None)
+    if hint == "qemu/local":
+        from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+
+        return QEMUBaremetalRuntime()
+    if hint == "oci/local":
+        from cua_sandbox.runtime.docker import DockerRuntime
+
+        return DockerRuntime(ephemeral=True)
 
     if image.kind is None:
         raise ValueError(
@@ -1038,6 +1051,18 @@ class Sandbox:
             await sb._connect()
             _record_sandbox_create(sb, image=None, local=local, ephemeral=False, t_start=_t_start)
             return sb
+
+        # A runtime hint of "**/cloud" always routes to the CUA cloud, even
+        # when the caller passed local=True.  A hint of "**/local" always stays
+        # on the local host.  Without a hint the existing local/cloud logic
+        # applies unchanged.
+        _runtime_hint = getattr(image, "_runtime_hint", None) if image else None
+        if _runtime_hint:
+            _hint_location = _runtime_hint.split("/", 1)[-1]  # "cloud" or "local"
+            if _hint_location == "cloud":
+                local = False  # force cloud path
+            elif _hint_location == "local":
+                local = True   # force local path
 
         if image and not runtime and local:
             # local=True with no runtime → auto-select based on image type

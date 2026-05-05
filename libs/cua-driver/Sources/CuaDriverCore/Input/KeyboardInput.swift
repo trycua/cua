@@ -34,14 +34,15 @@ public enum KeyboardInput {
     public static func press(
         _ key: String,
         modifiers: [String] = [],
-        toPid pid: pid_t? = nil
+        toPid pid: pid_t? = nil,
+        attachAuthMessage: Bool = true
     ) throws {
         guard let code = virtualKeyCode(for: key) else {
             throw KeyboardError.unknownKey(key)
         }
         let flags = modifierMask(for: modifiers)
-        try sendKey(code: code, down: true, flags: flags, toPid: pid)
-        try sendKey(code: code, down: false, flags: flags, toPid: pid)
+        try sendKey(code: code, down: true, flags: flags, toPid: pid, attachAuthMessage: attachAuthMessage)
+        try sendKey(code: code, down: false, flags: flags, toPid: pid, attachAuthMessage: attachAuthMessage)
     }
 
     /// Press a combination of keys simultaneously.
@@ -50,7 +51,15 @@ public enum KeyboardInput {
     /// If multiple non-modifier keys are supplied, only the last is pressed.
     /// Pass `toPid` to route to a specific process's event queue via
     /// `CGEvent.postToPid`, bypassing frontmost-app routing.
-    public static func hotkey(_ keys: [String], toPid pid: pid_t? = nil) throws {
+    ///
+    /// `attachAuthMessage`: when `true` (default) attaches the SkyLight auth
+    /// envelope Chromium needs; when `false` routes via `IOHIDPostEvent` so
+    /// NSMenu key equivalents in native AppKit apps fire correctly.
+    public static func hotkey(
+        _ keys: [String],
+        toPid pid: pid_t? = nil,
+        attachAuthMessage: Bool = true
+    ) throws {
         var modifiers: [String] = []
         var finalKey: String?
         for raw in keys {
@@ -63,7 +72,7 @@ public enum KeyboardInput {
         guard let final = finalKey else {
             throw KeyboardError.noKeyInCombo
         }
-        try press(final, modifiers: modifiers, toPid: pid)
+        try press(final, modifiers: modifiers, toPid: pid, attachAuthMessage: attachAuthMessage)
     }
 
     /// Type each character in ``text`` as a synthetic key-down + key-up
@@ -103,7 +112,8 @@ public enum KeyboardInput {
         code: Int,
         down: Bool,
         flags: CGEventFlags,
-        toPid pid: pid_t? = nil
+        toPid pid: pid_t? = nil,
+        attachAuthMessage: Bool = true
     ) throws {
         guard
             let event = CGEvent(
@@ -116,15 +126,20 @@ public enum KeyboardInput {
         }
         event.flags = flags
         if let pid {
-            // Prefer SkyLight's SLEventPostToPid — it routes through
-            // CGSTickleActivityMonitor which Chromium omniboxes need to
-            // promote the synthetic event into their keyboard pipeline.
-            // Prefer SkyLight's SLEventPostToPid — it routes through
-            // CGSTickleActivityMonitor which some apps need to promote
-            // the synthetic event. Falls back to the public
-            // CGEventPostToPid when the SPI is unavailable (older macOS
-            // / stripped framework).
-            if !SkyLightEventPost.postToPid(pid, event: event) {
+            // Two delivery paths:
+            //
+            // attachAuthMessage=true (Chromium path, default):
+            //   SLEventSetAuthenticationMessage + SLEventPostToPid →
+            //   direct-mach delivery; Chromium omniboxes accept synthetic
+            //   keyboard events as trusted input. Bypasses IOHIDPostEvent
+            //   and therefore NSMenu's key-equivalent dispatch.
+            //
+            // attachAuthMessage=false (native-AppKit/NSMenu path):
+            //   SLEventPostToPid without envelope → SLEventPostToPSN →
+            //   IOHIDPostEvent → Finder/TextEdit/etc. event queue where
+            //   NSApplication.sendEvent: dispatches NSMenu key equivalents.
+            //   Falls back to CGEvent.postToPid when SkyLight isn't available.
+            if !SkyLightEventPost.postToPid(pid, event: event, attachAuthMessage: attachAuthMessage) {
                 event.postToPid(pid)
             }
         } else {

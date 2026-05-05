@@ -29,6 +29,12 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
+# AWS IAM role ARN for OIDC-based S3 write access (no static keys needed)
+# Role created in cloud repo: terraform/aws/docs-mcp-storage/main.tf
+S3_WRITE_ROLE_ARN = "arn:aws:iam::296062593712:role/modal-docs-mcp-write-role"
+S3_BUCKET_NAME = "trycua-docs-mcp-data"
+S3_BUCKET_REGION = "us-west-2"
+
 # Define the container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -45,6 +51,7 @@ image = (
         "pandas>=2.0.0",
         "markdown-it-py>=3.0.0",
         "markitdown>=0.0.1",
+        "boto3>=1.34.0",
     )
     .run_commands("playwright install --with-deps chromium")
 )
@@ -322,6 +329,96 @@ async def crawl_docs():
 
 @app.function(
     image=image,
+    volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
+    timeout=1800,  # 30 minutes
+    cpu=1.0,
+    memory=2048,
+)
+def sync_to_s3(bucket: str = S3_BUCKET_NAME):
+    """Sync generated databases from Modal volumes to S3.
+
+    Uses Modal OIDC federation to assume an AWS IAM role for write access.
+    No static AWS credentials needed — the IAM role trust policy is scoped
+    to this Modal workspace and app (terraform/aws/docs-mcp-storage/main.tf).
+
+    Args:
+        bucket: S3 bucket name to upload to
+    """
+    import os
+
+    import boto3
+
+    print(f"Syncing databases to s3://{bucket}/ ...")
+
+    # Use Modal's OIDC token (auto-injected env var) to assume AWS IAM role
+    oidc_token = os.environ["MODAL_IDENTITY_TOKEN"]
+
+    sts = boto3.client("sts", region_name=S3_BUCKET_REGION)
+    creds = sts.assume_role_with_web_identity(
+        RoleArn=S3_WRITE_ROLE_ARN,
+        RoleSessionName="modal-docs-mcp-s3-sync",
+        WebIdentityToken=oidc_token,
+        DurationSeconds=3600,
+    )["Credentials"]
+
+    s3 = boto3.client(
+        "s3",
+        region_name=S3_BUCKET_REGION,
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+
+    uploaded = 0
+
+    # --- docs databases ---
+    docs_db_dir = Path(DB_PATH)
+    if docs_db_dir.exists():
+        # SQLite
+        sqlite_path = docs_db_dir / "docs.sqlite"
+        if sqlite_path.exists():
+            key = "docs_db/docs.sqlite"
+            print(f"  Uploading {sqlite_path} -> {key}")
+            s3.upload_file(str(sqlite_path), bucket, key)
+            uploaded += 1
+
+        # LanceDB directory
+        lance_dir = docs_db_dir / "docs.lance"
+        if lance_dir.exists():
+            for fpath in lance_dir.rglob("*"):
+                if fpath.is_file():
+                    key = f"docs_db/docs.lance/{fpath.relative_to(lance_dir)}"
+                    s3.upload_file(str(fpath), bucket, key)
+                    uploaded += 1
+            print(f"  Uploaded docs LanceDB directory")
+
+    # --- code databases ---
+    code_db_dir = Path(CODE_DB_PATH)
+    if code_db_dir.exists():
+        # Aggregated SQLite
+        code_sqlite = code_db_dir / "code_index.sqlite"
+        if code_sqlite.exists():
+            key = "code_db/code_index.sqlite"
+            print(f"  Uploading {code_sqlite} -> {key}")
+            s3.upload_file(str(code_sqlite), bucket, key)
+            uploaded += 1
+
+        # Aggregated LanceDB directory
+        code_lance = code_db_dir / "code_index.lancedb"
+        if code_lance.exists():
+            for fpath in code_lance.rglob("*"):
+                if fpath.is_file():
+                    key = f"code_db/code_index.lancedb/{fpath.relative_to(code_lance)}"
+                    s3.upload_file(str(fpath), bucket, key)
+                    uploaded += 1
+            print(f"  Uploaded code LanceDB directory")
+
+    print(f"S3 sync complete: {uploaded} files uploaded to s3://{bucket}/")
+    return {"bucket": bucket, "files_uploaded": uploaded}
+
+
+@app.function(
+    image=image,
     volumes={VOLUME_PATH: docs_volume},
     schedule=modal.Cron("0 6 * * *"),  # Daily at 6 AM UTC
     timeout=3600,
@@ -335,6 +432,11 @@ async def scheduled_crawl():
     print("Generating databases...")
     await generate_vector_db.remote.aio()
     await generate_sqlite_db.remote.aio()
+
+    # Sync docs databases to S3
+    print("Syncing docs databases to S3...")
+    sync_result = sync_to_s3.remote()
+    print(f"S3 sync result: {sync_result}")
 
     print(f"Scheduled crawl complete: {summary}")
     return summary
@@ -1462,6 +1564,12 @@ async def scheduled_code_index():
         agg_result = aggregate_code_databases.remote()
         print(f"Aggregation complete: {agg_result}")
         result["aggregation"] = agg_result
+
+        # Sync code databases to S3
+        print("Syncing code databases to S3...")
+        sync_result = sync_to_s3.remote()
+        print(f"S3 sync result: {sync_result}")
+        result["s3_sync"] = sync_result
 
         return result
     except modal.exception.FunctionTimeoutError as e:

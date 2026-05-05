@@ -20,23 +20,15 @@ public enum AppLauncher {
         }
     }
 
-    /// Launch a macOS app in the background — no focus steal, no window
-    /// visible on screen.
+    /// Launch a macOS app in the background — window visible on screen,
+    /// no focus steal.
     ///
-    /// Uses `NSWorkspace.openApplication(at:configuration:)` with both
-    /// `configuration.activates = false` and `configuration.hides = true`.
-    /// The `hides = true` flag is the key to a fully-populated AX tree on
-    /// a pure background launch: LaunchServices lets the target finish
-    /// `applicationDidFinishLaunching` and create its window, then hides
-    /// the app back immediately. The target's AX tree is fully populated
-    /// (Calculator on macOS 14+ goes from a 13-element menu-bar-only tree
-    /// to a 41-element tree with the keypad) and there's no visible
-    /// focus flash because the window never draws on screen.
-    ///
-    /// To bring a hidden-launched app onto the screen, the caller (or
-    /// the user) must explicitly unhide it — either via
-    /// `NSRunningApplication.unhide()` from their own code or through
-    /// regular macOS UI (Dock click, Cmd-Tab, etc.).
+    /// Uses `NSWorkspace.open(_:configuration:)` with
+    /// `configuration.activates = false` so the target never becomes the
+    /// frontmost app. After the launch callback, `NSRunningApplication.unhide()`
+    /// is called so the target's windows appear on screen behind the current
+    /// foreground app. The AX tree is fully populated and automation can
+    /// start immediately via `click`, `hotkey`, `get_window_state`, etc.
     ///
     /// When `urls` is non-empty, dispatches through
     /// `NSWorkspace.open(_:withApplicationAt:configuration:)` instead so
@@ -139,15 +131,59 @@ public enum AppLauncher {
             }
         }
 
-        // We intentionally do NOT call `NSRunningApplication.unhide()` here.
+        // Unhide the app so its windows are visible on screen in the
+        // background. `activates = false` already prevents focus steal;
+        // `unhide()` only makes existing windows drawable — it does not
+        // activate the app or raise it above the current foreground.
         //
-        // `unhide()` bumps the target's CPS activation count away from 0,
-        // which lets a target like Chrome's subsequent self-activation
-        // succeed and raise its window on top of the user's work —
-        // exactly the focus-steal we're trying to avoid. Leaving the
-        // activation count at 0 keeps self-activation attempts as the
-        // softer "presents 0 windows, is frontable" rejection, which
-        // resolves on its own once the target creates a window.
+        // If the app self-activates after unhide (Chrome occasionally does
+        // during its launch lifecycle), the focus-steal preventer in
+        // LaunchAppTool re-activates the previous frontmost app. Calling
+        // unhide() here is safe because by the time we reach this point
+        // the launch-lifecycle self-activation window has closed.
+        if let runningApp = NSRunningApplication(
+            processIdentifier: info.pid)
+        {
+            runningApp.unhide()
+        }
+
+        // For Finder and Safari: if no on-screen windows appeared after
+        // unhide (e.g. already running with windows on a different Space),
+        // open the home directory via the URL-handoff path. This calls
+        // `application(_:open:)` which creates a new window on the current
+        // Space without activation — Finder opens ~/, Safari opens it as a
+        // local file URL. Scoped to these two apps only to avoid unintended
+        // side effects on other apps (document pickers, unexpected behavior).
+        if urls.isEmpty {
+            let resolvedBundleId =
+                Bundle(url: appURL)?.bundleIdentifier ?? bundleId ?? ""
+            let wantsFallback =
+                resolvedBundleId == "com.apple.finder"
+                || resolvedBundleId == "com.apple.Safari"
+            if wantsFallback {
+                let onScreen = WindowEnumerator.visibleWindows().filter { $0.pid == info.pid }
+                if onScreen.isEmpty {
+                    // Finder gets its home directory; Safari gets a blank page.
+                    let fallbackURL: URL =
+                        resolvedBundleId == "com.apple.Safari"
+                        ? URL(string: "about:blank")!
+                        : FileManager.default.homeDirectoryForCurrentUser
+                    let fallbackConfig = NSWorkspace.OpenConfiguration()
+                    fallbackConfig.activates = false
+                    fallbackConfig.addsToRecentItems = false
+                    _ = try? await withCheckedThrowingContinuation {
+                        (cont: CheckedContinuation<AppInfo, Error>) in
+                        NSWorkspace.shared.open(
+                            [fallbackURL],
+                            withApplicationAt: appURL,
+                            configuration: fallbackConfig
+                        ) { app, error in
+                            Self.resumeWithResult(cont: cont, app: app, error: error)
+                        }
+                    }
+                }
+            }
+        }
 
         return info
     }

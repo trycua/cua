@@ -167,6 +167,48 @@ public enum SkyLightEventPost {
     // state without asking WindowServer to reorder its windows. Recipe
     // ported from yabai's `window_manager_focus_window_without_raise`.
 
+    /// `OSStatus SLPSSetFrontProcessWithOptions(ProcessSerialNumber *psn, uint32_t windowID, uint32_t options)`.
+    ///
+    /// Makes `psn` the WindowServer-level frontmost process. The options flag controls behaviour:
+    /// - `0x100` (kCPSUserGenerated) → raises windows + triggers Space follow
+    /// - `0x400` (kCPSNoWindows)     → no window raise, no Space follow; Chrome's
+    ///   user-activation gate rejects events after this, but native AppKit apps
+    ///   (Finder, TextEdit, etc.) are unaffected.
+    ///
+    /// `FocusWithoutRaise` deliberately skips this call for the click/mouse path
+    /// because Chrome needs the PSN-only recipe. For the keyboard-menu-shortcut
+    /// path (hotkey/press_key with window_id) we call it with `kCPSNoWindows`
+    /// (0x400) so that HID-tap events route to the now-frontmost target instead
+    /// of the sentinel foreground app.
+    private typealias SetFrontProcessWithOptionsFn = @convention(c) (
+        UnsafeRawPointer, UInt32, UInt32
+    ) -> Int32
+
+    private static let setFrontProcessWithOptionsFn: SetFrontProcessWithOptionsFn? = {
+        _ = dlopen(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
+            RTLD_LAZY)
+        guard
+            let p = dlsym(
+                UnsafeMutableRawPointer(bitPattern: -2),
+                "SLPSSetFrontProcessWithOptions")
+        else { return nil }
+        return unsafeBitCast(p, to: SetFrontProcessWithOptionsFn.self)
+    }()
+
+    /// Make `psn` the WindowServer-level frontmost process without raising
+    /// windows or triggering Space follow (`kCPSNoWindows = 0x400`).
+    /// `windowID` is the CGWindowID of the target window (yabai passes the
+    /// real window ID; passing 0 leaves it unset). Returns `false` when the
+    /// SPI didn't resolve.
+    @discardableResult
+    public static func setFrontProcessNoWindows(
+        psn: UnsafeRawPointer, windowID: UInt32 = 0
+    ) -> Bool {
+        guard let fn = setFrontProcessWithOptionsFn else { return false }
+        return fn(psn, windowID, 0x400) == 0
+    }
+
     /// `OSStatus SLPSPostEventRecordTo(ProcessSerialNumber *psn, uint8_t *bytes)`.
     /// Posts a 248-byte synthetic event record into the target process's
     /// Carbon event queue. We build the buffer with
@@ -183,9 +225,22 @@ public enum SkyLightEventPost {
         UnsafeMutableRawPointer
     ) -> Int32
 
-    /// `OSStatus GetProcessForPID(pid_t, ProcessSerialNumber *)`.
-    /// Deprecated but still resolves via dlsym. Writes the target pid's
-    /// PSN into the 8 bytes at `psn`.
+    /// `CGError SLSGetWindowOwner(CGSConnectionID cid, CGWindowID wid, CGSConnectionID *ownerCid)`.
+    /// Returns the SkyLight connection ID of the process that owns `wid`.
+    /// Modern replacement for the deprecated `GetProcessForPID` on macOS 15+.
+    private typealias GetWindowOwnerFn = @convention(c) (
+        UInt32, UInt32, UnsafeMutablePointer<UInt32>
+    ) -> Int32
+
+    /// `OSStatus SLSGetConnectionPSN(CGSConnectionID cid, ProcessSerialNumber *psn)`.
+    /// Converts a SkyLight connection ID to a PSN (two UInt32s).
+    private typealias GetConnectionPSNFn = @convention(c) (
+        UInt32, UnsafeMutableRawPointer
+    ) -> Int32
+
+    /// Deprecated `OSStatus GetProcessForPID(pid_t, ProcessSerialNumber *)`.
+    /// Only used as a fallback on older macOS; nil on macOS 15+ where the
+    /// symbol no longer exports. Prefer `getProcessPSN(forWindowId:)` instead.
     private typealias GetProcessForPIDFn = @convention(c) (
         pid_t, UnsafeMutableRawPointer
     ) -> Int32
@@ -212,6 +267,30 @@ public enum SkyLightEventPost {
                 "_SLPSGetFrontProcess")
         else { return nil }
         return unsafeBitCast(p, to: GetFrontProcessFn.self)
+    }()
+
+    private static let getWindowOwnerFn: GetWindowOwnerFn? = {
+        _ = dlopen(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
+            RTLD_LAZY)
+        guard
+            let p = dlsym(
+                UnsafeMutableRawPointer(bitPattern: -2),
+                "SLSGetWindowOwner")
+        else { return nil }
+        return unsafeBitCast(p, to: GetWindowOwnerFn.self)
+    }()
+
+    private static let getConnectionPSNFn: GetConnectionPSNFn? = {
+        _ = dlopen(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
+            RTLD_LAZY)
+        guard
+            let p = dlsym(
+                UnsafeMutableRawPointer(bitPattern: -2),
+                "SLSGetConnectionPSN")
+        else { return nil }
+        return unsafeBitCast(p, to: GetConnectionPSNFn.self)
     }()
 
     private static let getProcessForPIDFn: GetProcessForPIDFn? = {
@@ -352,13 +431,37 @@ public enum SkyLightEventPost {
         return fn(psn, bytes) == 0
     }
 
-    /// `true` when all three focus-without-raise SPIs
-    /// (`_SLPSGetFrontProcess`, `GetProcessForPID`, `SLPSPostEventRecordTo`)
-    /// resolved — i.e. `FocusWithoutRaise.activateWithoutRaise` has its
-    /// prerequisites.
+    /// `true` when the focus-without-raise SPIs needed to run the PSN
+    /// defocus/focus recipe are available. The PSN-for-pid lookup uses
+    /// `SLSGetWindowOwner + SLSGetConnectionPSN` on macOS 15+ (where the
+    /// old `GetProcessForPID` no longer exports), falling back to
+    /// `GetProcessForPID` on older releases.
     public static var isFocusWithoutRaiseAvailable: Bool {
-        getFrontProcessFn != nil && getProcessForPIDFn != nil
-            && postEventRecordToFn != nil
+        let hasPsnLookup = (getWindowOwnerFn != nil && getConnectionPSNFn != nil)
+            || getProcessForPIDFn != nil
+        return getFrontProcessFn != nil && hasPsnLookup && postEventRecordToFn != nil
+    }
+
+    /// Look up the PSN of the process that owns `windowId`, writing 8 bytes
+    /// into `psnBuffer`. Uses `SLSGetWindowOwner + SLSGetConnectionPSN` on
+    /// macOS 15+ where `GetProcessForPID` no longer exports.
+    public static func getProcessPSN(
+        forWindowId windowId: CGWindowID, into psnBuffer: UnsafeMutableRawPointer
+    ) -> Bool {
+        // Modern path: window ID → owner connection ID → PSN.
+        if let owner = getWindowOwnerFn, let psnFn = getConnectionPSNFn,
+           let connFn = connectionIDFn
+        {
+            let mainCid = connFn()
+            var ownerCid: UInt32 = 0
+            guard owner(mainCid, UInt32(windowId), &ownerCid) == 0 else { return false }
+            return psnFn(ownerCid, psnBuffer) == 0
+        }
+        // Fallback: deprecated GetProcessForPID (macOS < 15).
+        // Caller must supply a pid in this path — psnBuffer is reused as
+        // a typed pointer, but this branch is only reached when the modern
+        // path isn't available.
+        return false
     }
 
     // MARK: - Event-record extraction

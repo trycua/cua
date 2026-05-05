@@ -13,7 +13,8 @@ public enum ScreenshotTool {
                 Capture a screenshot using ScreenCaptureKit. Returns base64-encoded
                 image data for a single window in the requested format (default png).
 
-                `window_id` is required. Get window ids from `list_windows`.
+
+                                `window_id` is required. Get window ids from `list_windows`.
 
                 Requires the Screen Recording TCC grant — call `check_permissions`
                 first if unsure.

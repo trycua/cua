@@ -20,12 +20,11 @@ public enum LaunchAppTool {
                 against /Applications and /System/Applications). If both are
                 given, bundle_id wins.
 
-                Launches hidden — the app runs with its window initialized
-                for automation (so the AX tree is populated and
-                `click({pid, element_index})` works end-to-end), but no
-                window is drawn on screen. To bring the window on-screen,
-                use `NSRunningApplication.unhide()` from your own code, or
-                have the user open the app (Dock click, Cmd-Tab, Spotlight).
+                Launches in the background — the app's window appears on
+                screen but does not steal focus from whatever is currently
+                frontmost. The AX tree is fully populated and automation
+                can start immediately via `click`, `hotkey`,
+                `get_window_state`, etc.
 
                 Some apps (Calculator and many Electron apps) call
                 `NSApp.activate(ignoringOtherApps:)` in their own
@@ -36,16 +35,14 @@ public enum LaunchAppTool {
                 around the launch and re-activates the previously-frontmost
                 app if the target self-activates. If suppression fails the
                 returned summary includes a "self-activation not suppressed"
-                warning. With `hides = true`, the target is also hidden
-                back immediately by LaunchServices, so even a missed
-                layer-3 demotion doesn't leave a visible window.
+                warning.
 
                 Optional `urls` are handed to the app through its
                 `application(_:open:)` AppKit delegate. For Finder, passing
-                a folder URL opens a backgrounded Finder window rooted at
-                that folder — no activation, no visible window. Works
-                with any app that implements `application(_:open:)`; apps
-                that ignore the delegate simply launch without side effects.
+                a folder URL opens a Finder window rooted at that folder in
+                the background. Works with any app that implements
+                `application(_:open:)`; apps that ignore the delegate simply
+                launch without side effects.
 
                 Optional `electron_debugging_port` launches an Electron app
                 with `--remote-debugging-port=<N>`, activating its Chrome

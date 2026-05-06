@@ -1,4 +1,5 @@
 """Unit tests for Image.runtime() API — CUA-482."""
+
 from __future__ import annotations
 
 import pytest
@@ -9,6 +10,7 @@ class TestImageRuntimeMethod:
 
     def _registry_image(self) -> "Image":
         from cua_sandbox import Image
+
         return Image.from_registry("myorg/myimage:latest")
 
     # ── Valid hints ───────────────────────────────────────────────────────
@@ -60,11 +62,7 @@ class TestImageRuntimeMethod:
         assert img._registry == "myorg/myimage:latest"
 
     def test_runtime_preserves_layers(self):
-        img = (
-            self._registry_image()
-            .apt_install("curl")
-            .runtime("oci/cloud")
-        )
+        img = self._registry_image().apt_install("curl").runtime("oci/cloud")
         assert len(img._layers) == 1
         assert img._layers[0]["type"] == "apt_install"
         assert img._runtime_hint == "oci/cloud"
@@ -88,6 +86,7 @@ class TestImageRuntimeMethod:
 
     def test_from_dict_restores_runtime_hint(self):
         from cua_sandbox import Image
+
         original = self._registry_image().runtime("oci/cloud")
         d = original.to_dict()
         restored = Image.from_dict(d)
@@ -113,6 +112,7 @@ class TestCloudTransportRuntimeHint:
 
     def _make_transport(self, image):
         from cua_sandbox.transport.cloud import CloudTransport
+
         t = CloudTransport.__new__(CloudTransport)
         t._image = image
         t._region = "us-east-1"
@@ -127,6 +127,7 @@ class TestCloudTransportRuntimeHint:
     def _extract_instance_type(self, image) -> str:
         """Run the body-building logic from _create_vm and return instanceType."""
         from cua_sandbox import Image
+
         transport = self._make_transport(image)
 
         # Replicate the body-building logic from _create_vm
@@ -146,20 +147,24 @@ class TestCloudTransportRuntimeHint:
 
     def test_qemu_cloud_sends_vm(self):
         from cua_sandbox import Image
+
         img = Image.from_registry("myorg/img:latest").runtime("qemu/cloud")
         assert self._extract_instance_type(img) == "vm"
 
     def test_oci_cloud_sends_container(self):
         from cua_sandbox import Image
+
         img = Image.from_registry("myorg/app:latest").runtime("oci/cloud")
         assert self._extract_instance_type(img) == "container"
 
     def test_no_hint_defaults_to_vm(self):
         from cua_sandbox import Image
+
         img = Image.from_registry("myorg/img:latest")
         assert self._extract_instance_type(img) == "vm"
 
     def test_kind_container_without_hint_sends_container(self):
         from cua_sandbox import Image
+
         img = Image.linux("ubuntu", "24.04", kind="container")._with(_registry="myorg/app:latest")
         assert self._extract_instance_type(img) == "container"

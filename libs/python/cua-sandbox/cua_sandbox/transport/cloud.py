@@ -412,10 +412,12 @@ class CloudTransport(Transport):
                 return resp
             if attempt == _CREATE_MAX_RETRIES - 1:
                 break
-            delay = _CREATE_RETRY_BASE_S * (2 ** attempt)
+            delay = _CREATE_RETRY_BASE_S * (2**attempt)
             logger.warning(
                 "No sandbox capacity (503), retrying in %.1fs (attempt %d/%d)",
-                delay, attempt + 1, _CREATE_MAX_RETRIES,
+                delay,
+                attempt + 1,
+                _CREATE_MAX_RETRIES,
             )
             await asyncio.sleep(delay)
         return resp  # return last 503 response, caller will raise_for_status

@@ -313,9 +313,7 @@ class Image:
         """
         if hint not in self._VALID_RUNTIME_HINTS:
             valid_str = ", ".join(f'"{v}"' for v in self._VALID_RUNTIME_HINTS)
-            raise ValueError(
-                f"Unknown runtime hint {hint!r}. Valid values: {valid_str}"
-            )
+            raise ValueError(f"Unknown runtime hint {hint!r}. Valid values: {valid_str}")
         # Derive kind from the engine part so _auto_runtime() can use it.
         engine, location = hint.split("/", 1)
         derived_kind = "vm" if engine == "qemu" else "container"

@@ -1062,7 +1062,7 @@ class Sandbox:
             if _hint_location == "cloud":
                 local = False  # force cloud path
             elif _hint_location == "local":
-                local = True   # force local path
+                local = True  # force local path
 
         if image and not runtime and local:
             # local=True with no runtime → auto-select based on image type

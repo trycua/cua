@@ -8,10 +8,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app/libs/python/core:/app/libs/python/computer:/app/libs/python/agent:/app/libs/python/som:/app/libs/python/computer-server:/app/libs/python/mcp-server"
 
 # Install system dependencies for ARM architecture
+# Note: libgl1-mesa-glx was removed in Debian Bookworm (python:3.12-slim base);
+# use libgl1 instead, which pulls in the appropriate Mesa/DRI backend.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     build-essential \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libxcb-xinerama0 \
     libxkbcommon-x11-0 \

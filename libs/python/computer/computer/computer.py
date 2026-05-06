@@ -519,7 +519,9 @@ class Computer:
                     else:
                         vm = await self.config.vm_provider.get_vm(self.config.name)
                     vm_status = vm.get("status", "unknown")
-                    self.logger.verbose(f"Found existing VM: {self.config.name} (status={vm_status})")
+                    self.logger.verbose(
+                        f"Found existing VM: {self.config.name} (status={vm_status})"
+                    )
 
                     # For CloudV2: if the VM doesn't exist yet but a docker image was
                     # explicitly provided by the user, create a new VMI instance with that image.
@@ -529,6 +531,7 @@ class Computer:
                         and self._user_supplied_image
                     ):
                         from .providers.cloud.providerv2 import CloudV2Provider
+
                         if isinstance(self.config.vm_provider, CloudV2Provider):
                             self.logger.info(
                                 f"VM {self.config.name!r} not found — creating VMI with "
@@ -563,9 +566,7 @@ class Computer:
                                 "pass image='your/image:tag' to Computer(). "
                                 "Only public images are supported."
                             )
-                        raise RuntimeError(
-                            f"VM {self.config.name} not found."
-                        )
+                        raise RuntimeError(f"VM {self.config.name} not found.")
                     else:
                         is_running = vm_status == "running"
                 except RuntimeError:

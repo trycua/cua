@@ -51,7 +51,9 @@ class TestCloudV2ProviderCreateVM:
         """create_vm with docker_image and no instance_type should send instanceType='vm'."""
         provider = self._make_provider()
         captured = {}
-        resp = _make_mock_resp(202, {"status": "provisioning", "name": "witty-falcon", "source": "kubevirt-ubuntu"})
+        resp = _make_mock_resp(
+            202, {"status": "provisioning", "name": "witty-falcon", "source": "kubevirt-ubuntu"}
+        )
         session = _make_capture_session(resp, captured)
 
         with patch("aiohttp.ClientSession", return_value=session):
@@ -71,7 +73,9 @@ class TestCloudV2ProviderCreateVM:
         """create_vm with instance_type='vm' should send instanceType='vm'."""
         provider = self._make_provider()
         captured = {}
-        resp = _make_mock_resp(202, {"status": "provisioning", "name": "brave-eagle", "source": "kubevirt-ubuntu"})
+        resp = _make_mock_resp(
+            202, {"status": "provisioning", "name": "brave-eagle", "source": "kubevirt-ubuntu"}
+        )
         session = _make_capture_session(resp, captured)
 
         with patch("aiohttp.ClientSession", return_value=session):
@@ -94,7 +98,9 @@ class TestCloudV2ProviderCreateVM:
         """create_vm with instance_type='container' should send instanceType='container'."""
         provider = self._make_provider()
         captured = {}
-        resp = _make_mock_resp(202, {"status": "provisioning", "name": "calm-fox", "source": "incus-container"})
+        resp = _make_mock_resp(
+            202, {"status": "provisioning", "name": "calm-fox", "source": "incus-container"}
+        )
         session = _make_capture_session(resp, captured)
 
         with patch("aiohttp.ClientSession", return_value=session):

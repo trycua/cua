@@ -98,9 +98,10 @@ public enum ListWindowsTool {
                 : WindowEnumerator.allWindows()
 
             let windows = raw
-                .filter { $0.layer == 0 }
                 .filter { info in
-                    guard let pid = pidFilter else { return true }
+                    guard let pid = pidFilter else {
+                        return info.layer == 0
+                    }
                     return info.pid == pid
                 }
 

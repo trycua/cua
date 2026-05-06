@@ -265,10 +265,17 @@ public actor AppStateEngine {
         var nextIndex = 0
         var markdown = ""
 
+        let layer0WindowIds: Set<CGWindowID> = Set(
+            WindowEnumerator.allWindows()
+                .filter { $0.layer == 0 }
+                .map { CGWindowID($0.id) }
+        )
+
         renderTree(
             root,
             depth: 0,
             targetWindowId: windowId,
+            layer0WindowIds: layer0WindowIds,
             elements: &elements,
             nextIndex: &nextIndex,
             output: &markdown
@@ -510,6 +517,7 @@ public actor AppStateEngine {
         _ element: AXUIElement,
         depth: Int,
         targetWindowId: UInt32?,
+        layer0WindowIds: Set<CGWindowID> = [],
         elements: inout [Int: AXUIElement],
         nextIndex: inout Int,
         output: inout String
@@ -595,7 +603,8 @@ public actor AppStateEngine {
                     // windows whose CGWindowID we can't read.
                     return true
                 }
-                return cgWindowId == targetWid
+                if cgWindowId == targetWid { return true }
+                return !layer0WindowIds.contains(cgWindowId)
             }
         }
 
@@ -604,6 +613,7 @@ public actor AppStateEngine {
                 child,
                 depth: depth + 1,
                 targetWindowId: targetWindowId,
+                layer0WindowIds: layer0WindowIds,
                 elements: &elements,
                 nextIndex: &nextIndex,
                 output: &output

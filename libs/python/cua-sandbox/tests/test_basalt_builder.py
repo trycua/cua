@@ -3,6 +3,7 @@
 Tests the _layers_to_basalt_steps() function which translates Image layers
 into basalt JSON step files. Does NOT require a basalt binary or root access.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ import pytest
 
 def _make_step_file(layers):
     from cua_sandbox.builder.basalt import _layers_to_basalt_steps
+
     return _layers_to_basalt_steps(layers, os_type="linux")
 
 
@@ -85,7 +87,8 @@ class TestLayersToBasaltSteps:
         sf = _make_step_file([{"type": "run", "command": "whoami"}])
         step = list(sf["steps"].values())[0]
         hash_deps = [
-            d for d in step["deps"]
+            d
+            for d in step["deps"]
             if d.get("type") == "exec_output" and "layer-hash:" in " ".join(d.get("args", []))
         ]
         assert len(hash_deps) == 1
@@ -152,16 +155,19 @@ class TestBasaltBuilderInit:
 
     def test_default_nbd_device(self):
         from cua_sandbox.builder.basalt import BasaltQEMUBuilder
+
         b = BasaltQEMUBuilder()
         assert b.nbd_device == "/dev/nbd0"
 
     def test_custom_nbd_device(self):
         from cua_sandbox.builder.basalt import BasaltQEMUBuilder
+
         b = BasaltQEMUBuilder(nbd_device="/dev/nbd1")
         assert b.nbd_device == "/dev/nbd1"
 
     def test_custom_images_dir(self, tmp_path):
         from cua_sandbox.builder.basalt import BasaltQEMUBuilder
+
         b = BasaltQEMUBuilder(images_dir=tmp_path)
         assert b.images_dir == tmp_path
 
@@ -171,16 +177,18 @@ class TestCloudBuilderStubs:
 
     @pytest.mark.asyncio
     async def test_qemu_cloud_builder_raises(self):
-        from cua_sandbox.builder.basalt import QEMUCloudBuilder
         from cua_sandbox import Image
+        from cua_sandbox.builder.basalt import QEMUCloudBuilder
+
         builder = QEMUCloudBuilder()
         with pytest.raises(NotImplementedError, match="qemu/cloud"):
             await builder.build(Image.from_registry("myorg/img:latest"))
 
     @pytest.mark.asyncio
     async def test_docker_cloud_builder_raises(self):
-        from cua_sandbox.builder.basalt import DockerCloudBuilder
         from cua_sandbox import Image
+        from cua_sandbox.builder.basalt import DockerCloudBuilder
+
         builder = DockerCloudBuilder()
         with pytest.raises(NotImplementedError, match="docker/cloud"):
             await builder.build(Image.from_registry("myorg/app:latest"))
@@ -199,6 +207,7 @@ class TestBasaltWasmRunnerMock:
     def wasm_path(self, tmp_path):
         """Return the basalt_wasmtime.wasm path, or skip if not available."""
         from cua_sandbox.builder.basalt import BasaltWasmLoader
+
         try:
             return BasaltWasmLoader.load(build_if_missing=False)
         except RuntimeError:
@@ -208,6 +217,7 @@ class TestBasaltWasmRunnerMock:
     def test_wasm_runner_runs_echo_pipeline(self, wasm_path):
         """Run a trivial echo pipeline through the real WASM module."""
         import pytest
+
         pytest.importorskip("wasmtime")
 
         from cua_sandbox.builder.basalt import _BasaltWasmRunner
@@ -250,18 +260,19 @@ class TestBasaltWasmLoaderSearchPaths:
 
     def test_env_var_missing_file_raises(self, tmp_path, monkeypatch):
         from cua_sandbox.builder.basalt import BasaltWasmLoader
+
         monkeypatch.setenv("BASALT_WASM", str(tmp_path / "nonexistent.wasm"))
         with pytest.raises(RuntimeError, match="non-existent file"):
             BasaltWasmLoader.load(build_if_missing=False)
 
     def test_not_found_raises_without_build(self, tmp_path, monkeypatch):
-        from cua_sandbox.builder.basalt import BasaltWasmLoader, _WASM_SEARCH_PATHS
+        from cua_sandbox.builder.basalt import _WASM_SEARCH_PATHS, BasaltWasmLoader
+
         # Patch all search paths to tmp_path (nothing there)
         monkeypatch.setenv("BASALT_WASM", "")
         monkeypatch.delenv("BASALT_WASM")
         monkeypatch.setattr(
-            "cua_sandbox.builder.basalt._WASM_SEARCH_PATHS",
-            [tmp_path / "nonexistent.wasm"]
+            "cua_sandbox.builder.basalt._WASM_SEARCH_PATHS", [tmp_path / "nonexistent.wasm"]
         )
         with pytest.raises(RuntimeError, match="not found"):
             BasaltWasmLoader.load(build_if_missing=False)

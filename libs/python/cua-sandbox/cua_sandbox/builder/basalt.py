@@ -57,7 +57,10 @@ logger = logging.getLogger(__name__)
 
 _BASALT_ROOT = (
     # Expected location when cua-sandbox lives alongside the cloud repo
-    Path(__file__).resolve().parents[6] / "cloud" / "services" / "basalt"
+    Path(__file__).resolve().parents[6]
+    / "cloud"
+    / "services"
+    / "basalt"
 )
 _WASM_CRATE = _BASALT_ROOT / "crates" / "basalt-wasmtime"
 _WASM_ARTIFACT = (
@@ -78,6 +81,7 @@ _DEFAULT_IMAGES_DIR = Path.home() / ".cua" / "cua-sandbox" / "images"
 # ---------------------------------------------------------------------------
 # WASM loader
 # ---------------------------------------------------------------------------
+
 
 class BasaltWasmLoader:
     """Locate or build the basalt-wasmtime WASM module.
@@ -108,9 +112,7 @@ class BasaltWasmLoader:
             p = Path(env_path)
             if p.is_file():
                 return p
-            raise RuntimeError(
-                f"BASALT_WASM env var points to non-existent file: {p}"
-            )
+            raise RuntimeError(f"BASALT_WASM env var points to non-existent file: {p}")
 
         for candidate in _WASM_SEARCH_PATHS:
             if candidate.is_file():
@@ -145,14 +147,13 @@ class BasaltWasmLoader:
                 "Clone the cloud repo alongside cua-sandbox."
             )
 
-        logger.info(
-            "BasaltWasmLoader: building basalt-wasmtime WASM "
-            "(first run may take ~30s)…"
-        )
+        logger.info("BasaltWasmLoader: building basalt-wasmtime WASM " "(first run may take ~30s)…")
         result = subprocess.run(
             [
-                "cargo", "build",
-                "--target", "wasm32-unknown-unknown",
+                "cargo",
+                "build",
+                "--target",
+                "wasm32-unknown-unknown",
                 "--release",
             ],
             cwd=str(_WASM_CRATE),
@@ -160,14 +161,10 @@ class BasaltWasmLoader:
             text=True,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"cargo build failed:\n{result.stderr}"
-            )
+            raise RuntimeError(f"cargo build failed:\n{result.stderr}")
 
         if not _WASM_ARTIFACT.is_file():
-            raise RuntimeError(
-                f"cargo build succeeded but artifact not found at {_WASM_ARTIFACT}"
-            )
+            raise RuntimeError(f"cargo build succeeded but artifact not found at {_WASM_ARTIFACT}")
 
         logger.info("BasaltWasmLoader: built → %s", _WASM_ARTIFACT)
         return _WASM_ARTIFACT
@@ -176,6 +173,7 @@ class BasaltWasmLoader:
 # ---------------------------------------------------------------------------
 # Wasmtime executor
 # ---------------------------------------------------------------------------
+
 
 class _BasaltWasmRunner:
     """Low-level wrapper around the basalt-wasmtime WASM module.
@@ -252,16 +250,37 @@ class _BasaltWasmRunner:
             caller["memory"].write(caller, last_stderr[0], dest_ptr)
 
         i32 = wt.ValType.i32()
-        linker.define_func("env", "host_exec",
-            wt.FuncType([i32, i32], [i32]), host_exec, access_caller=True)
-        linker.define_func("env", "host_exec_stdout_len",
-            wt.FuncType([], [i32]), host_exec_stdout_len, access_caller=True)
-        linker.define_func("env", "host_exec_stdout_read",
-            wt.FuncType([i32], []), host_exec_stdout_read, access_caller=True)
-        linker.define_func("env", "host_exec_stderr_len",
-            wt.FuncType([], [i32]), host_exec_stderr_len, access_caller=True)
-        linker.define_func("env", "host_exec_stderr_read",
-            wt.FuncType([i32], []), host_exec_stderr_read, access_caller=True)
+        linker.define_func(
+            "env", "host_exec", wt.FuncType([i32, i32], [i32]), host_exec, access_caller=True
+        )
+        linker.define_func(
+            "env",
+            "host_exec_stdout_len",
+            wt.FuncType([], [i32]),
+            host_exec_stdout_len,
+            access_caller=True,
+        )
+        linker.define_func(
+            "env",
+            "host_exec_stdout_read",
+            wt.FuncType([i32], []),
+            host_exec_stdout_read,
+            access_caller=True,
+        )
+        linker.define_func(
+            "env",
+            "host_exec_stderr_len",
+            wt.FuncType([], [i32]),
+            host_exec_stderr_len,
+            access_caller=True,
+        )
+        linker.define_func(
+            "env",
+            "host_exec_stderr_read",
+            wt.FuncType([i32], []),
+            host_exec_stderr_read,
+            access_caller=True,
+        )
 
         instance = linker.instantiate(store, module)
         return store, instance
@@ -291,24 +310,21 @@ class _BasaltWasmRunner:
             rlen = exports["result_len"](store)
             output = ""
             if rlen > 0:
-                output = exports["memory"].read(store, rptr, rptr + rlen).decode(
-                    errors="replace"
-                )
+                output = exports["memory"].read(store, rptr, rptr + rlen).decode(errors="replace")
             return {"success": True, "output": output, "error": ""}
         else:
             eptr = exports["error_ptr"](store)
             elen = exports["error_len"](store)
             error = ""
             if elen > 0:
-                error = exports["memory"].read(store, eptr, eptr + elen).decode(
-                    errors="replace"
-                )
+                error = exports["memory"].read(store, eptr, eptr + elen).decode(errors="replace")
             return {"success": False, "output": "", "error": error}
 
 
 # ---------------------------------------------------------------------------
 # Chroot host_exec — runs commands inside a mounted qcow2 rootfs
 # ---------------------------------------------------------------------------
+
 
 def _make_chroot_exec_fn(mount_dir: Path):
     """Return a ``host_exec_fn`` that runs commands via ``chroot`` into *mount_dir*.
@@ -330,8 +346,12 @@ def _make_chroot_exec_fn(mount_dir: Path):
         # We use: chroot <mount_dir> /usr/bin/env <env pairs...> <program> <args...>
         env_prefix = [f"{k}={v}" for k, v in env_pairs]
         chroot_cmd = [
-            "chroot", str(mount_dir),
-            "/usr/bin/env", *env_prefix, program, *args,
+            "chroot",
+            str(mount_dir),
+            "/usr/bin/env",
+            *env_prefix,
+            program,
+            *args,
         ]
 
         logger.debug("chroot exec: %s", " ".join(chroot_cmd))
@@ -357,6 +377,7 @@ def _make_chroot_exec_fn(mount_dir: Path):
 # ---------------------------------------------------------------------------
 # Layer → basalt step-file translation
 # ---------------------------------------------------------------------------
+
 
 def _layers_to_basalt_steps(
     layers: list[Dict[str, Any]],
@@ -394,14 +415,14 @@ def _layers_to_basalt_steps(
             deps.append({"type": "step", "name": prev_step})
 
         # Content-address the layer spec so cache is invalidated on any change
-        layer_hash = hashlib.sha256(
-            json.dumps(layer, sort_keys=True).encode()
-        ).hexdigest()[:16]
-        deps.append({
-            "type": "exec_output",
-            "program": "echo",
-            "args": [f"layer-hash:{layer_hash}"],
-        })
+        layer_hash = hashlib.sha256(json.dumps(layer, sort_keys=True).encode()).hexdigest()[:16]
+        deps.append(
+            {
+                "type": "exec_output",
+                "program": "echo",
+                "args": [f"layer-hash:{layer_hash}"],
+            }
+        )
 
         steps[step_name] = {
             "run": run_spec,
@@ -450,8 +471,7 @@ def _layer_to_shell(layer: Dict[str, Any], os_type: str) -> Optional[str]:
             return "true"
         # Write each variable to /etc/environment (persistent across boots)
         lines = "\n".join(
-            f"printf '%s=%s\\n' '{k}' '{v}' >> /etc/environment"
-            for k, v in variables.items()
+            f"printf '%s=%s\\n' '{k}' '{v}' >> /etc/environment" for k, v in variables.items()
         )
         return lines
 
@@ -466,6 +486,7 @@ def _layer_to_shell(layer: Dict[str, Any], os_type: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Disk helpers
 # ---------------------------------------------------------------------------
+
 
 def _qemu_img_bin() -> str:
     found = shutil.which("qemu-img")
@@ -491,11 +512,14 @@ def _mount_qcow2(qcow2_path: Path, mount_dir: Path, nbd_device: str) -> None:
     subprocess.run(["modprobe", "nbd", "max_part=8"], check=True, capture_output=True)
     subprocess.run(
         ["qemu-nbd", "--connect", nbd_device, str(qcow2_path)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
 
     # Give the kernel time to populate partition devices
-    import time; time.sleep(0.5)
+    import time
+
+    time.sleep(0.5)
 
     # Try common root partition suffixes (p1, p2)
     root_part = None
@@ -509,13 +533,15 @@ def _mount_qcow2(qcow2_path: Path, mount_dir: Path, nbd_device: str) -> None:
 
     subprocess.run(
         ["mount", root_part, str(mount_dir)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     # Bind-mount /dev, /proc, /sys for commands that need them
     for pseudo in ["dev", "proc", "sys"]:
         subprocess.run(
             ["mount", "--bind", f"/{pseudo}", str(mount_dir / pseudo)],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
 
 
@@ -533,6 +559,7 @@ def _umount_qcow2(mount_dir: Path, nbd_device: str) -> None:
 # ---------------------------------------------------------------------------
 # BasaltQEMUBuilder
 # ---------------------------------------------------------------------------
+
 
 class BasaltQEMUBuilder:
     """Incrementally build a qcow2 VM disk using basalt via WASM.
@@ -612,7 +639,9 @@ class BasaltQEMUBuilder:
 
         logger.info(
             "BasaltQEMUBuilder: building %d layers on top of %s → %s",
-            len(image._layers), base_qcow2, out_disk,
+            len(image._layers),
+            base_qcow2,
+            out_disk,
         )
 
         # Locate the WASM module (auto-build if necessary)
@@ -644,8 +673,7 @@ class BasaltQEMUBuilder:
 
             if not result["success"]:
                 raise RuntimeError(
-                    f"basalt pipeline failed: {result['error']}\n"
-                    f"WASM module: {wasm_path}"
+                    f"basalt pipeline failed: {result['error']}\n" f"WASM module: {wasm_path}"
                 )
 
             logger.info("BasaltQEMUBuilder: pipeline complete")
@@ -672,6 +700,7 @@ class BasaltQEMUBuilder:
 # ---------------------------------------------------------------------------
 # Cloud builder stubs
 # ---------------------------------------------------------------------------
+
 
 class QEMUCloudBuilder:
     """Stub: cloud-side QEMU/KubeVirt VMI image builder via basalt build API.

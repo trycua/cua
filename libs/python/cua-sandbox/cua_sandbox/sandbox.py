@@ -144,7 +144,8 @@ async def _basalt_build_for_local(image: Image) -> Image:
 
     logger.info(
         "_basalt_build_for_local: pulling base image %s and building %d layers",
-        image._registry, len(image._layers),
+        image._registry,
+        len(image._layers),
     )
 
     # Pull the base image from the registry (returns path to local qcow2 / disk)

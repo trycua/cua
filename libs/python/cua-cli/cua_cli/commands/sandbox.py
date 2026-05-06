@@ -57,9 +57,9 @@ def _parse_image(image_str: str, vm: bool = False):
     # Registry reference: contains '/' or starts with a known registry hostname.
     # Apply a runtime hint so instanceType is explicit rather than inferred:
     #   --vm  → "qemu/cloud"  (KubeVirt VMI)
-    #   default → "oci/cloud" (gVisor container)
+    #   default → "docker/cloud" (gVisor container)
     def _with_hint(img: Image) -> Image:
-        return img.runtime("qemu/cloud" if vm else "oci/cloud")
+        return img.runtime("qemu/cloud" if vm else "docker/cloud")
 
     if "/" in image_str:
         host = image_str.split("/")[0]

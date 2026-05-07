@@ -20,6 +20,7 @@ __version__ = "0.1.0"
 
 from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
+from cua_sandbox._oidc import AWSCredentials, OIDCToken, aws_credentials, oidc_token
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost, localhost
 from cua_sandbox.runtime.compat import (
@@ -34,6 +35,12 @@ __all__ = [
     "configure",
     "login",
     "whoami",
+    # OIDC helpers
+    "oidc_token",
+    "aws_credentials",
+    "OIDCToken",
+    "AWSCredentials",
+    # Sandbox
     "Image",
     "Sandbox",
     "SandboxInfo",

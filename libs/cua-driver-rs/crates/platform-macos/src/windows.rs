@@ -24,6 +24,7 @@ pub struct WindowInfo {
     pub z_index: usize,
     pub is_on_screen: bool,
     pub on_current_space: Option<bool>,
+    pub space_ids: Option<Vec<u64>>,
 }
 
 // ── CGWindow option flags ─────────────────────────────────────────────────────
@@ -170,6 +171,7 @@ fn enumerate_windows(options: u32) -> Vec<WindowInfo> {
             z_index,
             is_on_screen,
             on_current_space: None,
+            space_ids: None,
         });
     }
 

@@ -149,7 +149,7 @@ impl ToolResult {
 
 pub fn initialize_result() -> Value {
     serde_json::json!({
-        "protocolVersion": "2024-11-05",
+        "protocolVersion": "2025-06-18",
         "capabilities": { "tools": {} },
         "serverInfo": { "name": "cua-driver-rs", "version": env!("CARGO_PKG_VERSION") },
         "instructions": AGENT_INSTRUCTIONS

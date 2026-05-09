@@ -95,6 +95,32 @@ pub fn hotkey(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     press_key(pid, key, modifiers)
 }
 
+/// Send a key combination to `pid` WITHOUT the auth-message envelope.
+///
+/// Required for NSMenu key equivalents: with the envelope, SLEventPostToPid
+/// forks onto a direct-mach path that bypasses IOHIDPostEvent — NSMenu never
+/// sees those events. Without the envelope the path goes through IOHIDPostEvent
+/// so NSApplication.sendEvent: dispatches NSMenu key equivalents.
+pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    let key_code = key_name_to_code(key)?;
+    let flags = modifier_flags(modifiers);
+    post_key_no_auth(pid, key_code, true, flags)?;
+    std::thread::sleep(std::time::Duration::from_millis(8));
+    post_key_no_auth(pid, key_code, false, flags)?;
+    Ok(())
+}
+
+/// Press and release a single key to `pid` WITHOUT the auth-message envelope.
+/// Works for single keys as well as combinations (same as hotkey_no_auth for single key).
+pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    let key_code = key_name_to_code(key)?;
+    let flags = modifier_flags(modifiers);
+    post_key_no_auth(pid, key_code, true, flags)?;
+    std::thread::sleep(std::time::Duration::from_millis(8));
+    post_key_no_auth(pid, key_code, false, flags)?;
+    Ok(())
+}
+
 /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
 /// Chromium/Electron support) or fall back to CGEvent::post_to_pid.
 fn post_keyboard_event(pid: i32, event: &CGEvent) {
@@ -114,6 +140,22 @@ fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> any
         event.set_flags(flags);
     }
     post_keyboard_event(pid, &event);
+    Ok(())
+}
+
+fn post_key_no_auth(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let event = CGEvent::new_keyboard_event(source, key_code, key_down)
+        .map_err(|_| anyhow::anyhow!("CGEvent::new_keyboard_event failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        event.set_flags(flags);
+    }
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+    // attach_auth_message = false → IOHIDPostEvent path → NSMenu fires
+    if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {
+        event.post_to_pid(pid as libc::pid_t);
+    }
     Ok(())
 }
 

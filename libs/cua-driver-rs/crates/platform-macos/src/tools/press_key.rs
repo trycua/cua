@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
+use libc;
 
 use super::ToolState;
 
@@ -20,7 +21,14 @@ fn def() -> &'static ToolDef {
         name: "press_key".into(),
         description: "Press and release a single key, delivered to the target pid via \
             CGEventPostToPid. No focus steal.\n\n\
-            Optional element_index + window_id pre-focuses the element before the key fires.\n\n\
+            Two delivery paths:\n\
+            • window_id + element_index: focuses the AX element first, then posts via the \
+              auth-message path (Chromium-safe).\n\
+            • window_id only (no element_index): NSMenu path — briefly activates the window \
+              WindowServer-frontmost via SLPSSetFrontProcessWithOptions (kCPSNoWindows, < 1 ms), \
+              posts WITHOUT the auth envelope so IOHIDPostEvent fires and NSApplication.sendEvent: \
+              dispatches NSMenu key equivalents. Restores prior frontmost immediately.\n\
+            • No window_id: standard auth-message path.\n\n\
             Key names: return, tab, escape, up/down/left/right, space, delete, home, end, \
             pageup, pagedown, f1-f12, plus any letter or digit.\n\
             Modifiers array: cmd, shift, option/alt, ctrl, fn.".into(),
@@ -78,7 +86,7 @@ impl Tool for PressKeyTool {
         };
         let display_key = key_raw.clone();
 
-        // Pre-focus element if requested.
+        // Pre-focus element if requested (element_index + window_id path).
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
             if let Some(element_ptr) = self.state.element_cache.get_element_ptr(pid, wid, idx) {
                 let _ = tokio::task::spawn_blocking(move || {
@@ -90,6 +98,15 @@ impl Tool for PressKeyTool {
 
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+            if let Some(wid) = window_id {
+                if element_index.is_none() {
+                    // NSMenu path: window_id set but no element_index.
+                    crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
+                        crate::input::keyboard::press_key_no_auth(pid, &key, &m)
+                    })?;
+                    return Ok(());
+                }
+            }
             crate::input::keyboard::press_key(pid, &key, &m)
         }).await;
 

@@ -41,6 +41,17 @@ type SetIntFieldFn = unsafe extern "C" fn(*mut c_void, u32, i64);
 /// `uint32_t CGSMainConnectionID(void)`
 type ConnectionIDFn = unsafe extern "C" fn() -> u32;
 
+// ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
+
+/// `OSStatus SLPSSetFrontProcessWithOptions(const void *psn, uint32_t windowID, uint32_t options)`
+type SetFrontProcessFn = unsafe extern "C" fn(*const c_void, u32, u32) -> i32;
+
+/// `OSStatus SLSGetWindowOwner(uint32_t cid, uint32_t wid, uint32_t *out_cid)`
+type GetWindowOwnerFn = unsafe extern "C" fn(u32, u32, *mut u32) -> i32;
+
+/// `OSStatus SLSGetConnectionPSN(uint32_t cid, void *psn)`
+type GetConnectionPSNFn = unsafe extern "C" fn(u32, *mut c_void) -> i32;
+
 // ── Focus-without-raise SPIs ──────────────────────────────────────────────────
 
 /// `OSStatus SLPSPostEventRecordTo(const void *psn, const uint8_t *bytes)`
@@ -127,6 +138,21 @@ fn connection_id_fn() -> Option<ConnectionIDFn> {
 fn factory_msg_send_fn() -> Option<FactoryMsgSendFn> {
     static SYM: OnceLock<Option<FactoryMsgSendFn>> = OnceLock::new();
     *SYM.get_or_init(|| find_sym(b"objc_msgSend\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn set_front_process_fn() -> Option<SetFrontProcessFn> {
+    static SYM: OnceLock<Option<SetFrontProcessFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSSetFrontProcessWithOptions\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_window_owner_fn() -> Option<GetWindowOwnerFn> {
+    static SYM: OnceLock<Option<GetWindowOwnerFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLSGetWindowOwner\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_connection_psn_fn() -> Option<GetConnectionPSNFn> {
+    static SYM: OnceLock<Option<GetConnectionPSNFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLSGetConnectionPSN\0").map(|p| unsafe { as_fn(p) }))
 }
 
 fn post_event_record_to_fn() -> Option<PostEventRecordToFn> {
@@ -329,4 +355,80 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
     };
 
     defocus_ok && focus_ok
+}
+
+// ── NSMenu shortcut activation ────────────────────────────────────────────────
+
+/// Gets the PSN for the process that owns `window_id`.
+/// Uses `CGSMainConnectionID` + `SLSGetWindowOwner` + `SLSGetConnectionPSN`.
+/// Falls back to `GetProcessForPID(pid)` when the SkyLight path fails.
+pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mut [u8; 8]) -> bool {
+    // Try modern path: CGSMainConnectionID → SLSGetWindowOwner → SLSGetConnectionPSN
+    if let (Some(get_owner), Some(get_psn), Some(conn_id_fn)) =
+        (get_window_owner_fn(), get_connection_psn_fn(), connection_id_fn())
+    {
+        let main_cid = unsafe { conn_id_fn() };
+        let mut owner_cid: u32 = 0;
+        let ok = unsafe { get_owner(main_cid, window_id, &mut owner_cid) } == 0;
+        if ok && owner_cid != 0 {
+            let psn_ok = unsafe { get_psn(owner_cid, out_psn.as_mut_ptr() as *mut c_void) } == 0;
+            if psn_ok { return true; }
+        }
+    }
+    // Fallback: GetProcessForPID
+    if let Some(get_pid_psn) = get_process_for_pid_fn() {
+        return unsafe { get_pid_psn(pid, out_psn.as_mut_ptr() as *mut c_void) } == 0;
+    }
+    false
+}
+
+/// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
+/// then immediately restore the prior frontmost process.
+///
+/// The entire activate → action → restore sequence is < 1 ms — a 5 ms UX monitor
+/// never observes the intermediate frontmost state. NSMenu still fires because the
+/// key event is already enqueued in the target's run-loop queue before we restore.
+///
+/// Returns `Ok(true)` when activation succeeded, `Ok(false)` when SPIs unavailable.
+pub fn with_menu_shortcut_activation(
+    target_pid: libc::pid_t,
+    target_wid: u32,
+    action: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    let set_front = match set_front_process_fn() {
+        Some(f) => f,
+        None => {
+            // SPIs unavailable — run action anyway without activation.
+            action()?;
+            return Ok(false);
+        }
+    };
+
+    // Capture prior frontmost PSN.
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    // Resolve target PSN.
+    let mut target_psn = [0u8; 8];
+    let target_ok = get_process_psn_for_window(target_wid, target_pid, &mut target_psn);
+    if !target_ok {
+        action()?;
+        return Ok(false);
+    }
+
+    // Make target WindowServer-frontmost (kCPSNoWindows = 0x400).
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+
+    // Run action then restore — even if action fails.
+    let result = action();
+
+    // Restore prior frontmost (windowID=0, options=0x400).
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result?;
+    Ok(true)
 }

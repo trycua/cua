@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
+use libc;
 
 use super::ToolState;
 
@@ -22,6 +23,14 @@ fn def() -> &'static ToolDef {
             "Press a combination of keys simultaneously — e.g. `[\"cmd\", \"c\"]` for Copy, \
              `[\"cmd\", \"shift\", \"4\"]` for screenshot selection. The combo is posted directly \
              to the target pid's event queue; the target does NOT need to be frontmost.\n\n\
+             Two delivery paths:\n\
+             • Default (no window_id): auth-message envelope — Chromium/Electron apps accept \
+               the keystrokes as trusted live input on macOS 14+.\n\
+             • With window_id: NSMenu path — briefly activates the target WindowServer-frontmost \
+               via SLPSSetFrontProcessWithOptions (kCPSNoWindows, < 1 ms), posts WITHOUT the auth \
+               envelope so IOHIDPostEvent fires and NSApplication.sendEvent: dispatches NSMenu key \
+               equivalents (e.g. Cmd+Z undo, Cmd+W close). Restores prior frontmost immediately. \
+               Use this path when you need native menu-bar actions on non-Chromium apps.\n\n\
              Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. \
              Non-modifier keys use the same vocabulary as `press_key` (return, tab, escape, \
              up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, letters, \
@@ -37,6 +46,10 @@ fn def() -> &'static ToolDef {
                     "items": { "type": "string" },
                     "minItems": 2,
                     "description": "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"]."
+                },
+                "window_id": {
+                    "type": "integer",
+                    "description": "When set, uses NSMenu path: briefly activates the window for menu key dispatch, then restores prior frontmost."
                 }
             },
             "additionalProperties": false
@@ -97,10 +110,18 @@ impl Tool for HotkeyTool {
         // Use the last non-modifier key; if there are multiple, treat earlier ones as extra keys.
         let key = non_modifiers.last().unwrap().clone();
         let key_display = raw_keys.join("+");
+        let window_id = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
 
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            crate::input::keyboard::hotkey(pid, &key, &m)
+            if let Some(wid) = window_id {
+                crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
+                    crate::input::keyboard::hotkey_no_auth(pid, &key, &m)
+                })?;
+                Ok(())
+            } else {
+                crate::input::keyboard::hotkey(pid, &key, &m)
+            }
         }).await;
 
         match result {

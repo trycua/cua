@@ -69,6 +69,7 @@ impl Tool for ListWindowsTool {
             "z_index": w.z_index,
             "is_on_screen": w.is_on_screen,
             "on_current_space": w.on_current_space,
+            "space_ids": w.space_ids,
         })).collect();
 
         ToolResult::text(format!("Found {} window(s).", windows_json.len()))

@@ -38,6 +38,10 @@ fn def() -> &'static ToolDef {
                     "type": "string",
                     "enum": ["som", "vision", "ax"],
                     "description": "som=AX+screenshot (default), vision=screenshot only (no AX walk), ax=AX only (no screenshot)."
+                },
+                "screenshot_out_file": {
+                    "type": "string",
+                    "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
                 }
             },
             "additionalProperties": false
@@ -63,6 +67,15 @@ impl Tool for GetWindowStateTool {
             None => return ToolResult::error("Missing required parameter: window_id"),
         };
         let query = args.get("query").and_then(|v| v.as_str()).map(str::to_owned);
+        let screenshot_out_file = args.get("screenshot_out_file").and_then(|v| v.as_str()).map(|s| {
+            // Expand ~ prefix.
+            if s.starts_with("~/") {
+                let home = std::env::var("HOME").unwrap_or_default();
+                format!("{home}/{}", &s[2..])
+            } else {
+                s.to_owned()
+            }
+        });
         let default_mode = self.state.config.read().unwrap().capture_mode.clone();
         let capture_mode = args.get("capture_mode").and_then(|v| v.as_str()).unwrap_or(&default_mode);
 
@@ -88,19 +101,25 @@ impl Tool for GetWindowStateTool {
 
         // Screenshot (unless ax-only mode).
         let max_dim = self.state.config.read().unwrap().max_image_dimension;
-        // Returns (b64, final_w, final_h, Option<original_w>) so we can compute resize ratio.
+        // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
         let screenshot = if capture_mode != "ax" {
-            let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u32, u32, Option<u32>)> {
+            let out_file = screenshot_out_file.clone();
+            let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Option<u32>)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let raw = crate::capture::screenshot_window_bytes(window_id)?;
                 let (orig_w, _orig_h) = crate::capture::png_dimensions(&raw)?;
                 let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                 let (w, h) = crate::capture::png_dimensions(&png)?;
                 let original_w = if w < orig_w { Some(orig_w) } else { None };
-                Ok((BASE64.encode(&png), w, h, original_w))
+                if let Some(ref path) = out_file {
+                    std::fs::write(path, &png)?;
+                    Ok((None, Some(path.clone()), w, h, original_w))
+                } else {
+                    Ok((Some(BASE64.encode(&png)), None, w, h, original_w))
+                }
             }).await;
             match res {
-                Ok(Ok((b64, w, h, orig_w))) => {
+                Ok(Ok((b64, file_path, w, h, orig_w))) => {
                     // Record resize ratio so ClickTool can scale coordinates back up.
                     if let Some(ow) = orig_w {
                         if w > 0 {
@@ -109,7 +128,7 @@ impl Tool for GetWindowStateTool {
                     } else {
                         self.state.resize_registry.clear_ratio(pid);
                     }
-                    Some((b64, w, h))
+                    Some((b64, file_path, w, h))
                 }
                 Ok(Err(e)) => {
                     tracing::warn!("Screenshot failed for window {window_id}: {e}");
@@ -125,13 +144,16 @@ impl Tool for GetWindowStateTool {
         };
 
         // Capture screenshot dimensions before consuming.
-        let screenshot_dims = screenshot.as_ref().map(|(_, w, h)| (*w, *h));
+        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h)| (*w, *h));
+        let screenshot_file_path = screenshot.as_ref().and_then(|(_, fp, _, _)| fp.clone());
 
         // Build response.
         let mut content: Vec<Content> = Vec::new();
 
-        if let Some((b64, w, h)) = screenshot {
-            content.push(Content::image_png(b64));
+        if let Some((b64_opt, _file_path, w, h)) = screenshot {
+            if let Some(b64) = b64_opt {
+                content.push(Content::image_png(b64));
+            }
 
             // Summary text line (matching Swift reference format).
             let element_count = self.state.element_cache.element_count(pid, window_id);
@@ -167,6 +189,9 @@ impl Tool for GetWindowStateTool {
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);
+        }
+        if let Some(ref fp) = screenshot_file_path {
+            structured["screenshot_file_path"] = serde_json::json!(fp);
         }
         ToolResult { content, is_error: None, structured_content: Some(structured) }
     }

@@ -60,9 +60,17 @@ cd "$CUA_DRIVER_DIR"
 mkdir -p .release
 log "normal" "Ensuring .release directory exists and is accessible"
 
+# Get the native architecture and allow env override
+NATIVE_ARCH=$(uname -m)
+ARCH=${ARCH:-$(uname -m)}
+
 # Build the release version
-log "essential" "Building release version..."
-swift build -c release --product cua-driver > /dev/null
+log "essential" "Building release version (arch: $ARCH)..."
+if [ "$ARCH" != "$NATIVE_ARCH" ]; then
+  swift build -c release --product cua-driver --arch "$ARCH" > /dev/null
+else
+  swift build -c release --product cua-driver > /dev/null
+fi
 
 # --- Assemble .app bundle ---
 log "essential" "Assembling .app bundle..."
@@ -72,8 +80,15 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-# Copy the binary into the bundle
-cp -f .build/release/cua-driver "$APP_BUNDLE/Contents/MacOS/cua-driver"
+# Copy the binary into the bundle.
+# When cross-compiling (ARCH != native), Swift places the output under
+# .build/<triple>/release/ instead of the usual .build/release/ symlink.
+if [ "$ARCH" != "$NATIVE_ARCH" ]; then
+  BINARY_PATH=".build/${ARCH}-apple-macosx/release/cua-driver"
+else
+  BINARY_PATH=".build/release/cua-driver"
+fi
+cp -f "$BINARY_PATH" "$APP_BUNDLE/Contents/MacOS/cua-driver"
 
 # Stamp and copy Info.plist — the source plist ships with a static
 # `CFBundleShortVersionString` for dev builds; substitute the release
@@ -218,8 +233,7 @@ fi
 
 # --- Create release archives ---
 
-# Get architecture and create OS identifier
-ARCH=$(uname -m)
+# ARCH is already set above (env override or native); derive OS identifier
 OS_IDENTIFIER="darwin-${ARCH}"
 RELEASE_DIR="$(cd .release && pwd)"
 

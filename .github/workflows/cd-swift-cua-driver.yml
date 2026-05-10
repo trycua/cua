@@ -50,6 +50,10 @@ jobs:
     outputs:
       sha256_checksums: ${{ steps.generate_checksums.outputs.checksums }}
       version: ${{ steps.set_version.outputs.version }}
+      tarball_path: ${{ steps.build_notarize.outputs.tarball_path }}
+      pkg_path: ${{ steps.build_notarize.outputs.pkg_path }}
+      x86_64_tarball_path: ${{ steps.build_notarize.outputs.x86_64_tarball_path }}
+      x86_64_pkg_path: ${{ steps.build_notarize.outputs.x86_64_pkg_path }}
     steps:
       - uses: actions/checkout@v4
 
@@ -168,6 +172,9 @@ jobs:
           cd scripts/build
           LOG_LEVEL=minimal ./build-release-notarized.sh
 
+          # Cross-compile for Intel Mac (x86_64) on this arm64 runner
+          ARCH=x86_64 LOG_LEVEL=minimal ./build-release-notarized.sh
+
           # Return to the cua-driver directory
           cd ../..
 
@@ -179,9 +186,13 @@ jobs:
           ARCH=$(uname -m)
           OS_IDENTIFIER="darwin-${ARCH}"
 
-          # Output paths for later use
+          # Output paths for arm64 (native) artifacts
           echo "tarball_path=.release/cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" >> $GITHUB_OUTPUT
           echo "pkg_path=.release/cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" >> $GITHUB_OUTPUT
+
+          # Output paths for x86_64 artifacts
+          echo "x86_64_tarball_path=.release/cua-driver-${VERSION}-darwin-x86_64.tar.gz" >> $GITHUB_OUTPUT
+          echo "x86_64_pkg_path=.release/cua-driver-${VERSION}-darwin-x86_64.pkg.tar.gz" >> $GITHUB_OUTPUT
 
       - name: Upload build log on failure
         if: failure() && steps.build_notarize.outcome == 'failure'
@@ -273,6 +284,20 @@ jobs:
           path: ./libs/cua-driver/.release/cua-driver-*-binary.tar.gz
           if-no-files-found: warn
 
+      - name: Upload Notarized Package x86_64 (Tarball)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-notarized-tarball-x86_64
+          path: ./libs/cua-driver/${{ steps.build_notarize.outputs.x86_64_tarball_path }}
+          if-no-files-found: error
+
+      - name: Upload Notarized Package x86_64 (Installer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-notarized-installer-x86_64
+          path: ./libs/cua-driver/${{ steps.build_notarize.outputs.x86_64_pkg_path }}
+          if-no-files-found: error
+
       - name: Generate path-filtered release notes
         if: startsWith(github.ref, 'refs/tags/cua-driver-v')
         id: release-notes
@@ -310,6 +335,8 @@ jobs:
           files: |
             ./libs/cua-driver/${{ steps.build_notarize.outputs.tarball_path }}
             ./libs/cua-driver/${{ steps.build_notarize.outputs.pkg_path }}
+            ./libs/cua-driver/${{ steps.build_notarize.outputs.x86_64_tarball_path }}
+            ./libs/cua-driver/${{ steps.build_notarize.outputs.x86_64_pkg_path }}
             ./libs/cua-driver/.release/cua-driver-darwin.tar.gz
             ./libs/cua-driver/.release/cua-driver-darwin.pkg.tar.gz
             ./libs/cua-driver/.release/cua-driver.tar.gz

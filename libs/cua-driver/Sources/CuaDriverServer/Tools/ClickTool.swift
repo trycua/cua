@@ -238,6 +238,8 @@ public enum ClickTool {
         guard let axAction = axActionByName[actionName] else {
             return errorResult("Unknown action: \(actionName).")
         }
+        // Snapshot before the action so we can detect cross-app side-effects.
+        let snap = await WindowChangeDetector.snapshot()
         do {
             let element = try await AppStateRegistry.engine.lookup(
                 pid: pid,
@@ -331,6 +333,15 @@ public enum ClickTool {
             // period and arm the idle-hide timer. No-op when
             // disabled.
             await AgentCursor.shared.finishClick(pid: pid)
+            // Detect side-effects: new windows or foreground-app change triggered
+            // by this action (e.g. "Browse UTM Gallery" opens Safari, or
+            // "Open in UTM" hands off to UTM via a URL scheme).
+            let changes = await WindowChangeDetector.detectChanges(snapshot: snap)
+            if let origPid = snap.frontPid, changes.needsRestore {
+                await MainActor.run {
+                    WindowChangeDetector.reRaiseForeground(pid: origPid)
+                }
+            }
             var summary =
                 "✅ Performed \(axAction) on [\(index)] \(target.role ?? "?") \"\(target.title ?? "")\"."
             // For popup buttons (HTML <select> elements in Safari/WebKit):
@@ -378,7 +389,7 @@ public enum ClickTool {
                 summary += " if the expected state change didn't happen."
             }
             return CallTool.Result(
-                content: [.text(text: summary, annotations: nil, _meta: nil)]
+                content: [.text(text: summary + changes.resultSuffix, annotations: nil, _meta: nil)]
             )
         } catch AppStateError.noCachedState(let pid, let windowId) {
             return errorResult(noCachedStateMessage(pid: pid, windowId: windowId))
@@ -425,8 +436,11 @@ public enum ClickTool {
         fromZoom: Bool = false,
         debugImageOut: String? = nil
     ) async -> CallTool.Result {
+        // Snapshot before the action so we can detect cross-app side-effects
+        // (e.g. clicking "Open in UTM" in Safari fires a utm:// URL scheme
+        // that activates UTM and potentially opens a new window).
+        let snap = await WindowChangeDetector.snapshot()
         // Write the debug crosshair BEFORE any coordinate mangling —
-        // we want the saved image to reflect the exact (x, y) the
         // caller handed us, in the same resized space the caller
         // was reasoning in. The crosshair lands on the received
         // pixel; the caller compares against their own "intent"
@@ -507,10 +521,17 @@ public enum ClickTool {
             }
             await AgentCursor.shared.playClickPress()
             await AgentCursor.shared.finishClick(pid: pid)
+            // Detect side-effects: new windows or foreground change.
+            let changes = await WindowChangeDetector.detectChanges(snapshot: snap)
+            if let origPid = snap.frontPid, changes.needsRestore {
+                await MainActor.run {
+                    WindowChangeDetector.reRaiseForeground(pid: origPid)
+                }
+            }
             let clickWord = count == 2 ? "double-click" : (count == 3 ? "triple-click" : "click")
             let modSuffix = modifiers.isEmpty ? "" : " with \(modifiers.joined(separator: "+"))"
             return CallTool.Result(
-                content: [.text(text: "✅ Posted \(clickWord)\(modSuffix) to pid \(pid).", annotations: nil, _meta: nil)]
+                content: [.text(text: "✅ Posted \(clickWord)\(modSuffix) to pid \(pid)." + changes.resultSuffix, annotations: nil, _meta: nil)]
             )
         } catch let error as MouseInputError {
             return errorResult(error.description)

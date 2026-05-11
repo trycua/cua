@@ -219,8 +219,20 @@ private final class Dispatcher: @unchecked Sendable {
         let activatedPid = app.processIdentifier
 
         lock.lock()
+        // Match entries where:
+        //   - targetPid == activatedPid  (specific target suppression), OR
+        //   - targetPid == 0             (wildcard: suppress any activation that
+        //                                 isn't restoreTo — used by the side-effect
+        //                                 guard in WindowChangeDetector so that a
+        //                                 background click opening a new app, e.g.
+        //                                 UTM Gallery → Safari, is suppressed even
+        //                                 though we didn't know Safari's pid ahead
+        //                                 of time.)
         let restoreCandidates = entries.values
-            .filter { $0.targetPid == activatedPid }
+            .filter {
+                $0.targetPid == activatedPid ||
+                ($0.targetPid == 0 && activatedPid != $0.restoreTo.processIdentifier)
+            }
             .map { $0.restoreTo }
         lock.unlock()
 

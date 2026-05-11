@@ -1,0 +1,153 @@
+name: "CI: Cua Driver — PR pre-release binaries"
+
+# Builds unsigned pre-release binaries for both darwin-arm64 and darwin-x86_64
+# on every PR that touches libs/cua-driver, then posts download links as a
+# PR comment so Intel Mac users can test before merging.
+#
+# Limitations:
+#   - Binaries are UNSIGNED and UNNOTARIZED. macOS Gatekeeper will quarantine
+#     them. To run: xattr -d com.apple.quarantine ./cua-driver
+#   - Artifact links require a GitHub login and expire after 90 days.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/**"
+      - ".github/workflows/ci-cua-driver-pr-binaries.yml"
+
+concurrency:
+  group: cua-driver-pr-binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write   # to post the comment
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: macos-15
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16.3
+        run: sudo xcode-select -s /Applications/Xcode_16.3.app
+
+      - name: Build (${{ matrix.arch }})
+        working-directory: ./libs/cua-driver
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            swift build --configuration release --product cua-driver
+            BINARY=".build/release/cua-driver"
+          else
+            swift build --configuration release --product cua-driver --arch x86_64
+            BINARY=".build/x86_64-apple-macosx/release/cua-driver"
+          fi
+
+          # Package into a tarball alongside a thin wrapper script so users
+          # can just extract and run ./cua-driver without knowing the bundle layout.
+          TARBALL="cua-driver-pr${{ github.event.pull_request.number }}-darwin-${{ matrix.arch }}.tar.gz"
+          mkdir -p /tmp/cua-driver-dist
+          cp "$BINARY" /tmp/cua-driver-dist/cua-driver
+          tar -czf "/tmp/$TARBALL" -C /tmp/cua-driver-dist cua-driver
+          echo "TARBALL=/tmp/$TARBALL" >> "$GITHUB_ENV"
+          echo "TARBALL_NAME=$TARBALL" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-pr${{ github.event.pull_request.number }}-darwin-${{ matrix.arch }}
+          path: ${{ env.TARBALL }}
+          retention-days: 90
+
+  comment:
+    name: Post PR comment with download links
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Get artifact URLs
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub Actions artifacts aren't directly linkable without auth,
+          # but we can construct the deep-link to the run's artifact list.
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+
+          ARM64_NAME="cua-driver-pr${{ github.event.pull_request.number }}-darwin-arm64"
+          X86_NAME="cua-driver-pr${{ github.event.pull_request.number }}-darwin-x86_64"
+
+          # Fetch artifact IDs so we can construct direct zip download URLs
+          ARTIFACTS=$(gh api \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[] | {name, id}')
+
+          ARM64_ID=$(echo "$ARTIFACTS" | python3 -c "
+          import sys, json
+          lines = sys.stdin.read().strip().split('\n')
+          import json as j
+          for line in lines:
+              try:
+                  obj = j.loads(line)
+                  if obj['name'] == '$ARM64_NAME':
+                      print(obj['id'])
+              except: pass
+          " 2>/dev/null || echo "")
+
+          X86_ID=$(echo "$ARTIFACTS" | python3 -c "
+          import sys, json
+          lines = sys.stdin.read().strip().split('\n')
+          import json as j
+          for line in lines:
+              try:
+                  obj = j.loads(line)
+                  if obj['name'] == '$X86_NAME':
+                      print(obj['id'])
+              except: pass
+          " 2>/dev/null || echo "")
+
+          REPO="${{ github.repository }}"
+          if [ -n "$ARM64_ID" ]; then
+            echo "arm64_url=https://github.com/${REPO}/actions/runs/${{ github.run_id }}/artifacts/${ARM64_ID}" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$X86_ID" ]; then
+            echo "x86_url=https://github.com/${REPO}/actions/runs/${{ github.run_id }}/artifacts/${X86_ID}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Find existing bot comment
+        id: find-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "<!-- cua-driver-pr-binaries -->"
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- cua-driver-pr-binaries -->
+            ## 🔧 Pre-release binaries (unsigned)
+
+            Built from commit ${{ github.event.pull_request.head.sha }} · [CI run](${{ steps.artifacts.outputs.run_url }})
+
+            | Platform | Download |
+            |----------|----------|
+            | macOS — Apple Silicon (arm64) | [${{ github.event.pull_request.number }}-darwin-arm64](${{ steps.artifacts.outputs.arm64_url }}) |
+            | macOS — Intel (x86_64) | [${{ github.event.pull_request.number }}-darwin-x86_64](${{ steps.artifacts.outputs.x86_url }}) |
+
+            > **⚠️ Unsigned binary** — macOS will quarantine it on first download. To run:
+            > ```bash
+            > # After extracting the tarball:
+            > xattr -d com.apple.quarantine ./cua-driver
+            > chmod +x ./cua-driver
+            > ./cua-driver --version
+            > ```
+            > Artifact links require a GitHub login and expire after 90 days.

@@ -67,15 +67,24 @@ ARCH=${ARCH:-$(uname -m)}
 # Build the release version
 log "essential" "Building release version (arch: $ARCH)..."
 if [ "$ARCH" != "$NATIVE_ARCH" ]; then
-  swift build -c release --product cua-driver --arch "$ARCH" > /dev/null
+  if ! swift build -c release --product cua-driver --arch "$ARCH" > /dev/null; then
+    log "error" "swift build failed for ARCH=$ARCH"
+    exit 1
+  fi
 else
-  swift build -c release --product cua-driver > /dev/null
+  if ! swift build -c release --product cua-driver > /dev/null; then
+    log "error" "swift build failed for native ARCH=$NATIVE_ARCH"
+    exit 1
+  fi
 fi
 
 # --- Assemble .app bundle ---
 log "essential" "Assembling .app bundle..."
 
-APP_BUNDLE=".release/CuaDriver.app"
+# Use an arch-suffixed bundle name so sequential arm64 + x86_64 invocations
+# don't clobber each other's .app in .release/. The CI workflow renames/copies
+# to CuaDriver.app where needed (e.g. the bare-binary packaging step).
+APP_BUNDLE=".release/CuaDriver-${ARCH}.app"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
@@ -87,6 +96,10 @@ if [ "$ARCH" != "$NATIVE_ARCH" ]; then
   BINARY_PATH=".build/${ARCH}-apple-macosx/release/cua-driver"
 else
   BINARY_PATH=".build/release/cua-driver"
+fi
+if [ ! -f "$BINARY_PATH" ]; then
+  log "error" "Expected binary not found at $BINARY_PATH"
+  exit 1
 fi
 cp -f "$BINARY_PATH" "$APP_BUNDLE/Contents/MacOS/cua-driver"
 
@@ -240,8 +253,10 @@ RELEASE_DIR="$(cd .release && pwd)"
 log "essential" "Creating archives in $RELEASE_DIR..."
 cd "$RELEASE_DIR"
 
-# Clean up any existing artifacts first to avoid conflicts
-rm -f cua-driver-*.tar.gz cua-driver-*.pkg.tar.gz
+# Clean up only this arch's artifacts — a wildcard glob would wipe artifacts
+# from a previous arch pass (e.g. the arm64 tarballs before x86_64 finishes).
+rm -f "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" \
+      "cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz"
 
 # Create a backward-compatible wrapper script at the tarball root so
 # extracting the tarball and running `./cua-driver <tool>` works
@@ -252,11 +267,23 @@ exec "$(dirname "$0")/CuaDriver.app/Contents/MacOS/cua-driver" "$@"
 WRAPPER_EOF
 chmod +x cua-driver
 
-# Create version-specific archives
+# Create version-specific archives.
+# The arch-suffixed bundle (CuaDriver-${ARCH}.app) is packaged as CuaDriver.app
+# inside the tarball so install.sh — which always extracts and looks for
+# CuaDriver.app — works without any changes.
+# We create a temporary symlink CuaDriver.app → CuaDriver-${ARCH}.app, tar it
+# (tar follows symlinks to directories by default on macOS), then remove the link.
 log "essential" "Creating version-specific archives (${VERSION})..."
 
-# Package the .app bundle and wrapper script
-tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" cua-driver CuaDriver.app > /dev/null 2>&1
+# Temporary CuaDriver.app symlink so the tarball layout is stable for install.sh
+ln -sfn "CuaDriver-${ARCH}.app" CuaDriver.app
+
+# Package the .app bundle (via the CuaDriver.app symlink) and wrapper script
+tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" \
+    cua-driver CuaDriver.app > /dev/null 2>&1
+
+# Remove the symlink; the arch-suffixed bundle stays for the bare-binary step
+rm -f CuaDriver.app
 
 # Package the installer
 tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" cua-driver.pkg > /dev/null 2>&1

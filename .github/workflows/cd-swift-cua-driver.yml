@@ -249,18 +249,30 @@ jobs:
         working-directory: ./libs/cua-driver/.release
         run: |
           VERSION=${{ steps.set_version.outputs.version }}
-          ARCH=$(uname -m)
-          OS_IDENTIFIER="darwin-${ARCH}"
+          NATIVE_ARCH=$(uname -m)
 
           # The bare binary is already signed (it lives inside the signed .app).
           # Re-extract it and package it for embedders who build their own bundle.
-          BINARY="CuaDriver.app/Contents/MacOS/cua-driver"
-          if [ -f "$BINARY" ]; then
-            tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" -C "CuaDriver.app/Contents/MacOS" cua-driver
-            ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" "cua-driver-binary.tar.gz"
-            echo "Bare binary packaged."
-          else
-            echo "Warning: binary not found at $BINARY"
+          # build-release-notarized.sh now writes arch-suffixed bundles
+          # (CuaDriver-arm64.app, CuaDriver-x86_64.app) so we iterate over
+          # both arches explicitly rather than relying on uname -m, which would
+          # always point at the native runner arch regardless of which pass ran last.
+          for ARCH in arm64 x86_64; do
+            OS_IDENTIFIER="darwin-${ARCH}"
+            BUNDLE="CuaDriver-${ARCH}.app"
+            BINARY="${BUNDLE}/Contents/MacOS/cua-driver"
+            if [ -f "$BINARY" ]; then
+              tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" \
+                  -C "${BUNDLE}/Contents/MacOS" cua-driver
+              echo "Bare binary packaged for ${ARCH}."
+            else
+              echo "Warning: binary not found at $BINARY (skipping ${ARCH})"
+            fi
+          done
+          # Convenience symlink points at the native-arch bare binary
+          NATIVE_BINARY="cua-driver-${VERSION}-darwin-${NATIVE_ARCH}-binary.tar.gz"
+          if [ -f "$NATIVE_BINARY" ]; then
+            ln -sf "$NATIVE_BINARY" "cua-driver-binary.tar.gz"
           fi
 
       - name: Upload Notarized Package (Tarball)

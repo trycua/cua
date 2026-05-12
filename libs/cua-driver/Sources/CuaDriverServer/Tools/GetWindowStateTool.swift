@@ -74,15 +74,18 @@ public enum GetWindowStateTool {
                 Change with `cua-driver config set capture_mode <mode>` or
                 the `set_config` tool.
 
-                Screenshot capture failures in `som` / `vision` modes are
-                non-fatal for `som`: the AX tree still ships in the
-                response and the summary line carries a hint. The macOS
-                26.4.x SCK regression (SCStreamError -3801, "Could not
-                start streaming") is handled this way — agents can keep
-                doing element-indexed clicks against the same window even
-                when the screenshot is unavailable. Switching to
-                `capture_mode: ax` skips the capture attempt entirely on
-                subsequent turns.
+                Screenshot capture failures behave differently per mode:
+                in `som`, they're non-fatal — the AX tree still ships in
+                the response and the summary line carries a hint, so
+                agents can keep doing element-indexed clicks against the
+                same window even when the screenshot is unavailable. In
+                `vision`, the screenshot IS the deliverable, so the same
+                failure returns `isError: true` with an actionable hint
+                (try another window, retry later, or switch to
+                `capture_mode: ax`). The macOS 26.4.x SCK regression
+                (SCStreamError -3801, "Could not start streaming") is
+                surfaced this way. Switching to `capture_mode: ax` skips
+                the capture attempt entirely on subsequent turns.
 
                 Requires Accessibility and Screen Recording permissions.
                 """,
@@ -221,9 +224,12 @@ public enum GetWindowStateTool {
                 // race (window closed between validation and capture)
                 // leaves the snapshot without a screenshot; the structured
                 // response's `has_screenshot=false` surfaces the omission.
-                // A `.streamingFailed` (macOS 26.4 SCK regression) is also
-                // swallowed: the AX tree is still useful, and the summary
-                // line gets an actionable hint instead of a hard error.
+                // A `.streamingFailed` (macOS 26.4 SCK regression) is
+                // handled differently per mode: in `som` the AX tree is
+                // still useful so we swallow it and emit a hint; in
+                // `vision` the screenshot IS the deliverable, so we
+                // return a hard error with the same actionable guidance
+                // as the standalone `screenshot` tool.
                 var captureHint: String? = nil
                 if captureMode != .ax {
                     do {
@@ -252,13 +258,35 @@ public enum GetWindowStateTool {
                         // Window raced — swallow and emit a screenshot-less
                         // response.
                     } catch CaptureError.streamingFailed(let msg) {
-                        // Known macOS 26.4 SCK regression: streaming-start
-                        // fails for specific windows on physical Macs and
-                        // even CGWindowList can't get pixels back. We don't
-                        // fail the call — the AX snapshot is still useful
-                        // for element-indexed clicks. The hint nudges the
-                        // caller toward `capture_mode: ax` to skip the
-                        // capture attempt entirely on subsequent turns.
+                        if captureMode == .vision {
+                            // In `vision` mode the screenshot IS the
+                            // deliverable — there's no AX tree to fall
+                            // back to. Surface the same actionable hint
+                            // as the standalone `screenshot` tool.
+                            return errorResult(
+                                """
+                                ScreenCaptureKit refused this window: \(msg)
+
+                                This is a known macOS 26.4.x SCK regression that hits \
+                                specific windows on physical Macs. The legacy \
+                                CGWindowList fallback also returned no image.
+
+                                Workarounds:
+                                  • Try a different `window_id` on the same app — \
+                                often only one window is affected.
+                                  • For element-indexed clicks, switch to AX-only: \
+                                `cua-driver config set capture_mode ax` and re-call \
+                                `get_window_state` (no screenshot, AX tree only).
+                                  • Re-snapshot a moment later — the failure is \
+                                sometimes transient.
+                                """
+                            )
+                        }
+                        // `som` mode: AX snapshot is still useful for
+                        // element-indexed clicks, so we don't fail the
+                        // call. The hint nudges the caller toward
+                        // `capture_mode: ax` to skip the capture attempt
+                        // entirely on subsequent turns.
                         captureHint = """
                             ⚠️  Screenshot skipped: ScreenCaptureKit refused this \
                             window (\(msg)). Known macOS 26.4 SCK regression. The \

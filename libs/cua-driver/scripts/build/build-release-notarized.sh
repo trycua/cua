@@ -60,9 +60,16 @@ cd "$CUA_DRIVER_DIR"
 mkdir -p .release
 log "normal" "Ensuring .release directory exists and is accessible"
 
-# Build the release version
-log "essential" "Building release version..."
-swift build -c release --product cua-driver > /dev/null
+# Build or use a prebuilt binary (e.g. a pre-lipo'd universal binary from CI).
+# Set CUA_DRIVER_PREBUILT_BINARY to an absolute path to skip swift build entirely.
+if [ -n "${CUA_DRIVER_PREBUILT_BINARY:-}" ]; then
+    log "essential" "Using prebuilt binary: $CUA_DRIVER_PREBUILT_BINARY"
+    BUILT_BINARY="$CUA_DRIVER_PREBUILT_BINARY"
+else
+    log "essential" "Building release version..."
+    swift build -c release --product cua-driver > /dev/null
+    BUILT_BINARY=".build/release/cua-driver"
+fi
 
 # --- Assemble .app bundle ---
 log "essential" "Assembling .app bundle..."
@@ -73,7 +80,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy the binary into the bundle
-cp -f .build/release/cua-driver "$APP_BUNDLE/Contents/MacOS/cua-driver"
+cp -f "$BUILT_BINARY" "$APP_BUNDLE/Contents/MacOS/cua-driver"
 
 # Stamp and copy Info.plist — the source plist ships with a static
 # `CFBundleShortVersionString` for dev builds; substitute the release

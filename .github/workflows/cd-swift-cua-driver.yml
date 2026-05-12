@@ -177,28 +177,22 @@ jobs:
           lipo -create "$ARM64_BIN" "$X86_BIN" -output .build/cua-driver-universal
           lipo -info .build/cua-driver-universal
 
-          # The notarization script builds from source; we'll inject the
-          # universal binary into the .app after the script runs.
-          # First, run the script to get the signed .app structure.
+          # Pass the universal binary to the notarization script so it is
+          # embedded in the .app (and therefore the tarballs) from the start.
+          # Without this the script rebuilds arm64-only from source, packages
+          # it into the tarball, and the post-hoc binary swap comes too late.
+          export CUA_DRIVER_PREBUILT_BINARY="$(pwd)/.build/cua-driver-universal"
+
           chmod +x scripts/build/build-release-notarized.sh
           cd scripts/build
           LOG_LEVEL=minimal ./build-release-notarized.sh
           # Return from libs/cua-driver/scripts/build back to libs/cua-driver
           cd ../..
 
-          # Replace the single-arch binary inside the .app with the universal one.
+          echo "Verifying universal binary in packaged .app..."
           APP_BINARY=".release/CuaDriver.app/Contents/MacOS/cua-driver"
           if [ -f "$APP_BINARY" ]; then
-            cp .build/cua-driver-universal "$APP_BINARY"
-            # Re-sign the binary (the .app is already signed; we need to
-            # re-sign just the binary slice we replaced).
-            codesign --force --sign "$CERT_APPLICATION_NAME" \
-              --options runtime \
-              --entitlements scripts/build/entitlements.plist \
-              "$APP_BINARY" || true
-            echo "Universal binary injected and re-signed."
-          else
-            echo "Warning: app binary not found at $APP_BINARY — using architecture-specific release."
+            lipo -info "$APP_BINARY"
           fi
 
           echo "Files in .release directory:"

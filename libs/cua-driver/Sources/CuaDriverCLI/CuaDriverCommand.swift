@@ -24,6 +24,7 @@ struct CuaDriverCommand: AsyncParsableCommand {
             UpdateCommand.self,
             DiagnoseCommand.self,
             DoctorCommand.self,
+            CleanupCommand.self,
             DumpDocsCommand.self,
         ]
     )
@@ -509,7 +510,7 @@ struct UpdateCommand: AsyncParsableCommand {
     }
 }
 
-/// `cua-driver doctor` — clean up stale install bits left from older versions.
+/// `cua-driver cleanup` — clean up stale install bits left from older versions.
 ///
 /// v0.0.5 and earlier installed a weekly LaunchAgent at
 /// `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` and a companion
@@ -521,9 +522,9 @@ struct UpdateCommand: AsyncParsableCommand {
 /// update script. The plist lives under `$HOME` (no sudo). The companion
 /// script under `/usr/local/bin` is root-owned, so we print the exact
 /// `sudo rm` command for the user to run if it still exists.
-struct DoctorCommand: ParsableCommand {
+struct CleanupCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "doctor",
+        commandName: "cleanup",
         abstract: "Clean up stale install bits left from older cua-driver versions."
     )
 

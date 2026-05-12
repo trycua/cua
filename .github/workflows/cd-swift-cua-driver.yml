@@ -35,27 +35,38 @@ on:
 permissions:
   contents: write
 
-env:
-  APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
-  INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
-  CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
-  APPLE_ID: ${{ secrets.APPLE_ID }}
-  TEAM_ID: ${{ secrets.TEAM_ID }}
-  APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-  DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
-
 jobs:
-  notarize:
-    runs-on: macos-15
+  # Build and notarize for each supported architecture.
+  # macos-15 is arm64 (Apple Silicon); macos-13 is x86_64 (Intel).
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            xcode: /Applications/Xcode_16.3.app
+          - runner: macos-13
+            arch: x86_64
+            xcode: /Applications/Xcode_15.4.app
+    runs-on: ${{ matrix.runner }}
     outputs:
-      sha256_checksums: ${{ steps.generate_checksums.outputs.checksums }}
       version: ${{ steps.set_version.outputs.version }}
+      sha256_checksums: ${{ steps.generate_checksums.outputs.checksums }}
+    env:
+      APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+      INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
+      CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      TEAM_ID: ${{ secrets.TEAM_ID }}
+      APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+      DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 16.3
+      - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.3.app
+          sudo xcode-select -s ${{ matrix.xcode }}
           xcodebuild -version
 
       - name: Install dependencies
@@ -63,59 +74,43 @@ jobs:
           brew install cpio
 
       - name: Create .release directory
-        run: mkdir -p .release
+        run: mkdir -p libs/cua-driver/.release
 
       - name: Set version
         id: set_version
         run: |
-          # Determine version from tag or input
           if [[ "$GITHUB_REF" == refs/tags/cua-driver-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-v}"
             echo "Using version from tag: $VERSION"
           elif [[ -n "${{ inputs.version }}" ]]; then
             VERSION="${{ inputs.version }}"
             echo "Using version from input: $VERSION"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
-            echo "Using version from workflow_call input: $VERSION"
           else
             echo "Error: No version found in tag or input"
             exit 1
           fi
 
           # Update version in CuaDriverCore.swift (powers `cua-driver --version`)
-          echo "Updating version in CuaDriverCore.swift to $VERSION"
           sed -i '' "s/public static let version = \".*\"/public static let version = \"$VERSION\"/" libs/cua-driver/Sources/CuaDriverCore/CuaDriverCore.swift
 
-          # Set output for later steps
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Import Certificates
         env:
-          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
-          INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
           KEYCHAIN_PASSWORD: "temp_password"
         run: |
-          # Create a temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -l build.keychain
 
-          # Import certificates
           echo $APPLICATION_CERT_BASE64 | base64 --decode > application.p12
           echo $INSTALLER_CERT_BASE64 | base64 --decode > installer.p12
 
-          # Import certificates silently (minimize output)
           security import application.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/pkgbuild > /dev/null 2>&1
           security import installer.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/pkgbuild > /dev/null 2>&1
-
-          # Allow codesign to access the certificates (minimal output)
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain > /dev/null 2>&1
 
-          # Verify certificates were imported
-          echo "Verifying signing identities..."
           CERT_COUNT=$(security find-identity -v -p codesigning build.keychain | grep -c "Developer ID Application" || echo "0")
           INSTALLER_COUNT=$(security find-identity -v build.keychain | grep -c "Developer ID Installer" || echo "0")
 
@@ -132,54 +127,33 @@ jobs:
           fi
 
           echo "Found $CERT_COUNT Developer ID Application certificate(s) and $INSTALLER_COUNT Developer ID Installer certificate(s)"
-          echo "All required certificates verified successfully"
-
-          # Clean up certificate files
           rm application.p12 installer.p12
 
       - name: Build and Notarize
         id: build_notarize
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          TEAM_ID: ${{ secrets.TEAM_ID }}
-          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-          # These will now reference the imported certificates
           CERT_APPLICATION_NAME: "Developer ID Application: ${{ secrets.DEVELOPER_NAME }} (${{ secrets.TEAM_ID }})"
           CERT_INSTALLER_NAME: "Developer ID Installer: ${{ secrets.DEVELOPER_NAME }} (${{ secrets.TEAM_ID }})"
           VERSION: ${{ steps.set_version.outputs.version }}
         working-directory: ./libs/cua-driver
         run: |
-          # Minimal debug information
-          echo "Starting build process..."
-          echo "Swift version: $(swift --version | head -n 1)"
-          echo "Building version: $VERSION"
-
-          # Ensure .release directory exists
+          echo "Building version: $VERSION for ${{ matrix.arch }}"
           mkdir -p .release
           chmod 755 .release
 
-          # Build the project first (redirect verbose output)
-          echo "Building project..."
           swift build --configuration release > build.log 2>&1
           echo "Build completed."
 
-          # Run the notarization script with LOG_LEVEL env var
           chmod +x scripts/build/build-release-notarized.sh
           cd scripts/build
           LOG_LEVEL=minimal ./build-release-notarized.sh
-
-          # Return to the cua-driver directory
           cd ../..
 
-          # Debug: List what files were actually created
           echo "Files in .release directory:"
           find .release -type f -name "*.tar.gz" -o -name "*.pkg.tar.gz"
 
-          # Get architecture for output filename
           ARCH=$(uname -m)
           OS_IDENTIFIER="darwin-${ARCH}"
-
-          # Output paths for later use
           echo "tarball_path=.release/cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" >> $GITHUB_OUTPUT
           echo "pkg_path=.release/cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" >> $GITHUB_OUTPUT
 
@@ -187,7 +161,7 @@ jobs:
         if: failure() && steps.build_notarize.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: swift-build-log
+          name: swift-build-log-${{ matrix.arch }}
           path: ./libs/cua-driver/build.log
           retention-days: 7
 
@@ -195,9 +169,7 @@ jobs:
         id: generate_checksums
         working-directory: ./libs/cua-driver/.release
         run: |
-          # Use existing checksums file if it exists, otherwise generate one
           if [ -f "checksums.txt" ]; then
-            echo "Using existing checksums file"
             cat checksums.txt
           else
             echo "## SHA256 Checksums" > checksums.txt
@@ -211,27 +183,7 @@ jobs:
           echo "$checksums" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # Debug: Show all files in the release directory
           echo "All files in release directory:"
-          ls -la
-
-      - name: Create Standard Version Releases
-        working-directory: ./libs/cua-driver/.release
-        run: |
-          VERSION=${{ steps.set_version.outputs.version }}
-          ARCH=$(uname -m)
-          OS_IDENTIFIER="darwin-${ARCH}"
-
-          # Create OS-tagged symlinks
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" "cua-driver-darwin.tar.gz"
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" "cua-driver-darwin.pkg.tar.gz"
-
-          # Create simple symlinks
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" "cua-driver.tar.gz"
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" "cua-driver.pkg.tar.gz"
-
-          # List all files (including symlinks)
-          echo "Files with symlinks in release directory:"
           ls -la
 
       - name: Package bare binary
@@ -241,54 +193,76 @@ jobs:
           ARCH=$(uname -m)
           OS_IDENTIFIER="darwin-${ARCH}"
 
-          # The bare binary is already signed (it lives inside the signed .app).
-          # Re-extract it and package it for embedders who build their own bundle.
           BINARY="CuaDriver.app/Contents/MacOS/cua-driver"
           if [ -f "$BINARY" ]; then
             tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" -C "CuaDriver.app/Contents/MacOS" cua-driver
-            ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" "cua-driver-binary.tar.gz"
             echo "Bare binary packaged."
           else
             echo "Warning: binary not found at $BINARY"
           fi
 
-      - name: Upload Notarized Package (Tarball)
+      - name: Upload Notarized Tarball
         uses: actions/upload-artifact@v4
         with:
-          name: cua-driver-notarized-tarball
+          name: cua-driver-notarized-tarball-${{ matrix.arch }}
           path: ./libs/cua-driver/${{ steps.build_notarize.outputs.tarball_path }}
           if-no-files-found: error
 
-      - name: Upload Notarized Package (Installer)
+      - name: Upload Notarized Installer
         uses: actions/upload-artifact@v4
         with:
-          name: cua-driver-notarized-installer
+          name: cua-driver-notarized-installer-${{ matrix.arch }}
           path: ./libs/cua-driver/${{ steps.build_notarize.outputs.pkg_path }}
           if-no-files-found: error
 
       - name: Upload Bare Binary
         uses: actions/upload-artifact@v4
         with:
-          name: cua-driver-bare-binary
+          name: cua-driver-bare-binary-${{ matrix.arch }}
           path: ./libs/cua-driver/.release/cua-driver-*-binary.tar.gz
           if-no-files-found: warn
 
+  # Create the GitHub release once both arch builds have succeeded.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/cua-driver-v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cua-driver-notarized-*
+          path: ./release-assets
+          merge-multiple: false
+
+      - name: Download bare binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cua-driver-bare-binary-*
+          path: ./release-assets-binary
+          merge-multiple: false
+
+      - name: List downloaded assets
+        run: find ./release-assets ./release-assets-binary -type f | sort
+
       - name: Generate path-filtered release notes
-        if: startsWith(github.ref, 'refs/tags/cua-driver-v')
         id: release-notes
         run: |
-          # Find previous cua-driver tag
           PREV_TAG=$(git tag -l "cua-driver-v*" --sort=-v:refname | grep -v "^${{ github.ref_name }}$" | head -n 1 || echo "")
 
           echo "Current tag: ${{ github.ref_name }}"
           echo "Previous tag: $PREV_TAG"
 
-          # Generate release notes filtered by libs/cua-driver path
           if [ -n "$PREV_TAG" ]; then
-            echo "Generating notes for commits between $PREV_TAG and HEAD in libs/cua-driver"
             NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver" | head -50)
           else
-            echo "No previous tag found, generating notes for recent commits in libs/cua-driver"
             NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver" | head -50)
           fi
 
@@ -296,29 +270,36 @@ jobs:
             NOTES="* Initial release or no path-specific changes found"
           fi
 
-          # Store notes in output
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
           echo "## What's Changed" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Generate combined checksums
+        id: checksums
+        run: |
+          echo "## SHA256 Checksums" > combined_checksums.txt
+          echo '```' >> combined_checksums.txt
+          find ./release-assets -name "*.tar.gz" -exec shasum -a 256 {} \; | sed 's|./release-assets[^/]*/||' >> combined_checksums.txt
+          echo '```' >> combined_checksums.txt
+          cat combined_checksums.txt
+
+          checksums=$(cat combined_checksums.txt)
+          echo "checksums<<EOF" >> $GITHUB_OUTPUT
+          echo "$checksums" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/cua-driver-v')
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ./libs/cua-driver/${{ steps.build_notarize.outputs.tarball_path }}
-            ./libs/cua-driver/${{ steps.build_notarize.outputs.pkg_path }}
-            ./libs/cua-driver/.release/cua-driver-darwin.tar.gz
-            ./libs/cua-driver/.release/cua-driver-darwin.pkg.tar.gz
-            ./libs/cua-driver/.release/cua-driver.tar.gz
-            ./libs/cua-driver/.release/cua-driver.pkg.tar.gz
-            ./libs/cua-driver/.release/cua-driver-binary.tar.gz
+            ./release-assets/**/*.tar.gz
+            ./release-assets-binary/**/*.tar.gz
           body: |
             ${{ steps.release-notes.outputs.RELEASE_NOTES }}
 
-            ${{ steps.generate_checksums.outputs.checksums }}
+            ${{ steps.checksums.outputs.checksums }}
 
             ### Installation with script
 

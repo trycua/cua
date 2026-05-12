@@ -322,6 +322,10 @@ Requires Accessibility and Screen Recording permissions.
 
 **Arguments:**
 
+<Callout type="info">
+  **Sticky (pid, window_id) context.** Each `get_window_state(pid, window_id)` call refreshes the element-index cache for that specific window. All element-indexed actions (`click`, `type_text`, `scroll`, etc.) in the same turn resolve against the *most recent snapshot for that (pid, window_id) pair* — indices from a different window or an older snapshot are stale. Always re-call `get_window_state` after any action that might shift focus to a different window or app, and always pass the same `(pid, window_id)` you intend to act against.
+</Callout>
+
 - `javascript` (string, optional): Optional JavaScript to execute in the browser tab and return alongside the AX snapshot — one round-trip instead of two. Only works for Chromium-family browsers (Chrome, Brave, Edge) and Safari; requires 'Allow JavaScript from Apple Events' to be enabled first (see WEB_APPS.md). The result is appended to the response as a `## JavaScript result` section. Use for read-only queries (document.title, innerText, querySelectorAll, etc.). For mutations or side effects use the `page` tool instead.
 - `pid` (integer, required): Process ID from `list_apps`.
 - `query` (string, optional): Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged.
@@ -432,6 +436,14 @@ empty — call `list_windows(pid)` explicitly a moment
 later to resolve a target.
 
 **Arguments:**
+
+<Callout type="warn">
+  **Browsers require at least one URL.** Launching Safari, Chrome, Firefox, Arc, Brave, or Edge without a `urls` argument starts the process but no window is ever created — subsequent `get_window_state`, `click`, and `screenshot` calls will fail with "no window found." Always pass `urls=["about:blank"]` for a blank window, or a real URL to open.
+
+  ```json
+  {"bundle_id": "com.apple.Safari", "urls": ["about:blank"]}
+  ```
+</Callout>
 
 - `additional_arguments` (array of string, optional): Extra command-line arguments passed to the launched process. Passed directly as argv entries — no shell expansion. Example: ["--user-data-dir=/tmp/cua-session", "--no-first-run"] for an isolated Chrome session.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator.

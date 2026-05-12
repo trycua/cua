@@ -105,6 +105,25 @@ public enum ListWindowsTool {
                     return info.pid == pid
                 }
 
+            // When a pid filter was specified but no windows matched, surface
+            // a loud warning so the caller knows the pid is wrong or the app
+            // has no windows yet — rather than silently returning an empty list.
+            if let pidFilter, windows.isEmpty {
+                let frontmost = WindowEnumerator.allWindows()
+                    .filter { $0.layer == 0 && $0.isOnScreen }
+                    .max(by: { $0.zIndex < $1.zIndex })
+                var warning =
+                    "⚠️ No windows found for pid \(pidFilter). "
+                    + "The pid may be wrong or the app may not have created a window yet."
+                if let front = frontmost {
+                    warning +=
+                        " The current frontmost app appears to be \"\(front.owner)\" (pid \(front.pid))."
+                }
+                return CallTool.Result(
+                    content: [.text(text: warning, annotations: nil, _meta: nil)]
+                )
+            }
+
             let currentSpaceID = SpaceMigrator.currentSpaceID()
             let records = windows.map { info -> Row in
                 let spaceIDs = SpaceMigrator.spaceIDs(forWindowID: UInt32(info.id))

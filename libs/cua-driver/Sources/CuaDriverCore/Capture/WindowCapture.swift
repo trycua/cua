@@ -33,6 +33,13 @@ public enum CaptureError: Error, Sendable, CustomStringConvertible {
     case encodeFailed
     case captureFailed(String)
     case windowNotFound(UInt32)
+    /// ScreenCaptureKit could not start streaming for this window. Distinct
+    /// from `captureFailed` so callers (e.g. `get_window_state`) can surface
+    /// an actionable hint — switch to `capture_mode: ax`, retry against a
+    /// different window — without having to grep error strings. Seen
+    /// regularly on macOS 26.4.x physical Macs against specific windows
+    /// where even `screencapture -l<id>` fails (rdar / openclaw/Peekaboo#121).
+    case streamingFailed(String)
 
     public var description: String {
         switch self {
@@ -41,6 +48,7 @@ public enum CaptureError: Error, Sendable, CustomStringConvertible {
         case .encodeFailed: return "failed to encode CGImage"
         case .captureFailed(let msg): return "capture failed: \(msg)"
         case .windowNotFound(let id): return "no shareable window with id \(id)"
+        case .streamingFailed(let msg): return "ScreenCaptureKit streaming failed: \(msg)"
         }
     }
 }
@@ -131,12 +139,43 @@ public actor WindowCapture {
         config.height = max(1, Int(window.frame.height * scale))
         config.showsCursor = false
 
+        // One-shot SCK call with a single retry on streaming-start failure.
+        // macOS 26.4.x has a regression where `SCScreenshotManager.captureImage`
+        // intermittently returns "Could not start streaming because audio/video
+        // capture failed" (SCStreamError code -3801) on physical Macs, often
+        // recovering on a second attempt a moment later. We retry once with a
+        // brief back-off; if it still fails, we surface `.streamingFailed` so
+        // the tool layer can hint the caller toward `capture_mode: ax` for
+        // `get_window_state` workflows.
         let cgImage: CGImage
         do {
-            cgImage = try await SCScreenshotManager.captureImage(
-                contentFilter: filter,
-                configuration: config
-            )
+            cgImage = try await captureSCKWithRetry(filter: filter, config: config)
+        } catch let error as CaptureError {
+            // Already classified — re-throw without wrapping. CGWindowList
+            // is intentionally NOT tried for permission errors (it'd just
+            // fail the same way and confuse the user-facing message).
+            if case .permissionDenied = error { throw error }
+            // For streaming / generic SCK failures, try the legacy
+            // CGWindowListCreateImage path. It's deprecated on macOS 15+
+            // but still works in many cases where SCK refuses — particularly
+            // useful as a last-ditch fallback for the 26.4 SCK regression.
+            if let fallback = legacyCaptureWindow(windowID: windowID) {
+                let origW = fallback.width
+                let origH = fallback.height
+                let resized = resizeIfNeeded(fallback, maxDim: maxImageDimension)
+                let didResize = resized.width != origW || resized.height != origH
+                let data = try encode(resized, format: format, quality: quality)
+                return Screenshot(
+                    imageData: data,
+                    format: format,
+                    width: resized.width,
+                    height: resized.height,
+                    scaleFactor: Double(scale),
+                    originalWidth: didResize ? origW : nil,
+                    originalHeight: didResize ? origH : nil
+                )
+            }
+            throw error
         } catch {
             throw classify(error)
         }
@@ -207,15 +246,119 @@ public actor WindowCapture {
         return (best ?? NSScreen.main)?.backingScaleFactor ?? 1.0
     }
 
+    /// Attempt `SCScreenshotManager.captureImage` once; on a streaming-start
+    /// failure, wait briefly and retry once more. Returns a classified
+    /// `CaptureError` on persistent failure so the caller can branch on the
+    /// kind (permission vs. streaming vs. generic) without string-matching.
+    ///
+    /// The retry covers the macOS 26.4.x SCK regression where the very first
+    /// call after the SCK daemon has been idle returns -3801 ("Could not
+    /// start streaming because audio/video capture failed") but a second
+    /// call ~250ms later succeeds. A second failure isn't transient and we
+    /// stop retrying — the caller falls back to CGWindowList or surfaces
+    /// the error.
+    private func captureSCKWithRetry(
+        filter: SCContentFilter,
+        config: SCStreamConfiguration
+    ) async throws -> CGImage {
+        do {
+            return try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+        } catch {
+            let classified = classify(error)
+            // Only retry on streaming-start failures; permission errors and
+            // not-found errors won't change on a second attempt.
+            guard case .streamingFailed = classified else { throw classified }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            do {
+                return try await SCScreenshotManager.captureImage(
+                    contentFilter: filter,
+                    configuration: config
+                )
+            } catch {
+                throw classify(error)
+            }
+        }
+    }
+
+    /// Legacy `CGWindowListCreateImage` fallback for the SCK 26.4 regression.
+    /// Deprecated by Apple in macOS 15 but still functional on most windows,
+    /// and frequently works where SCK refuses. Returns nil on failure — the
+    /// caller surfaces the original SCK error in that case so the user knows
+    /// the real cause.
+    ///
+    /// Marked with `@available(*, deprecated)` suppression because the API
+    /// is the entire point: we *want* the legacy path here.
+    private func legacyCaptureWindow(windowID: UInt32) -> CGImage? {
+        // CGWindowListCreateImage is deprecated on macOS 15+. The deprecation
+        // diagnostic is silenced with the @available pragma. Apple has not
+        // (yet) removed the symbol, and this path is the only practical
+        // fallback when SCK's streaming-start is broken for a given window.
+        let opts: CGWindowImageOption = [.boundsIgnoreFraming, .bestResolution]
+        let listOption: CGWindowListOption = .optionIncludingWindow
+        // Wrap the deprecated call so we keep the unsafePointer-style
+        // signature out of the rest of the code.
+        let image = legacyCGWindowImage(
+            windowID: windowID, listOption: listOption, imageOption: opts
+        )
+        // Reject 1×1 placeholder images that the legacy API sometimes returns
+        // for occluded / off-screen windows — they're worse than no image.
+        guard let image, image.width > 1, image.height > 1 else { return nil }
+        return image
+    }
+
     private func classify(_ error: Error) -> CaptureError {
         let ns = error as NSError
         let msg = ns.localizedDescription.lowercased()
+
+        // Permission failure — English and Japanese phrasings observed in
+        // SCK's `NSError.localizedDescription`. The Japanese strings cover
+        // users on JP system locale where the SCK error comes back
+        // localized rather than in English.
         if msg.contains("permission") || msg.contains("not authorized")
             || msg.contains("declined") || msg.contains("denied")
+            || ns.localizedDescription.contains("許可")     // "permission"
+            || ns.localizedDescription.contains("拒否")     // "denied"
         {
             return .permissionDenied
         }
+
+        // SCStreamError "could not start streaming" — code -3801 in
+        // `SCStreamErrorDomain`. macOS localizes the message ("Could not
+        // start streaming because audio/video capture failed" / Japanese:
+        // "オーディオ/ビデオの取り込みがうまくいかなかったため、ストリーミングを開始できませんでした"),
+        // so we match on code first and fall through to substring matching
+        // for the rare case where the domain isn't surfaced.
+        let isSCStreamDomain = ns.domain == "SCStreamErrorDomain"
+            || ns.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
+        if (isSCStreamDomain && ns.code == -3801)
+            || msg.contains("could not start streaming")
+            || msg.contains("streaming")
+            || ns.localizedDescription.contains("ストリーミング")  // "streaming"
+        {
+            return .streamingFailed(ns.localizedDescription)
+        }
+
         return .captureFailed(ns.localizedDescription)
+    }
+
+    /// Thin shim around the deprecated `CGWindowListCreateImage` so the
+    /// deprecation-warning suppression is isolated to one place. Returns nil
+    /// if the legacy path also refuses to produce an image.
+    ///
+    /// Marking the wrapper itself deprecated downgrades the call-site
+    /// warning to a no-op — we *want* this legacy path because SCK has a
+    /// well-known regression on macOS 26.4.x where streaming-start fails
+    /// for specific windows on physical Macs.
+    @available(*, deprecated, message: "Intentional fallback for SCK streaming-start failures.")
+    private func legacyCGWindowImage(
+        windowID: UInt32,
+        listOption: CGWindowListOption,
+        imageOption: CGWindowImageOption
+    ) -> CGImage? {
+        CGWindowListCreateImage(.null, listOption, windowID, imageOption)
     }
 
     /// Capture the topmost layer-0 window owned by `pid`, or `nil` when the

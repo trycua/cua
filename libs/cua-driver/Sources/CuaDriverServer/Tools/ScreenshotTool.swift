@@ -18,6 +18,14 @@ public enum ScreenshotTool {
 
                 Requires the Screen Recording TCC grant — call `check_permissions`
                 first if unsure.
+
+                On macOS 26.4.x, ScreenCaptureKit can refuse specific windows on
+                physical Macs (SCStreamError -3801, "Could not start streaming").
+                The driver retries once and falls back to the legacy
+                CGWindowList path before failing; if both refuse, the error
+                response includes a hint to try a different `window_id` or
+                switch to `capture_mode: ax` for `get_window_state` (the
+                element-indexed flow doesn't need pixels).
                 """,
             inputSchema: [
                 "type": "object",
@@ -105,6 +113,38 @@ public enum ScreenshotTool {
                                 `check_permissions` with {"prompt": true} to request it, \
                                 then allow cua-driver in System Settings → Privacy & \
                                 Security → Screen Recording.
+                                """,
+                            annotations: nil,
+                            _meta: nil
+                        )
+                    ],
+                    isError: true
+                )
+            } catch CaptureError.streamingFailed(let msg) {
+                // SCK streaming-start regression on macOS 26.4.x — the
+                // legacy CGWindowList fallback also refused this specific
+                // window. There's nothing we can do at the pixel layer;
+                // surface an actionable hint pointing at `get_window_state`
+                // (which can fall back to AX-only via `capture_mode: ax`)
+                // or trying a different window.
+                return CallTool.Result(
+                    content: [
+                        .text(
+                            text: """
+                                ScreenCaptureKit refused this window: \(msg)
+
+                                This is a known macOS 26.4.x SCK regression that hits \
+                                specific windows on physical Macs. The legacy \
+                                CGWindowList fallback also returned no image.
+
+                                Workarounds:
+                                  • Try a different `window_id` on the same app — \
+                                often only one window is affected.
+                                  • For element-indexed clicks, switch to AX-only: \
+                                `cua-driver config set capture_mode ax` and use \
+                                `get_window_state` (no screenshot, AX tree only).
+                                  • Re-snapshot a moment later — the failure is \
+                                sometimes transient.
                                 """,
                             annotations: nil,
                             _meta: nil

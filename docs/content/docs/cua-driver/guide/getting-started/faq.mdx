@@ -36,6 +36,28 @@ open -n -g -a CuaDriver --args serve
 
 The window capture raced against a close, or the window has no backing store yet. Re-snapshot. If it persists, pick a different `window_id` via `list_windows`.
 
+### `screenshot` or `get_window_state` fails with "ScreenCaptureKit refused this window" / "Could not start streaming".
+
+Known macOS 26.4.x ScreenCaptureKit regression on physical Macs (`SCStreamError` code -3801, sometimes localized — e.g. Japanese "オーディオ/ビデオの取り込みがうまくいかなかったため、ストリーミングを開始できませんでした"). The driver already:
+
+1. Retries the SCK call once after a brief delay (covers transient failures).
+2. Falls back to the legacy `CGWindowListCreateImage` path (works on many windows the SCK regression breaks).
+
+If both refuse, the error surfaces with an actionable hint. Workarounds in order of preference:
+
+1. **Try a different `window_id` on the same app.** Usually only one specific window is hit.
+2. **Switch to AX-only capture for that workflow.** Element-indexed clicks don't need pixels:
+
+   ```bash
+   cua-driver config set capture_mode ax
+   ```
+
+   `get_window_state` then returns the AX tree without attempting a screenshot, and `click({pid, window_id, element_index: N})` works as before.
+
+3. **Re-snapshot a moment later.** The failure is sometimes transient.
+
+`get_window_state` does **not** hard-fail on this error: the AX tree still ships in the response with a warning line, so element-indexed clicks keep working even when the screenshot is unavailable. The standalone `screenshot` tool does hard-fail (no AX tree to fall back to).
+
 ### The AX tree is tiny. What's happening?
 
 Check the capture mode:

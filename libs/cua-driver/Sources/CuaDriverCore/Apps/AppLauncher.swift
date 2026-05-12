@@ -228,6 +228,8 @@ public enum AppLauncher {
             throw LaunchError.notFound("bundle_id '\(bundleId)'")
         }
         if let name, !name.isEmpty {
+            // Pass 1 — filesystem lookup by bundle filename (fastest; locale-independent
+            // for English app names whose on-disk bundle name matches the display name).
             let appName = name.hasSuffix(".app") ? name : "\(name).app"
             // System roots first — they're canonical. User-local paths come
             // after so an app present in /Applications wins over a same-name
@@ -250,6 +252,62 @@ public enum AppLauncher {
                     return URL(fileURLWithPath: path)
                 }
             }
+
+            // Pass 2 — LaunchServices bundle-ID lookup, in case the caller
+            // passed a bundle identifier string as `name` rather than using
+            // the `bundle_id` parameter (e.g. "com.apple.calculator").
+            if let url = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: name)
+            {
+                return url
+            }
+
+            // Pass 3 — scan all candidate directories and match against each
+            // bundle's metadata, in priority order:
+            //   a) localizedName from NSRunningApplication (locale-aware; works
+            //      on non-English systems, e.g. "計算機" on JP macOS)
+            //   b) CFBundleDisplayName / CFBundleName (English; from Info.plist)
+            //   c) bundle URL stem (filename minus .app)
+            //
+            // Matching is case-insensitive throughout so "calculator" and
+            // "Calculator" both resolve.
+            let needle = name.lowercased()
+
+            // Check running apps first — NSRunningApplication.localizedName
+            // gives the OS-locale display name without touching the disk.
+            for app in NSWorkspace.shared.runningApplications {
+                guard let url = app.bundleURL else { continue }
+                if (app.localizedName?.lowercased() == needle) {
+                    return url
+                }
+            }
+
+            // Fall back to scanning installed bundles in the same roots.
+            let fm = FileManager.default
+            for root in roots {
+                guard let children = try? fm.contentsOfDirectory(atPath: root)
+                else { continue }
+                for child in children where child.hasSuffix(".app") {
+                    let path = "\(root)/\(child)"
+                    guard let bundle = Bundle(path: path) else { continue }
+                    // CFBundleDisplayName > CFBundleName > stem
+                    let displayName =
+                        (bundle.infoDictionary?["CFBundleDisplayName"] as? String)
+                        ?? (bundle.infoDictionary?["CFBundleName"] as? String)
+                        ?? URL(fileURLWithPath: path)
+                            .deletingPathExtension().lastPathComponent
+                    if displayName.lowercased() == needle {
+                        return URL(fileURLWithPath: path)
+                    }
+                    // Also match against the raw stem ("Calculator" → "Calculator.app")
+                    let stem = URL(fileURLWithPath: path)
+                        .deletingPathExtension().lastPathComponent
+                    if stem.lowercased() == needle {
+                        return URL(fileURLWithPath: path)
+                    }
+                }
+            }
+
             throw LaunchError.notFound("name '\(name)'")
         }
         throw LaunchError.nothingSpecified

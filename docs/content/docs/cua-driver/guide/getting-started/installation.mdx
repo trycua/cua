@@ -155,6 +155,17 @@ cua-driver mcp-config | pbcopy
 
 The client spawns `cua-driver mcp` on demand once registered.
 
+<Callout type="info">
+  **TCC auto-delegation.** When MCP clients spawn `cua-driver mcp` from an IDE terminal (Claude Code,
+  Cursor, VS Code, Warp), macOS attributes the subprocess to the terminal — not `CuaDriver.app` — so
+  AX probes would silently fail against the wrong bundle id. `mcp` detects this and auto-launches a
+  `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call
+  through the daemon's Unix socket. The client sees an ordinary stdio MCP server; the daemon runs
+  under LaunchServices with the right TCC context. No Python bridge, no manual `serve` step required.
+  Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to opt out, e.g. when MCP is
+  launched from CuaDriver.app directly and already has the right TCC grants.
+</Callout>
+
 ## Agent skills (auto-wired)
 
 The bundle ships an Anthropic-format SKILL.md pack at `/Applications/CuaDriver.app/Contents/Resources/Skills/cua-driver/`. The installer detects the agents you have and creates symlinks pointing them at the bundle so the skill auto-loads:

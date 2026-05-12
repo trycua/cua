@@ -145,6 +145,10 @@ open -n -g -a CuaDriver --args serve
 cua-driver check_permissions   # forwards to the daemon — authoritative answer
 ```
 
+### `cua-driver mcp` from an IDE terminal can't see Accessibility.
+
+This is the same TCC-attribution issue as the previous question, applied to the stdio MCP server. `cua-driver mcp` detects it and auto-launches the daemon via `open -n -g -a CuaDriver --args serve`, then proxies every MCP tool call through the daemon's Unix socket. From the MCP client's perspective nothing changes — the same stdio server, the same tool names, the same response shapes — but every AX probe now hits a process that LaunchServices attributed to `CuaDriver.app`. No Python bridge needed. Force the in-process path with `--no-daemon-relaunch` (or `CUA_DRIVER_MCP_NO_RELAUNCH=1`) if you really want it, e.g. when `mcp` is launched from `CuaDriver.app` directly.
+
 ### I keep seeing the permissions dialog on every launch.
 
 macOS is attributing the process to a different bundle id than the one you granted. Run `cua-driver diagnose` and share the output when filing an issue. It reports cdhash, team id, and which bundle TCC matched against.

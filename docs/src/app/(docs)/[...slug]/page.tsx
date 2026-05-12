@@ -4,7 +4,7 @@ import { buttonVariants } from 'fumadocs-ui/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from 'fumadocs-ui/components/ui/popover';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/page';
-import { cn } from 'fumadocs-ui/utils/cn';
+import { cn } from '@/lib/cn';
 import { ChevronDown, ExternalLink } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';

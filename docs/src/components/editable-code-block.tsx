@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import * as Base from 'fumadocs-ui/components/codeblock';
-import { cn } from 'fumadocs-ui/utils/cn';
+import { cn } from '@/lib/cn';
 
 /**
  * Context for managing editable values within code blocks

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { cn } from 'fumadocs-ui/utils/cn';
+import { cn } from '@/lib/cn';
 
 const tabs = [
   { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },

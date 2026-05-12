@@ -1,4 +1,5 @@
 import { defineConfig, defineDocs, frontmatterSchema, metaSchema } from 'fumadocs-mdx/config';
+import lastModified from 'fumadocs-mdx/plugins/last-modified';
 import { z } from 'zod';
 
 // Extended frontmatter schema
@@ -23,7 +24,7 @@ export const docs = defineDocs({
 });
 
 export default defineConfig({
-  lastModifiedTime: 'git',
+  plugins: [lastModified()],
   mdxOptions: {
     // MDX options
   },

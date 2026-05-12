@@ -1,5 +1,5 @@
 import './global.css';
-import { RootProvider } from 'fumadocs-ui/provider';
+import { RootProvider } from 'fumadocs-ui/provider/next';
 import { Geist, Geist_Mono, Urbanist } from 'next/font/google';
 import type { ReactNode } from 'react';
 import { PHProvider, PostHogPageView } from '@/providers/posthog-provider';

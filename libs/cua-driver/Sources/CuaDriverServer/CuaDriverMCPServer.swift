@@ -50,7 +50,7 @@ public enum CuaDriverMCPServer {
         version: String = CuaDriverCore.version,
         socketPath: String,
         claudeCodeComputerUseCompat: Bool = false
-    ) async -> Server {
+    ) async throws -> Server {
         let server = Server(
             name: serverName,
             version: version,
@@ -60,7 +60,10 @@ public enum CuaDriverMCPServer {
         // Cache the tool list once at startup. Daemon registries are
         // static — every connected client sees the same handlers — so a
         // single fetch is enough for the life of the stdio MCP session.
-        let cachedToolList = await fetchProxyToolList(
+        // Fail fast on a missing/unhealthy daemon so the MCP client sees
+        // a clear startup error instead of a "successful" handshake that
+        // advertises zero tools and then errors on every `CallTool`.
+        let cachedToolList = try await fetchProxyToolList(
             socketPath: socketPath,
             claudeCodeComputerUseCompat: claudeCodeComputerUseCompat
         )
@@ -114,21 +117,36 @@ public enum CuaDriverMCPServer {
     }
 
     /// One-shot daemon `list` over the UDS, with the compat-mode rename
-    /// applied client-side. Falls back to an empty list if the daemon
-    /// is unreachable at startup — the same `CallTool` requests will
-    /// surface the connection error per-call, which the MCP client can
-    /// then translate into a user-visible failure.
+    /// applied client-side. Throws a descriptive `MCPError.internalError`
+    /// if the daemon is unreachable, transport-failed, or returned an
+    /// unexpected envelope — surfacing the failure during `makeProxy`'s
+    /// init rather than producing a proxy that advertises zero tools and
+    /// errors on every subsequent `CallTool`.
     private static func fetchProxyToolList(
         socketPath: String,
         claudeCodeComputerUseCompat: Bool
-    ) async -> [Tool] {
+    ) async throws -> [Tool] {
         let request = DaemonRequest(method: "list")
         let result = DaemonClient.sendRequest(request, socketPath: socketPath)
-        guard case let .ok(response) = result,
-              response.ok,
-              case let .list(tools) = response.result
-        else {
-            return []
+        let tools: [Tool]
+        switch result {
+        case .noDaemon:
+            throw MCPError.internalError(
+                "cua-driver daemon not reachable on \(socketPath). "
+                    + "Start it with `open -n -g -a CuaDriver --args serve` and retry."
+            )
+        case .error(let message):
+            throw MCPError.internalError(
+                "cua-driver daemon transport error while listing tools on \(socketPath): \(message)"
+            )
+        case .ok(let response):
+            guard response.ok, case let .list(listed) = response.result else {
+                let reason = response.error ?? "daemon returned unexpected result kind for list"
+                throw MCPError.internalError(
+                    "cua-driver daemon refused tool list on \(socketPath): \(reason)"
+                )
+            }
+            tools = listed
         }
         if !claudeCodeComputerUseCompat {
             return tools

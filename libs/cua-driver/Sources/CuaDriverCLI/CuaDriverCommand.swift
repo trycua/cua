@@ -470,7 +470,7 @@ extension MCPCommand {
         // CuaDriver.app bundle, otherwise there's nothing for the
         // daemon side to land in. Raw `swift run` dev invocations fail
         // this check and stay in-process.
-        guard resolvedExecutableIsInsideCuaDriverApp() else { return false }
+        guard isExecutableInsideCuaDriverApp() else { return false }
         // ppid == 1 means launchd already reparented us — we're
         // post-LaunchServices and have the right TCC context.
         if getppid() == 1 { return false }
@@ -507,7 +507,7 @@ extension MCPCommand {
         // daemon owns TCC, and AX probes against this process would
         // lie because we're attributed to the calling shell.
         AppKitBootstrap.runBlockingAppKitWith {
-            let server = await CuaDriverMCPServer.makeProxy(
+            let server = try await CuaDriverMCPServer.makeProxy(
                 serverName: serverName,
                 socketPath: socketPath,
                 claudeCodeComputerUseCompat: compat
@@ -571,23 +571,6 @@ extension MCPCommand {
                 "cua-driver: daemon did not appear on \(socketPath) within \(Int(timeout))s. If this is the first launch, grant Accessibility + Screen Recording to CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch to stay in-process.\n"
                     .utf8))
         throw ExitCode(1)
-    }
-
-    /// True when the argv[0] / executablePath resolves (through any
-    /// symlinks) to a binary physically living inside some
-    /// `CuaDriver.app/Contents/MacOS/` directory. Same check
-    /// `ServeCommand` uses — duplicated rather than shared so each
-    /// subcommand owns its own relaunch heuristic and they can diverge
-    /// independently if needed.
-    private func resolvedExecutableIsInsideCuaDriverApp() -> Bool {
-        let candidate = Bundle.main.executablePath
-            ?? CommandLine.arguments.first
-            ?? ""
-        guard !candidate.isEmpty else { return false }
-        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard realpath(candidate, &buffer) != nil else { return false }
-        let resolved = String(cString: buffer)
-        return resolved.contains("/CuaDriver.app/Contents/MacOS/")
     }
 
     private func isEnvTruthy(_ value: String?) -> Bool {

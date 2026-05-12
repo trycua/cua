@@ -1,0 +1,187 @@
+---
+title: MCP process model
+description: How cua-driver mcp runs — in-process vs daemon-proxy modes, lifecycles, failure modes, and wrapper-author guidance
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver mcp` runs in one of two modes depending on the TCC context it inherits from its parent process. Both expose the **exact same MCP tool surface** — same names, same arguments, same response shapes — so MCP clients never need to care which mode is active. This page documents how the two modes differ at the process level, so wrapper authors (Hermes, custom MCP shims, etc.) and operators debugging the lifecycle have a precise mental model.
+
+## The two modes
+
+### In-process mode (default when TCC context is correct)
+
+```text
+cua-driver.app (LaunchServices) → cua-driver mcp (stdio)
+                                    │
+                                    └─ AX + ScreenCaptureKit calls
+                                       attributed to com.trycua.driver
+```
+
+When `cua-driver mcp` is spawned by `CuaDriver.app` directly (LaunchServices-attributed), the process inherits the bundle's TCC grants. Every tool runs in-process: AX walks, screenshots, click synthesis, the agent-cursor overlay, all of it. Lifecycle is dead simple — the process lives for the duration of the stdio session and exits when stdin closes.
+
+### Daemon-proxy mode (auto-engaged from IDE terminals)
+
+```text
+Claude Code / Cursor / Warp                 LaunchServices
+       │                                          │
+       └─ cua-driver mcp (stdio client)           └─ CuaDriver.app
+              │                                          │
+              │  Unix socket (~/Library/Caches/          │
+              │  cua-driver/cua-driver.sock)             │
+              └──────────────────────────────────────────┴─ cua-driver serve (daemon)
+                                                              │
+                                                              └─ AX + ScreenCaptureKit calls
+                                                                 attributed to com.trycua.driver
+```
+
+When `cua-driver mcp` is spawned from an IDE terminal (Claude Code, Cursor, VS Code, Warp), macOS attributes the subprocess to the terminal — not `CuaDriver.app` — so AX probes would silently fail against the wrong bundle id. To sidestep this, `mcp` does three things on startup:
+
+1. Checks whether a `cua-driver serve` daemon is already listening on `~/Library/Caches/cua-driver/cua-driver.sock`.
+2. If not, runs `open -n -g -a CuaDriver --args serve` to spawn one under LaunchServices (`-n` = new instance so we never reuse an existing CuaDriver.app process without `--args serve`; `-g` = stay backgrounded). Then polls the socket for up to 10s.
+3. Proxies every MCP `ListTools` / `CallTool` request through the daemon's line-delimited JSON socket protocol. The mcp client process never touches AX directly.
+
+Two processes, one stdio session. The daemon runs under the right TCC context; the mcp client just shuttles bytes.
+
+## Detecting which mode is active
+
+`cua-driver mcp` emits a single stderr line on startup when it engages the daemon-proxy path:
+
+```text
+cua-driver: mcp launched without CuaDriver.app's TCC grants; auto-launching the daemon
+via `open -n -g -a CuaDriver --args serve` and proxying MCP requests through it.
+Pass --no-daemon-relaunch to stay in-process.
+```
+
+In-process mode is silent at startup — no extra log line. So:
+
+- **Stderr contains that line** → daemon-proxy mode.
+- **No log line, mcp serving normally** → in-process mode.
+
+You can also infer the mode from the heuristic the code uses. Daemon-proxy mode engages when **all** of the following are true:
+
+- `--no-daemon-relaunch` is not set.
+- `CUA_DRIVER_MCP_NO_RELAUNCH` is not truthy (`1`, `true`, `yes`, `on`).
+- The binary's `Bundle.main.bundlePath` does not end in `.app` (i.e. we're invoked through the `~/.local/bin/cua-driver` symlink, not the bundle's main executable directly).
+- The binary resolves into an installed `CuaDriver.app` bundle via `realpath` (raw `swift run` dev invocations fail this check and stay in-process).
+- `getppid() != 1` (a ppid of 1 means launchd reparented us — we already have the right TCC context).
+
+## Process lifecycles
+
+### Daemon lifecycle (proxy mode only)
+
+The daemon is **not** owned by the mcp client. Concretely:
+
+- **Spawned once.** The first `cua-driver mcp` invocation from an IDE terminal calls `open -n -g -a CuaDriver --args serve`. macOS LaunchServices keeps a handle on the resulting process.
+- **Survives mcp-client restarts.** When the MCP client (Claude Code, Cursor) closes stdio and the `cua-driver mcp` proxy exits, the daemon keeps running. The next `cua-driver mcp` invocation reuses the same daemon — it sees the socket already listening and skips the relaunch.
+- **Persists across IDE restarts.** As long as nothing kills the `CuaDriver.app` process, the daemon is there to serve any number of mcp-client sessions.
+- **Exits when:**
+  - The user runs `cua-driver stop` (sends a clean shutdown over the socket).
+  - The user quits `CuaDriver.app` (via the Activity Monitor, `killall CuaDriver`, or the menubar item).
+  - The Mac reboots / logs out.
+  - The daemon's own permissions gate is closed without granting Accessibility + Screen Recording (the daemon then exits with a diagnostic).
+
+Run `cua-driver status` at any point to verify:
+
+```bash
+cua-driver status
+# cua-driver daemon is running
+#   socket: /Users/you/Library/Caches/cua-driver/cua-driver.sock
+#   pid: 12345
+```
+
+### mcp-client lifecycle (proxy mode)
+
+The `cua-driver mcp` process in proxy mode is a thin stdio→UDS pump:
+
+- Lives for the duration of the stdio session — exits cleanly when the MCP client (parent) closes stdin or the host process is killed.
+- Does **not** terminate the daemon on exit. The daemon stays running, ready for the next mcp client.
+- Holds no AX caches or per-pid state of its own — everything lives on the daemon side. Restarting just the mcp client preserves whatever element-index caches the daemon has built up.
+
+### mcp-client lifecycle (in-process mode)
+
+Single process. Lives for the duration of the stdio session. Exits when stdin closes. All per-pid state (element-index cache, recording state, agent-cursor toggles) lives in the mcp process and is lost on exit. For element-indexed workflows that need to survive restarts, prefer daemon-proxy mode or run `cua-driver serve` explicitly.
+
+## Failure modes
+
+### Daemon unreachable at mcp startup
+
+`mcp` tries to spawn the daemon via `open -n -g -a CuaDriver --args serve` and polls the socket for 10s. If the daemon never appears (CuaDriver.app missing, app refused to launch, permissions gate not yet granted), `mcp` exits with:
+
+```text
+cua-driver: daemon did not appear on <socket> within 10s. If this is the first launch,
+grant Accessibility + Screen Recording to CuaDriver.app in System Settings and retry.
+Pass --no-daemon-relaunch to stay in-process.
+```
+
+If `open` itself fails (CuaDriver.app not installed at all), the error is reported and the process exits with a clear pointer at the `--no-daemon-relaunch` escape hatch.
+
+### Daemon present but refuses the initial ListTools
+
+`makeProxy` caches the tool list with a single `list` RPC at startup. If that fails — daemon transport error, unexpected response, daemon reports failure — `mcp` fails fast with an `MCPError.internalError` carrying the daemon hint, **before** completing the MCP handshake. The MCP client sees a clear startup error rather than a successful handshake that advertises zero tools and then errors on every `CallTool`.
+
+### Daemon dies mid-session
+
+If the daemon is killed (user quits CuaDriver.app, `killall`, crash) while an mcp client is connected, the proxy can't tell until the next `CallTool` lands. That call raises:
+
+```text
+MCPError.internalError("cua-driver daemon not reachable on <socket>. Start it with
+`open -n -g -a CuaDriver --args serve` and retry.")
+```
+
+The MCP client surfaces this as a tool error. The mcp-client process **does not** auto-restart the daemon mid-session. The recommended client behavior is: catch the error, optionally restart the daemon yourself (`open -n -g -a CuaDriver --args serve`), reconnect the MCP transport, and retry. Hermes' wrapper in [trycua/hermes#22821](https://github.com/trycua/hermes/pull/22821) implements exactly this pattern.
+
+### Socket path ownership
+
+The socket lives at `~/Library/Caches/cua-driver/cua-driver.sock`. macOS cache hygiene may sweep `~/Library/Caches/` periodically; the daemon recreates the socket on startup, and the `--socket` flag overrides the path if you want to pin it elsewhere. A stale socket file from a crashed daemon is detected by the next `serve` invocation's flock probe (`cua-driver.lock`) and replaced atomically.
+
+## Forcing one mode or the other
+
+### Force in-process mode
+
+Useful when the calling context already has the right TCC grants (e.g. you launched `cua-driver mcp` directly from `CuaDriver.app`), or for diagnosing in-process failures:
+
+```bash
+# CLI flag
+cua-driver mcp --no-daemon-relaunch
+
+# Environment variable (same effect; useful in MCP client config)
+CUA_DRIVER_MCP_NO_RELAUNCH=1 cua-driver mcp
+```
+
+Either path keeps the entire MCP server in-process. The mcp client takes care of TCC by itself — if Accessibility / Screen Recording aren't granted to the calling shell, AX probes fail.
+
+### Force daemon-proxy mode against a specific socket
+
+For multi-daemon setups, or pointing at a daemon running under an alternate user / install:
+
+```bash
+cua-driver mcp --socket /tmp/my-cua-driver.sock
+```
+
+`--socket` only overrides the path — the relaunch heuristic still applies (if the daemon isn't listening at that path, `mcp` runs `open -n -g -a CuaDriver --args serve`, which writes to the default socket, not the override). For non-default sockets, start the daemon explicitly first:
+
+```bash
+cua-driver serve --socket /tmp/my-cua-driver.sock &
+cua-driver mcp --socket /tmp/my-cua-driver.sock
+```
+
+### Force in-process mode by launching from CuaDriver.app
+
+Launching `cua-driver mcp` through the bundle's main executable (or any path that LaunchServices attributes to `CuaDriver.app`) makes `Bundle.main.bundlePath` end in `.app`, which trips the heuristic's first short-circuit. In-process mode runs automatically — no flag needed.
+
+## Recommendations for wrapper authors
+
+If you ship a tool that spawns `cua-driver mcp` as a subprocess (Hermes, custom MCP brokers, agent-platform shims):
+
+1. **Don't try to manage the daemon yourself.** `cua-driver mcp` already auto-spawns the daemon on demand. Adding a manual `cua-driver serve` step in your install flow creates two ways to start the daemon — and the user will hit ordering bugs.
+2. **Treat the stdio MCP transport as the contract.** Both modes look identical from the MCP-client side. Don't branch on which mode you think is active; the heuristic is the driver's responsibility.
+3. **Handle mid-session disconnects via MCP-level reconnect.** If a `CallTool` raises `MCPError.internalError` mentioning "daemon not reachable," tear down the MCP transport and reconnect with a fresh `cua-driver mcp` subprocess. The new subprocess will either find the daemon healthy or relaunch it.
+4. **Surface the stderr line.** `cua-driver mcp` writes the daemon-relaunch notice to stderr exactly once at startup. Forward your subprocess's stderr to your own logs so operators can see which mode is active when debugging.
+5. **Don't pass `--no-daemon-relaunch` by default.** That flag exists for niche cases (in-process diagnostics, fully sandboxed runtimes where `open -n -g -a` won't work). Defaulting it on makes IDE-terminal users hit the wrong-bundle TCC trap.
+
+## See also
+
+- [Installation](./installation) — granting TCC permissions to `CuaDriver.app`.
+- [FAQ](./faq) — common TCC-attribution gotchas in IDE terminals.
+- [CLI reference](/cua-driver/reference/cli-reference) — full surface area of `cua-driver mcp` flags, `cua-driver serve`, `cua-driver status`, `cua-driver stop`.

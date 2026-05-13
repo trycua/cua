@@ -439,3 +439,47 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - `structuredContent.pid` is the actual ShellExecuteEx pid ✓
 - `bundle_id: null`, `running: true`, `active: false` ✓
 - Notepad killed on test exit. ✓
+
+---
+
+## MCP tool: `press_key`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/PressKeyTool.swift:20-202`
+- Rust:
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (PressKeyTool)
+  - macos=`crates/platform-macos/src/tools/press_key.rs` (TBD)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
+- Status: windows VERIFIED; macos / linux OPEN
+- Test: `crates/platform-windows/examples/press_key_parity.rs`
+
+### Fixed (Windows)
+
+1. **Text format** — was `"Pressed key 'KEY'."`; now matches Swift verbatim
+   `"✅ Pressed KEY on pid X."` (no quotes around key, pid included).
+2. **Error wording** —
+   - Missing pid: `"Missing required integer field pid."` (was generic)
+   - Missing key: `"Missing required string field key."` (was generic)
+   - element_index without window_id: `"window_id is required when
+     element_index is used — the element_index cache is scoped per
+     (pid, window_id). Pass the same window_id you used in
+     get_window_state."` (was previously not validated; added the
+     same Swift guard).
+3. **Schema** — added `element_index` field (accepted; currently no-op
+   on Windows since UIA SetFocus isn't wired up yet — documented).
+4. **Description** — multi-paragraph port from Swift, including the
+   full key vocabulary list.
+
+### Intentional Rust-only (Windows)
+
+- `element_index` is accepted but currently no-op (Swift focuses the
+  element via `AXSetAttribute(kAXFocused, true)` first; Windows UIA
+  `IUIAutomationElement::SetFocus` exists but is not yet wired up
+  here).  Documented as a follow-up; using `press_key` without
+  `element_index` already works for scroll keys / shortcuts on the
+  already-focused element.
+
+### Verified on Windows
+
+`press_key_parity.exe` against Chrome:
+- Missing-key error: `"Missing required string field key."` ✓
+- Element-without-window error: matches Swift's wording ✓
+- End key: `"✅ Pressed end on pid 85676."` ✓

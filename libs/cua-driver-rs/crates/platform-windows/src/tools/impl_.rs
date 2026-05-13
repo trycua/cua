@@ -822,13 +822,26 @@ impl Tool for PressKeyTool {
     fn def(&self) -> &ToolDef {
         PRESS_DEF.get_or_init(|| ToolDef {
             name: "press_key".into(),
-            description: "Press a key (WM_KEYDOWN/WM_KEYUP) to the target HWND. No focus steal.".into(),
+            // Description ported from Swift `PressKeyTool.swift` with
+            // Windows-specific transport note (PostMessage WM_KEYDOWN/UP).
+            description: "Press and release a single key, delivered directly to the target pid's \
+                top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP). The target does NOT need \
+                to be frontmost — no focus steal.\n\n\
+                Optional `window_id` selects a specific HWND when the pid owns more than one; \
+                without it the first visible top-level window for the pid is used.\n\n\
+                Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, \
+                end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
+                array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
+                cleaner surface.\n\n\
+                Note: `element_index` is accepted for cross-platform parity with macOS but \
+                currently no-op on Windows (no UIA SetFocus path wired up yet).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","key"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "key":{"type":"string"},
-                    "modifiers":{"type":"array","items":{"type":"string"}}
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "key":{"type":"string","description":"Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit)."},
+                    "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier names held while the key is pressed (ctrl/shift/alt/win)."},
+                    "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
+                    "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -836,16 +849,30 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
+        };
+        let pid = raw_pid as u32;
         let key = match args.get("key").and_then(|v| v.as_str()) {
             Some(k) => k.to_owned(),
-            None => return ToolResult::error("Missing required parameter: key"),
+            None    => return ToolResult::error("Missing required string field key."),
         };
         let mods: Vec<String> = args.get("modifiers")
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
+        // Swift requires window_id when element_index is supplied — ports the
+        // same validation.
+        let elem_idx = args.get("element_index").and_then(|v| v.as_u64());
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.");
+        }
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
@@ -862,9 +889,10 @@ impl Tool for PressKeyTool {
             crate::input::post_key(hwnd, &key, &m)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key_display}'.")),
+            // Match Swift's text format 1:1: `"✅ Pressed KEY on pid X."`.
+            Ok(Ok(())) => ToolResult::text(format!("✅ Pressed {key_display} on pid {raw_pid}.")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

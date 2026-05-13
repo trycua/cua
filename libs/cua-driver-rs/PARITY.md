@@ -561,3 +561,31 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   element-without-window) ✓
 - Pixel double-click: `"✅ Posted double-click to pid 85676 at
   window-pixel (300, 300) → screen-point (462, 456)."` ✓
+
+---
+
+## MCP tool: `right_click`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/RightClickTool.swift:27-324`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (RightClickTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/right_click_parity.rs`
+
+### Fixed (Windows)
+1. **Pixel-path text** — was `"✅ Right-clicked at (X.X, Y.Y)."`; now
+   `"✅ Posted right-click to pid X at window-pixel (a, b) → screen-point (c, d)."`
+   matching Swift.
+2. **Element-path text** — was `"✅ Right-clicked element [N] at screen (X,Y)."`;
+   now `"✅ Shown menu for [N] (screen (X, Y))."` matching Swift's
+   AXShowMenu text (UIA role/title placeholder pending element-cache enrichment).
+3. **Validation** — ports Swift's 5 guards verbatim (missing pid,
+   partial xy, both modes, missing target, element-without-window).
+4. **Description** — multi-paragraph port from Swift with Windows-
+   specific caveats (no AXShowMenu analogue wired up; element path
+   falls through to pixel recipe — matches Swift's
+   AXShowMenu-not-advertised fallback).
+
+### Verified on Windows
+`right_click_parity.exe` against Chrome:
+- 4 error paths ✓
+- Pixel right-click: `"✅ Posted right-click to pid 62156 at window-pixel
+  (300, 300) → screen-point (301, 368)."` ✓

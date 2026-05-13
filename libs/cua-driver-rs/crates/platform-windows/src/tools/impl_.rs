@@ -1385,27 +1385,64 @@ impl Tool for RightClickTool {
     fn def(&self) -> &ToolDef {
         RCLICK_DEF.get_or_init(|| ToolDef {
             name: "right_click".into(),
-            description: "Right-click at (x,y) or on a UIA element by element_index + window_id. No focus steal. After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
+            // Description ported from Swift `RightClickTool.swift` semantics.
+            // Windows uses PostMessage(WM_RBUTTONDOWN/UP); the AXShowMenu
+            // analogue (UIA ShowContextMenu) is not yet wired up, so element
+            // path falls through to the pixel recipe at the cached center.
+            description: "Right-click against a target pid. Two addressing modes:\n\n\
+                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
+                of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen \
+                center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; \
+                Swift's AX-action path falls through to the same pixel recipe on non-\
+                advertising elements, so user-visible behavior matches.)\n\n\
+                - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
+                returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest \
+                child window at that point.\n\n\
+                Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is \
+                required in both modes. `window_id` is required when `element_index` is used. \
+                `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't \
+                propagate modifier-key state).".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
-                "pid":{"type":"integer"},
-                "window_id":{"type":"integer"},
-                "element_index":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
-                "modifier":{"type":"array","items":{"type":"string"}},
-                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+                "pid":{"type":"integer","description":"Target process ID."},
+                "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used."},
+                "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id)."},
+                "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
+                "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
+                "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the right-click. Accepted for parity; currently no-op on Windows."},
+                "from_zoom":{"type":"boolean","description":"After a zoom call, pass true to translate zoom-image coords back to window space."}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32, None => return ToolResult::error("Missing required parameter: pid"),
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
+        let pid = raw_pid as u32;
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
         let elem_idx = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
         let x = args.get("x").and_then(|v| v.as_f64());
         let y = args.get("y").and_then(|v| v.as_f64());
+        // Port Swift's full validation set.
+        let has_xy     = x.is_some() && y.is_some();
+        let partial_xy = x.is_some() != y.is_some();
+        if partial_xy {
+            return ToolResult::error("Provide both x and y together, not just one.");
+        }
+        if elem_idx.is_some() && has_xy {
+            return ToolResult::error("Provide either element_index or (x, y), not both.");
+        }
+        if elem_idx.is_none() && !has_xy {
+            return ToolResult::error("Provide element_index or (x, y) to address the right-click target.");
+        }
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.");
+        }
 
         // Resolve HWND: explicit, or auto from pid.
         let hwnd = match hwnd_opt {
@@ -1428,7 +1465,10 @@ impl Tool for RightClickTool {
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
-                Ok(format!("✅ Right-clicked element [{idx}] at screen ({},{}).", cx, cy))
+                // Match Swift's element-path text 1:1
+                // (`"✅ Shown menu for [N] role \"title\"."`).  UIA role/title
+                // placeholder pending element-cache enrichment.
+                Ok(format!("✅ Shown menu for [{idx}] (screen ({cx}, {cy}))."))
             }).await;
             match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -1460,12 +1500,18 @@ impl Tool for RightClickTool {
             let (xi, yi) = (px as i32, py as i32);
             let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 1, "right")).await;
             match result {
-                Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked at ({px:.1}, {py:.1}).")),
+                Ok(Ok(())) => {
+                    // Swift pixel-path text 1:1.
+                    ToolResult::text(format!(
+                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({}, {}).",
+                        sx as i32, sy as i32))
+                }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e) => ToolResult::error(format!("Task error: {e}")),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            ToolResult::error("Provide element_index or (x + y). pid is always required.")
+            // Guarded above by the early validation block — unreachable.
+            unreachable!()
         }
     }
 }

@@ -45,6 +45,10 @@ env:
   DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
 
 jobs:
+  # Build on macos-15 (Apple Silicon). We cross-compile x86_64 in the same
+  # job using `swift build --arch x86_64`, then combine both slices into a
+  # universal binary with `lipo`. This avoids needing a separate Intel runner
+  # (macos-13 only has Xcode 15.x which cannot build swift-tools-version: 6.0).
   notarize:
     runs-on: macos-15
     outputs:
@@ -75,9 +79,6 @@ jobs:
           elif [[ -n "${{ inputs.version }}" ]]; then
             VERSION="${{ inputs.version }}"
             echo "Using version from input: $VERSION"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
-            echo "Using version from workflow_call input: $VERSION"
           else
             echo "Error: No version found in tag or input"
             exit 1
@@ -137,58 +138,110 @@ jobs:
           # Clean up certificate files
           rm application.p12 installer.p12
 
-      - name: Build and Notarize
-        id: build_notarize
+      - name: Build arm64 + x86_64 and create universal binary
+        id: build_universal
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-          # These will now reference the imported certificates
           CERT_APPLICATION_NAME: "Developer ID Application: ${{ secrets.DEVELOPER_NAME }} (${{ secrets.TEAM_ID }})"
           CERT_INSTALLER_NAME: "Developer ID Installer: ${{ secrets.DEVELOPER_NAME }} (${{ secrets.TEAM_ID }})"
           VERSION: ${{ steps.set_version.outputs.version }}
         working-directory: ./libs/cua-driver
         run: |
-          # Minimal debug information
-          echo "Starting build process..."
-          echo "Swift version: $(swift --version | head -n 1)"
           echo "Building version: $VERSION"
-
-          # Ensure .release directory exists
           mkdir -p .release
           chmod 755 .release
 
-          # Build the project first (redirect verbose output)
-          echo "Building project..."
-          swift build --configuration release > build.log 2>&1
-          echo "Build completed."
+          # Build arm64 (native on macos-15)
+          echo "Building arm64..."
+          swift build --configuration release --arch arm64 > build-arm64.log 2>&1
+          echo "arm64 build complete."
 
-          # Run the notarization script with LOG_LEVEL env var
+          # Cross-compile x86_64 using the same Xcode 16 toolchain
+          echo "Cross-compiling x86_64..."
+          swift build --configuration release --arch x86_64 > build-x86_64.log 2>&1
+          echo "x86_64 build complete."
+
+          ARM64_BIN=".build/arm64-apple-macosx/release/cua-driver"
+          X86_BIN=".build/x86_64-apple-macosx/release/cua-driver"
+
+          if [ ! -f "$ARM64_BIN" ] || [ ! -f "$X86_BIN" ]; then
+            echo "Error: expected binaries not found"
+            ls .build/*/release/cua-driver 2>/dev/null || true
+            exit 1
+          fi
+
+          # Create universal binary
+          echo "Creating universal binary..."
+          lipo -create "$ARM64_BIN" "$X86_BIN" -output .build/cua-driver-universal
+          lipo -info .build/cua-driver-universal
+
+          # Pass the universal binary to the notarization script so it is
+          # embedded in the .app (and therefore the tarballs) from the start.
+          # Without this the script rebuilds arm64-only from source, packages
+          # it into the tarball, and the post-hoc binary swap comes too late.
+          export CUA_DRIVER_PREBUILT_BINARY="$(pwd)/.build/cua-driver-universal"
+
           chmod +x scripts/build/build-release-notarized.sh
           cd scripts/build
           LOG_LEVEL=minimal ./build-release-notarized.sh
-
-          # Return to the cua-driver directory
+          # Return from libs/cua-driver/scripts/build back to libs/cua-driver
           cd ../..
 
-          # Debug: List what files were actually created
+          echo "Verifying universal binary in packaged .app..."
+          APP_BINARY=".release/CuaDriver.app/Contents/MacOS/cua-driver"
+          if [ -f "$APP_BINARY" ]; then
+            lipo -info "$APP_BINARY"
+          fi
+
           echo "Files in .release directory:"
           find .release -type f -name "*.tar.gz" -o -name "*.pkg.tar.gz"
 
-          # Get architecture for output filename
-          ARCH=$(uname -m)
-          OS_IDENTIFIER="darwin-${ARCH}"
+          VERSION_OUT="${VERSION}"
+          echo "arm64_tarball_path=.release/cua-driver-${VERSION_OUT}-darwin-arm64.tar.gz" >> $GITHUB_OUTPUT
+          echo "x86_tarball_path=.release/cua-driver-${VERSION_OUT}-darwin-x86_64.tar.gz" >> $GITHUB_OUTPUT
+          echo "pkg_path=.release/cua-driver-${VERSION_OUT}-darwin-arm64.pkg.tar.gz" >> $GITHUB_OUTPUT
 
-          # Output paths for later use
-          echo "tarball_path=.release/cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" >> $GITHUB_OUTPUT
-          echo "pkg_path=.release/cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" >> $GITHUB_OUTPUT
+      - name: Package per-arch tarballs
+        working-directory: ./libs/cua-driver/.release
+        env:
+          VERSION: ${{ steps.set_version.outputs.version }}
+        run: |
+          # The notarization script produced a versioned arm64 tarball.
+          # Also produce an x86_64 tarball using the same .app (now universal).
+          # Callers that download by arch name get the same universal binary.
+          ARM64_TAR="cua-driver-${VERSION}-darwin-arm64.tar.gz"
+          X86_TAR="cua-driver-${VERSION}-darwin-x86_64.tar.gz"
+          UNIVERSAL_TAR="cua-driver-${VERSION}-darwin-universal.tar.gz"
 
-      - name: Upload build log on failure
-        if: failure() && steps.build_notarize.outcome == 'failure'
+          # Rename existing tarball to arm64 if needed.
+          # Exclude *.pkg.tar.gz — they end in .tar.gz too and sort first,
+          # which caused the pkg tarball to overwrite the app tarball.
+          EXISTING=$(ls cua-driver-"${VERSION}"-darwin-*.tar.gz 2>/dev/null | grep -v '\.pkg\.tar\.gz' | head -1)
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "$ARM64_TAR" ]; then
+            mv "$EXISTING" "$ARM64_TAR"
+          fi
+
+          # x86_64 and universal tarballs are identical (same universal binary inside)
+          cp "$ARM64_TAR" "$X86_TAR"
+          cp "$ARM64_TAR" "$UNIVERSAL_TAR"
+
+          # Convenience aliases (always-latest links)
+          ln -sf "$UNIVERSAL_TAR" "cua-driver-darwin.tar.gz"
+          ln -sf "$UNIVERSAL_TAR" "cua-driver.tar.gz"
+
+          echo "Tarballs:"
+          ls -lh cua-driver-*.tar.gz
+
+      - name: Upload build logs on failure
+        if: failure() && steps.build_universal.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: swift-build-log
-          path: ./libs/cua-driver/build.log
+          name: swift-build-logs
+          path: |
+            ./libs/cua-driver/build-arm64.log
+            ./libs/cua-driver/build-x86_64.log
           retention-days: 7
 
       - name: Generate SHA256 Checksums
@@ -211,66 +264,65 @@ jobs:
           echo "$checksums" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # Debug: Show all files in the release directory
           echo "All files in release directory:"
-          ls -la
-
-      - name: Create Standard Version Releases
-        working-directory: ./libs/cua-driver/.release
-        run: |
-          VERSION=${{ steps.set_version.outputs.version }}
-          ARCH=$(uname -m)
-          OS_IDENTIFIER="darwin-${ARCH}"
-
-          # Create OS-tagged symlinks
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" "cua-driver-darwin.tar.gz"
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" "cua-driver-darwin.pkg.tar.gz"
-
-          # Create simple symlinks
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.tar.gz" "cua-driver.tar.gz"
-          ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" "cua-driver.pkg.tar.gz"
-
-          # List all files (including symlinks)
-          echo "Files with symlinks in release directory:"
           ls -la
 
       - name: Package bare binary
         working-directory: ./libs/cua-driver/.release
         run: |
           VERSION=${{ steps.set_version.outputs.version }}
-          ARCH=$(uname -m)
-          OS_IDENTIFIER="darwin-${ARCH}"
 
-          # The bare binary is already signed (it lives inside the signed .app).
-          # Re-extract it and package it for embedders who build their own bundle.
+          # Bare binary is the universal one we injected into the .app.
           BINARY="CuaDriver.app/Contents/MacOS/cua-driver"
           if [ -f "$BINARY" ]; then
-            tar -czf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" -C "CuaDriver.app/Contents/MacOS" cua-driver
-            ln -sf "cua-driver-${VERSION}-${OS_IDENTIFIER}-binary.tar.gz" "cua-driver-binary.tar.gz"
-            echo "Bare binary packaged."
+            tar -czf "cua-driver-${VERSION}-darwin-universal-binary.tar.gz" -C "CuaDriver.app/Contents/MacOS" cua-driver
+            ln -sf "cua-driver-${VERSION}-darwin-universal-binary.tar.gz" "cua-driver-binary.tar.gz"
+            echo "Universal bare binary packaged."
           else
             echo "Warning: binary not found at $BINARY"
           fi
+
+      # .release/ is in .gitignore, so actions/upload-artifact's @actions/glob
+      # would exclude every file inside it. Stage the release artifacts in a
+      # git-tracked directory so the glob finds them.
+      - name: Stage release artifacts for upload
+        env:
+          VERSION: ${{ steps.set_version.outputs.version }}
+        run: |
+          mkdir -p release-upload
+          cp libs/cua-driver/.release/cua-driver-"${VERSION}"-darwin-*.tar.gz \
+             libs/cua-driver/.release/cua-driver-"${VERSION}"-darwin-*.pkg.tar.gz \
+             release-upload/ 2>/dev/null || true
+          # Bare binary (may not exist if the .app binary was missing)
+          cp libs/cua-driver/.release/cua-driver-"${VERSION}"-darwin-universal-binary.tar.gz \
+             release-upload/ 2>/dev/null || true
+          echo "Staged files:"
+          ls -lh release-upload/
 
       - name: Upload Notarized Package (Tarball)
         uses: actions/upload-artifact@v4
         with:
           name: cua-driver-notarized-tarball
-          path: ./libs/cua-driver/${{ steps.build_notarize.outputs.tarball_path }}
+          # Single-wildcard glob — double-star patterns are unreliable in
+          # @actions/glob. Exclude .pkg.tar.gz with a negation pattern since
+          # those also end in .tar.gz.
+          path: |
+            release-upload/*.tar.gz
+            !release-upload/*.pkg.tar.gz
           if-no-files-found: error
 
       - name: Upload Notarized Package (Installer)
         uses: actions/upload-artifact@v4
         with:
           name: cua-driver-notarized-installer
-          path: ./libs/cua-driver/${{ steps.build_notarize.outputs.pkg_path }}
+          path: release-upload/*.pkg.tar.gz
           if-no-files-found: error
 
       - name: Upload Bare Binary
         uses: actions/upload-artifact@v4
         with:
           name: cua-driver-bare-binary
-          path: ./libs/cua-driver/.release/cua-driver-*-binary.tar.gz
+          path: release-upload/cua-driver-*-binary.tar.gz
           if-no-files-found: warn
 
       - name: Generate path-filtered release notes
@@ -305,16 +357,11 @@ jobs:
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/cua-driver-v')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
-            ./libs/cua-driver/${{ steps.build_notarize.outputs.tarball_path }}
-            ./libs/cua-driver/${{ steps.build_notarize.outputs.pkg_path }}
-            ./libs/cua-driver/.release/cua-driver-darwin.tar.gz
-            ./libs/cua-driver/.release/cua-driver-darwin.pkg.tar.gz
-            ./libs/cua-driver/.release/cua-driver.tar.gz
-            ./libs/cua-driver/.release/cua-driver.pkg.tar.gz
-            ./libs/cua-driver/.release/cua-driver-binary.tar.gz
+            release-upload/*.tar.gz
+            release-upload/*.pkg.tar.gz
           body: |
             ${{ steps.release-notes.outputs.RELEASE_NOTES }}
 
@@ -325,5 +372,7 @@ jobs:
             ```bash
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
             ```
+
+            > Supports Apple Silicon (arm64) and Intel (x86_64) — the release tarball contains a universal binary.
           generate_release_notes: false
           make_latest: true

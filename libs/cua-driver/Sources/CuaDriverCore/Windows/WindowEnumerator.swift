@@ -50,10 +50,25 @@ public enum WindowEnumerator {
     /// callers that also need `bounds` (e.g. the auth-signed click recipe that
     /// computes a window-local point via `CGEventSetWindowLocation`) can
     /// read both off a single query.
+    ///
+    /// Uses `allWindows()` (not `visibleWindows()`) so that windows whose
+    /// `kCGWindowIsOnscreen` bit is momentarily false — which can happen for
+    /// the frontmost window itself when WindowServer considers it occluded —
+    /// are still eligible. Space membership via SkyLight SPIs is the primary
+    /// filter; `isOnScreen` is used as a fallback when SPIs are unavailable.
     public static func frontmostWindow(forPid pid: Int32) -> WindowInfo? {
-        let candidates = visibleWindows()
-            .filter { $0.pid == pid && $0.isOnScreen }
+        let currentSpace = SpaceMigrator.currentSpaceID()
+        let candidates = allWindows()
+            .filter { $0.pid == pid && $0.layer == 0 }
             .filter { $0.bounds.width > 1 && $0.bounds.height > 1 }
+            .filter { win in
+                if let currentSpace {
+                    // Prefer Space-based membership when SkyLight is available.
+                    let spaces = SpaceMigrator.spaceIDs(forWindowID: UInt32(win.id))
+                    return spaces?.contains(currentSpace) ?? win.isOnScreen
+                }
+                return win.isOnScreen
+            }
         return candidates.max(by: { $0.zIndex < $1.zIndex })
     }
 

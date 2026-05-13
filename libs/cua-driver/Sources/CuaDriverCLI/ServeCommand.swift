@@ -212,7 +212,7 @@ extension ServeCommand {
         // bundle on disk — the symlink case. Raw `swift run` dev
         // invocations resolve into `.build/<config>/cua-driver`
         // instead, and have no bundle to relaunch into.
-        guard resolvedExecutableIsInsideCuaDriverApp() else { return false }
+        guard isExecutableInsideCuaDriverApp() else { return false }
         // ppid == 1 means we're already a LaunchServices-spawned process
         // (or orphaned into init, in which case relaunching wouldn't
         // change anything useful anyway).
@@ -306,31 +306,6 @@ extension ServeCommand {
                 "cua-driver: relaunched CuaDriver.app but no daemon appeared on \(socketPath) within 5s. Check Accessibility + Screen Recording grants for CuaDriver.app, or re-run with --no-relaunch to see in-process errors.\n"
                     .utf8))
         throw ExitCode(1)
-    }
-
-    /// True when the argv[0] / executablePath resolves (through any
-    /// symlinks) to a binary physically living inside some
-    /// `CuaDriver.app/Contents/MacOS/` directory. That's the "installed
-    /// via install-local.sh / install.sh" shape — `~/.local/bin/cua-driver`
-    /// is a symlink into `/Applications/CuaDriver.app`, and `realpath`
-    /// walks into the bundle.
-    ///
-    /// Returns false for `swift run` / raw `.build/<config>/cua-driver`
-    /// dev invocations, which have no installed bundle to relaunch into.
-    private func resolvedExecutableIsInsideCuaDriverApp() -> Bool {
-        // Prefer Foundation's executablePath (stable, absolute).
-        // Fall back to argv[0] when unset, which realpath() still
-        // resolves via $PATH lookup at the shell level — good enough
-        // for the cases we care about.
-        let candidate = Bundle.main.executablePath
-            ?? CommandLine.arguments.first
-            ?? ""
-        guard !candidate.isEmpty else { return false }
-
-        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard realpath(candidate, &buffer) != nil else { return false }
-        let resolved = String(cString: buffer)
-        return resolved.contains("/CuaDriver.app/Contents/MacOS/")
     }
 
     /// Accepts the same truthy-value conventions the rest of the CLI

@@ -52,12 +52,29 @@ public struct ToolRegistry: Sendable {
     ]
 
     public func call(_ name: String, arguments: [String: Value]?) async throws -> CallTool.Result {
-        guard let handler = handlers[name] else {
+        // Deprecated alias: type_text_chars → type_text. Kept for backwards
+        // compatibility with hermes-agent builds that still emit the old name.
+        // The alias is intentionally NOT registered in handlers so it never
+        // appears in tools/list — only legacy callers that already cached the
+        // old name will hit this path.
+        let effectiveName: String
+        if name == "type_text_chars" {
+            FileHandle.standardError.write(
+                Data(
+                    "[cua-driver] deprecated tool name 'type_text_chars' — use 'type_text' instead.\n"
+                        .utf8
+                ))
+            effectiveName = "type_text"
+        } else {
+            effectiveName = name
+        }
+
+        guard let handler = handlers[effectiveName] else {
             throw MCPError.invalidParams("Unknown tool: \(name)")
         }
         // Capture monotonic start time before any animation or side-effect
         // so the recorded span brackets the full action duration.
-        let actionStartNs: UInt64 = Self.actionToolNames.contains(name)
+        let actionStartNs: UInt64 = Self.actionToolNames.contains(effectiveName)
             ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0
 
         let result = try await handler.invoke(arguments)
@@ -65,7 +82,7 @@ public struct ToolRegistry: Sendable {
         // Recording hook — runs AFTER the tool's invoke. Errors inside
         // the recorder are swallowed by the actor; the tool caller
         // never sees a recording-path failure.
-        if Self.actionToolNames.contains(name),
+        if Self.actionToolNames.contains(effectiveName),
            await RecordingSession.shared.isEnabled()
         {
             // Bind the shared engine lazily. `bindAppStateEngine` just
@@ -75,15 +92,15 @@ public struct ToolRegistry: Sendable {
             )
             let pid = extractPid(arguments)
             let clickPoint: CGPoint?
-            if Self.clickFamilyToolNames.contains(name) {
+            if Self.clickFamilyToolNames.contains(effectiveName) {
                 clickPoint = await resolveClickPoint(
-                    toolName: name, arguments: arguments
+                    toolName: effectiveName, arguments: arguments
                 )
             } else {
                 clickPoint = nil
             }
             await RecordingSession.shared.record(
-                toolName: name,
+                toolName: effectiveName,
                 arguments: snapshotArguments(arguments),
                 pid: pid,
                 clickPoint: clickPoint,

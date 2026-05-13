@@ -3,5 +3,5 @@
   "description": "Get up and running with Cua Driver",
   "icon": "Rocket",
   "defaultOpen": true,
-  "pages": ["introduction", "installation", "quickstart", "integrations", "swift-integration", "comparison", "faq"]
+  "pages": ["introduction", "installation", "quickstart", "integrations", "swift-integration", "process-model", "comparison", "faq"]
 }

@@ -24,6 +24,7 @@ struct CuaDriverCommand: AsyncParsableCommand {
             UpdateCommand.self,
             DiagnoseCommand.self,
             DoctorCommand.self,
+            CleanupCommand.self,
             DumpDocsCommand.self,
         ]
     )
@@ -342,7 +343,22 @@ struct CuaDriverEntryPoint {
 struct MCPCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mcp",
-        abstract: "Run the stdio MCP server."
+        abstract: "Run the stdio MCP server.",
+        discussion: """
+            When invoked from a shell or IDE terminal (Claude Code, Cursor, \
+            VS Code, Warp), macOS TCC attributes the process to the parent \
+            terminal — not to CuaDriver.app — so AX probes silently fail \
+            against the wrong bundle id. To sidestep this without breaking \
+            the stdio MCP transport, `mcp` detects the context, ensures a \
+            `cua-driver serve` daemon is running under LaunchServices \
+            (relaunching via `open -n -g -a CuaDriver --args serve` if not), \
+            and proxies every MCP tool call through the daemon's Unix \
+            socket. Tool semantics are identical to the in-process path. \
+            Pass `--no-daemon-relaunch` (or set CUA_DRIVER_MCP_NO_RELAUNCH=1) \
+            to force in-process execution — useful when the calling context \
+            already has the right TCC grants (e.g. spawned from CuaDriver.app \
+            directly), or for diagnosing in-process failures.
+            """
     )
 
     @Flag(
@@ -356,7 +372,38 @@ struct MCPCommand: ParsableCommand {
     )
     var claudeCodeComputerUseCompat: Bool = false
 
+    @Flag(
+        name: .long,
+        help: """
+            Stay in the current process instead of auto-launching a daemon \
+            and proxying through its Unix socket when invoked from a shell \
+            without CuaDriver.app's TCC grants. Also toggleable via \
+            CUA_DRIVER_MCP_NO_RELAUNCH=1.
+            """
+    )
+    var noDaemonRelaunch: Bool = false
+
+    @Option(
+        name: .long,
+        help: "Override the daemon Unix socket path used by the proxy fallback."
+    )
+    var socket: String?
+
     func run() throws {
+        // TCC sidestep. Same heuristic the `serve` subcommand uses
+        // (shell-spawned bare binary that resolves into a CuaDriver.app
+        // bundle), gated by an explicit env / flag opt-out. When the
+        // shell already has the right TCC context (e.g. CuaDriver.app
+        // launched us directly), this returns false and we stay
+        // in-process exactly like before. The proxy path is purely
+        // additive: it gives stdio MCP clients spawned from IDE
+        // terminals a correct TCC context without requiring an external
+        // bridge.
+        if shouldUseDaemonProxy() {
+            try runViaDaemonProxy()
+            return
+        }
+
         // MCP stdio runs for the lifetime of the host process, so we
         // bootstrap AppKit here — the agent cursor overlay (disabled
         // by default, enabled via `set_agent_cursor_enabled`) needs a
@@ -401,6 +448,135 @@ struct MCPCommand: ParsableCommand {
             try await server.start(transport: transport)
             await server.waitUntilCompleted()
         }
+    }
+}
+
+extension MCPCommand {
+    /// Decide whether the current `mcp` invocation should auto-launch a
+    /// daemon and proxy every MCP tool call through its Unix socket.
+    /// Mirror of `ServeCommand.shouldRelaunchViaOpen()` — same heuristic,
+    /// same env override convention, separate flag so callers can opt
+    /// each surface in/out independently.
+    fileprivate func shouldUseDaemonProxy() -> Bool {
+        if noDaemonRelaunch { return false }
+        if isEnvTruthy(ProcessInfo.processInfo.environment["CUA_DRIVER_MCP_NO_RELAUNCH"]) {
+            return false
+        }
+        // When AppKit already attributes us to CuaDriver.app — either
+        // because LaunchServices spawned us, or the user invoked the
+        // bundle's main executable directly — `Bundle.main.bundlePath`
+        // ends in `.app`. Either case has the right TCC context.
+        if Bundle.main.bundlePath.hasSuffix(".app") { return false }
+        // The bare-binary path must resolve into an installed
+        // CuaDriver.app bundle, otherwise there's nothing for the
+        // daemon side to land in. Raw `swift run` dev invocations fail
+        // this check and stay in-process.
+        guard isExecutableInsideCuaDriverApp() else { return false }
+        // ppid == 1 means launchd already reparented us — we're
+        // post-LaunchServices and have the right TCC context.
+        if getppid() == 1 { return false }
+        return true
+    }
+
+    /// Ensure a `cua-driver serve` daemon is running under the right TCC
+    /// context, then run the MCP stdio server with `ListTools` /
+    /// `CallTool` handlers that forward every request through
+    /// `~/Library/Caches/cua-driver/cua-driver.sock`. Falls back to
+    /// in-process on launch failure with a diagnostic and a pointer at
+    /// the `--no-daemon-relaunch` escape hatch.
+    fileprivate func runViaDaemonProxy() throws {
+        let socketPath = socket ?? DaemonPaths.defaultSocketPath()
+
+        if !DaemonClient.isDaemonListening(socketPath: socketPath) {
+            FileHandle.standardError.write(
+                Data(
+                    "cua-driver: mcp launched without CuaDriver.app's TCC grants; auto-launching the daemon via `open -n -g -a CuaDriver --args serve` and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process.\n"
+                        .utf8))
+            try launchDaemonViaOpen()
+            try waitForDaemon(socketPath: socketPath, timeout: 10.0)
+        }
+
+        let serverName = claudeCodeComputerUseCompat ? "computer-use" : "cua-driver"
+        let compat = claudeCodeComputerUseCompat
+
+        // The MCP `Server` actor + `StdioTransport` use Swift
+        // concurrency, so we need a live async runtime. Reuse
+        // `AppKitBootstrap` for that — it's the same sync→async bridge
+        // the in-process path already takes, and the idle AppKit
+        // run-loop costs us nothing here (no AX work runs in this
+        // process). Critically we skip PermissionsGate entirely: the
+        // daemon owns TCC, and AX probes against this process would
+        // lie because we're attributed to the calling shell.
+        AppKitBootstrap.runBlockingAppKitWith {
+            let server = try await CuaDriverMCPServer.makeProxy(
+                serverName: serverName,
+                socketPath: socketPath,
+                claudeCodeComputerUseCompat: compat
+            )
+            let transport = StdioTransport()
+            try await server.start(transport: transport)
+            await server.waitUntilCompleted()
+        }
+    }
+
+    /// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve`. Mirror of
+    /// `ServeCommand.relaunchViaOpen` minus the post-launch probe (we
+    /// poll separately via `waitForDaemon`, since the timeout there is
+    /// MCP-specific).
+    fileprivate func launchDaemonViaOpen() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        // -n: force a new instance. CuaDriver.app may already be
+        //     running from a previous `mcp` (different MCP client
+        //     session); without -n, `open -a` would re-use it and
+        //     drop our `--args serve`, leaving no daemon up.
+        // -g: keep the new instance backgrounded. CuaDriver.app is
+        //     LSUIElement=true anyway, but this makes that explicit.
+        process.arguments = ["-n", "-g", "-a", "CuaDriver", "--args", "serve"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            FileHandle.standardError.write(
+                Data(
+                    "cua-driver: failed to exec `/usr/bin/open`: \(error). Pass --no-daemon-relaunch to bypass.\n"
+                        .utf8))
+            throw ExitCode(1)
+        }
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            FileHandle.standardError.write(
+                Data(
+                    "cua-driver: `open -n -g -a CuaDriver --args serve` exited \(process.terminationStatus). Check that `/Applications/CuaDriver.app` is installed, or pass --no-daemon-relaunch to bypass.\n"
+                        .utf8))
+            throw ExitCode(1)
+        }
+    }
+
+    /// Block (up to `timeout` seconds) until `socketPath` accepts a
+    /// protocol-speaking probe. Throws `ExitCode(1)` with a diagnostic
+    /// if the daemon never appears — usually means the user hasn't
+    /// granted Accessibility / Screen Recording to CuaDriver.app yet
+    /// and the daemon's PermissionsGate is waiting on a dialog.
+    fileprivate func waitForDaemon(socketPath: String, timeout: TimeInterval) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if DaemonClient.isDaemonListening(socketPath: socketPath) {
+                return
+            }
+            usleep(100_000)  // 100ms
+        }
+        FileHandle.standardError.write(
+            Data(
+                "cua-driver: daemon did not appear on \(socketPath) within \(Int(timeout))s. If this is the first launch, grant Accessibility + Screen Recording to CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch to stay in-process.\n"
+                    .utf8))
+        throw ExitCode(1)
+    }
+
+    private func isEnvTruthy(_ value: String?) -> Bool {
+        guard let value = value?.lowercased() else { return false }
+        return ["1", "true", "yes", "on"].contains(value)
     }
 }
 
@@ -509,7 +685,7 @@ struct UpdateCommand: AsyncParsableCommand {
     }
 }
 
-/// `cua-driver doctor` — clean up stale install bits left from older versions.
+/// `cua-driver cleanup` — clean up stale install bits left from older versions.
 ///
 /// v0.0.5 and earlier installed a weekly LaunchAgent at
 /// `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` and a companion
@@ -521,9 +697,9 @@ struct UpdateCommand: AsyncParsableCommand {
 /// update script. The plist lives under `$HOME` (no sudo). The companion
 /// script under `/usr/local/bin` is root-owned, so we print the exact
 /// `sudo rm` command for the user to run if it still exists.
-struct DoctorCommand: ParsableCommand {
+struct CleanupCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "doctor",
+        commandName: "cleanup",
         abstract: "Clean up stale install bits left from older cua-driver versions."
     )
 

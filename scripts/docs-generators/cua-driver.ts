@@ -599,6 +599,12 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   );
   lines.push('</Callout>');
   lines.push('');
+  lines.push('<Callout type="info">');
+  lines.push(
+    '  **TCC auto-delegation.** When an MCP client spawns `cua-driver mcp` from an IDE terminal (Claude Code, Cursor, VS Code, Warp), macOS attributes the subprocess to the parent terminal — not `CuaDriver.app` — so AX probes fail against the wrong bundle id. `mcp` detects this and auto-launches a `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call through the daemon\'s Unix socket. Tool semantics are identical to the in-process path; no Python bridge is needed. Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to force in-process execution. See the [process model guide](/cua-driver/guide/getting-started/process-model) for the full lifecycle, failure modes, and wrapper-author guidance.'
+  );
+  lines.push('</Callout>');
+  lines.push('');
 
   // Emit each tool
   for (const tool of docs.tools) {

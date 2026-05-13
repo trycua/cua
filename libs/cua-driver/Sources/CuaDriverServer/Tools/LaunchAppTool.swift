@@ -44,6 +44,16 @@ public enum LaunchAppTool {
                 `application(_:open:)`; apps that ignore the delegate simply
                 launch without side effects.
 
+                ⚠️ BROWSER WINDOW REQUIREMENT: Browsers (Safari, Chrome,
+                Firefox, Arc, Brave, Edge) require at least one URL in
+                `urls` — without it NSWorkspace starts the process but
+                never creates a window, so subsequent `get_window_state`,
+                `click`, and `screenshot` calls will fail with "no window
+                found." Use `urls=["about:blank"]` for a blank window.
+                Example: `{"bundle_id": "com.apple.Safari", "urls":
+                ["about:blank"]}`. Electron apps also follow this contract
+                when their entry point depends on a URL argument.
+
                 Optional `electron_debugging_port` launches an Electron app
                 with `--remote-debugging-port=<N>`, activating its Chrome
                 DevTools Protocol (CDP) on that port. This gives the `page`

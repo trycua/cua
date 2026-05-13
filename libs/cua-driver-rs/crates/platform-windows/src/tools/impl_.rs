@@ -2154,20 +2154,33 @@ impl Tool for GetConfigTool {
     fn def(&self) -> &ToolDef {
         GCFG_DEF.get_or_init(|| ToolDef {
             name: "get_config".into(),
-            description: "Return current cua-driver-rs configuration.".into(),
+            // Description ported from Swift `GetConfigTool.swift` with the
+            // Windows config path. Swift's `agent_cursor.*` subtree is not
+            // mirrored on Windows yet (separate cursor-overlay config path);
+            // documented in PARITY.md.
+            description: "Report the current persistent driver config.\n\n\
+                Pure read-only. Returns defaults when the underlying state is unset — \
+                same fallback the daemon uses at startup. Sibling to `set_config`.\n\n\
+                Current schema (Windows):\n\n  \
+                {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \
+                \"platform\": \"windows\",\n    \"capture_mode\": \"som\" | \"vision\" | \"ax\",\n    \
+                \"max_image_dimension\": 0\n  }\n".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         let cfg = self.state.config.read().unwrap();
-        ToolResult::text("cua-driver-rs configuration")
-            .with_structured(json!({
-                "version": env!("CARGO_PKG_VERSION"),
-                "platform": "windows",
-                "capture_mode": cfg.capture_mode,
-                "max_image_dimension": cfg.max_image_dimension
-            }))
+        let payload = json!({
+            "schema_version":      1,
+            "version":             env!("CARGO_PKG_VERSION"),
+            "platform":            "windows",
+            "capture_mode":        cfg.capture_mode,
+            "max_image_dimension": cfg.max_image_dimension,
+        });
+        // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.
+        let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+        ToolResult::text(format!("✅ {pretty}")).with_structured(payload)
     }
 }
 
@@ -2183,35 +2196,72 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
-            description: "Update cua-driver-rs configuration. Changes take effect immediately.".into(),
+            // Description ported from Swift `SetConfigTool.swift`.  Windows
+            // accepts BOTH Swift's `{key, value}` dotted-path shape AND a
+            // legacy per-field shape; documented as intentional.
+            description: "Write a setting into the persistent driver config. Values take \
+                effect immediately.\n\n\
+                Two input shapes:\n\
+                - **Swift-compatible** (preferred): `{\"key\": \"capture_mode\", \"value\": \"som\"}` \
+                  — single dotted-path leaf write.\n\
+                - **Legacy per-field** (Rust-only): `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}` \
+                  — bulk write of named fields.\n\n\
+                Known keys:\n\
+                - `capture_mode` (string: `vision` | `ax` | `som`)\n\
+                - `max_image_dimension` (integer)\n\n\
+                Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: json!({"type":"object","properties":{
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Default capture mode for get_window_state."},
-                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."}
+                "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
+                "value":{"description":"New value for `key`. JSON type depends on the key."},
+                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape."},
+                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         let mut cfg = self.state.config.write().unwrap();
-        let mut parts = Vec::new();
+        let mut applied = false;
+        // Swift-compatible {key, value} shape.
+        if let (Some(key), Some(val)) = (
+            args.get("key").and_then(|v| v.as_str()),
+            args.get("value"),
+        ) {
+            match key {
+                "capture_mode" => match val.as_str() {
+                    Some(s) => { cfg.capture_mode = s.to_owned(); applied = true; }
+                    None    => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
+                },
+                "max_image_dimension" => match val.as_u64() {
+                    Some(n) => { cfg.max_image_dimension = n as u32; applied = true; }
+                    None    => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
+                },
+                other => return ToolResult::error(format!(
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension."
+                )),
+            }
+        }
+        // Legacy per-field shape.
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
-            cfg.capture_mode = mode.to_owned();
-            parts.push(format!("capture_mode={mode}"));
+            cfg.capture_mode = mode.to_owned(); applied = true;
         }
         if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
-            cfg.max_image_dimension = dim as u32;
-            parts.push(format!("max_image_dimension={dim}"));
+            cfg.max_image_dimension = dim as u32; applied = true;
         }
-        let msg = if parts.is_empty() {
-            "Config unchanged (no known parameters).".to_owned()
-        } else {
-            format!("Config updated: {}", parts.join(", "))
-        };
-        ToolResult::text(msg)
-            .with_structured(json!({
-                "capture_mode": cfg.capture_mode,
-                "max_image_dimension": cfg.max_image_dimension
-            }))
+        if !applied {
+            return ToolResult::error("Missing required string field `key` (or a known legacy per-field).");
+        }
+        // Emit the same pretty-JSON payload as `get_config` (matches Swift's
+        // `set_config` return shape — both tools echo the full config after).
+        let payload = json!({
+            "schema_version":      1,
+            "version":             env!("CARGO_PKG_VERSION"),
+            "platform":            "windows",
+            "capture_mode":        cfg.capture_mode,
+            "max_image_dimension": cfg.max_image_dimension,
+        });
+        let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+        ToolResult::text(format!("✅ {pretty}")).with_structured(payload)
     }
 }
 

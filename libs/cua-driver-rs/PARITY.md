@@ -734,3 +734,42 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 `set_value_parity.exe`:
 - Missing-value error (schema layer): mentions `value` + `required` ✓
 - Cache-miss error: `"Element 99999 not in cache."` ✓
+
+---
+
+## MCP tools: `get_config` + `set_config`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetConfigTool.swift:13-79`
+  + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetConfigTool.swift:25-167`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetConfigTool, SetConfigTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/config_parity.rs`
+
+### Fixed (Windows)
+1. **get_config text** — was `"cua-driver-rs configuration"`; now matches
+   Swift's `"✅ <pretty JSON>"` format with `schema_version`, `version`,
+   `platform`, `capture_mode`, `max_image_dimension`.
+2. **set_config schema** — now accepts Swift's `{key: <dotted-path>, value: <json>}`
+   shape AND keeps the legacy per-field shape.  Unknown keys return
+   `"Unknown config key 'X'. Known: capture_mode, max_image_dimension."`.
+3. **set_config response** — was `"Config updated: ..."`; now echoes the
+   full updated config in the same pretty-JSON `"✅ {...}"` format as
+   `get_config`, matching Swift's "echo full config after write" pattern.
+4. **Descriptions** — both ported from Swift with Windows-specific
+   schema notes.
+
+### Intentional Rust-only
+
+- **No `agent_cursor.*` subtree** in the Windows config struct.  Swift
+  exposes `agent_cursor.enabled` + `agent_cursor.motion.*` (start_handle,
+  end_handle, arc_size, arc_flow, spring) as persistent config; Windows
+  currently has only `capture_mode` and `max_image_dimension`.  Cursor
+  config lives separately in `cursor-overlay` crate config and is set
+  via CLI flags, not this tool yet.  Documented as a follow-up.
+
+### Verified on Windows
+`config_parity.exe`:
+- get_config: `"✅ {<pretty JSON>}"` with all keys ✓
+- set_config {key, value}: capture_mode=vision applied ✓
+- set_config legacy: capture_mode=som + max_image_dimension=1024 applied ✓
+- Unknown key error ✓
+- Missing-input error ✓

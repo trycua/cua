@@ -9,7 +9,7 @@ import SwiftUI
 /// matches the existing gradient-arrow design: a classic pointer with
 /// the tip at upper-left, scaled for legibility at any display density.
 public struct AgentCursorView: View {
-    @Bindable var renderer: AgentCursorRenderer
+    let renderer: AgentCursorRenderer
 
     public init(renderer: AgentCursorRenderer = .shared) {
         self.renderer = renderer

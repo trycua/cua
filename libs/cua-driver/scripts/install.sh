@@ -54,6 +54,17 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
+MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null || true)"
+MACOS_MAJOR="${MACOS_VERSION%%.*}"
+if [[ -z "$MACOS_VERSION" ]] || ! [[ "$MACOS_MAJOR" =~ ^[0-9]+$ ]]; then
+    err "could not determine macOS version via sw_vers"
+    exit 1
+fi
+if (( MACOS_MAJOR < 13 )); then
+    err "cua-driver requires macOS 13 (Ventura) or later; this Mac is running macOS ${MACOS_VERSION}"
+    exit 1
+fi
+
 for cmd in curl tar; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         err "$cmd not found on PATH"

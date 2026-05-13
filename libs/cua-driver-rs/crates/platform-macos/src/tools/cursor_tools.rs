@@ -441,7 +441,9 @@ impl Tool for GetAgentCursorStateTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         let states = self.state.cursor_registry.all_states();
         let json = serde_json::to_value(&states).unwrap_or_default();
+        // Top-level "enabled" mirrors Swift's field for parity — use the default cursor.
+        let enabled = states.first().map(|s| s.config.enabled).unwrap_or(true);
         ToolResult::text(format!("{} cursor instance(s).", states.len()))
-            .with_structured(serde_json::json!({ "cursors": json }))
+            .with_structured(serde_json::json!({ "cursors": json, "enabled": enabled }))
     }
 }

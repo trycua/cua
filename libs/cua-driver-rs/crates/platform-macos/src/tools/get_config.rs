@@ -33,12 +33,19 @@ impl Tool for GetConfigTool {
 
     async fn invoke(&self, _args: Value) -> ToolResult {
         let cfg = self.state.config.read().unwrap();
+        let cursor_enabled = self.state.cursor_registry.all_states()
+            .first()
+            .map(|s| s.config.enabled)
+            .unwrap_or(true);
         ToolResult::text("cua-driver-rs configuration")
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "macos",
                 "capture_mode": cfg.capture_mode,
-                "max_image_dimension": cfg.max_image_dimension
+                "max_image_dimension": cfg.max_image_dimension,
+                "agent_cursor": {
+                    "enabled": cursor_enabled,
+                },
             }))
     }
 }

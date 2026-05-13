@@ -24,6 +24,7 @@ mod set_config;
 mod get_accessibility_tree;
 mod zoom;
 mod type_text_chars;
+mod page;
 
 use mcp_server::tool::ToolRegistry;
 use std::sync::Arc;
@@ -171,6 +172,7 @@ pub fn register_all(registry: &mut ToolRegistry) {
     registry.register(Box::new(get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone())));
     registry.register(Box::new(zoom::ZoomTool { state: state.clone() }));
     registry.register(Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())));
+    registry.register(Box::new(page::PageTool::new(state.clone())));
     // Recording / replay tools are platform-independent — live in mcp-server.
     registry.register_recording_tools();
 }

@@ -1,5 +1,34 @@
 # cua-driver-rs ↔ cua-driver (Swift) Parity Audit
 
+## Integration Test Suite
+
+All API surfaces (CLI subcommands, stdio MCP protocol, daemon lifecycle) are
+covered by `tests/integration/test_api_parity.py` — **111 tests per binary,
+222 total**, parametrized so both binaries run the identical suite.
+
+```bash
+# Rust binary only
+cd libs/cua-driver-rs/tests/integration
+./run_tests.sh test_api_parity -v
+
+# Both binaries side-by-side
+./run_tests.sh --parity -v
+```
+
+### Known parity gaps (as of 2026-05-13, macOS)
+
+| Gap | Rust | Swift |
+|-----|------|-------|
+| `type_text_chars` | ✅ | missing |
+| `browser_eval` | ✅ | missing |
+| `get_accessibility_tree` | ✅ | missing |
+| `page` tool | ✅ (registered as of this commit) | ✅ |
+| `--version` flag | ✅ (fixed in this commit) | ✅ |
+| `call check_permissions` JSON | ✅ JSON | human-readable text |
+| `call screenshot` (no window_id) | ✅ full-display default | error (requires window_id) |
+
+---
+
 Tracking surface-by-surface line-by-line behavioral comparison between the
 Rust port and the Swift reference. Each entry lists Swift source location,
 Rust source location, divergences (intentional vs. accidental), and the

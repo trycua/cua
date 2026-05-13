@@ -358,6 +358,8 @@ impl Tool for ReplayTrajectoryTool {
 
 fn recording_state_json(state: &RecordingState) -> Value {
     json!({
+        // "recording" mirrors the Swift field name for parity.
+        "recording": state.enabled,
         "enabled": state.enabled,
         "output_dir": state.output_dir,
         "next_turn": state.next_turn,

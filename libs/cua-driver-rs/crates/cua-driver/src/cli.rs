@@ -55,6 +55,19 @@ const VALUE_FLAGS: &[&str] = &[
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Handle --version / -V before any other parsing so they are never
+    // silently stripped as "bare flags" and swallowed by MCP mode.
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("cua-driver {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
+        println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose");
+        std::process::exit(0);
+    }
+
     // Collect named flag values we care about.
     let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
     let mcp_client = flag_value(&args, "--client");
@@ -911,6 +924,36 @@ fn diagnose_config_paths_section() -> String {
     lines.join("\n")
 }
 
+/// Path to the persistent JSON config file (`~/.cua-driver/config.json`).
+fn config_file_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
+}
+
+/// Read persisted config from disk.  Returns an empty object if absent/unreadable.
+fn read_config_file() -> serde_json::Value {
+    let path = config_file_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// Write a single key/value into the persisted config file.
+fn write_config_file(key: &str, value: &serde_json::Value) {
+    let path = config_file_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut cfg = read_config_file();
+    if let serde_json::Value::Object(ref mut map) = cfg {
+        map.insert(key.to_owned(), value.clone());
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&cfg) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 /// `cua-driver config [show|get|set|reset] [key] [value]`
 ///
 /// Thin wrapper around the `get_config` / `set_config` MCP tools.
@@ -974,21 +1017,41 @@ pub fn run_config_cmd(
                     }
                 }
             }
-            // In-process.
+            // In-process: merge persisted file config over in-memory defaults.
             let config = rt.block_on(async {
                 registry.invoke("get_config", serde_json::json!({})).await
             });
-            if let Some(sc) = config.structured_content {
-                if let Some(v) = sc.get(key) {
-                    println!("{}", match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() });
-                } else {
-                    eprintln!("Unknown config key: {key}");
-                    eprintln!("Available keys: capture_mode, max_image_dimension, version, platform");
-                    process::exit(64);
+            let mut sc = match config.structured_content {
+                Some(v) => v,
+                None => {
+                    eprintln!("get_config: no structured content returned");
+                    process::exit(1);
                 }
+            };
+            // Overlay persisted values from the config file.
+            let file_cfg = read_config_file();
+            if let (serde_json::Value::Object(sc_map), serde_json::Value::Object(file_map)) =
+                (&mut sc, file_cfg)
+            {
+                for (k, v) in file_map {
+                    sc_map.insert(k, v);
+                }
+            }
+            // Support dotted key paths like "agent_cursor.enabled".
+            let v = if key.contains('.') {
+                let mut parts = key.splitn(2, '.');
+                let parent = parts.next().unwrap();
+                let child = parts.next().unwrap();
+                sc.get(parent).and_then(|obj| obj.get(child)).cloned()
             } else {
-                eprintln!("get_config: no structured content returned");
-                process::exit(1);
+                sc.get(key).cloned()
+            };
+            if let Some(v) = v {
+                println!("{}", match &v { serde_json::Value::String(s) => s.clone(), other => other.to_string() });
+            } else {
+                eprintln!("Unknown config key: {key}");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled");
+                process::exit(64);
             }
         }
 
@@ -1054,6 +1117,8 @@ pub fn run_config_cmd(
                 }
                 process::exit(1);
             }
+            // Persist the value to disk so future CLI invocations can read it.
+            write_config_file(key, &parsed_value);
             // Print updated config.
             let config = rt.block_on(async {
                 registry.invoke("get_config", serde_json::json!({})).await

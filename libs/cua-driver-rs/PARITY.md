@@ -803,3 +803,45 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Text: `"✅ cursor: enabled=true startHandle=0.3 endHandle=0.3 arcSize=0.25
   arcFlow=0 spring=0.72 glideDurationMs=0 dwellAfterClickMs=80 idleHideMs=20000"` ✓
 - structuredContent has all 9 fields + `cursors` array ✓
+
+---
+
+## MCP tools: `set_agent_cursor_enabled` + `set_agent_cursor_motion`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorEnabledTool.swift:8-85`
+  + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorMotionTool.swift:11-187`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs`; macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/agent_cursor_setters_parity.rs`
+
+### Fixed (Windows)
+1. **set_agent_cursor_enabled text** — was `"Agent cursor 'default' enabled."`;
+   now matches Swift verbatim `"✅ Agent cursor enabled."` (or `"disabled"`).
+2. **set_agent_cursor_enabled error** — was `"Missing required parameter: enabled"`;
+   now Swift's `"Missing required boolean field \`enabled\`."`.
+3. **set_agent_cursor_motion was silently dropping all motion knobs** —
+   tool accepted them in schema but only forwarded appearance fields to
+   the cursor registry.  Now applies each motion knob via
+   `MotionConfig::with_overrides()` and sends `OverlayCommand::SetMotion`
+   to the live render state — matches Swift's
+   `AgentCursor.shared.defaultMotionOptions = opts`.
+4. **set_agent_cursor_motion text** — was `"Cursor 'default' config updated."`;
+   now matches Swift's `"✅ cursor motion: startHandle=X endHandle=Y arcSize=Z arcFlow=W spring=S glideDurationMs=N dwellAfterClickMs=N idleHideMs=N"`.
+5. **Number coercion** — JSON ints (`{"glide_duration_ms": 500}`) now
+   coerced to f64 instead of silently ignored (mirrors Swift's `number()`).
+6. **Descriptions** — both ported from Swift; appearance/motion split
+   documented (Rust splits appearance into the separate
+   `set_agent_cursor_style` tool, matching Swift's
+   SetAgentCursorStyleTool surface).
+
+### Intentional Rust-only
+- **`cursor_id`** parameter for both tools — selects an instance from
+  the Rust-only multi-cursor registry.  Swift has a single
+  `AgentCursor.shared`.
+
+### Verified on Windows
+`agent_cursor_setters_parity.exe`:
+- Missing-enabled error ✓
+- `enabled: true` → `"✅ Agent cursor enabled."` ✓
+- `enabled: false` → `"✅ Agent cursor disabled."` ✓
+- Motion update: `"✅ cursor motion: startHandle=0.4 endHandle=0.3 arcSize=0.3
+  arcFlow=0 spring=0.8 glideDurationMs=500 dwellAfterClickMs=80 idleHideMs=20000"` ✓

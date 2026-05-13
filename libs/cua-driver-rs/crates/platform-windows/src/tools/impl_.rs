@@ -1824,21 +1824,39 @@ impl Tool for SetAgentCursorEnabledTool {
     fn def(&self) -> &ToolDef {
         SCE_DEF.get_or_init(|| ToolDef {
             name: "set_agent_cursor_enabled".into(),
-            description: "Show or hide the agent cursor overlay.".into(),
+            // Description ported from Swift `SetAgentCursorEnabledTool.swift`.
+            description: "Toggle the visual agent-cursor overlay. When enabled, future \
+                pointer actions animate a floating arrow to the target's on-screen position \
+                before firing the click — purely visual, the click dispatch itself is \
+                unchanged. Disabling removes the overlay immediately.\n\n\
+                Default: enabled. Stays on for the life of the MCP session / daemon; \
+                disable with `{\"enabled\": false}` for headless / CI runs where the \
+                visual isn't wanted.\n\n\
+                Rust-only: `cursor_id` selects an instance from the multi-cursor registry; \
+                default is `'default'` (Swift has a single AgentCursor.shared).".into(),
             input_schema: json!({"type":"object","required":["enabled"],"properties":{
-                "enabled":{"type":"boolean"},"cursor_id":{"type":"string"}
+                "enabled":{"type":"boolean","description":"True to show the overlay cursor; false to hide."},
+                "cursor_id":{"type":"string","description":"Rust-only: multi-cursor instance id. Default 'default'."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
+        // Swift error wording 1:1.
         let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
-            Some(v) => v, None => return ToolResult::error("Missing required parameter: enabled"),
+            Some(v) => v,
+            None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
         let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
         self.state.cursor_registry.set_enabled(cursor_id, enabled);
         crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
-        ToolResult::text(format!("Agent cursor '{cursor_id}' {}.", if enabled { "enabled" } else { "disabled" }))
+        // Match Swift text format 1:1: `"✅ Agent cursor enabled."`
+        // (or `"✅ Agent cursor disabled."`).
+        ToolResult::text(if enabled {
+            "✅ Agent cursor enabled.".to_owned()
+        } else {
+            "✅ Agent cursor disabled.".to_owned()
+        })
     }
 }
 
@@ -1891,15 +1909,58 @@ impl Tool for SetAgentCursorMotionTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
+        // JSON numbers without decimals parse as ints; coerce to f64 so
+        // callers can write `{"glide_duration_ms": 1500}` without it being
+        // silently ignored (matches Swift's `number()` helper).
+        fn num(v: Option<&Value>) -> Option<f64> {
+            v.and_then(|x| x.as_f64().or_else(|| x.as_i64().map(|i| i as f64)))
+        }
         let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        // 1. Per-instance appearance fields (Rust-only).
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.get("cursor_icon").and_then(|v| v.as_str()) { cfg.cursor_icon = Some(v.to_owned()); }
             if let Some(v) = args.get("cursor_color").and_then(|v| v.as_str()) { cfg.cursor_color = Some(v.to_owned()); }
             if let Some(v) = args.get("cursor_label").and_then(|v| v.as_str()) { cfg.cursor_label = Some(v.to_owned()); }
-            if let Some(v) = args.get("cursor_size").and_then(|v| v.as_f64()) { cfg.cursor_size = Some(v); }
-            if let Some(v) = args.get("cursor_opacity").and_then(|v| v.as_f64()) { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
+            if let Some(v) = num(args.get("cursor_size"))    { cfg.cursor_size    = Some(v); }
+            if let Some(v) = num(args.get("cursor_opacity")) { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
         });
-        ToolResult::text(format!("Cursor '{cursor_id}' config updated.")).with_structured(args)
+        // 2. Apply motion knobs to the live render state — was silently
+        // dropped before; this is the Swift parity behavior.
+        let current = crate::overlay::current_motion();
+        let updated = current.with_overrides(
+            num(args.get("start_handle")),
+            num(args.get("end_handle")),
+            num(args.get("arc_size")),
+            num(args.get("arc_flow")),
+            num(args.get("spring")),
+            num(args.get("glide_duration_ms")),
+            num(args.get("dwell_after_click_ms")),
+            num(args.get("idle_hide_ms")),
+            None, // press_duration_ms — not in Swift tool surface
+        );
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::SetMotion(updated.clone()));
+        // Match Swift text format 1:1.
+        let summary = format!(
+            "cursor motion: startHandle={sh} endHandle={eh} arcSize={asz} arcFlow={af} \
+             spring={sp} glideDurationMs={gd} dwellAfterClickMs={dw} idleHideMs={ih}",
+            sh = updated.start_handle, eh = updated.end_handle,
+            asz = updated.arc_size,   af = updated.arc_flow,
+            sp = updated.spring,
+            gd = updated.glide_duration_ms as i64,
+            dw = updated.dwell_after_click_ms as i64,
+            ih = updated.idle_hide_ms as i64,
+        );
+        ToolResult::text(format!("✅ {summary}")).with_structured(json!({
+            "cursor_id":            cursor_id,
+            "start_handle":         updated.start_handle,
+            "end_handle":           updated.end_handle,
+            "arc_size":             updated.arc_size,
+            "arc_flow":             updated.arc_flow,
+            "spring":               updated.spring,
+            "glide_duration_ms":    updated.glide_duration_ms,
+            "dwell_after_click_ms": updated.dwell_after_click_ms,
+            "idle_hide_ms":         updated.idle_hide_ms,
+        }))
     }
 }
 

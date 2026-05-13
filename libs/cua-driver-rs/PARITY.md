@@ -210,3 +210,56 @@ return platform-specific content:
 These divergences are intentional and not fixable without making the tool
 no-op on Windows/Linux (worse UX than returning the platform-specific
 status).
+
+---
+
+## MCP tool: `list_apps`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListAppsTool.swift:6-71`
+        + `libs/cua-driver/Sources/CuaDriverCore/Apps/AppInfo.swift`
+- Rust:
+  - macos=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (ListAppsTool)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (ListAppsTool)
+- Status:
+  - macos: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
+  - windows: VERIFIED (text format + structured shape + `active` flag)
+  - linux: OPEN (subagent currently fixing pre-existing compile errors)
+- Test: `crates/platform-windows/examples/list_apps_parity.rs`
+
+### Fixed divergences
+
+1. **Windows: returned every OS process** (System, Registry, csrss, etc.)
+   instead of "apps". Now filters to processes that own at least one
+   visible top-level window — the closest analogue to Swift's
+   `NSApplicationActivationPolicyRegular` filter (excludes background
+   helpers / agents).
+2. **Structured shape**: Swift returns `Output { apps: [AppInfo] }` with
+   `AppInfo = {pid, bundle_id, name, running, active}`. Windows was
+   returning `{ processes: [{pid, name}] }`. Now returns both keys —
+   `apps` (Swift shape) for new callers, `processes` (legacy shape) as a
+   transitional alias.
+3. **Text format**: Swift starts with `"✅ Found N app(s): R running, I installed-not-running."`.
+   macOS Rust was missing the `✅` prefix; Windows had a different
+   wording entirely (`"Found N processes:"`). Both now match Swift 1:1.
+4. **`active` flag** — Windows resolves it via `GetForegroundWindow` +
+   `GetWindowThreadProcessId` (only one app is `active` at a time).
+5. **Description** — copied verbatim from Swift on macOS; adapted with
+   Windows-specific caveats on Windows (no bundle_id, no installed-apps
+   enumeration yet).
+
+### Known limitation (Windows / Linux)
+
+Neither Rust port enumerates *installed but not running* apps yet — Swift
+scans `/Applications`, `~/Applications`, `/System/Applications`, etc.
+Windows would need to scan Start Menu shortcuts and the Registry
+Uninstall keys; Linux would need to scan `.desktop` files in
+`/usr/share/applications` and `~/.local/share/applications`. Marked as
+follow-up work; the running-app view is still useful and matches Swift's
+running subset exactly.
+
+### Verified on Windows
+
+`list_apps_parity.exe`: header line matches `"✅ Found N app(s): R
+running, 0 installed-not-running."`; `structuredContent.apps` is an
+array of `{pid, bundle_id (null on Windows), name, running, active}`;
+at least one entry has `active: true` (the foreground app).

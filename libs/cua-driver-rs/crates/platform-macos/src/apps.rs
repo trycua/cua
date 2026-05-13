@@ -234,8 +234,9 @@ pub fn get_app_name_for_pid(pid: i32) -> Option<String> {
 pub fn format_app_list(apps: &[AppInfo]) -> String {
     let running: Vec<&AppInfo> = apps.iter().filter(|a| a.running).collect();
     let total = apps.len();
+    // Match Swift `ListAppsTool.swift` `summary(_:)` text format 1:1.
     let mut lines = vec![format!(
-        "Found {} app(s): {} running, {} installed-not-running.",
+        "✅ Found {} app(s): {} running, {} installed-not-running.",
         total,
         running.len(),
         total - running.len()

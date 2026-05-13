@@ -115,22 +115,85 @@ impl Tool for ListAppsTool {
     fn def(&self) -> &ToolDef {
         LIST_APPS_DEF.get_or_init(|| ToolDef {
             name: "list_apps".into(),
-            description: "List running processes with pid and executable name.".into(),
+            // Description copied from Swift `ListAppsTool.swift` and adapted —
+            // notes Windows-specific limitations (no bundle_id, no installed
+            // enumeration yet).  Same semantics for running/active state flags.
+            description: "List Windows apps that are currently running, with per-app state flags:\n\n\
+                - running: is a process for this app live? (pid is 0 when false)\n\
+                - active: is it the system-frontmost app? (implies running)\n\n\
+                Only processes that own at least one visible top-level window are included — \
+                background services and console processes are filtered out (mirrors Swift's \
+                NSApplicationActivationPolicyRegular filter).\n\n\
+                Use this for \"is X running?\". For per-window state — on-screen, minimized, \
+                window titles — call list_windows instead. For just opening an app — running \
+                or not — call launch_app({path: ...}) directly; list_apps is not a prerequisite.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let procs = tokio::task::spawn_blocking(|| crate::win32::list_processes())
-            .await.unwrap_or_default();
-        let mut lines = vec![format!("Found {} processes:", procs.len())];
-        for p in &procs {
-            lines.push(format!("  {} (pid {})", p.name, p.pid));
+        // Strategy (port of `AppEnumerator.apps()` semantics):
+        // 1. Enumerate top-level visible windows; their owner pids are the
+        //    "running apps with a user-facing surface".
+        // 2. Look up each pid's executable name via the process table.
+        // 3. Mark `active` for the pid that owns GetForegroundWindow.
+        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+            let wins = crate::win32::list_windows(None);
+            // Deduplicate by pid — one app may own several top-level windows.
+            let mut seen_pids = std::collections::HashSet::new();
+            let mut running_pids: Vec<u32> = Vec::new();
+            for w in &wins {
+                if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
+            }
+
+            let foreground_pid = unsafe {
+                let fg = GetForegroundWindow();
+                let mut pid = 0u32;
+                let _ = GetWindowThreadProcessId(fg, Some(&mut pid));
+                pid
+            };
+
+            let procs = crate::win32::list_processes();
+            let pid_to_name: std::collections::HashMap<u32, &str> =
+                procs.iter().map(|p| (p.pid, p.name.as_str())).collect();
+
+            running_pids.iter().map(|&pid| {
+                let name = pid_to_name.get(&pid).copied().unwrap_or("<unknown>");
+                json!({
+                    "pid":       pid,
+                    "bundle_id": serde_json::Value::Null,  // Windows has no bundle ID concept
+                    "name":      name,
+                    "running":   true,
+                    "active":    pid == foreground_pid,
+                })
+            }).collect()
+        }).await.unwrap_or_default();
+
+        let running_count = apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)).count();
+        let total = apps.len();
+        let installed_only = total - running_count;
+        // Match Swift's text format: header line + bullet per running app.
+        let mut lines = vec![format!(
+            "✅ Found {total} app(s): {running_count} running, {installed_only} installed-not-running."
+        )];
+        for app in apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)) {
+            let name = app["name"].as_str().unwrap_or("?");
+            let pid  = app["pid"].as_u64().unwrap_or(0);
+            // Windows lacks bundle_id; omit the trailing [bundle] segment.
+            lines.push(format!("- {name} (pid {pid})"));
         }
-        let structured = json!({ "processes": procs.iter().map(|p| json!({
-            "pid": p.pid, "name": p.name
-        })).collect::<Vec<_>>() });
+        // `apps` key (matches Swift `Output.apps`); `processes` key kept as
+        // an alias for any pre-existing Rust callers that read the old shape.
+        let structured = json!({
+            "apps": apps,
+            "processes": apps.iter().map(|a| json!({
+                "pid":  a["pid"], "name": a["name"]
+            })).collect::<Vec<_>>(),
+        });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
 }

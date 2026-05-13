@@ -773,3 +773,33 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - set_config legacy: capture_mode=som + max_image_dimension=1024 applied ✓
 - Unknown key error ✓
 - Missing-input error ✓
+
+---
+
+## MCP tool: `get_agent_cursor_state`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetAgentCursorStateTool.swift:9-68`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetAgentCursorStateTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/get_agent_cursor_state_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"N cursor instance(s)."`; now matches Swift's
+   single-line camelCase output:
+   `"✅ cursor: enabled=true startHandle=0.3 endHandle=0.3 arcSize=0.25
+   arcFlow=0 spring=0.72 glideDurationMs=0 dwellAfterClickMs=80 idleHideMs=20000"`
+2. **`current_motion()`** helper added to `overlay.rs` — mirrors macOS
+   `current_motion()` so the tool can snapshot live motion values.
+3. **Description** — ported from Swift verbatim.
+
+### Intentional Rust-only
+
+- **Multi-cursor `cursors` array** — Rust supports multiple cursor
+  instances via `CursorRegistry`; Swift has a single `AgentCursor.shared`.
+  Included in `structuredContent` as an extra field; text format keeps
+  Swift's single-cursor vocabulary.
+
+### Verified on Windows
+`get_agent_cursor_state_parity.exe`:
+- Text: `"✅ cursor: enabled=true startHandle=0.3 endHandle=0.3 arcSize=0.25
+  arcFlow=0 spring=0.72 glideDurationMs=0 dwellAfterClickMs=80 idleHideMs=20000"` ✓
+- structuredContent has all 9 fields + `cursors` array ✓

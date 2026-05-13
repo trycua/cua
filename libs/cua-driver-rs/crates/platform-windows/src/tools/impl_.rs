@@ -1916,16 +1916,46 @@ impl Tool for GetAgentCursorStateTool {
     fn def(&self) -> &ToolDef {
         GCSTATE_DEF.get_or_init(|| ToolDef {
             name: "get_agent_cursor_state".into(),
-            description: "Return the current state of all agent cursor instances.".into(),
+            // Description ported from Swift `GetAgentCursorStateTool.swift`.
+            description: "Report the current agent-cursor configuration: enabled flag, \
+                motion knobs (startHandle, endHandle, arcSize, arcFlow, spring), glide \
+                duration, post-click dwell, and idle-hide delay. Durations come back in \
+                milliseconds to match the setter's units. Pure read-only — no side effects.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let states = self.state.cursor_registry.all_states();
-        let json = serde_json::to_value(&states).unwrap_or_default();
-        ToolResult::text(format!("{} cursor instance(s).", states.len()))
-            .with_structured(json!({ "cursors": json }))
+        let enabled = crate::overlay::is_enabled();
+        let motion  = crate::overlay::current_motion();
+        // Swift text format 1:1: single-line camelCase key=value pairs.
+        let summary = format!(
+            "cursor: enabled={enabled} startHandle={sh} endHandle={eh} arcSize={asz} \
+             arcFlow={af} spring={sp} glideDurationMs={gd} dwellAfterClickMs={dw} idleHideMs={ih}",
+            sh = motion.start_handle, eh = motion.end_handle,
+            asz = motion.arc_size,   af = motion.arc_flow,
+            sp = motion.spring,
+            gd = motion.glide_duration_ms as i64,
+            dw = motion.dwell_after_click_ms as i64,
+            ih = motion.idle_hide_ms as i64,
+        );
+        // Rust-only structured payload: the same fields + the multi-cursor
+        // instance map. Cursor instances are a Rust extension Swift doesn't
+        // expose; documented in PARITY.md.
+        let cursors = serde_json::to_value(self.state.cursor_registry.all_states()).unwrap_or_default();
+        ToolResult::text(format!("✅ {summary}"))
+            .with_structured(json!({
+                "enabled":              enabled,
+                "start_handle":         motion.start_handle,
+                "end_handle":           motion.end_handle,
+                "arc_size":             motion.arc_size,
+                "arc_flow":             motion.arc_flow,
+                "spring":               motion.spring,
+                "glide_duration_ms":    motion.glide_duration_ms,
+                "dwell_after_click_ms": motion.dwell_after_click_ms,
+                "idle_hide_ms":         motion.idle_hide_ms,
+                "cursors":              cursors,
+            }))
     }
 }
 

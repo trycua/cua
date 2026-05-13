@@ -53,6 +53,16 @@ pub fn is_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Snapshot the current motion config (start_handle / end_handle / arc_size /
+/// arc_flow / spring / glide_duration_ms / dwell_after_click_ms /
+/// idle_hide_ms).  Mirrors macOS `current_motion()` so
+/// `get_agent_cursor_state` can report the live values.
+pub fn current_motion() -> MotionConfig {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.motion.clone()))
+        .unwrap_or_default()
+}
+
 /// Returns the current cursor position in screen coordinates.
 pub fn current_position() -> (f64, f64) {
     RENDER.lock().ok()

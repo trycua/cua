@@ -1242,26 +1242,64 @@ impl Tool for DoubleClickTool {
     fn def(&self) -> &ToolDef {
         DCLICK_DEF.get_or_init(|| ToolDef {
             name: "double_click".into(),
-            description: "Double-click at (x,y) or on a UIA element by element_index + window_id. No focus steal. After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
+            // Description ported from Swift `DoubleClickTool.swift` semantics
+            // (two addressing modes, AXOpen analogue on Windows is not yet
+            // wired up — element path always falls back to a stamped pixel
+            // double-click via PostMessage).
+            description: "Double-click against a target pid. Two addressing modes:\n\n\
+                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
+                of that window) — synthesizes a stamped pixel double-click at the element's \
+                cached on-screen center via PostMessage. (Windows has no AXOpen analogue; \
+                Swift's AXOpen-first path falls through to the same pixel recipe when the \
+                element doesn't advertise AXOpen, so the user-visible behavior matches.)\n\n\
+                - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
+                returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in \
+                quick succession to the deepest child window at that point.\n\n\
+                Exactly one of `element_index` or (`x` AND `y`) must be provided. \
+                `pid` is required in both modes. `window_id` is required when \
+                `element_index` is used. The macOS-only `modifier` field is accepted for \
+                parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
-                "pid":{"type":"integer"},
-                "window_id":{"type":"integer"},
-                "element_index":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
-                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+                "pid":{"type":"integer","description":"Target process ID."},
+                "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used."},
+                "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id)."},
+                "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
+                "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
+                "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the gesture. Accepted for parity; currently no-op on Windows."},
+                "from_zoom":{"type":"boolean","description":"After a zoom call, pass true to translate zoom-image coords back to window space."}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32, None => return ToolResult::error("Missing required parameter: pid"),
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
+        let pid = raw_pid as u32;
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
         let elem_idx = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
         let x = args.get("x").and_then(|v| v.as_f64());
         let y = args.get("y").and_then(|v| v.as_f64());
+        // Swift validates "both x and y or neither" and "no element_index without window_id".
+        let has_xy        = x.is_some() && y.is_some();
+        let partial_xy    = x.is_some() != y.is_some();
+        if partial_xy {
+            return ToolResult::error("Provide both x and y together, not just one.");
+        }
+        if elem_idx.is_some() && has_xy {
+            return ToolResult::error("Provide either element_index or (x, y), not both.");
+        }
+        if elem_idx.is_none() && !has_xy {
+            return ToolResult::error("Provide element_index or (x, y) to address the double-click target.");
+        }
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.");
+        }
 
         // Resolve HWND: explicit, or auto from pid.
         let hwnd = match hwnd_opt {
@@ -1284,7 +1322,9 @@ impl Tool for DoubleClickTool {
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
-                Ok(format!("✅ Double-clicked element [{idx}] at screen ({},{}).", cx, cy))
+                // Swift text format 1:1: `"✅ Posted double-click to [N] role \"title\" at screen-point (X, Y)."`.
+                // UIA role/title placeholder pending element-cache enrichment.
+                Ok(format!("✅ Posted double-click to [{idx}] at screen-point ({cx}, {cy})."))
             }).await;
             match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -1316,12 +1356,18 @@ impl Tool for DoubleClickTool {
             let (xi, yi) = (px as i32, py as i32);
             let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 2, "left")).await;
             match result {
-                Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({px:.1}, {py:.1}).")),
+                Ok(Ok(())) => {
+                    // Match Swift's pixel-path text 1:1.
+                    ToolResult::text(format!(
+                        "✅ Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({}, {}).",
+                        sx as i32, sy as i32))
+                }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            ToolResult::error("Provide element_index or (x + y). pid is always required.")
+            // Unreachable — guarded by the earlier validation block.
+            unreachable!()
         }
     }
 }

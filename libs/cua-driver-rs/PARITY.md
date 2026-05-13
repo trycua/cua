@@ -516,3 +516,48 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 `hotkey_parity.exe` against Chrome:
 - Missing-pid / missing-keys errors ✓
 - `ctrl+end` → `"✅ Pressed ctrl+end on pid 85676."` ✓
+
+---
+
+## MCP tool: `double_click`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/DoubleClickTool.swift:28-327`
+- Rust:
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (DoubleClickTool)
+  - macos / linux: OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/double_click_parity.rs`
+
+### Fixed (Windows)
+
+1. **Text format pixel path** — was `"✅ Double-clicked at (X.X, Y.Y)."`;
+   now `"✅ Posted double-click to pid X at window-pixel (a, b) → screen-point (c, d)."`
+   matching Swift verbatim.
+2. **Text format element path** — was `"✅ Double-clicked element [N] at screen (X,Y)."`;
+   now `"✅ Posted double-click to [N] at screen-point (X, Y)."` matching
+   Swift's pixel-fallback element wording.  (UIA role/title placeholder
+   pending element-cache enrichment.)
+3. **Validation guards added** — ports Swift's full set:
+   - `"Provide both x and y together, not just one."`
+   - `"Provide either element_index or (x, y), not both."`
+   - `"Provide element_index or (x, y) to address the double-click target."`
+   - `"window_id is required when element_index is used — the element_index
+      cache is scoped per (pid, window_id). Pass the same window_id you used
+      in get_window_state."`
+4. **Error wording for missing pid** — `"Missing required integer field pid."`
+   matches Swift (schema-layer catches this first; tool-layer fallback uses
+   Swift wording).
+5. **`modifier` schema field** — accepted for parity (no-op on Windows;
+   PostMessage doesn't propagate modifier-key state — same caveat as
+   `click`).
+6. **Multi-paragraph description** ported from Swift with Windows-specific
+   notes (no AXOpen analogue; element path always falls back to pixel
+   double-click — user-visible behavior matches Swift's AXOpen-not-advertised
+   fallback).
+
+### Verified on Windows
+
+`double_click_parity.exe` against Chrome:
+- 4 error paths (missing-target, partial-xy, both-modes,
+  element-without-window) ✓
+- Pixel double-click: `"✅ Posted double-click to pid 85676 at
+  window-pixel (300, 300) → screen-point (462, 456)."` ✓

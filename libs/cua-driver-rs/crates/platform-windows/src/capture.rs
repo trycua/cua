@@ -11,7 +11,9 @@ use windows::Win32::Graphics::Gdi::{
     GetDIBits, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
     RGBQUAD, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowDC, PrintWindow, ReleaseDC, PW_RENDERFULLCONTENT};
+use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
+use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(2u32);
 
 /// Capture a window by HWND, returning raw PNG bytes.
 pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
@@ -34,7 +36,7 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
     use windows::Win32::Foundation::RECT;
 
-    let hwnd = HWND(hwnd as isize);
+    let hwnd = HWND(hwnd as *mut _);
 
     let mut rect = RECT::default();
     GetClientRect(hwnd, &mut rect)?;
@@ -50,7 +52,7 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     let old_bitmap = SelectObject(mem_dc, bitmap);
 
     let pw_ok = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT);
-    if pw_ok.0 == 0 {
+    if !pw_ok.as_bool() {
         BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
     }
 

@@ -3,7 +3,7 @@
 //! Uses CreateToolhelp32Snapshot / Process32FirstW / Process32NextW (simpler
 //! and more portable than NtQuerySystemInformation or EnumProcesses+psapi).
 
-use windows::Win32::Foundation::{CloseHandle, FALSE};
+use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
     TH32CS_SNAPPROCESS,
@@ -38,7 +38,7 @@ pub fn list_processes() -> Vec<ProcessInfo> {
                     parent_pid: entry.th32ParentProcessID,
                     name,
                 });
-                if Process32NextW(snap, &mut entry) == FALSE {
+                if Process32NextW(snap, &mut entry).is_err() {
                     break;
                 }
             }

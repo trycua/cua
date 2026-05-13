@@ -22,6 +22,8 @@ pub struct CacheKey {
 pub struct CachedSnapshot {
     /// element_index → raw IUIAutomationElement pointer (retained).
     pub elements: Vec<usize>,
+    /// element_index → screen-coordinate center (captured at walk time).
+    pub centers: Vec<(i32, i32)>,
 }
 
 impl Drop for CachedSnapshot {
@@ -48,17 +50,21 @@ impl ElementCache {
     }
 
     pub fn update(&self, pid: u32, hwnd: u64, nodes: &[UiaNode]) {
-        let elements: Vec<usize> = nodes.iter()
-            .filter(|n| n.element_index.is_some())
-            .map(|n| n.element_ptr)
-            .collect();
+        let actionable: Vec<&UiaNode> = nodes.iter().filter(|n| n.element_index.is_some()).collect();
+        let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();
+        let centers: Vec<(i32, i32)> = actionable.iter().map(|n| (n.center_x, n.center_y)).collect();
         let mut inner = self.inner.lock().unwrap();
-        inner.insert(CacheKey { pid, hwnd }, CachedSnapshot { elements });
+        inner.insert(CacheKey { pid, hwnd }, CachedSnapshot { elements, centers });
     }
 
     pub fn get_element_ptr(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<usize> {
         let inner = self.inner.lock().unwrap();
         inner.get(&CacheKey { pid, hwnd })?.elements.get(element_index).copied()
+    }
+
+    pub fn get_element_center(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32)> {
+        let inner = self.inner.lock().unwrap();
+        inner.get(&CacheKey { pid, hwnd })?.centers.get(element_index).copied()
     }
 
     pub fn element_count(&self, pid: u32, hwnd: u64) -> usize {

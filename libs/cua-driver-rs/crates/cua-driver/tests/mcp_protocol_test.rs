@@ -1972,3 +1972,1282 @@ fn test_set_recording_video_experimental_accepted() {
     child.kill().ok();
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Windows integration tests
+//
+// Mirrors the macOS tests above with Windows-specific adaptations:
+//   - binary path includes .exe
+//   - list_apps returns structuredContent.processes (not .apps)
+//   - get_config returns platform="windows"
+//   - check_permissions returns { elevated, uia, post_message } (not accessibility)
+//   - get_accessibility_tree returns processes + windows keys
+//   - type_text tests target Notepad instead of TextEdit
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+fn binary_path_windows() -> std::path::PathBuf {
+    binary_path().with_extension("exe")
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_initialize_handshake_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() {
+        eprintln!("Binary not found at {:?} — run `cargo build` first", binary);
+        return;
+    }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "clientInfo": { "name": "test-client", "version": "0.0.1" }
+        }
+    }));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["jsonrpc"], "2.0");
+    assert_eq!(resp["id"], 1);
+    assert!(resp["result"]["protocolVersion"].is_string());
+    assert_eq!(resp["result"]["serverInfo"]["name"], "cua-driver-rs");
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["id"], 2);
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
+    assert!(!tools.is_empty());
+
+    let tool_names: Vec<&str> = tools.iter()
+        .filter_map(|t| t["name"].as_str()).collect();
+    for expected in &["list_apps", "list_windows", "get_window_state", "click", "type_text", "press_key"] {
+        assert!(tool_names.contains(expected), "Missing tool: {}", expected);
+    }
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":3,"method":"unknown/method"}));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["id"], 3);
+    assert_eq!(resp["error"]["code"], -32601);
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_tools_call_list_apps_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_apps","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["id"], 2);
+    assert!(resp["result"]["content"].is_array());
+    let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Found"), "Expected process list text, got: {}", text);
+    // Windows backend returns "processes" key.
+    assert!(resp["result"]["structuredContent"]["processes"].is_array(),
+        "Expected processes array: {:?}", resp["result"]["structuredContent"]);
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_tools_call_unknown_tool_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"nonexistent_tool","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let is_error = resp["result"]["isError"].as_bool().unwrap_or(false);
+    assert!(is_error, "Expected isError=true for unknown tool");
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_all_expected_tools_registered_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    let resp = read_response(&mut stdout);
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
+    let names: std::collections::HashSet<&str> = tools.iter()
+        .filter_map(|t| t["name"].as_str()).collect();
+
+    let expected = [
+        "list_apps", "list_windows", "get_window_state", "launch_app",
+        "click", "double_click", "right_click", "type_text", "type_text_chars",
+        "press_key", "hotkey", "set_value", "scroll", "screenshot", "zoom",
+        "get_screen_size", "get_cursor_position",
+        "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
+        "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
+        "get_accessibility_tree",
+        "set_recording", "get_recording_state", "replay_trajectory",
+        "browser_eval",
+    ];
+    for name in &expected {
+        assert!(names.contains(name), "Missing tool: {name}  (registered: {names:?})");
+    }
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_get_screen_size_and_cursor_position_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"get_screen_size","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "get_screen_size failed: {resp:?}");
+    let sc = &resp["result"]["structuredContent"];
+    assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
+    assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"get_cursor_position","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "get_cursor_position failed: {resp:?}");
+    assert!(resp["result"]["structuredContent"]["x"].is_number());
+    assert!(resp["result"]["structuredContent"]["y"].is_number());
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_get_config_and_check_permissions_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"get_config","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+    assert_eq!(resp["result"]["structuredContent"]["platform"], "windows");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"check_permissions","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+    let sc = &resp["result"]["structuredContent"];
+    // Windows returns elevated, uia, post_message booleans.
+    assert!(sc["uia"].as_bool().unwrap_or(false), "uia should be true: {sc:?}");
+    assert!(sc["post_message"].as_bool().unwrap_or(false), "post_message should be true: {sc:?}");
+    assert!(sc["elevated"].is_boolean(), "elevated should be a boolean: {sc:?}");
+
+    // set_config — change capture_mode and verify get_config reflects it.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"set_config","arguments":{"capture_mode":"ax","max_image_dimension":1920}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from set_config: {resp:?}");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"get_config","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["result"]["structuredContent"]["capture_mode"], "ax");
+    assert_eq!(resp["result"]["structuredContent"]["max_image_dimension"], 1920);
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_concurrent_clients_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut processes: Vec<std::process::Child> = (0..2).map(|_| {
+        Command::new(&binary)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .spawn().expect("spawn")
+    }).collect();
+
+    for (i, child) in processes.iter_mut().enumerate() {
+        let stdin = child.stdin.as_mut().unwrap();
+        let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+        send_request(stdin, &serde_json::json!({
+            "jsonrpc":"2.0","id": i + 1,"method":"initialize","params":{}
+        }));
+        let resp = read_response(&mut stdout);
+        assert_eq!(resp["id"], (i + 1) as i64);
+        assert!(resp["result"]["protocolVersion"].is_string(), "Process {i} failed to initialize");
+    }
+
+    for mut child in processes { child.kill().ok(); }
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_list_windows_structured_content_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+    let sc = &resp["result"]["structuredContent"];
+    assert!(sc["windows"].is_array(), "Expected windows array: {sc:?}");
+    if let Some(wins) = sc["windows"].as_array() {
+        if let Some(w) = wins.first() {
+            assert!(w["window_id"].is_number(), "window_id missing: {w:?}");
+            assert!(w["pid"].is_number(), "pid missing: {w:?}");
+        }
+    }
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_get_accessibility_tree_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"get_accessibility_tree","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+    let sc = &resp["result"]["structuredContent"];
+    // Windows backend returns both "processes" and "windows" keys.
+    assert!(sc["processes"].is_array(), "Expected processes array: {sc:?}");
+    assert!(sc["windows"].is_array(), "Expected windows array: {sc:?}");
+    let content = resp["result"]["content"].as_array().expect("content array");
+    assert!(!content.is_empty());
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_screenshot_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    // Full-display screenshot (no window_id).
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"screenshot","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
+    let content = resp["result"]["content"].as_array().expect("content array");
+    assert!(!content.is_empty(), "screenshot returned empty content");
+
+    // JPEG format.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from screenshot jpeg: {resp:?}");
+    if !resp["result"]["isError"].as_bool().unwrap_or(false) {
+        let content = resp["result"]["content"].as_array().expect("content array");
+        let has_jpeg = content.iter().any(|c| {
+            c["type"] == "image" && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
+                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
+        });
+        assert!(has_jpeg, "Expected image/jpeg in screenshot response: {content:?}");
+        let sc = &resp["result"]["structuredContent"];
+        assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
+        assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
+        assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg");
+    }
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_zoom_tool_returns_jpeg_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"on_screen_only":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let windows = resp["result"]["structuredContent"]["windows"]
+        .as_array().cloned().unwrap_or_default();
+
+    let mut found_jpeg = false;
+    let mut tried = 0usize;
+    for win in windows.iter().take(5) {
+        let Some(wid) = win["window_id"].as_u64() else { continue; };
+        tried += 1;
+        send_request(stdin, &serde_json::json!({
+            "jsonrpc":"2.0","id": 2 + tried as u64,"method":"tools/call",
+            "params":{"name":"zoom","arguments":{
+                "window_id":wid,"x1":0,"y1":0,"x2":100,"y2":100
+            }}
+        }));
+        let r = read_response(&mut stdout);
+        if r["result"]["isError"].as_bool().unwrap_or(false) { continue; }
+        let content = r["result"]["content"].as_array().expect("content array");
+        found_jpeg = content.iter().any(|c| {
+            c["type"] == "image" && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
+                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
+        });
+        if found_jpeg {
+            let sc = &r["result"]["structuredContent"];
+            assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
+            assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
+            assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg");
+            break;
+        }
+    }
+
+    if tried == 0 {
+        eprintln!("No on-screen windows found — skipping zoom test");
+        child.kill().ok();
+        return;
+    }
+    assert!(found_jpeg, "Expected at least one window to return a valid JPEG from zoom");
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_overlay_move_cursor_stays_alive_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    for (id, (x, y)) in [(2u64, (100.0_f64, 200.0_f64)), (3, (400.0, 300.0)), (4, (800.0, 600.0))] {
+        send_request(stdin, &serde_json::json!({
+            "jsonrpc":"2.0","id":id,"method":"tools/call",
+            "params":{"name":"move_cursor","arguments":{"x":x,"y":y}}
+        }));
+        let resp = read_response(&mut stdout);
+        assert_eq!(resp["id"], id);
+        assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "move_cursor failed: {:?}", resp);
+    }
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"get_agent_cursor_state","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["id"], 5);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+
+    std::thread::sleep(Duration::from_millis(100));
+
+    assert!(
+        child.try_wait().expect("try_wait").is_none(),
+        "cua-driver crashed during overlay move_cursor test"
+    );
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_multi_cursor_instance_state_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"move_cursor","arguments":{"x":100.0,"y":200.0,"cursor_id":"agent1"}}
+    }));
+    assert!(!read_response(&mut stdout)["result"]["isError"].as_bool().unwrap_or(false));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"move_cursor","arguments":{"x":300.0,"y":400.0,"cursor_id":"agent2"}}
+    }));
+    assert!(!read_response(&mut stdout)["result"]["isError"].as_bool().unwrap_or(false));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"set_agent_cursor_motion","arguments":{
+            "cursor_id":"agent1","cursor_color":"#FF0000","cursor_label":"AI-1"
+        }}
+    }));
+    assert!(!read_response(&mut stdout)["result"]["isError"].as_bool().unwrap_or(false));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"set_agent_cursor_enabled","arguments":{"enabled":false,"cursor_id":"agent2"}}
+    }));
+    assert!(!read_response(&mut stdout)["result"]["isError"].as_bool().unwrap_or(false));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":6,"method":"tools/call",
+        "params":{"name":"get_agent_cursor_state","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+    let cursors = &resp["result"]["structuredContent"]["cursors"];
+    assert!(cursors.as_array().map(|a| a.len() >= 2).unwrap_or(false),
+        "Expected at least 2 cursor instances: {cursors:?}");
+
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(child.try_wait().expect("try_wait").is_none(), "cua-driver crashed during multi-cursor test");
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_press_key_harmless_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let wins = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(win) = wins.and_then(|a| a.iter().find(|w| w["pid"].as_i64().is_some())) else {
+        eprintln!("No windows found — skipping press_key test");
+        child.kill().ok();
+        return;
+    };
+    let pid = win["pid"].as_i64().unwrap();
+    let wid = win["window_id"].as_u64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"press_key","arguments":{"pid":pid,"window_id":wid,"key":"F24"}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from press_key: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_scroll_tool_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    // Windows list_apps returns "processes".
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_apps","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let procs = resp["result"]["structuredContent"]["processes"].as_array();
+    let Some(proc_) = procs.and_then(|a| a.iter().find(|p| p["pid"].as_i64().is_some())) else {
+        eprintln!("No processes found — skipping scroll test");
+        child.kill().ok();
+        return;
+    };
+    let pid = proc_["pid"].as_i64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"scroll","arguments":{"pid":pid,"direction":"down","amount":1}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from scroll: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_click_pixel_path_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"on_screen_only":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let wins = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(win) = wins.and_then(|a| a.iter().find(|w| w["pid"].as_i64().is_some())) else {
+        eprintln!("No on-screen windows — skipping click pixel path test");
+        child.kill().ok();
+        return;
+    };
+    let pid = win["pid"].as_i64().unwrap();
+    let wid = win["window_id"].as_u64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"click","arguments":{"pid":pid,"window_id":wid,"x":5.0,"y":5.0}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from click: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_double_click_and_right_click_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"on_screen_only":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let wins = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(win) = wins.and_then(|a| a.iter().find(|w| w["pid"].as_i64().is_some())) else {
+        eprintln!("No on-screen windows — skipping double/right click test");
+        child.kill().ok();
+        return;
+    };
+    let pid = win["pid"].as_i64().unwrap();
+    let wid = win["window_id"].as_u64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"double_click","arguments":{"pid":pid,"window_id":wid,"x":5.0,"y":5.0}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from double_click: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"right_click","arguments":{"pid":pid,"window_id":wid,"x":5.0,"y":5.0}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from right_click: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_hotkey_keys_array_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let windows = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(win) = windows.and_then(|a| a.iter().find(|w| w["pid"].as_i64().is_some())) else {
+        eprintln!("No windows found — skipping hotkey test");
+        child.kill().ok();
+        return;
+    };
+    let pid = win["pid"].as_i64().unwrap();
+    let wid = win["window_id"].as_u64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"hotkey","arguments":{"pid":pid,"window_id":wid,"keys":["ctrl","a"]}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from hotkey: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_get_window_state_ax_mode_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let windows = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(win) = windows.and_then(|a| a.iter().find(|w| {
+        w["pid"].as_i64().is_some() && w["window_id"].as_u64().is_some()
+    })) else {
+        eprintln!("No windows found — skipping get_window_state ax test");
+        child.kill().ok();
+        return;
+    };
+    let pid = win["pid"].as_i64().unwrap();
+    let wid = win["window_id"].as_u64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"get_window_state","arguments":{"pid":pid,"window_id":wid,"capture_mode":"ax"}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
+    let content = resp["result"]["content"].as_array().expect("content array");
+    let has_image = content.iter().any(|c| c["type"] == "image");
+    assert!(!has_image, "capture_mode=ax should not return an image");
+    assert!(!content.is_empty());
+
+    let sc = &resp["result"]["structuredContent"];
+    assert_eq!(sc["window_id"].as_u64().unwrap_or(0), wid);
+    assert_eq!(sc["pid"].as_i64().unwrap_or(0), pid);
+    assert!(sc["element_count"].is_number(), "expected element_count: {sc:?}");
+
+    // vision mode should include screenshot dimensions.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"get_window_state","arguments":{"pid":pid,"window_id":wid,"capture_mode":"vision"}}
+    }));
+    let vision_resp = read_response(&mut stdout);
+    assert!(vision_resp["error"].is_null(), "Protocol error from vision get_window_state: {vision_resp:?}");
+    if !vision_resp["result"]["isError"].as_bool().unwrap_or(false) {
+        let vsc = &vision_resp["result"]["structuredContent"];
+        assert!(vsc["screenshot_width"].as_f64().unwrap_or(0.0) > 0.0, "vision mode should have screenshot_width: {vsc:?}");
+    }
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_type_text_chars_schema_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
+    let list_resp = read_response(&mut stdout);
+    let tools = list_resp["result"]["tools"].as_array().expect("tools array");
+
+    let ttc = tools.iter().find(|t| t["name"] == "type_text_chars")
+        .expect("type_text_chars not found");
+    let props = &ttc["inputSchema"]["properties"];
+    assert!(props["type_chars_only"].is_object(),
+        "type_text_chars schema missing type_chars_only: {props:?}");
+
+    let lw = tools.iter().find(|t| t["name"] == "list_windows").expect("list_windows not found");
+    assert!(lw["inputSchema"]["properties"]["on_screen_only"].is_object());
+
+    let sacm = tools.iter().find(|t| t["name"] == "set_agent_cursor_motion")
+        .expect("set_agent_cursor_motion not found");
+    let sacm_props = &sacm["inputSchema"]["properties"];
+    for knob in &["arc_size", "spring", "glide_duration_ms", "dwell_after_click_ms", "idle_hide_ms"] {
+        assert!(sacm_props[knob].is_object(), "missing {knob}: {sacm_props:?}");
+    }
+
+    let sc = tools.iter().find(|t| t["name"] == "set_config").expect("set_config not found");
+    assert!(sc["inputSchema"]["properties"]["capture_mode"]["enum"].is_array());
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_type_text_notepad_windows() {
+    //! Launch Notepad, type a short string via type_text. Skips if Notepad unavailable.
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    // Launch Notepad.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"launch_app","arguments":{"name":"notepad.exe"}}
+    }));
+    read_response(&mut stdout);
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
+    // Find Notepad in running processes.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"list_apps","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let procs = resp["result"]["structuredContent"]["processes"].as_array();
+    let Some(proc_) = procs.and_then(|a| {
+        a.iter().find(|p| {
+            p["name"].as_str().map(|n| n.to_lowercase().contains("notepad")).unwrap_or(false)
+        })
+    }) else {
+        eprintln!("Notepad not found — skipping type_text test");
+        child.kill().ok();
+        return;
+    };
+    let pid = proc_["pid"].as_i64().unwrap();
+
+    // Find Notepad's window.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"pid":pid,"on_screen_only":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let wins = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(win) = wins.and_then(|a| a.first()) else {
+        eprintln!("Notepad has no on-screen windows — skipping type_text test");
+        child.kill().ok();
+        return;
+    };
+    let wid = win["window_id"].as_u64().unwrap();
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"type_text","arguments":{"pid":pid,"window_id":wid,"text":"cua-test"}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Protocol error from type_text: {resp:?}");
+    assert!(!resp["result"]["content"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_recording_session_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-rec-test-{}", std::process::id()));
+    let tmp_str = tmp_dir.to_string_lossy().to_string();
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"set_recording","arguments":{"enabled":true,"output_dir":tmp_str}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "set_recording failed: {resp:?}");
+    assert!(resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(false));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"move_cursor","arguments":{"x":100.0,"y":200.0}}
+    }));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"get_recording_state","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let next_turn = resp["result"]["structuredContent"]["next_turn"].as_u64().unwrap_or(0);
+    assert!(next_turn >= 2, "expected next_turn >= 2, got {next_turn}");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"set_recording","arguments":{"enabled":false}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(true));
+    child.kill().ok();
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    let action_path = tmp_dir.join("turn-00001").join("action.json");
+    assert!(action_path.exists(), "Expected action.json at {action_path:?}");
+    let content: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&action_path).unwrap()
+    ).unwrap();
+    assert_eq!(content["tool"].as_str().unwrap_or(""), "move_cursor");
+    assert_eq!(content["arguments"]["x"].as_f64().unwrap_or(0.0), 100.0);
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_replay_trajectory_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let traj_dir = std::env::temp_dir().join(format!("cua-driver-rs-replay-{}", std::process::id()));
+    let turn_dir = traj_dir.join("turn-00001");
+    std::fs::create_dir_all(&turn_dir).unwrap();
+    std::fs::write(
+        turn_dir.join("action.json"),
+        r#"{"tool":"move_cursor","arguments":{"x":50.0,"y":60.0}}"#,
+    ).unwrap();
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"replay_trajectory","arguments":{
+            "dir":traj_dir.to_string_lossy(),"delay_ms":0
+        }}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "replay error: {resp:?}");
+    let sc = &resp["result"]["structuredContent"];
+    assert_eq!(sc["attempted"].as_u64().unwrap_or(0), 1);
+    assert_eq!(sc["succeeded"].as_u64().unwrap_or(0), 1);
+    assert_eq!(sc["failed"].as_u64().unwrap_or(99), 0);
+
+    child.kill().ok();
+    let _ = std::fs::remove_dir_all(&traj_dir);
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_browser_eval_no_cdp_error_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"browser_eval","arguments":{"expression":"1+1","cdp_port":19722}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(
+        resp["result"]["isError"].as_bool().unwrap_or(false),
+        "expected isError=true when CDP port not listening: {resp:?}"
+    );
+    let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(text.contains("browser_eval"), "error text should mention browser_eval: {text}");
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_set_config_screenshot_resize_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"set_config","arguments":{"max_image_dimension":200}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "set_config failed: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"screenshot","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "screenshot failed: {resp:?}");
+
+    let w = resp["result"]["structuredContent"]["width"].as_u64().unwrap_or(9999);
+    let h = resp["result"]["structuredContent"]["height"].as_u64().unwrap_or(9999);
+    assert!(w <= 200, "screenshot width {w} should be ≤ 200 after max_image_dimension=200");
+    assert!(h <= 200, "screenshot height {h} should be ≤ 200 after max_image_dimension=200");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"get_config","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert_eq!(resp["result"]["structuredContent"]["max_image_dimension"].as_u64(), Some(200));
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_zoom_from_zoom_click_round_trip_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"on_screen_only":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let wins = resp["result"]["structuredContent"]["windows"].as_array().cloned().unwrap_or_default();
+    let Some(win) = wins.iter().find(|w| w["pid"].as_i64().is_some()) else {
+        eprintln!("No on-screen windows — skipping from_zoom test");
+        child.kill().ok();
+        return;
+    };
+    let window_id = win["window_id"].as_u64().unwrap();
+    let pid = win["pid"].as_i64().unwrap();
+
+    // click with from_zoom=true and no prior zoom context — expect error.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"click","arguments":{"pid":pid,"window_id":window_id,"x":10.0,"y":10.0,"from_zoom":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
+    let err_text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(is_err, "Expected error when from_zoom=true with no context: {resp:?}");
+    assert!(err_text.contains("no zoom context"), "Expected 'no zoom context': {err_text}");
+
+    // Call zoom to store context.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"zoom","arguments":{"window_id":window_id,"pid":pid,"x1":0,"y1":0,"x2":50,"y2":50}}
+    }));
+    let resp = read_response(&mut stdout);
+    if resp["result"]["isError"].as_bool().unwrap_or(false) {
+        eprintln!("zoom failed — skipping from_zoom click test");
+        child.kill().ok();
+        return;
+    }
+
+    // click with from_zoom=true should NOT say "no zoom context".
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"click","arguments":{"pid":pid,"window_id":window_id,"x":10.0,"y":10.0,"from_zoom":true}}
+    }));
+    let resp = read_response(&mut stdout);
+    let err_text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(!err_text.contains("no zoom context"),
+        "After zoom(), from_zoom click should not say 'no zoom context': {err_text}");
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_set_recording_video_experimental_accepted_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-videxp-{}", std::process::id()));
+    let tmp_str = tmp_dir.to_string_lossy().to_string();
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"set_recording","arguments":{
+            "enabled":true,"output_dir":tmp_str,"video_experimental":true
+        }}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(resp["error"].is_null(), "Expected no JSON-RPC error: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false),
+        "set_recording with video_experimental should succeed: {resp:?}");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"set_recording","arguments":{"enabled":false}}
+    }));
+    read_response(&mut stdout);
+    child.kill().ok();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_concurrent_multi_driver_isolation_windows() {
+    let binary = binary_path_windows();
+    if !binary.exists() { return; }
+
+    let mut child_a = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn driver A");
+    let mut child_b = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn driver B");
+
+    let stdin_a = child_a.stdin.as_mut().unwrap();
+    let mut stdout_a = BufReader::new(child_a.stdout.as_mut().unwrap());
+    let stdin_b = child_b.stdin.as_mut().unwrap();
+    let mut stdout_b = BufReader::new(child_b.stdout.as_mut().unwrap());
+
+    send_request(stdin_a, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    send_request(stdin_b, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout_a);
+    read_response(&mut stdout_b);
+
+    send_request(stdin_a, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"set_agent_cursor_enabled","arguments":{"cursor_id":"alpha","enabled":true}}
+    }));
+    send_request(stdin_b, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"set_agent_cursor_enabled","arguments":{"cursor_id":"beta","enabled":false}}
+    }));
+    let resp_a = read_response(&mut stdout_a);
+    let resp_b = read_response(&mut stdout_b);
+    assert!(resp_a["error"].is_null(), "Driver A failed: {resp_a:?}");
+    assert!(resp_b["error"].is_null(), "Driver B failed: {resp_b:?}");
+
+    send_request(stdin_a, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"get_agent_cursor_state","arguments":{}}
+    }));
+    send_request(stdin_b, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"get_agent_cursor_state","arguments":{}}
+    }));
+    let state_a = read_response(&mut stdout_a);
+    let state_b = read_response(&mut stdout_b);
+    assert!(state_a["error"].is_null());
+    assert!(state_b["error"].is_null());
+
+    let cursors_a = state_a["result"]["structuredContent"]["cursors"].as_array();
+    let cursors_b = state_b["result"]["structuredContent"]["cursors"].as_array();
+
+    let alpha_enabled = cursors_a.and_then(|arr| arr.iter().find(|c| {
+        c["config"]["cursor_id"].as_str() == Some("alpha")
+    })).and_then(|c| c["config"]["enabled"].as_bool());
+    let beta_enabled = cursors_b.and_then(|arr| arr.iter().find(|c| {
+        c["config"]["cursor_id"].as_str() == Some("beta")
+    })).and_then(|c| c["config"]["enabled"].as_bool());
+
+    assert_eq!(alpha_enabled, Some(true), "Cursor alpha should be enabled in driver A");
+    assert_eq!(beta_enabled, Some(false), "Cursor beta should be disabled in driver B");
+
+    child_a.kill().ok();
+    child_b.kill().ok();
+}

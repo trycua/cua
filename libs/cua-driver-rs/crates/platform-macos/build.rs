@@ -1,4 +1,8 @@
 fn main() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "macos" {
+        return;
+    }
     // Force AppKit, Foundation, QuartzCore and CoreGraphics to be linked.
     // objc2-app-kit's empty extern block is not enough to propagate
     // framework links through Cargo's dependency graph on all toolchain

@@ -1,12 +1,33 @@
 //! Real Windows tool implementations (compiled only on Windows).
 
 use async_trait::async_trait;
+
+/// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
+/// glide to finish before returning.  No-op when the overlay is not enabled.
+///
+/// On the very first call the cursor is at the off-screen initial position
+/// (-200, -200).  Animating from there would cause a jarring off-screen fly-in,
+/// so we snap to the target with a ClickPulse first and skip the glide wait.
+async fn overlay_glide_to(sx: f64, sy: f64) {
+    if !crate::overlay::is_enabled() { return; }
+    if crate::overlay::is_at_initial_position() {
+        // Snap to target; no animation to wait for.
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        return;
+    }
+    crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
+        x: sx, y: sy, end_heading_radians: 0.0,
+    });
+    let ms = crate::overlay::glide_duration_ms();
+    tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
+}
 use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
 use crate::uia::ElementCache;
 use cursor_overlay::CursorRegistry;
+use windows::core::Interface as _;
 
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
 
@@ -28,7 +49,7 @@ impl ResizeRegistry {
     pub fn new() -> Self { Self { ratios: std::sync::Mutex::new(Default::default()) } }
     pub fn set_ratio(&self, pid: u32, ratio: f64) { self.ratios.lock().unwrap().insert(pid, ratio); }
     pub fn clear_ratio(&self, pid: u32) { self.ratios.lock().unwrap().remove(&pid); }
-    pub fn ratio(&self, pid: u32) -> Option<f64> { *self.ratios.lock().unwrap().get(&pid) }
+    pub fn ratio(&self, pid: u32) -> Option<f64> { self.ratios.lock().unwrap().get(&pid).copied() }
 }
 
 /// Per-process zoom context — stores padded crop origin and resize scale from
@@ -287,32 +308,68 @@ impl Tool for LaunchAppTool {
         }
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-            // Launch by path first.
+            // Launch by full path with no focus steal.
             if let Some(path) = path_opt {
-                let child = std::process::Command::new(&path).spawn()?;
-                return Ok(format!("Launched '{}' with pid {}.", path, child.id()));
+                use windows::Win32::UI::Shell::ShellExecuteW;
+                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+                use windows::core::PCWSTR;
+                fn to_wide_lp(s: &str) -> Vec<u16> {
+                    s.encode_utf16().chain(std::iter::once(0)).collect()
+                }
+                let op   = to_wide_lp("open");
+                let file = to_wide_lp(&path);
+                let ret  = unsafe {
+                    ShellExecuteW(None, PCWSTR(op.as_ptr()), PCWSTR(file.as_ptr()),
+                        PCWSTR::null(), PCWSTR::null(), SW_SHOWNOACTIVATE)
+                };
+                if ret.0 as usize <= 32 {
+                    return Err(anyhow::anyhow!("ShellExecuteW failed (ret={:?})", ret.0));
+                }
+                return Ok(format!("Launched '{}' (no focus steal).", path));
             }
-            // Open URLs in default browser.
+            // Open URLs in default browser (no focus steal via ShellExecuteW).
             if !urls.is_empty() {
+                use windows::Win32::UI::Shell::ShellExecuteW;
+                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+                use windows::core::PCWSTR;
+                fn to_wide_url(s: &str) -> Vec<u16> {
+                    s.encode_utf16().chain(std::iter::once(0)).collect()
+                }
+                let op = to_wide_url("open");
                 for url in &urls {
-                    // ShellExecute with "open" launches in default browser.
-                    std::process::Command::new("cmd")
-                        .args(["/c", "start", "", url.as_str()])
-                        .spawn()?;
+                    let file = to_wide_url(url);
+                    unsafe {
+                        ShellExecuteW(None, PCWSTR(op.as_ptr()), PCWSTR(file.as_ptr()),
+                            PCWSTR::null(), PCWSTR::null(), SW_SHOWNOACTIVATE);
+                    }
                 }
-                return Ok(format!("Opened {} URL(s).", urls.len()));
+                return Ok(format!("Opened {} URL(s) (no focus steal).", urls.len()));
             }
-            // Launch by name via ShellExecute-style "start" command.
+            // Launch by name via ShellExecuteW with SW_SHOWNOACTIVATE (no focus steal).
             if let Some(name) = name_opt {
-                std::process::Command::new("cmd")
-                    .args(["/c", "start", "", name.as_str()])
-                    .spawn()?;
-                // Wait briefly for windows to appear.
-                for _ in 0..5 {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    // could try to find windows here, but just return ok for now
+                use windows::Win32::UI::Shell::ShellExecuteW;
+                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+                use windows::core::PCWSTR;
+                fn to_wide(s: &str) -> Vec<u16> {
+                    s.encode_utf16().chain(std::iter::once(0)).collect()
                 }
-                return Ok(format!("Launched '{}'.", name));
+                let op  = to_wide("open");
+                let file = to_wide(&name);
+                let result = unsafe {
+                    ShellExecuteW(
+                        None,
+                        PCWSTR(op.as_ptr()),
+                        PCWSTR(file.as_ptr()),
+                        PCWSTR::null(),
+                        PCWSTR::null(),
+                        SW_SHOWNOACTIVATE,
+                    )
+                };
+                // ShellExecuteW returns >32 on success.
+                if result.0 as usize <= 32 {
+                    return Err(anyhow::anyhow!("ShellExecuteW failed (ret={:?})", result.0));
+                }
+                return Ok(format!("Launched '{}' (no focus steal).", name));
             }
             unreachable!()
         }).await;
@@ -380,27 +437,24 @@ impl Tool for ClickTool {
         };
 
         if let Some(idx) = elem_idx {
-            // UIA invoke path — find element in cache, get bounding rect, post click at center.
-            let state = self.state.clone();
+            // UIA path: get cached center (no COM call needed — captured at walk time).
+            let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
+                Some(v) => v,
+                None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
+            };
+            // Step 2: animate cursor to screen coords (awaits glide_duration_ms).
+            overlay_glide_to(cx as f64, cy as f64).await;
+            // Step 3: click pulse + post click.
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                x: cx as f64, y: cy as f64,
+            });
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(hwnd));
             let btn = button.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-                let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
-                    .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."))?;
-                // Reconstruct element and get bounding rect.
-                use windows::Win32::UI::Accessibility::IUIAutomationElement;
-                use windows::core::Interface;
-                let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-                let rect = unsafe { elem.CurrentBoundingRectangle()? };
-                std::mem::forget(elem); // don't release cache's ref
-                let cx = (rect.left + rect.right) / 2;
-                let cy = (rect.top + rect.bottom) / 2;
-                // Convert screen coords to client coords.
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::UI::WindowsAndMessaging::ScreenToClient;
-                let mut pt = POINT { x: cx, y: cy };
-                unsafe { ScreenToClient(HWND(hwnd as isize), &mut pt); }
-                crate::input::post_click(hwnd, pt.x, pt.y, count, &btn)?;
-                Ok(format!("✅ Clicked element [{idx}] at client ({},{}).", pt.x, pt.y))
+                // cx/cy are screen coords from CurrentBoundingRectangle; use
+                // post_click_screen so deepest-child resolution happens once.
+                crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
+                Ok(format!("✅ Clicked element [{idx}] at screen ({},{}).", cx, cy))
             }).await;
             match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -420,6 +474,8 @@ impl Tool for ClickTool {
                 px *= ratio;
                 py *= ratio;
             }
+            // Animate cursor to target (screen coords = window-client coords here).
+            overlay_glide_to(px, py).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: px, y: py });
             // Pin overlay just above the target window.
             if let Some(h) = hwnd_opt {
@@ -539,12 +595,13 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+        let key_display = key.clone();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::post_key(hwnd, &key, &m)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key}'.")),
+            Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key_display}'.")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -733,6 +790,8 @@ impl Tool for ScrollTool {
             None => return ToolResult::error("Missing required parameter: direction"),
         };
         let by = args.get("by").and_then(|v| v.as_str()).unwrap_or("line").to_owned();
+        let direction_display = direction.clone();
+        let by_display = by.clone();
         let amount = args.get("amount").and_then(|v| v.as_u64())
             .unwrap_or(3).clamp(1, 50) as u32;
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
@@ -757,7 +816,7 @@ impl Tool for ScrollTool {
                 SB_PAGEDOWN, SB_PAGEUP, SB_PAGELEFT, SB_PAGERIGHT,
             };
 
-            let hwnd_win = HWND(hwnd as isize);
+            let hwnd_win = HWND(hwnd as *mut _);
             let use_page = by == "page";
             let (msg, code) = match (direction.as_str(), use_page) {
                 ("up",    false) => (WM_VSCROLL, SB_LINEUP),
@@ -772,14 +831,14 @@ impl Tool for ScrollTool {
             };
             for _ in 0..amount {
                 unsafe {
-                    PostMessageW(hwnd_win, msg, WPARAM(code as usize), LPARAM(0))?;
+                    PostMessageW(hwnd_win, msg, WPARAM(code.0 as usize), LPARAM(0))?;
                 }
             }
             Ok(())
         }).await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Scrolled {direction} {amount}×{by}.")),
+            Ok(Ok(())) => ToolResult::text(format!("Scrolled {direction_display} {amount}×{by_display}.")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -837,7 +896,7 @@ impl Tool for ScreenshotTool {
 
         match result {
             Ok(Ok((b64, w, h))) => {
-                let label = if is_jpeg { "JPEG" } else { "PNG" };
+                let label = if is_jpeg { "jpeg" } else { "png" };
                 let scope = if hwnd_opt.is_some() { "window".to_owned() }
                     else { "display".to_owned() };
                 let mut tr = ToolResult::text(format!("Screenshot ({scope}): {w}×{h} {label}."));
@@ -903,22 +962,16 @@ impl Tool for DoubleClickTool {
         };
 
         if let Some(idx) = elem_idx {
-            let state = self.state.clone();
+            let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
+                Some(v) => v,
+                None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
+            };
+            overlay_glide_to(cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(hwnd));
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-                let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
-                    .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."))?;
-                use windows::Win32::UI::Accessibility::IUIAutomationElement;
-                let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-                let rect = unsafe { elem.CurrentBoundingRectangle()? };
-                std::mem::forget(elem);
-                let cx = (rect.left + rect.right) / 2;
-                let cy = (rect.top + rect.bottom) / 2;
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::UI::WindowsAndMessaging::ScreenToClient;
-                let mut pt = POINT { x: cx, y: cy };
-                unsafe { ScreenToClient(HWND(hwnd as isize), &mut pt); }
-                crate::input::post_click(hwnd, pt.x, pt.y, 2, "left")?;
-                Ok(format!("✅ Double-clicked element [{idx}] at client ({},{}).", pt.x, pt.y))
+                crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
+                Ok(format!("✅ Double-clicked element [{idx}] at screen ({},{}).", cx, cy))
             }).await;
             match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -938,6 +991,7 @@ impl Tool for DoubleClickTool {
                 px *= ratio;
                 py *= ratio;
             }
+            overlay_glide_to(px, py).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: px, y: py });
             let (xi, yi) = (px as i32, py as i32);
             let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 2, "left")).await;
@@ -1000,22 +1054,16 @@ impl Tool for RightClickTool {
         };
 
         if let Some(idx) = elem_idx {
-            let state = self.state.clone();
+            let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
+                Some(v) => v,
+                None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
+            };
+            overlay_glide_to(cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(hwnd));
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-                let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
-                    .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."))?;
-                use windows::Win32::UI::Accessibility::IUIAutomationElement;
-                let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-                let rect = unsafe { elem.CurrentBoundingRectangle()? };
-                std::mem::forget(elem);
-                let cx = (rect.left + rect.right) / 2;
-                let cy = (rect.top + rect.bottom) / 2;
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::UI::WindowsAndMessaging::ScreenToClient;
-                let mut pt = POINT { x: cx, y: cy };
-                unsafe { ScreenToClient(HWND(hwnd as isize), &mut pt); }
-                crate::input::post_click(hwnd, pt.x, pt.y, 1, "right")?;
-                Ok(format!("✅ Right-clicked element [{idx}] at client ({},{}).", pt.x, pt.y))
+                crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
+                Ok(format!("✅ Right-clicked element [{idx}] at screen ({},{}).", cx, cy))
             }).await;
             match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -1035,6 +1083,7 @@ impl Tool for RightClickTool {
                 px *= ratio;
                 py *= ratio;
             }
+            overlay_glide_to(px, py).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: px, y: py });
             let (xi, yi) = (px as i32, py as i32);
             let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 1, "right")).await;
@@ -1270,13 +1319,20 @@ impl Tool for SetAgentCursorMotionTool {
     fn def(&self) -> &ToolDef {
         CURSOR_DEF.get_or_init(|| ToolDef {
             name: "set_agent_cursor_motion".into(),
-            description: "Configure the visual appearance of an agent cursor instance.\n\n\
+            description: "Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
+                Appearance:\n\
                 - cursor_id: instance name (default='default')\n\
                 - cursor_icon: built-in ('arrow','crosshair','hand','dot') or PNG/SVG file path\n\
                 - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
                 - cursor_label: short text shown near the cursor\n\
                 - cursor_size: dot radius in points (default=16)\n\
-                - cursor_opacity: 0.0–1.0 (default=0.85)".into(),
+                - cursor_opacity: 0.0–1.0 (default=0.85)\n\n\
+                Motion curve (Bezier):\n\
+                - arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25\n\
+                - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
+                - glide_duration_ms: flight duration per move [50,5000]. Default 160\n\
+                - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
+                - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000".into(),
             input_schema: json!({
                 "type":"object","properties":{
                     "cursor_id":{"type":"string"},
@@ -1284,7 +1340,15 @@ impl Tool for SetAgentCursorMotionTool {
                     "cursor_color":{"type":"string"},
                     "cursor_label":{"type":"string"},
                     "cursor_size":{"type":"number"},
-                    "cursor_opacity":{"type":"number"}
+                    "cursor_opacity":{"type":"number"},
+                    "start_handle":{"type":"number","description":"Start-handle fraction [0,1]. Default 0.3."},
+                    "end_handle":{"type":"number","description":"End-handle fraction [0,1]. Default 0.3."},
+                    "arc_size":{"type":"number","description":"Arc deflection as fraction of path length [0,1]. Default 0.25."},
+                    "arc_flow":{"type":"number","description":"Asymmetry bias [-1,1]. Default 0.0."},
+                    "spring":{"type":"number","description":"Settle damping [0.3,1.0]. Default 0.72."},
+                    "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000,"description":"Flight duration per move in ms. Default 160."},
+                    "dwell_after_click_ms":{"type":"number","minimum":0,"maximum":5000,"description":"Pause after click ripple in ms. Default 80."},
+                    "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000,"description":"Auto-hide delay in ms. 0=never. Default 20000."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: true, open_world: false,
@@ -1395,9 +1459,10 @@ impl Tool for SetAgentCursorStyleTool {
                     cursor_overlay::CursorShape::load(&path_owned)
                 }).await {
                     Ok(Ok(shape)) => {
-                        let mut current = self.state.cursor_registry.get_or_create(&cursor_id);
-                        current.config.cursor_icon = Some(path.to_owned());
-                        self.state.cursor_registry.update_config(current.config);
+                        let path_owned2 = path.to_owned();
+                        self.state.cursor_registry.update_config(&cursor_id, |c| {
+                            c.cursor_icon = Some(path_owned2);
+                        });
                         Some(cursor_overlay::OverlayCommand::SetShape(Some(shape)))
                     }
                     Ok(Err(e)) => return ToolResult::error(format!("Failed to load image_path: {e}")),

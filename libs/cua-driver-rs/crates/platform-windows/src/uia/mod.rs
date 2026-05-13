@@ -39,6 +39,9 @@ pub struct UiaNode {
     pub actions: Vec<String>,
     /// Raw IUIAutomationElement pointer as usize (retained for cache).
     pub element_ptr: usize,
+    /// Screen-coordinate center, captured at walk time to avoid later COM calls.
+    pub center_x: i32,
+    pub center_y: i32,
 }
 
 pub struct UiaTreeResult {
@@ -63,7 +66,7 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
         },
     };
 
-    let hwnd_win = windows::Win32::Foundation::HWND(hwnd as isize);
+    let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
     let root_elem = match automation.ElementFromHandle(hwnd_win) {
         Ok(e) => e,
         Err(e) => return UiaTreeResult {
@@ -131,6 +134,11 @@ unsafe fn walk_element(
         let ptr = retained.as_raw() as usize;
         std::mem::forget(retained); // We own the AddRef from clone; cache Drop will release.
 
+        // Capture center now, on this COM thread, so click never needs to call COM.
+        let (center_x, center_y) = element.CurrentBoundingRectangle()
+            .map(|r| ((r.left + r.right) / 2, (r.top + r.bottom) / 2))
+            .unwrap_or((0, 0));
+
         let node = if is_actionable {
             let idx = *counter;
             *counter += 1;
@@ -143,6 +151,8 @@ unsafe fn walk_element(
                 help_text: help_text.clone(),
                 actions: actions.clone(),
                 element_ptr: ptr,
+                center_x,
+                center_y,
             }
         } else {
             UiaNode {
@@ -154,6 +164,8 @@ unsafe fn walk_element(
                 help_text: help_text.clone(),
                 actions: vec![],
                 element_ptr: ptr,
+                center_x,
+                center_y,
             }
         };
 
@@ -233,8 +245,8 @@ fn read_bstr(element: &IUIAutomationElement, property_id: windows::Win32::UI::Ac
     unsafe {
         let variant = element.GetCurrentPropertyValue(property_id).ok()?;
         // VT_BSTR = 8
-        if variant.Anonymous.Anonymous.vt.0 == 8 {
-            let bstr = BSTR::from_raw(variant.Anonymous.Anonymous.Anonymous.bstrVal);
+        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
+            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
             let s = bstr.to_string();
             std::mem::forget(bstr); // Variant owns the BSTR; let variant handle cleanup.
             if s.trim().is_empty() { None } else { Some(s) }
@@ -248,8 +260,8 @@ fn read_bool(element: &IUIAutomationElement, property_id: windows::Win32::UI::Ac
     unsafe {
         let variant = element.GetCurrentPropertyValue(property_id).ok()?;
         // VT_BOOL = 11, VARIANT_TRUE = -1, VARIANT_FALSE = 0
-        if variant.Anonymous.Anonymous.vt.0 == 11 {
-            Some(variant.Anonymous.Anonymous.Anonymous.boolVal.as_bool())
+        if variant.as_raw().Anonymous.Anonymous.vt == 11 {
+            Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
         } else {
             None
         }

@@ -32,3 +32,8 @@ platform-linux = { path = "../platform-linux" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+image = { workspace = true }
+base64 = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+platform-windows = { path = "../platform-windows" }

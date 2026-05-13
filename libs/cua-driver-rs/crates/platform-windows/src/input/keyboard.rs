@@ -20,7 +20,7 @@ const KEY_DELAY_MS: u64 = 4;
 
 /// Post a Unicode character as WM_CHAR.
 pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
-    let hwnd = HWND(hwnd as isize);
+    let hwnd = HWND(hwnd as *mut _);
     let code = ch as u32 as usize;
     unsafe {
         PostMessageW(hwnd, WM_CHAR, WPARAM(code), LPARAM(1))?;
@@ -49,7 +49,7 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
 
 /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
 pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
-    let hwnd_win = HWND(hwnd as isize);
+    let hwnd_win = HWND(hwnd as *mut _);
     let vk = key_name_to_vk(key)?;
     let has_alt = modifiers.iter().any(|m| *m == "alt" || *m == "menu");
 

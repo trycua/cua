@@ -38,6 +38,29 @@ pub fn send_command(cmd: OverlayCommand) {
     }
 }
 
+/// Returns the current glide duration in milliseconds (default 750).
+/// Used by the click path to wait for the animation before firing ClickPulse.
+pub fn glide_duration_ms() -> f64 {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.motion.glide_duration_ms))
+        .unwrap_or(750.0)
+}
+
+/// Returns true if the cursor overlay is currently enabled/visible.
+pub fn is_enabled() -> bool {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.visible))
+        .unwrap_or(false)
+}
+
+/// Returns true if the cursor is still at the off-screen initial position
+/// (-200, -200), meaning it has never been positioned on screen yet.
+pub fn is_at_initial_position() -> bool {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.pos.0 < 0.0 && rs.pos.1 < 0.0))
+        .unwrap_or(true)
+}
+
 /// Spin up the overlay on a dedicated thread (STA for Win32 message loop).
 /// This is a non-blocking call — the overlay runs on its own thread.
 pub fn run_on_thread() {
@@ -573,7 +596,7 @@ unsafe fn update_layered_window(
 ) {
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
-    use windows::Win32::UI::WindowsAndMessaging::UpdateLayeredWindow;
+    use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
 
     let w = pixmap.width() as i32;
     let h = pixmap.height() as i32;
@@ -673,7 +696,7 @@ unsafe fn reapply_z_order(hwnd: windows::Win32::Foundation::HWND) {
     // If a target window is pinned, place the overlay just above it.
     // Falls back to HWND_TOP when not set or when the target is gone.
     let insert_after = if let Some(wid) = pinned_wid {
-        let target = HWND(wid as isize);
+        let target = HWND(wid as *mut _);
         if IsWindow(target).as_bool() {
             target
         } else {

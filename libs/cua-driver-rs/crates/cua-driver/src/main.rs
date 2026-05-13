@@ -220,11 +220,13 @@ fn main() {
 // ── Non-macOS entry-point ─────────────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     init_logging();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
+    // These commands create their own tokio runtimes internally, so they must
+    // run on a plain OS thread — not inside a #[tokio::main] context which
+    // would cause nested block_on panics.
     match cli::parse_command() {
         cli::Command::ListTools => {
             let reg = Arc::new(build_registry_no_cursor());
@@ -243,15 +245,23 @@ async fn main() -> anyhow::Result<()> {
         cli::Command::Call { tool, json_args, screenshot_out_file } => {
             let reg = Arc::new(build_registry_no_cursor());
             reg.init_self_weak();
-            cli::run_call(reg, &tool, json_args, screenshot_out_file);
+            // run_call builds its own tokio runtime; must run on a fresh thread.
+            std::thread::spawn(move || {
+                cli::run_call(reg, &tool, json_args, screenshot_out_file);
+            }).join().ok();
             return Ok(());
         }
         cli::Command::Serve { socket } => {
-            let reg = Arc::new(build_registry_no_cursor());
+            // Serve mode needs the cursor overlay just like MCP mode.
+            let cursor_cfg = cursor_overlay::CursorConfig::from_args();
+            let reg = Arc::new(build_registry(cursor_cfg));
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
-            serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+            // run_serve_cmd builds its own runtime; must run on a fresh thread.
+            std::thread::spawn(move || {
+                serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+            }).join().ok();
             return Ok(());
         }
         cli::Command::Stop { socket } => {
@@ -290,11 +300,25 @@ async fn main() -> anyhow::Result<()> {
         cli::Command::Config { subcommand, key, value, socket } => {
             let reg = Arc::new(build_registry_no_cursor());
             reg.init_self_weak();
-            cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
+            std::thread::spawn(move || {
+                cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
+            }).join().ok();
             return Ok(());
         }
         cli::Command::Mcp => {} // fall through to MCP server startup below
     }
+
+    // MCP server mode: this needs a full async tokio runtime.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(async_main())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn async_main() -> anyhow::Result<()> {
 
     let cursor_cfg = cursor_overlay::CursorConfig::from_args();
 

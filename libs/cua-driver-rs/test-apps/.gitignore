@@ -1,0 +1,8 @@
+# Pre-built test app binaries are downloaded by run-tests-in-sandbox.ps1
+# Run: .\sandbox\run-tests-in-sandbox.ps1 to auto-download before testing
+*.exe
+*.app
+*.dmg
+*.zip
+*.AppImage
+*.deb

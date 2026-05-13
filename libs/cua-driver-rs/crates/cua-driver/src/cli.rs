@@ -166,7 +166,11 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
         None => {
             eprintln!("Unknown tool: {name}");
             eprintln!("Available tools:");
-            for n in registry.tool_names() {
+            // Sort alphabetically to match Swift's `printUnknownTool`
+            // (`registry.allTools.map(\.name).sorted()`).
+            let mut names: Vec<&str> = registry.tool_names().collect();
+            names.sort();
+            for n in names {
                 eprintln!("  {n}");
             }
             process::exit(64);

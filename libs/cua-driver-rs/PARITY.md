@@ -902,3 +902,28 @@ description content.
   get_agent_cursor_state, set_value, get_config, set_config,
   check_permissions, get_recording_state, set_recording) ✓
 - Line shape `name: <first sentence>` or just `name` ✓
+
+---
+
+## CLI subcommand: `describe`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/CallCommand.swift:324-366`
+  + `printUnknownTool:552`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_describe`
+- Status: VERIFIED
+- Test: `crates/platform-windows/examples/describe_parity.rs`
+
+### Fixed
+**Unknown-tool listing order** — Swift sorts available tools
+alphabetically in the error stderr block. Rust was using
+`tool_names()` which is registration order. Now sorts to match.
+Exit code 64 (EX_USAGE) and known-tool output shape (`name: X`
++ `description:` + `input_schema:` pretty JSON) already matched
+Swift.
+
+### Verified on Windows
+`describe_parity.exe`:
+- `describe click`: stdout starts with `"name: click\n"`, contains
+  `"description:"` + pretty-printed `"input_schema:"` ✓
+- `describe this_tool_does_not_exist`: exit code 64, stderr lists
+  31 tools alphabetically with `"Unknown tool:"` + `"Available tools:"`
+  preamble ✓

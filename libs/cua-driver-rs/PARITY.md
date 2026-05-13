@@ -927,3 +927,40 @@ Swift.
 - `describe this_tool_does_not_exist`: exit code 64, stderr lists
   31 tools alphabetically with `"Unknown tool:"` + `"Available tools:"`
   preamble ✓
+
+---
+
+## MCP tool: `get_window_state`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetWindowStateTool.swift:5-end`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetWindowStateTool); macos/linux OPEN
+- Status: windows VERIFIED (error wording + validation); response shape already verified
+- Test: `crates/platform-windows/examples/get_window_state_parity.rs`
+
+### Fixed (Windows)
+1. **Error wording** — Swift's verbatim messages now used:
+   - `"Missing required integer field pid."`
+   - `"Missing required integer field window_id. Use `list_windows` to enumerate the target app's windows, or read `launch_app`'s `windows` array."`
+2. **Window-belongs-to-pid validation** — Swift hard-errors when the
+   window_id doesn't belong to pid. Windows now validates the same way:
+   - Window doesn't exist anywhere: `"No window with window_id N exists.
+     Call list_windows({pid: P}) for candidates."`
+   - Window exists under a different pid: `"window_id N belongs to pid Q,
+     not pid P. Call list_windows({pid: P}) to get this pid's own windows."`
+3. **`idempotent: false`** — was `true`; Swift uses `false` (each call
+   is a fresh snapshot).
+4. **Description** — multi-paragraph port from Swift covering invariant,
+   `capture_mode` semantics, `query` filter behavior, and Windows-specific
+   notes (UIA instead of AX, no Spaces, no `javascript` / `screenshot_out_file`
+   fields).
+
+### Intentional Rust-only schema absences
+- **`javascript`** — macOS-only AppleScript hook for Chromium/Safari.
+- **`screenshot_out_file`** — could be added later; not currently
+  implemented on Windows.
+
+### Verified on Windows
+`get_window_state_parity.exe`:
+- Missing-pid error ✓
+- Missing-window_id error (with Swift's full hint) ✓
+- Mismatched pid+window_id: `"window_id N belongs to pid Q, not pid P..."` ✓
+- Bogus window_id: `"No window with window_id N exists..."` ✓

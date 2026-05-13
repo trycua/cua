@@ -332,27 +332,75 @@ impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
         GWS_DEF.get_or_init(|| ToolDef {
             name: "get_window_state".into(),
-            description: "Walk a running app's UIA tree and return a Markdown rendering of its UI. Also captures a screenshot.".into(),
+            // Description ported from Swift `GetWindowStateTool.swift` with
+            // Windows-specific adaptations (UIA instead of AX; no SkyLight
+            // Space validation; no per-call `javascript` field — that's a
+            // macOS AppleScript hook).
+            description: "Walk a running app's UIA tree and return a Markdown rendering of its \
+                UI, tagging every actionable element with [element_index N]. Pass those \
+                indices to `click`, `type_text`, `scroll`, etc. — those tools resolve the \
+                index to the cached element on the server.\n\n\
+                INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
+                any element-indexed action against that window. The index map is replaced by \
+                the next snapshot of the same (pid, window_id).\n\n\
+                The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
+                window bounds reported come from the same `window_id`. This is the source of \
+                truth for which window the caller intends to reason about — the driver never \
+                picks a window implicitly.\n\n\
+                `window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. \
+                The driver does not auto-fall-back to a different window.\n\n\
+                Set `query` to a case-insensitive substring to filter `tree_markdown` down to \
+                matching lines plus their ancestor chain. element_index values and \
+                `element_count` are unchanged — the filter only trims the rendered Markdown.\n\n\
+                Response shape is controlled by `capture_mode`:\n\
+                - `som` (default) — walks UIA AND captures screenshot.\n\
+                - `vision` — captures only; UIA walk skipped; element_index cache not updated.\n\
+                - `ax` — UIA only; no screenshot.\n\n\
+                Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
+                single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
+                timing out at 4s with per-property RPCs).\n\n\
+                Windows requires no special permissions.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
-                "pid":{"type":"integer"},
-                "window_id":{"type":"integer","description":"HWND cast to u64 from list_windows."},
+                "pid":{"type":"integer","description":"Process ID from `list_apps`."},
+                "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode":{"type":"string","enum":["som","vision","ax"],
                     "description":"som=tree+screenshot (default), vision=screenshot only, ax=tree only."},
-                "query":{"type":"string","description":"Filter tree to lines matching this string."}
+                "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."}
             },"additionalProperties":false}),
-            read_only: true, destructive: false, idempotent: true, open_world: false,
+            // Swift annotation: idempotent: false (each call is a fresh snapshot).
+            read_only: true, destructive: false, idempotent: false, open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
+        // Swift error wording 1:1.
+        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
         let hwnd = match args.get("window_id").and_then(|v| v.as_u64()) {
             Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: window_id"),
+            None    => return ToolResult::error(
+                "Missing required integer field window_id. Use `list_windows` to enumerate \
+                 the target app's windows, or read `launch_app`'s `windows` array."),
         };
+        // Validate window belongs to pid — Swift's hard error.
+        let windows_for_pid = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+            .await.unwrap_or_default();
+        if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
+            // Check if the window exists under a different pid.
+            let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
+                .await.unwrap_or_default();
+            if let Some(w) = all.iter().find(|w| w.hwnd == hwnd) {
+                return ToolResult::error(format!(
+                    "window_id {hwnd} belongs to pid {}, not pid {pid}. Call \
+                     `list_windows({{\"pid\": {pid}}})` to get this pid's own windows.",
+                    w.pid));
+            }
+            return ToolResult::error(format!(
+                "No window with window_id {hwnd} exists. Call `list_windows({{\"pid\": \
+                 {pid}}})` for candidates."));
+        }
         let (default_mode, max_dim) = {
             let cfg = self.state.config.read().unwrap();
             (cfg.capture_mode.clone(), cfg.max_image_dimension)

@@ -625,3 +625,41 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Image content block present ✓
 - structuredContent has `width`, `height`, `format` ✓
 - JPEG format: `mimeType: image/jpeg`, `format: "jpeg"` ✓
+
+---
+
+## MCP tool: `scroll`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScrollTool.swift:23-211`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScrollTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/scroll_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"Scrolled DIR Nx GRAN."`; now matches Swift
+   shape `"✅ Scrolled pid X DIR via Nx SB_LINEDOWN message(s)."` (Swift uses key
+   names; Rust uses Win32 SB_* constants since the actual transport is
+   WM_VSCROLL/WM_HSCROLL, not keystrokes — text reflects mechanism).
+2. **Error wording** — `"Missing required integer field pid."` /
+   `"Missing required string field direction."` matches Swift.
+3. **Element-without-window guard** added — same wording as Swift.
+4. **Description** — multi-paragraph port from Swift with Windows-
+   specific note about WM_VSCROLL/WM_HSCROLL vs Swift's keystroke
+   approach.
+5. **`element_index`** — accepted; currently no-op on Windows (UIA
+   SetFocus not wired up).
+
+### Intentional Rust-only
+
+- **Transport**: Windows uses `WM_VSCROLL`/`WM_HSCROLL` messages with
+  `SB_LINE*`/`SB_PAGE*` codes. Swift uses synthesized keystrokes
+  (PageDown/arrow keys) via auth-signed SLEventPostToPid because
+  CGEventCreateScrollWheelEvent2 is dropped by Chromium on macOS.
+  Windows doesn't have that constraint; scroll-message events work
+  reliably background.
+
+### Verified on Windows
+
+`scroll_parity.exe` against Chrome:
+- Missing-direction error ✓
+- Element-without-window error ✓
+- Page-down × 2: `"✅ Scrolled pid 62156 down via 2× SB_PAGEDOWN message(s)."` ✓

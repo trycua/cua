@@ -1077,17 +1077,27 @@ impl Tool for ScrollTool {
     fn def(&self) -> &ToolDef {
         SCROLL_DEF.get_or_init(|| ToolDef {
             name: "scroll".into(),
-            description: "Scroll the target pid's focused region via WM_VSCROLL/WM_HSCROLL. \
-                direction required; by defaults to line, amount defaults to 3.".into(),
+            // Description ported from Swift `ScrollTool.swift` with the
+            // Windows-specific transport note (WM_VSCROLL/WM_HSCROLL).
+            description: "Scroll the target pid's focused region.\n\n\
+                Windows transport: WM_VSCROLL / WM_HSCROLL posted to the window — the same \
+                events the OS sends when scrollbars or trackpads scroll, so any window that \
+                handles scrollbars correctly responds to this. Swift uses synthesized \
+                keystrokes (PageDown / arrow keys) via auth-signed SLEventPostToPid; both \
+                approaches reach backgrounded windows.\n\n\
+                Mapping: `by: \"page\"` → SB_PAGEDOWN/UP/LEFT/RIGHT × amount; \
+                `by: \"line\"` → SB_LINEDOWN/UP/LEFT/RIGHT × amount.\n\n\
+                Note: `element_index` is accepted for cross-platform parity but currently \
+                no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","direction"],"properties":{
-                    "pid":{"type":"integer"},
+                    "pid":{"type":"integer","description":"Target process ID."},
                     "direction":{"type":"string","enum":["up","down","left","right"]},
-                    "by":{"type":"string","enum":["line","page"]},
+                    "by":{"type":"string","enum":["line","page"],"description":"Scroll granularity. Default: line."},
                     "amount":{"type":"integer","minimum":1,"maximum":50,
                         "description":"Number of scroll ticks. Default 3."},
-                    "window_id":{"type":"integer"},
-                    "element_index":{"type":"integer"}
+                    "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
+                    "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: false, open_world: true,
@@ -1095,13 +1105,15 @@ impl Tool for ScrollTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
+        let pid = raw_pid as u32;
         let direction = match args.get("direction").and_then(|v| v.as_str()) {
             Some(d) => d.to_owned(),
-            None => return ToolResult::error("Missing required parameter: direction"),
+            None    => return ToolResult::error("Missing required string field direction."),
         };
         let by = args.get("by").and_then(|v| v.as_str()).unwrap_or("line").to_owned();
         let direction_display = direction.clone();
@@ -1109,6 +1121,13 @@ impl Tool for ScrollTool {
         let amount = args.get("amount").and_then(|v| v.as_u64())
             .unwrap_or(3).clamp(1, 50) as u32;
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
+        let elem_idx = args.get("element_index").and_then(|v| v.as_u64());
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.");
+        }
 
         // Resolve HWND: use window_id if given, else first window for pid.
         let hwnd = match hwnd_opt {
@@ -1152,9 +1171,27 @@ impl Tool for ScrollTool {
         }).await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Scrolled {direction_display} {amount}×{by_display}.")),
+            Ok(Ok(())) => {
+                // Match Swift's text format shape 1:1 (Swift uses key names
+                // like "pagedown"; Windows uses Win32 SB_* constants — show
+                // the actual mechanism for traceability).
+                let mech_name = match (direction_display.as_str(), by_display.as_str()) {
+                    ("up",    "page") => "SB_PAGEUP",
+                    ("down",  "page") => "SB_PAGEDOWN",
+                    ("left",  "page") => "SB_PAGELEFT",
+                    ("right", "page") => "SB_PAGERIGHT",
+                    ("up",    _)      => "SB_LINEUP",
+                    ("down",  _)      => "SB_LINEDOWN",
+                    ("left",  _)      => "SB_LINELEFT",
+                    ("right", _)      => "SB_LINERIGHT",
+                    _ => "SB_LINEDOWN",
+                };
+                ToolResult::text(format!(
+                    "✅ Scrolled pid {raw_pid} {direction_display} via {amount}× {mech_name} message(s)."
+                ))
+            }
             Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

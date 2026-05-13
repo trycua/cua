@@ -583,7 +583,8 @@ pub fn run_stop_cmd(socket_path: &str) {
                     !is_daemon_listening(socket_path)
                 };
                 if gone {
-                    println!("cua-driver daemon stopped.");
+                    // Swift's `stop` exits silently on success (no stdout
+                    // line) — match that for byte-for-byte parity.
                     return;
                 }
                 if std::time::Instant::now() >= deadline {

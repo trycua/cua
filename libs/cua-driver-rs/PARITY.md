@@ -1013,3 +1013,29 @@ Swift.
 `replay_trajectory_parity.exe`:
 - Empty-dir: `"Missing required string field \`dir\`."` ✓
 - Nonexistent dir: `"Trajectory directory does not exist: <path>"` ✓
+
+---
+
+## CLI subcommands: `status` + `stop`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/ServeCommand.swift:368-470`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/serve.rs::run_status_cmd, run_stop_cmd`
+- Status: VERIFIED
+- Test: `crates/platform-windows/examples/daemon_lifecycle_parity.rs`
+
+### Fixed
+**`stop` silent on success** — Rust was printing `"cua-driver daemon stopped."`
+on stdout after a successful stop.  Swift's `stop` exits silently with
+status 0.  Now matches Swift byte-for-byte.
+
+### Already correct
+- `status` output: `"cua-driver daemon is running\n  socket: <path>\n  pid: <N>\n"` ✓
+- `status` exit code: 0 when running, 1 when not ✓
+- `stop` exit code: 0 when ran, 1 when no daemon ✓
+- Error wording on stderr: `"cua-driver daemon is not running"` ✓
+
+### Verified on Windows
+`daemon_lifecycle_parity.exe`:
+- `status` running: 3-line output ✓
+- `stop` running: silent stdout (was printing extra line) ✓
+- `status` not-running: exit 1 + stderr message ✓
+- `stop` not-running: exit 1 + stderr message ✓

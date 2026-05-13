@@ -110,3 +110,47 @@ Unix socket).
 
 All three return screen-coordinate space, top-left origin, matching the
 documented Swift behavior.
+
+---
+
+## MCP tool: `get_screen_size`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetScreenSizeTool.swift:6-46`
+        + `libs/cua-driver/Sources/CuaDriverCore/Capture/ScreenInfo.swift`
+- Rust:
+  - macos=`crates/platform-macos/src/tools/get_screen_size.rs`
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (GetScreenSizeTool)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (GetScreenSizeTool)
+- Status: VERIFIED
+- Test:  `crates/platform-windows/examples/get_screen_size_parity.rs`
+
+### Fixed divergences
+
+1. **Missing `scale_factor`** — Swift's whole reason for this tool is to
+   expose the backing scale factor (Retina = 2.0). All three Rust
+   platforms were dropping it. Now all three return it:
+   - macOS: `NSScreen.mainScreen.backingScaleFactor` via `objc2-app-kit`.
+   - Windows: `GetDpiForSystem() / 96.0`.
+   - Linux: hardcoded `1.0` (X11 has no per-monitor scale; recorded as a
+     known limitation rather than silently dropping the field).
+2. **Text format** — was `"Screen: W×H"` (no checkmark, no scale, ×
+   unicode); now `"✅ Main display: WxH points @ Sx"` matching Swift.
+3. **Error case** — macOS now returns `ToolResult::error("No main display
+   detected.")` when `NSScreen.mainScreen` is nil, matching Swift's
+   `isError: true` response.
+4. **Description** — standardized to Swift's wording across all three.
+5. **`structuredContent.scale_factor` key** is snake_case to match
+   Swift's `ScreenSize.CodingKeys.scaleFactor = "scale_factor"`.
+
+### Verified on Windows
+
+`get_screen_size_parity.exe` round-trips the pipe and asserts:
+- Text matches `"✅ Main display: 1680x1050 points @ 1x"` exactly.
+- `structuredContent.width / height / scale_factor` agree with the text.
+- All three agree with native `GetSystemMetrics` + `GetDpiForSystem` /96.
+
+### Intentional Rust-only
+
+`structuredContent: { width, height, scale_factor }` is included alongside
+the text response.  Swift returns text only.  Same rationale as
+`get_cursor_position` — backwards-compatible MCP enrichment, text format
+still matches Swift exactly.

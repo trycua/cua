@@ -1233,16 +1233,25 @@ impl Tool for GetScreenSizeTool {
     fn def(&self) -> &ToolDef {
         GSS_DEF.get_or_init(|| ToolDef {
             name: "get_screen_size".into(),
-            description: "Return the primary screen's width and height in pixels.".into(),
+            description: "Return the logical size of the main display in points plus its backing \
+                scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
+                Requires no TCC permissions.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        use windows::Win32::UI::HiDpi::GetDpiForSystem;
+        // SM_CXSCREEN/SM_CYSCREEN return values in the DPI of the current
+        // process; for a DPI-unaware process they're in *logical* points,
+        // matching Swift's NSScreen.frame.  Scale = system DPI / 96.
         let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-        ToolResult::text(format!("Screen: {w}×{h}"))
-            .with_structured(json!({ "width": w, "height": h }))
+        let dpi = unsafe { GetDpiForSystem() };
+        let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+        // Matches Swift text format 1:1.
+        ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
+            .with_structured(json!({ "width": w, "height": h, "scale_factor": scale }))
     }
 }
 

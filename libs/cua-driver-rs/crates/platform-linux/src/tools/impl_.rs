@@ -1091,7 +1091,9 @@ impl Tool for GetScreenSizeTool {
     fn def(&self) -> &ToolDef {
         GSS_DEF.get_or_init(|| ToolDef {
             name: "get_screen_size".into(),
-            description: "Return the primary screen's width and height in pixels.".into(),
+            description: "Return the logical size of the main display in points plus its backing \
+                scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
+                Requires no TCC permissions.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -1103,11 +1105,20 @@ impl Tool for GetScreenSizeTool {
             let (conn, screen_num) = RustConnection::connect(None)?;
             let setup = conn.setup();
             let screen = &setup.roots[screen_num];
-            Ok::<(u32, u32), anyhow::Error>((screen.width_in_pixels as u32, screen.height_in_pixels as u32))
+            // X11 reports pixel dimensions; scale factor on X11 is not
+            // well-defined per-monitor, so report 1.0 (matches DPI-unaware
+            // assumption).  Wayland/HiDPI X11 callers should query
+            // `xrandr --query` for true scale.
+            Ok::<(u32, u32, f64), anyhow::Error>((
+                screen.width_in_pixels as u32,
+                screen.height_in_pixels as u32,
+                1.0,
+            ))
         }).await;
         match result {
-            Ok(Ok((w, h))) => ToolResult::text(format!("Screen: {w}×{h}"))
-                .with_structured(json!({ "width": w, "height": h })),
+            // Matches Swift text format 1:1.
+            Ok(Ok((w, h, scale))) => ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
+                .with_structured(json!({ "width": w, "height": h, "scale_factor": scale })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

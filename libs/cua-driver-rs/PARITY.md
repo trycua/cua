@@ -876,3 +876,29 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Enable: `"✅ Recording enabled -> <path>"` ✓
 - `"✅ recording: enabled output_dir=<path> next_turn=1"` ✓
 - Disable: `"✅ Recording disabled."` ✓
+
+---
+
+## CLI subcommand: `list-tools`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/CallCommand.swift:298-322`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_list_tools`
+- Status: VERIFIED
+- Test: `crates/platform-windows/examples/list_tools_parity.rs`
+
+### Fixed
+**Sort order** — Swift sorts tools alphabetically by name
+(`tools.sorted(by: { $0.name < $1.name })`). Rust was iterating in
+registration order (HashMap-backed Vec). Now sorts alphabetically
+before printing, matching Swift's output byte-for-byte modulo per-tool
+description content.
+
+### Verified on Windows
+`list_tools_parity.exe`:
+- Names sorted ascending ✓
+- All 23 core tools present (click, double_click, right_click, type_text,
+  press_key, hotkey, scroll, screenshot, list_apps, list_windows,
+  get_cursor_position, get_screen_size, launch_app, move_cursor,
+  set_agent_cursor_enabled, set_agent_cursor_motion,
+  get_agent_cursor_state, set_value, get_config, set_config,
+  check_permissions, get_recording_state, set_recording) ✓
+- Line shape `name: <first sentence>` or just `name` ✓

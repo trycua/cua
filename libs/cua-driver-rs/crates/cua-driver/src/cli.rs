@@ -145,7 +145,11 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 
 /// Print all tools in the registry, one per line: `name: first sentence`.
 pub fn run_list_tools(registry: &ToolRegistry) {
-    for (name, def) in registry.iter_defs() {
+    // Sort alphabetically by name to match Swift's
+    // `ListToolsCommand.run()` `tools.sorted(by: { $0.name < $1.name })`.
+    let mut entries: Vec<(&str, &mcp_server::tool::ToolDef)> = registry.iter_defs().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (name, def) in entries {
         let summary = first_sentence(&def.description);
         if summary.is_empty() {
             println!("{name}");

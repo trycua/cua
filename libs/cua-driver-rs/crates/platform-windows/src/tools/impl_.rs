@@ -1700,18 +1700,27 @@ impl Tool for DragTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32, None => return ToolResult::error("Missing required parameter: pid"),
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
+        let pid = raw_pid as u32;
 
         let coerce = |key: &str| -> Option<f64> {
             args.get(key).and_then(|v| v.as_f64())
                 .or_else(|| args.get(key).and_then(|v| v.as_i64()).map(|i| i as f64))
         };
-        let mut from_x = match coerce("from_x") { Some(v) => v, None => return ToolResult::error("Missing: from_x") };
-        let mut from_y = match coerce("from_y") { Some(v) => v, None => return ToolResult::error("Missing: from_y") };
-        let mut to_x   = match coerce("to_x")   { Some(v) => v, None => return ToolResult::error("Missing: to_x") };
-        let mut to_y   = match coerce("to_y")   { Some(v) => v, None => return ToolResult::error("Missing: to_y") };
+        let from_x_opt = coerce("from_x");
+        let from_y_opt = coerce("from_y");
+        let to_x_opt   = coerce("to_x");
+        let to_y_opt   = coerce("to_y");
+        let (mut from_x, mut from_y, mut to_x, mut to_y) =
+            match (from_x_opt, from_y_opt, to_x_opt, to_y_opt) {
+                (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
+                _ => return ToolResult::error(
+                    "from_x, from_y, to_x, and to_y are all required (window-local pixels)."),
+            };
 
         let hwnd_opt    = args.get("window_id").and_then(|v| v.as_u64());
         let duration_ms = args.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(500);
@@ -1744,6 +1753,17 @@ impl Tool for DragTool {
             }
         };
 
+        // Compute screen-coord endpoints for Swift's text format.
+        let (sx_from, sy_from, sx_to, sy_to) = unsafe {
+            use windows::Win32::Foundation::{HWND, POINT};
+            use windows::Win32::Graphics::Gdi::ClientToScreen;
+            let mut p1 = POINT { x: from_x as i32, y: from_y as i32 };
+            let mut p2 = POINT { x: to_x   as i32, y: to_y   as i32 };
+            let _ = ClientToScreen(HWND(hwnd as *mut _), &mut p1);
+            let _ = ClientToScreen(HWND(hwnd as *mut _), &mut p2);
+            (p1.x, p1.y, p2.x, p2.y)
+        };
+
         let button_c = button.clone();
         let result = tokio::task::spawn_blocking(move || {
             crate::input::mouse::post_drag(
@@ -1755,13 +1775,19 @@ impl Tool for DragTool {
         }).await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Posted drag ({button}) to pid {pid} \
-                 from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
-                 in {duration_ms}ms / {steps} steps."
-            )),
+            Ok(Ok(())) => {
+                // Match Swift's text format verbatim.
+                let button_suffix = if button == "left" { String::new() } else { format!(" ({} button)", button) };
+                ToolResult::text(format!(
+                    "✅ Posted drag{button_suffix} to pid {raw_pid} \
+                     from window-pixel ({}, {}) → ({}, {}), \
+                     screen ({sx_from}, {sy_from}) → ({sx_to}, {sy_to}) \
+                     in {duration_ms}ms / {steps} steps.",
+                    from_x as i32, from_y as i32, to_x as i32, to_y as i32,
+                ))
+            }
             Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

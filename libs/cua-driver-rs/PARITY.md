@@ -964,3 +964,29 @@ Swift.
 - Missing-window_id error (with Swift's full hint) ✓
 - Mismatched pid+window_id: `"window_id N belongs to pid Q, not pid P..."` ✓
 - Bogus window_id: `"No window with window_id N exists..."` ✓
+
+---
+
+## MCP tool: `drag`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/DragTool.swift:21-327`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (DragTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/drag_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"✅ Posted drag (BUTTON) to pid P from (x,y) → (x,y) in Nms / Ssteps."`;
+   now Swift's `"✅ Posted drag[ (BUTTON button)] to pid P from window-pixel (a, b) → (c, d), screen (e, f) → (g, h) in Nms / Ssteps."`
+   (window-pixel + screen-coord pair; button suffix only for non-left).
+2. **Missing-coordinates error** — was `"Missing: from_y"` (one field at a
+   time); now Swift's `"from_x, from_y, to_x, and to_y are all required
+   (window-local pixels)."` even if only one is missing.
+3. **Missing-pid error** — `"Missing required integer field pid."`
+   matches Swift.
+
+### Intentional Rust-only
+- Schema unchanged; all Swift fields supported. No divergences in shape.
+
+### Verified on Windows
+`drag_parity.exe`:
+- Missing-coordinates error ✓
+- Real drag: `"✅ Posted drag to pid 62156 from window-pixel (100, 100) → (102, 102), screen (101, 168) → (103, 170) in 50ms / 2 steps."` ✓

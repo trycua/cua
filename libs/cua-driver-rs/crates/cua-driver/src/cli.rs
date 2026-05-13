@@ -643,7 +643,10 @@ fn fetch_latest_version() -> Option<String> {
     if !out.status.success() { return None; }
     let text = String::from_utf8_lossy(&out.stdout);
     let releases: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let prefix = "cua-driver-v";
+    // `cua-driver-rs-v*` releases are distinct from the Swift `cua-driver-v*`
+    // releases on the same repo — must filter by the Rust-port prefix or
+    // we'd recommend the Swift binary instead.
+    let prefix = "cua-driver-rs-v";
     let mut versions: Vec<String> = releases.as_array()?.iter()
         .filter_map(|r| {
             let tag = r["tag_name"].as_str()?;

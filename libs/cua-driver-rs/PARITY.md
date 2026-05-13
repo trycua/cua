@@ -1174,3 +1174,27 @@ Changes:
 `mcp_config_parity.exe` runs all 8 client variants + the unknown-client
 error path against the in-process binary, asserting each output contains
 the right needles. All pass on first try.
+
+---
+
+## CLI subcommand: `update`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/CuaDriverCommand.swift:638-686`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_update_cmd`
+- Status: VERIFIED (bug fix)
+- Test: `crates/platform-windows/examples/update_parity.rs`
+
+### Fixed — REAL BUG
+Rust was looking for release tag prefix `cua-driver-v` (Swift's prefix)
+when fetching the latest version from `trycua/cua`. That would match the
+Swift `cua-driver-v0.1.9` release and report it as an available upgrade
+for the Rust port — confusing users into installing the WRONG binary.
+
+Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
+
+### Verified on Windows
+`update_parity.exe`:
+- Always-present lines: `Current version:` and `Checking for updates…` ✓
+- Outcome is one of: `Already up to date.`, `New version available: <v>`,
+  or `Could not reach GitHub` ✓
+- After the fix, the Swift `cua-driver-v0.1.9` tag is no longer mis-
+  matched as a Rust-port release.

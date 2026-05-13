@@ -551,17 +551,41 @@ impl Tool for ClickTool {
     fn def(&self) -> &ToolDef {
         CLICK_DEF.get_or_init(|| ToolDef {
             name: "click".into(),
-            description: "Click on a UIA element (element_index) or at pixel coordinates (x,y) via PostMessage(WM_LBUTTONDOWN). No focus steal. After a zoom call, pass from_zoom=true to auto-translate zoom-image coords back to full-window space.".into(),
+            // Description matches Swift `ClickTool.swift` semantics (left-click
+            // primitive with two addressing modes — element_index via UIA, or
+            // window-local pixel coords via PostMessage).  Windows-only schema
+            // extras (`button`, no `modifier`/`action`/`debug_image_out`) are
+            // documented in PARITY.md.
+            description: "Left-click against a target pid. Two addressing modes:\n\n\
+                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
+                of that window) — performs the UIA Invoke pattern on the cached element via \
+                PostMessage. No cursor move, no focus steal. Requires a prior \
+                `get_window_state(pid, window_id)` in this turn; the element_index cache \
+                is scoped per (pid, window_id).\n\n\
+                - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
+                returned by `get_window_state`) — synthesizes mouse events via \
+                PostMessage(WM_LBUTTONDOWN/UP) and delivers them to the deepest child \
+                window under that point. `count: 2` posts two down/up pairs for a \
+                double-click.\n\n\
+                Exactly one of `element_index` or (`x` AND `y`) must be provided. \
+                `pid` is required in both modes. `window_id` is required when \
+                `element_index` is used (scopes the cache lookup). After a `zoom` call, \
+                pass `from_zoom=true` to auto-translate zoom-image coords back to \
+                full-window space.\n\n\
+                Windows-only convenience: `button: \"left\"|\"right\"|\"middle\"` switches \
+                the mouse button (Swift exposes right-click as a separate `right_click` \
+                tool). The Swift-only `action` / `modifier` / `debug_image_out` schema \
+                fields aren't supported yet.".into(),
             input_schema: json!({
                 "type":"object","required":["pid"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "element_index":{"type":"integer"},
-                    "x":{"type":"number"},
-                    "y":{"type":"number"},
-                    "button":{"type":"string","enum":["left","right","middle"]},
-                    "count":{"type":"integer"},
-                    "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Required when element_index is used."},
+                    "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id)."},
+                    "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
+                    "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
+                    "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Windows-only convenience; Swift exposes right-click as a separate `right_click` tool."},
+                    "count":{"type":"integer","minimum":1,"maximum":3,"description":"Click count — 1 (single), 2 (double), 3 (triple). Default 1."},
+                    "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -605,11 +629,19 @@ impl Tool for ClickTool {
                 x: cx as f64, y: cy as f64,
             });
             let btn = button.clone();
+            let action_name = match btn.as_str() {
+                "right"  => "ShowMenu",  // closest UIA analogue of Swift "show_menu"
+                "middle" => "Invoke",
+                _        => "Invoke",    // left-click = UIA Invoke pattern (matches Swift "AXPress")
+            };
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 // cx/cy are screen coords from CurrentBoundingRectangle; use
                 // post_click_screen so deepest-child resolution happens once.
                 crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
-                Ok(format!("✅ Clicked element [{idx}] at screen ({},{}).", cx, cy))
+                // Match Swift text format: "✅ Performed AXPress on [N] role \"title\"."
+                // (UIA has no readily-available role/name on the cached element here;
+                // emit element_index + screen coords for traceability instead).
+                Ok(format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."))
             }).await;
             match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -644,12 +676,21 @@ impl Tool for ClickTool {
                 crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
             }).await;
             match result {
-                Ok(Ok(())) => ToolResult::text(format!("✅ Clicked at ({px:.1}, {py:.1}) × {count}.")),
+                Ok(Ok(())) => {
+                    // Match Swift text format: "✅ Posted click/double-click/triple-click to pid X."
+                    let click_word = match count {
+                        2 => "double-click",
+                        3 => "triple-click",
+                        _ => "click",
+                    };
+                    ToolResult::text(format!("✅ Posted {click_word} to pid {pid}."))
+                }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            ToolResult::error("Provide element_index or (x + y). pid is always required.")
+            // Match Swift's error wording for the missing-target case.
+            ToolResult::error("Provide element_index or (x, y) to address the click target.")
         }
     }
 }

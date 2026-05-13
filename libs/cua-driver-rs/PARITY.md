@@ -321,3 +321,63 @@ filters them out at the `EnumWindows` callback level (`IsWindowVisible &&
 !IsIconic`).  The `on_screen_only` schema field is accepted but has no
 effect.  Follow-up to refactor `list_windows` to return everything and
 filter at the tool layer.
+
+---
+
+## MCP tool: `click`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ClickTool.swift:29-595`
+- Rust:
+  - macos=`crates/platform-macos/src/tools/click.rs` (TBD audit)
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (ClickTool)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (ClickTool)
+- Status:
+  - windows: VERIFIED (text format + error wording); schema divergences documented below
+  - macos: OPEN (already exists; line-by-line audit pending)
+  - linux: OPEN
+- Test: `crates/platform-windows/examples/click_parity.rs`
+
+### Fixed (Windows)
+
+1. **Text format — pixel path**: was `"✅ Clicked at (X.X, Y.Y) × N."`;
+   now `"✅ Posted click to pid X."`, `"✅ Posted double-click to pid X."`,
+   `"✅ Posted triple-click to pid X."` matching Swift's `performPixelClick`.
+2. **Text format — element path**: was `"✅ Clicked element [N] at screen (X,Y)."`;
+   now `"✅ Performed {action} on [N] (screen (X,Y))."` matching Swift's
+   `"✅ Performed AXPress on [N] {role} \"{title}\"."` shape (UIA has no
+   readily-available role/name on the cached element, so we emit
+   element_index + screen coords for traceability; future work: populate
+   the UIA cache with name/control-type and include them).
+3. **Missing-target error wording** — Swift: `"Provide element_index or
+   (x, y) to address the click target."` — Windows previously said
+   `"Provide element_index or (x + y). pid is always required."` Now
+   matches Swift verbatim.
+4. **Description** — multi-paragraph, ported from Swift, with explicit
+   notes about Windows-only fields and missing fields.
+
+### Intentional Rust-only schema divergences
+
+Swift's `click` takes `{action: enum, modifier: [string], debug_image_out: string}`;
+Windows's `click` takes `{button: enum}` instead.  Rationale:
+
+- **`button: left|right|middle`** — Windows convenience.  Swift exposes
+  right-click as a separate `right_click` tool (which we also have as
+  `right_click`), so `button: right` overlaps that tool.  Windows
+  keeps both shapes; the standalone tool matches Swift's per-tool
+  decomposition while `button` gives single-call flexibility.
+- **`action: enum`** — AX-specific (AXPress / AXShowMenu / AXPick /
+  AXConfirm / AXCancel / AXOpen).  UIA has no clean 1:1 mapping (Invoke
+  pattern handles most cases; ShowMenu doesn't exist as a UIA pattern).
+  Not exposed on Windows yet; a future Windows port could map a subset
+  to UIA patterns (Invoke ≈ press, but show_menu has no analogue).
+- **`modifier: [string]`** — not yet implemented on Windows; UIA's
+  background-click via PostMessage doesn't propagate modifier-key state
+  cleanly (would require synthesizing `WM_KEYDOWN(VK_CONTROL)` first).
+  Follow-up.
+- **`debug_image_out`** — also follow-up.
+
+### Verified on Windows
+
+`click_parity.exe` against Chrome (pid 62156, window_id 4464038):
+- Missing-target: `"Provide element_index or (x, y) to address the click target."` ✓
+- Pixel click: `"✅ Posted click to pid 62156."` ✓
+- Double-click (`count: 2`): `"✅ Posted double-click to pid 62156."` ✓

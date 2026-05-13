@@ -2341,12 +2341,20 @@ impl Tool for GetConfigTool {
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         let cfg = self.state.config.read().unwrap();
+        // Mirror the macOS agent's parity addition (commit adb9ecca):
+        // nested `agent_cursor.enabled` block so Swift-shaped get_config
+        // consumers can read the cursor's enabled state from one place.
+        let cursor_enabled = self.state.cursor_registry.all_states()
+            .first()
+            .map(|s| s.config.enabled)
+            .unwrap_or(true);
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
+            "agent_cursor":        { "enabled": cursor_enabled },
         });
         // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -2423,12 +2431,17 @@ impl Tool for SetConfigTool {
         }
         // Emit the same pretty-JSON payload as `get_config` (matches Swift's
         // `set_config` return shape — both tools echo the full config after).
+        let cursor_enabled = self.state.cursor_registry.all_states()
+            .first()
+            .map(|s| s.config.enabled)
+            .unwrap_or(true);
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
             "platform":            "windows",
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
+            "agent_cursor":        { "enabled": cursor_enabled },
         });
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
         ToolResult::text(format!("✅ {pretty}")).with_structured(payload)

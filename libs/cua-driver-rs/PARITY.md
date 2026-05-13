@@ -663,3 +663,38 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Missing-direction error ✓
 - Element-without-window error ✓
 - Page-down × 2: `"✅ Scrolled pid 62156 down via 2× SB_PAGEDOWN message(s)."` ✓
+
+---
+
+## MCP tool: `type_text`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/TypeTextTool.swift:13-225`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (TypeTextTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/type_text_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"Typed N character(s)."`; now matches Swift's
+   CGEvent-fallback shape `"✅ Typed N char(s) on pid X via PostMessage (Yms delay)."`
+   (Swift says `CGEvent`; Windows says `PostMessage` since that's the
+   actual transport).
+2. **Error wording** — `"Missing required integer field pid."` /
+   `"Missing required string field text."` matches Swift.
+3. **Element-without-window guard** added with Swift's wording.
+4. **`delay_ms` field** added (0–200, default 30, matches Swift).
+5. **Description** — multi-paragraph port from Swift adapted to the
+   PostMessage transport.
+
+### Intentional Rust-only
+
+- **No AX-fast-path attempt**: Swift tries `AXSetAttribute(kAXSelectedText)`
+  first for bulk insert, falls back to CGEvent when AX rejects.  Windows
+  always takes the character-by-character path (no UIA equivalent of
+  AXSelectedText wired up yet).  User-visible behavior matches Swift's
+  fallback path, just without the fast-path optimization.
+- **`element_index`** accepted; no-op on Windows (no UIA SetFocus path).
+
+### Verified on Windows
+`type_text_parity.exe` against Chrome:
+- Missing-text error ✓
+- Element-without-window error ✓
+- 5-char type: `"✅ Typed 5 char(s) on pid 62156 via PostMessage (10ms delay)."` ✓

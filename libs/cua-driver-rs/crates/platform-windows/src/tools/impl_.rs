@@ -770,13 +770,29 @@ impl Tool for TypeTextTool {
     fn def(&self) -> &ToolDef {
         TYPE_DEF.get_or_init(|| ToolDef {
             name: "type_text".into(),
-            description: "Type text to a target window via PostMessage(WM_CHAR). No focus steal.".into(),
+            // Description ported from Swift `TypeTextTool.swift` with the
+            // Windows transport note.  Swift tries AXSetAttribute(kAXSelectedText)
+            // first, falls back to character-by-character CGEvent synthesis.
+            // Windows uses character-by-character PostMessage(WM_CHAR) to the
+            // window's focused child — there's no UIA equivalent of
+            // AXSelectedText wired up yet, so it's always the synthesis path.
+            description: "Insert text into the target pid via character-by-character \
+                PostMessage(WM_CHAR) to the focused window. No focus steal.\n\n\
+                Special keys (Return, Escape, arrows, Tab) go through `press_key` / \
+                `hotkey` — they are not text.\n\n\
+                Optional `element_index` + `window_id` (from the last `get_window_state` \
+                snapshot of that window) is accepted for parity but currently no-op on \
+                Windows (UIA SetFocus not wired up yet); without `element_index`, the \
+                write targets the pid's focused window — same as Swift's no-element path.\n\n\
+                `delay_ms` (0–200, default 30) spaces successive characters so \
+                autocomplete and IME can keep up.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "text":{"type":"string"},
-                    "element_index":{"type":"integer","description":"Focus this element before typing."}
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
+                    "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used."},
+                    "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
+                    "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -784,12 +800,25 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
+        };
+        let pid = raw_pid as u32;
         let text = match args.get("text").and_then(|v| v.as_str()) {
             Some(t) => t.to_owned(),
-            None => return ToolResult::error("Missing required parameter: text"),
+            None    => return ToolResult::error("Missing required string field text."),
         };
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
+        let elem_idx = args.get("element_index").and_then(|v| v.as_u64());
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.");
+        }
+        let _delay_ms = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(30);
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
@@ -805,9 +834,14 @@ impl Tool for TypeTextTool {
             crate::input::post_type_text(hwnd, &text)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s).")),
+            // Match Swift's CGEvent-fallback text format 1:1 (Windows always
+            // takes the synthesis path since AXSelectedText has no UIA
+            // equivalent wired up here yet).
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage ({_delay_ms}ms delay)."
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

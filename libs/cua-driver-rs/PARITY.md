@@ -1072,3 +1072,24 @@ Changes:
 - `tools/list` does NOT contain `"type_text_chars"` ✓
 - Invoking `type_text_chars` with a 1-char text resolves to `type_text`'s
   response: `"✅ Typed 1 char(s) on pid 62156 via PostMessage (30ms delay)."` ✓
+
+---
+
+## MCP tool: `set_agent_cursor_style`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorStyleTool.swift:10-111`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetAgentCursorStyleTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/set_agent_cursor_style_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"cursor style: gradient_colors=[X, Y] bloom_color=Z image_path=(unchanged)"`
+   (always lists all three fields with `(unchanged)`/`(reverted)` placeholders,
+   space after comma). Now Swift's exact wording: `"✅ cursor style: gradient_colors=[X,Y] bloom_color=Z"`
+   (omit fields not provided; no space after comma; `image_path` only when set).
+2. **Revert-all case** — was `"cursor style: gradient_colors=(unchanged) bloom_color=(unchanged) image_path=(unchanged)"`;
+   now `"✅ cursor style: reverted to default"` matching Swift's `parts.isEmpty` branch.
+
+### Verified on Windows
+`set_agent_cursor_style_parity.exe`:
+- Set gradient + bloom: `"✅ cursor style: gradient_colors=[#FF6B6B,#FF8E53] bloom_color=#A855F7"` ✓
+- Revert all: `"✅ cursor style: reverted to default"` ✓

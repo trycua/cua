@@ -2217,26 +2217,31 @@ impl Tool for SetAgentCursorStyleTool {
             });
         }
 
-        let grad_str = args.get("gradient_colors")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                let strs: Vec<String> = arr.iter()
-                    .filter_map(|v| v.as_str().map(str::to_owned))
-                    .collect();
-                format!("[{}]", strs.join(", "))
-            })
-            .unwrap_or_else(|| "(unchanged)".into());
-        let bloom_str = args.get("bloom_color")
-            .and_then(|v| v.as_str())
-            .map(|s| if s.is_empty() { "(reverted)".to_owned() } else { s.to_owned() })
-            .unwrap_or_else(|| "(unchanged)".into());
-        let img_str = image_path
-            .map(|s| if s.is_empty() { "(reverted to arrow)".to_owned() } else { s.to_owned() })
-            .unwrap_or_else(|| "(unchanged)".into());
-
-        ToolResult::text(format!(
-            "cursor style: gradient_colors={grad_str} bloom_color={bloom_str} image_path={img_str}"
-        ))
+        // Swift `SetAgentCursorStyleTool` text format: only include fields
+        // whose post-write value is `Some` (i.e. not reverted to default).
+        // Falls back to "✅ cursor style: reverted to default" when every
+        // field is empty.
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(arr) = args.get("gradient_colors").and_then(|v| v.as_array()) {
+            let hexes: Vec<String> = arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+            if !hexes.is_empty() {
+                parts.push(format!("gradient_colors=[{}]", hexes.join(",")));
+            }
+        }
+        if let Some(s) = args.get("bloom_color").and_then(|v| v.as_str()) {
+            if !s.is_empty() { parts.push(format!("bloom_color={s}")); }
+        }
+        if let Some(s) = image_path {
+            if !s.is_empty() { parts.push(format!("image_path={s}")); }
+        }
+        let summary = if parts.is_empty() {
+            "reverted to default".to_owned()
+        } else {
+            parts.join(" ")
+        };
+        ToolResult::text(format!("✅ cursor style: {summary}"))
     }
 }
 

@@ -28,6 +28,7 @@ on:
           - npm/cuabot
           - lume
           - cua-driver
+          - cua-driver-rs
           - docker/cuabot
           - docker/kasm
           - docker/xfce
@@ -134,6 +135,10 @@ jobs:
             "cua-driver")
               echo "directory=libs/cua-driver" >> $GITHUB_OUTPUT
               echo "type=cua-driver" >> $GITHUB_OUTPUT
+              ;;
+            "cua-driver-rs")
+              echo "directory=libs/cua-driver-rs" >> $GITHUB_OUTPUT
+              echo "type=cua-driver-rs" >> $GITHUB_OUTPUT
               ;;
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
@@ -391,6 +396,14 @@ jobs:
         run: |
           VERSION=$(grep -oP 'public static let version = "\K[^"]+' libs/cua-driver/Sources/CuaDriverCore/CuaDriverCore.swift)
           echo "cua-driver version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped cua-driver-rs version
+        if: ${{ inputs.service == 'cua-driver-rs' }}
+        id: cua_driver_rs_version
+        run: |
+          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver-rs/Cargo.toml)
+          echo "cua-driver-rs version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped cuabot version

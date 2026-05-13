@@ -1198,3 +1198,38 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
   or `Could not reach GitHub` ✓
 - After the fix, the Swift `cua-driver-v0.1.9` tag is no longer mis-
   matched as a Rust-port release.
+
+---
+
+## CLI subcommand: `dump-docs`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/DumpDocsCommand.swift`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_dump_docs_with_type`
+- Status: VERIFIED (with caveat about CLI extraction)
+- Test: `crates/platform-windows/examples/dump_docs_parity.rs`
+
+### Fixed
+1. **Top-level JSON shape** — was `{mcp_tools: [...]}`; now matches Swift's
+   `CombinedDocs` shape: `--type=all` → `{cli: {...}, mcp: {...}}`,
+   `--type=mcp` → `{version, tools: [...]}`, `--type=cli` → CLI section.
+2. **`--type` flag** added (`cli` | `mcp` | `all`, default `all`) matching
+   Swift's flag.
+3. **`version` field** added to the MCP section matching Swift's
+   `MCPDocumentation`.
+
+### Intentional Rust-only
+- **CLI section is a stub** — Swift extracts via swift-argument-parser
+  introspection; Rust uses hand-rolled arg matching in `cli.rs` so there's
+  no equivalent introspection. Stub returns `{version, commands: [],
+  _note: "..."}` directing users to `--help` for CLI docs. Full CLI
+  introspection would require either clap migration or a parallel
+  hand-maintained doc table.
+- **Extra MCP fields** — `read_only`, `destructive`, `idempotent` per
+  tool. Swift only emits `name`, `description`, `input_schema`. Rust keeps
+  the extras as a documented enrichment.
+
+### Verified on Windows
+`dump_docs_parity.exe`:
+- Default (`--type=all`): `{cli, mcp}` with 30 tools ✓
+- `--type=mcp`: top-level `{version, tools}` ✓
+- `--type=cli`: stub section ✓
+- `--pretty`: multi-line JSON (991 lines) ✓

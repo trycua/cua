@@ -120,9 +120,9 @@ fn main() {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
             return;
         }
-        cli::Command::DumpDocs { pretty } => {
+        cli::Command::DumpDocs { pretty, doc_type } => {
             let reg = Arc::new(platform_macos::register_tools());
-            cli::run_dump_docs(&reg, pretty);
+            cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
             return;
         }
         cli::Command::Update { apply } => {
@@ -279,9 +279,9 @@ fn main() -> anyhow::Result<()> {
             cli::run_recording_cmd(&subcommand, &args, socket.as_deref());
             return Ok(());
         }
-        cli::Command::DumpDocs { pretty } => {
+        cli::Command::DumpDocs { pretty, doc_type } => {
             let reg = Arc::new(build_registry_no_cursor());
-            cli::run_dump_docs(&reg, pretty);
+            cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
             return Ok(());
         }
         cli::Command::Update { apply } => {

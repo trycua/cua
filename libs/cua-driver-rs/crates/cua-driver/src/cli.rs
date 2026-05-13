@@ -26,7 +26,7 @@ pub enum Command {
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
-    DumpDocs { pretty: bool },
+    DumpDocs { pretty: bool, doc_type: String },
     Update { apply: bool },
     Doctor,
     Diagnose,
@@ -46,7 +46,7 @@ pub enum Command {
 const VALUE_FLAGS: &[&str] = &[
     "--cursor-icon", "--cursor-id", "--cursor-palette",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
-    "--screenshot-out-file", "--client", "--socket", "--pid-file",
+    "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
 ];
 
 /// Parse the first non-flag positional argument from argv to determine which
@@ -103,7 +103,8 @@ pub fn parse_command() -> Command {
         }
         Some("dump-docs") => {
             let pretty = args.iter().any(|a| a == "--pretty" || a == "-p");
-            Command::DumpDocs { pretty }
+            let doc_type = flag_value(&args, "--type").unwrap_or_else(|| "all".to_owned());
+            Command::DumpDocs { pretty, doc_type }
         }
         Some("update") => {
             let apply = args.iter().any(|a| a == "--apply");
@@ -683,17 +684,47 @@ fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// `cua-driver dump-docs [--pretty]` — output all MCP tool schemas as JSON.
 pub fn run_dump_docs(registry: &ToolRegistry, pretty: bool) {
+    run_dump_docs_with_type(registry, pretty, "all")
+}
+
+/// Output documentation as JSON.  `doc_type` is one of:
+/// - `"mcp"` — only MCP tool docs (`{version, tools: [...]}`)
+/// - `"cli"` — CLI docs (stub on Rust — Swift extracts via swift-argument-parser
+///   introspection which has no clap analogue without a bigger refactor)
+/// - `"all"` — `{cli, mcp}` matching Swift `CombinedDocs`
+pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: &str) {
+    // Each MCP tool: `{name, description, input_schema}` (Swift's MCPToolDoc
+    // shape — Rust adds read_only/destructive/idempotent as intentional
+    // extras documented in PARITY.md).
     let tools: Vec<serde_json::Value> = registry.iter_defs()
         .map(|(_, def)| serde_json::json!({
-            "name": def.name,
-            "description": def.description,
+            "name":         def.name,
+            "description":  def.description,
             "input_schema": def.input_schema,
-            "read_only": def.read_only,
-            "destructive": def.destructive,
-            "idempotent": def.idempotent,
+            "read_only":    def.read_only,
+            "destructive":  def.destructive,
+            "idempotent":   def.idempotent,
         }))
         .collect();
-    let doc = serde_json::json!({ "mcp_tools": tools });
+    let mcp = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "tools":   tools,
+    });
+
+    // CLI docs are intentionally a thin stub on Rust — full extraction
+    // would require introspecting clap's command graph which we don't use
+    // (cli.rs uses hand-rolled arg matching).  Documented in PARITY.md.
+    let cli_stub = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "commands": [],
+        "_note": "CLI introspection not implemented on Rust port. Use `cua-driver --help` for CLI docs.",
+    });
+
+    let doc = match doc_type {
+        "cli" => cli_stub,
+        "mcp" => mcp,
+        _     => serde_json::json!({ "cli": cli_stub, "mcp": mcp }),
+    };
     let out = if pretty {
         serde_json::to_string_pretty(&doc)
     } else {

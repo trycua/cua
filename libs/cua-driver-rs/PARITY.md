@@ -589,3 +589,39 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - 4 error paths ✓
 - Pixel right-click: `"✅ Posted right-click to pid 62156 at window-pixel
   (300, 300) → screen-point (301, 368)."` ✓
+
+---
+
+## MCP tool: `screenshot`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScreenshotTool.swift:5-170`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScreenshotTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/screenshot_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"Screenshot (window): WxH png."`; now matches
+   Swift verbatim: `"✅ Window screenshot — WxH png [window_id: ID]"`
+   (em-dash, checkmark, window-id suffix). Display fallback uses
+   `"✅ Display screenshot — WxH png"` (Rust-only, see intentional below).
+2. **Default JPEG quality** — was 85, Swift defaults 95. Now 95.
+3. **Description** — multi-paragraph port from Swift adapted to Windows
+   (BitBlt + PrintWindow transport; no permission gate needed).
+4. **`idempotent`** — was `true`; Swift uses `false` (a fresh pixel grab
+   every call). Now matches Swift.
+
+### Intentional Rust-only
+
+- **Optional `window_id`** — Swift requires it; Windows allows omission
+  for whole-display capture (`screenshot_display_bytes`).  Useful
+  Windows-only convenience that Swift can't easily provide because
+  macOS Screen Recording requires per-window grants.  Schema accepts
+  both shapes; description explains.
+
+### Verified on Windows
+
+`screenshot_parity.exe`:
+- Window screenshot: text matches `"✅ Window screenshot — 1087x644 png
+  [window_id: 4464038]"` ✓
+- Image content block present ✓
+- structuredContent has `width`, `height`, `format` ✓
+- JPEG format: `mimeType: image/jpeg`, `format: "jpeg"` ✓

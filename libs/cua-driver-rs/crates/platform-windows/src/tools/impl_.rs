@@ -1171,24 +1171,32 @@ impl Tool for ScreenshotTool {
     fn def(&self) -> &ToolDef {
         SCREENSHOT_DEF.get_or_init(|| ToolDef {
             name: "screenshot".into(),
-            description: "Capture a screenshot via PrintWindow (no focus change). \
-                Without window_id captures the full primary display. Supports png and jpeg formats.".into(),
+            // Description ported from Swift `ScreenshotTool.swift` with the
+            // Windows-specific transport note (BitBlt + PrintWindow instead of
+            // ScreenCaptureKit).
+            description: "Capture a screenshot of a single window via BitBlt + PrintWindow \
+                (no focus change). Returns base64-encoded image data in the requested format \
+                (default png).\n\n\
+                `window_id` is recommended (use `list_windows` to find it). When omitted, \
+                captures the full primary display — a Windows-only convenience for whole-\
+                screen snapshots without a per-window target.\n\n\
+                Requires no special permissions on Windows.".into(),
             input_schema: json!({
                 "type":"object","properties":{
-                    "window_id":{"type":"integer"},
-                    "format":{"type":"string","enum":["png","jpeg"]},
+                    "window_id":{"type":"integer","description":"HWND of the window to capture. When omitted, captures the full primary display (Windows-only)."},
+                    "format":{"type":"string","enum":["png","jpeg"],"description":"Image format. Default: png."},
                     "quality":{"type":"integer","minimum":1,"maximum":95,
-                        "description":"JPEG quality (1-95). Ignored for png."}
+                        "description":"JPEG quality 1-95; ignored for png."}
                 },"additionalProperties":false
             }),
-            read_only: true, destructive: false, idempotent: true, open_world: false,
+            read_only: true, destructive: false, idempotent: false, open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
         let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("png").to_owned();
-        let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
+        let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(95) as u8;
         let is_jpeg = format == "jpeg";
         let max_dim = self.state.config.read().unwrap().max_image_dimension;
 
@@ -1211,9 +1219,15 @@ impl Tool for ScreenshotTool {
         match result {
             Ok(Ok((b64, w, h))) => {
                 let label = if is_jpeg { "jpeg" } else { "png" };
-                let scope = if hwnd_opt.is_some() { "window".to_owned() }
-                    else { "display".to_owned() };
-                let mut tr = ToolResult::text(format!("Screenshot ({scope}): {w}×{h} {label}."));
+                // Match Swift `ScreenshotTool.swift` text format 1:1:
+                //   "✅ Window screenshot — WxH png [window_id: ID]"
+                // Whole-display fallback uses "✅ Display screenshot — WxH png"
+                // (Rust-only path; Swift always requires window_id).
+                let summary = match hwnd_opt {
+                    Some(wid) => format!("✅ Window screenshot — {w}x{h} {label} [window_id: {wid}]"),
+                    None      => format!("✅ Display screenshot — {w}x{h} {label}"),
+                };
+                let mut tr = ToolResult::text(summary);
                 let img_content = if is_jpeg {
                     mcp_server::protocol::Content::image_jpeg(b64)
                 } else {

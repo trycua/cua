@@ -912,14 +912,25 @@ impl Tool for HotkeyTool {
     fn def(&self) -> &ToolDef {
         HOTKEY_DEF.get_or_init(|| ToolDef {
             name: "hotkey".into(),
-            description: "Press a combination of keys simultaneously, e.g. [\"ctrl\",\"c\"] for Copy. \
-                Posted directly to the target pid's message queue; target does NOT need to be frontmost.".into(),
+            // Description ported from Swift `HotkeyTool.swift` (omitting macOS-
+            // specific FocusWithoutRaise/SLEventPostToPid mechanics — Windows
+            // uses PostMessage which doesn't need a NSMenu-activation dance).
+            description: "Press a combination of keys simultaneously — e.g. `[\"ctrl\", \"c\"]` \
+                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. The combo is \
+                posted directly to the target pid's window via PostMessage(WM_KEYDOWN/UP); \
+                the target does NOT need to be frontmost.\n\n\
+                **`window_id`** (optional): explicit HWND when the pid owns more than one \
+                window; otherwise the pid's first visible window is used.\n\n\
+                Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier \
+                keys use the same vocabulary as `press_key` (return, tab, escape, \
+                up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, \
+                letters, digits). Order: modifiers first, one non-modifier last.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","keys"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
+                    "pid":{"type":"integer","description":"Target process ID."},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
-                        "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."}
+                        "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
+                    "window_id":{"type":"integer","description":"Explicit HWND when the pid owns multiple windows."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -928,27 +939,38 @@ impl Tool for HotkeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
+        // Swift error wording 1:1.
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
+        let pid = raw_pid as u32;
 
-        // Parse keys array (preferred) or fall back to legacy key+modifiers.
-        let (key, mods) = if let Some(arr) = args.get("keys").and_then(|v| v.as_array()) {
-            let keys: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+        // Parse keys array (Swift's only path).  Legacy key+modifiers shape
+        // still accepted as a Rust-side convenience.
+        let (key, mods, full_keys) = if let Some(arr) = args.get("keys") {
+            let raw = match arr.as_array() {
+                Some(r) => r,
+                None    => return ToolResult::error("Missing required array field keys."),
+            };
+            let keys: Vec<String> = raw.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+            if keys.len() != raw.len() || keys.is_empty() {
+                return ToolResult::error("keys must be a non-empty array of strings.");
+            }
             let modifiers: Vec<String> = keys.iter().filter(|k| is_modifier(k)).cloned().collect();
             let non_mods: Vec<String> = keys.iter().filter(|k| !is_modifier(k)).cloned().collect();
             if non_mods.is_empty() {
                 return ToolResult::error("keys must include at least one non-modifier key.");
             }
-            (non_mods.last().unwrap().clone(), modifiers)
+            (non_mods.last().unwrap().clone(), modifiers, keys)
         } else if let Some(k) = args.get("key").and_then(|v| v.as_str()) {
-            let mods: Vec<String> = args.get("modifiers").and_then(|v| v.as_array())
+            let m: Vec<String> = args.get("modifiers").and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
                 .unwrap_or_default();
-            (k.to_owned(), mods)
+            let mut full = m.clone(); full.push(k.to_owned());
+            (k.to_owned(), m, full)
         } else {
-            return ToolResult::error("Provide 'keys' array (e.g. [\"ctrl\",\"c\"]) or 'key'+'modifiers' parameters.");
+            return ToolResult::error("Missing required array field keys.");
         };
 
         // Resolve HWND: use window_id if given, else pick first window for pid.
@@ -964,15 +986,18 @@ impl Tool for HotkeyTool {
             }
         };
 
-        let key_display = format!("{}+{}", mods.join("+"), key);
+        // Match Swift's text format exactly: `"✅ Pressed K1+K2+... on pid X."`
+        // where K1+K2+... is `keys.joined(separator: "+")` of the FULL keys
+        // array as the caller supplied it (modifiers + non-modifier in order).
+        let key_display = full_keys.join("+");
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::post_key(hwnd, &key, &m)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Pressed {key_display} on pid {pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!("✅ Pressed {key_display} on pid {raw_pid}.")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

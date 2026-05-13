@@ -483,3 +483,36 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Missing-key error: `"Missing required string field key."` ✓
 - Element-without-window error: matches Swift's wording ✓
 - End key: `"✅ Pressed end on pid 85676."` ✓
+
+---
+
+## MCP tool: `hotkey`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/HotkeyTool.swift:6-142`
+- Rust:
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (HotkeyTool)
+  - macos=`crates/platform-macos/src/tools/hotkey.rs` (TBD)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
+- Status: windows VERIFIED; macos / linux OPEN
+- Test: `crates/platform-windows/examples/hotkey_parity.rs`
+
+### Fixed (Windows)
+
+1. **Text format** — was `"Pressed CTRL+C on pid X."` (no checkmark,
+   uppercase mods only); now `"✅ Pressed K1+K2+... on pid X."`
+   matching Swift's `keys.joined(separator: "+")` of the full keys
+   array as the caller supplied it (preserves case and order).
+2. **Error wording** —
+   - Missing pid: schema-layer catches first; tool layer falls back to
+     `"Missing required integer field pid."` (Swift's wording).
+   - Missing keys: `"Missing required array field keys."` (was
+     a Rust-specific "Provide 'keys' array..." fallback).
+   - Non-string elements: `"keys must be a non-empty array of strings."`.
+3. **Description** — multi-paragraph port from Swift, dropping the
+   macOS-specific FocusWithoutRaise / NSMenu mechanics that have no
+   Windows analogue.
+
+### Verified on Windows
+
+`hotkey_parity.exe` against Chrome:
+- Missing-pid / missing-keys errors ✓
+- `ctrl+end` → `"✅ Pressed ctrl+end on pid 85676."` ✓

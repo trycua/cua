@@ -263,3 +263,61 @@ running subset exactly.
 running, 0 installed-not-running."`; `structuredContent.apps` is an
 array of `{pid, bundle_id (null on Windows), name, running, active}`;
 at least one entry has `active: true` (the foreground app).
+
+---
+
+## MCP tool: `list_windows`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListWindowsTool.swift:6-245`
+- Rust:
+  - macos=`crates/platform-macos/src/tools/list_windows.rs` (TBD audit)
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (ListWindowsTool)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (ListWindowsTool, blocked behind Linux compile fix)
+- Status:
+  - windows: VERIFIED
+  - macos: OPEN (audit pending — macOS port already exists)
+  - linux: OPEN
+- Test: `crates/platform-windows/examples/list_windows_parity.rs`
+
+### Fixed divergences (Windows)
+
+Swift returns per-record: `{window_id, pid, app_name, title, bounds {x,y,width,height}, layer, z_index, is_on_screen, on_current_space?, space_ids?}`
+plus top-level `{windows, current_space_id}`. Windows Rust was returning
+a flat `{window_id, pid, title, x, y, width, height}`. Now matches Swift:
+
+1. **`app_name`** — populated by joining against the process table
+   (`crate::win32::list_processes`).
+2. **`bounds: {x, y, width, height}`** — was flat `x`, `y`, `width`,
+   `height` siblings of `title`.
+3. **`layer: 0`** — Swift filters to layer-0 (normal windows); Windows
+   has no layer concept so hard-coded 0.
+4. **`z_index`** — derived from `EnumWindows` order (top-to-bottom),
+   inverted so higher = closer to front per Swift convention.
+5. **`is_on_screen: true`** — currently always true because the Win32
+   `list_windows` source filter only returns `IsWindowVisible && !IsIconic`
+   windows.  See limitation below.
+6. **Top-level `current_space_id: null`** — Windows has no Spaces.
+7. **`on_current_space` / `space_ids` omitted** — matching Swift's
+   else-branch when SkyLight SPIs are unavailable; the text header
+   explicitly says so.
+8. **Text format** — header now reads `"✅ Found N window(s) across M
+   app(s); X on-screen. (SkyLight Space SPIs unavailable — ...)"`.
+   Per-record line: `"- {app_name} (pid {pid}) {"title"|(no title)} [window_id: {id}]{[off-screen]?}"`.
+9. **Pid-filter warning** — when a pid filter returns zero windows,
+   the response is `"⚠️ No windows found for pid X. ..."` with a hint
+   about the current frontmost app, matching Swift's warning.
+10. **Description** — copied from Swift with Windows-specific caveats
+    about Spaces.
+
+### Legacy alias
+
+`structuredContent._legacy_windows` keeps the old flat shape (no `app_name`,
+flat `x/y/width/height`) for any pre-existing callers; remove once they migrate.
+
+### Known limitation
+
+Windows Rust does **not** yet enumerate **off-screen / minimized windows**.
+Swift's default (`on_screen_only: false`) returns them; Windows currently
+filters them out at the `EnumWindows` callback level (`IsWindowVisible &&
+!IsIconic`).  The `on_screen_only` schema field is accepted but has no
+effect.  Follow-up to refactor `list_windows` to return everything and
+filter at the tool layer.

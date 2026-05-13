@@ -209,10 +209,25 @@ impl Tool for ListWindowsTool {
     fn def(&self) -> &ToolDef {
         LIST_WINDOWS_DEF.get_or_init(|| ToolDef {
             name: "list_windows".into(),
-            description: "List top-level visible windows (all processes or filtered by pid).".into(),
+            // Description matches Swift `ListWindowsTool.swift` semantics —
+            // Windows-specific caveat: no Spaces concept, so on_current_space
+            // / space_ids are always omitted and current_space_id is null.
+            description: "List every top-level window currently known to the window manager. \
+                Each record self-contains its owning app identity so the caller never has to \
+                join back against list_apps.\n\n\
+                Use this — not list_apps — for any window-level reasoning: \"does this app \
+                have a visible window right now?\", \"which of this pid's windows is the main \
+                one?\".\n\n\
+                Per-record fields: window_id (HWND), pid + app_name, title, \
+                bounds {x, y, width, height}, layer (always 0), z_index (stacking order), \
+                is_on_screen. The macOS-specific on_current_space / space_ids fields are \
+                omitted on Windows; current_space_id is null.\n\n\
+                Inputs: pid (optional pid filter), on_screen_only (bool, default false — \
+                Windows currently only enumerates visible non-minimized windows; this flag \
+                is accepted but has no effect on the result set yet).".into(),
             input_schema: json!({"type":"object","properties":{
-                "pid":{"type":"integer","description":"Filter to windows owned by this pid."},
-                "on_screen_only":{"type":"boolean","description":"When true, filter to visible windows only. Default false."}
+                "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
+                "on_screen_only":{"type":"boolean","description":"When true, drop windows that aren't currently on-screen. Default false."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -220,20 +235,86 @@ impl Tool for ListWindowsTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let filter_pid = args.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let windows = tokio::task::spawn_blocking(move || crate::win32::list_windows(filter_pid))
-            .await.unwrap_or_default();
-        let mut lines = vec![format!("Found {} windows:", windows.len())];
-        for w in &windows {
-            lines.push(format!("  [hwnd={}] pid={} \"{}\" {}x{}+{}+{}",
-                w.hwnd, w.pid, w.title, w.width, w.height, w.x, w.y));
+        let _on_screen_only = args.get("on_screen_only").and_then(|v| v.as_bool()).unwrap_or(false);
+        let (windows, pid_to_name) = tokio::task::spawn_blocking(move || {
+            let wins = crate::win32::list_windows(filter_pid);
+            let procs = crate::win32::list_processes();
+            let map: std::collections::HashMap<u32, String> =
+                procs.into_iter().map(|p| (p.pid, p.name)).collect();
+            (wins, map)
+        }).await.unwrap_or_default();
+
+        // Swift surfaces a warning when a pid filter matches nothing.
+        if let Some(fp) = filter_pid {
+            if windows.is_empty() {
+                use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+                use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+                let fg_pid = unsafe {
+                    let fg = GetForegroundWindow();
+                    let mut p = 0u32;
+                    let _ = GetWindowThreadProcessId(fg, Some(&mut p));
+                    p
+                };
+                let fg_name = pid_to_name.get(&fg_pid).map(|s| s.as_str()).unwrap_or("?");
+                let msg = format!(
+                    "⚠️ No windows found for pid {fp}. The pid may be wrong or the app may not \
+                     have created a window yet. The current frontmost app appears to be \
+                     \"{fg_name}\" (pid {fg_pid})."
+                );
+                return ToolResult::text(msg);
+            }
         }
-        let structured = json!({ "windows": windows.iter().map(|w| json!({
-            "window_id": w.hwnd,
-            "pid": w.pid,
-            "title": w.title,
-            "x": w.x, "y": w.y,
-            "width": w.width, "height": w.height,
-        })).collect::<Vec<_>>() });
+
+        // z_index: EnumWindows on Win32 returns top-to-bottom; higher index =
+        // farther from front.  Swift convention: higher z_index = closer to
+        // front.  Invert via `(len - 1 - i)`.
+        let n = windows.len();
+        let records: Vec<serde_json::Value> = windows.iter().enumerate().map(|(i, w)| {
+            let app_name = pid_to_name.get(&w.pid).cloned().unwrap_or_default();
+            let z_index = (n.saturating_sub(1).saturating_sub(i)) as i64;
+            json!({
+                "window_id":  w.hwnd,
+                "pid":        w.pid,
+                "app_name":   app_name,
+                "title":      w.title,
+                "bounds":     { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                "layer":      0,
+                "z_index":    z_index,
+                "is_on_screen": true,
+            })
+        }).collect();
+
+        let total = records.len();
+        let pid_count = windows.iter().map(|w| w.pid).collect::<std::collections::HashSet<_>>().len();
+        let on_screen = records.iter().filter(|r| r["is_on_screen"].as_bool().unwrap_or(false)).count();
+        // Swift text format 1:1 — append the SPI-unavailable note since
+        // Windows has no equivalent of macOS Spaces.
+        let header = format!(
+            "✅ Found {total} window(s) across {pid_count} app(s); {on_screen} on-screen. \
+             (SkyLight Space SPIs unavailable — on_current_space / space_ids omitted.)"
+        );
+        let mut lines = vec![header];
+        for r in &records {
+            let app  = r["app_name"].as_str().unwrap_or("?");
+            let pid  = r["pid"].as_u64().unwrap_or(0);
+            let tt   = r["title"].as_str().unwrap_or("");
+            let wid  = r["window_id"].as_u64().unwrap_or(0);
+            let title_disp = if tt.is_empty() { "(no title)".to_owned() } else { format!("\"{tt}\"") };
+            let tag = if r["is_on_screen"].as_bool().unwrap_or(false) { "" } else { " [off-screen]" };
+            lines.push(format!("- {app} (pid {pid}) {title_disp} [window_id: {wid}]{tag}"));
+        }
+
+        // Legacy alias: keep the old flat fields under each record for any
+        // pre-existing Rust callers, but they read from the same source.
+        let legacy_windows: Vec<serde_json::Value> = windows.iter().map(|w| json!({
+            "window_id": w.hwnd, "pid": w.pid, "title": w.title,
+            "x": w.x, "y": w.y, "width": w.width, "height": w.height,
+        })).collect();
+        let structured = json!({
+            "windows":          records,
+            "current_space_id": serde_json::Value::Null,  // Windows has no Spaces
+            "_legacy_windows":  legacy_windows,
+        });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
 }

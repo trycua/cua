@@ -11,8 +11,14 @@ import SwiftUI
 public struct AgentCursorView: View {
     let renderer: AgentCursorRenderer
 
-    public init(renderer: AgentCursorRenderer = .shared) {
+    @MainActor
+    public init(renderer: AgentCursorRenderer) {
         self.renderer = renderer
+    }
+
+    @MainActor
+    public init() {
+        self.renderer = .shared
     }
 
     public var body: some View {
@@ -31,6 +37,7 @@ public struct AgentCursorView: View {
     /// element (if `renderer.focusRect` is set). Color is derived from the
     /// current cursor style's bloom color so the focus rect always matches
     /// the cursor's visual identity.
+    @MainActor
     private func drawFocusRect(in ctx: GraphicsContext, canvasSize: CGSize) {
         guard let screenRect = renderer.focusRect else { return }
         let r = CGRect(
@@ -51,6 +58,7 @@ public struct AgentCursorView: View {
     /// Draw the cursor centered on `renderer.position`, rotated to
     /// `renderer.heading`. When `renderer.style.image` is set, draws that
     /// image instead of the default gradient arrow.
+    @MainActor
     private func drawCursor(in ctx: GraphicsContext) {
         let p = renderer.position
         guard p.x > -100 else { return }   // skip until first moveTo

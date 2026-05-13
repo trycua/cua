@@ -1256,7 +1256,7 @@ impl Tool for GetCursorPositionTool {
     fn def(&self) -> &ToolDef {
         GCP_DEF.get_or_init(|| ToolDef {
             name: "get_cursor_position".into(),
-            description: "Return the current real mouse cursor position in screen coordinates.".into(),
+            description: "Return the current mouse cursor position in screen points (origin top-left).".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -1266,7 +1266,8 @@ impl Tool for GetCursorPositionTool {
         use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut pt = POINT { x: 0, y: 0 };
         unsafe { let _ = GetCursorPos(&mut pt); }
-        ToolResult::text(format!("Cursor: ({}, {})", pt.x, pt.y))
+        // Text format matches Swift `GetCursorPositionTool` 1:1.
+        ToolResult::text(format!("✅ Cursor at ({}, {})", pt.x, pt.y))
             .with_structured(json!({ "x": pt.x, "y": pt.y }))
     }
 }

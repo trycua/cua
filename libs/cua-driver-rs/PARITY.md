@@ -67,3 +67,46 @@ is within 100 px of the requested target and that ≥50 magenta pixels are
 rendered. Hard 4 s timeout. Verified on Windows; should run on macOS/Linux
 once the daemon pipe is exposed there (macOS uses Unix socket, Linux uses
 Unix socket).
+
+---
+
+## MCP tool: `get_cursor_position`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetCursorPositionTool.swift:6-37`
+- Rust:
+  - macos=`crates/platform-macos/src/tools/get_cursor_position.rs`
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (GetCursorPositionTool)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (GetCursorPositionTool)
+- Status: VERIFIED
+- Test:  `crates/platform-windows/examples/get_cursor_position_parity.rs`
+
+### Fixed divergences
+
+1. **Response text format** — Swift returns `"✅ Cursor at (X, Y)"`; Rust on
+   every platform was returning `"Cursor: (X, Y)"` (no checkmark, wrong
+   word). All three platforms now match Swift exactly.
+2. **macOS coord type** — Swift truncates to `Int(pos.x)`; macOS Rust was
+   returning floats formatted `"({x:.1}, {y:.1})"`. Now truncates to
+   integers like Swift, consistent with Windows/Linux Rust.
+3. **Description text** — was inconsistent across Rust platforms. All
+   three now use Swift's wording: `"Return the current mouse cursor
+   position in screen points (origin top-left)."`.
+
+### Intentional additions (Rust-only)
+
+- `structuredContent: { x: int, y: int }` is included alongside the text
+  response. Swift returns text only. This is a backwards-compatible MCP
+  enrichment — tools that read structured content get integers; tools
+  that read text get Swift's exact format. The test asserts both views
+  agree and both agree with the platform's native `GetCursorPos` call
+  within ±5 px.
+
+### Underlying API per platform
+
+| Platform | Swift                              | Rust                                       |
+|----------|------------------------------------|--------------------------------------------|
+| macOS    | `CGEvent(source: nil).location`    | `CGEvent::new(CGEventSource(HIDSystemState)).location()` |
+| Windows  | n/a                                | `GetCursorPos` (Win32)                     |
+| Linux    | n/a                                | `xproto::query_pointer` on the root window |
+
+All three return screen-coordinate space, top-left origin, matching the
+documented Swift behavior.

@@ -9,8 +9,7 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_cursor_position".into(),
-        description: "Return the current real mouse cursor position in screen coordinates \
-            (top-left origin). This is the user's cursor, not the agent cursor overlay.".into(),
+        description: "Return the current mouse cursor position in screen points (origin top-left).".into(),
         input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
         read_only: true,
         destructive: false,
@@ -41,8 +40,12 @@ impl Tool for GetCursorPositionTool {
 
         match result {
             Ok(Ok((x, y))) => {
-                ToolResult::text(format!("Cursor: ({x:.1}, {y:.1})"))
-                    .with_structured(serde_json::json!({ "x": x, "y": y }))
+                // Truncate to integers and use Swift's text format 1:1
+                // (`GetCursorPositionTool.swift`: `Int(pos.x)`, `Int(pos.y)`,
+                // `"✅ Cursor at (X, Y)"`).
+                let (xi, yi) = (x as i64, y as i64);
+                ToolResult::text(format!("✅ Cursor at ({xi}, {yi})"))
+                    .with_structured(serde_json::json!({ "x": xi, "y": yi }))
             }
             Ok(Err(e)) => ToolResult::error(format!("Failed to get cursor position: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),

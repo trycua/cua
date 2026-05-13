@@ -350,8 +350,8 @@ struct MCPCommand: ParsableCommand {
             terminal — not to CuaDriver.app — so AX probes silently fail \
             against the wrong bundle id. To sidestep this without breaking \
             the stdio MCP transport, `mcp` detects the context, ensures a \
-            `cua-driver serve` daemon is running under LaunchServices \
-            (relaunching via `open -n -g -a CuaDriver --args serve` if not), \
+            `cua-driver serve` daemon is running under CuaDriver.app's bundle \
+            context (relaunching through the installed app executable if not), \
             and proxies every MCP tool call through the daemon's Unix \
             socket. Tool semantics are identical to the in-process path. \
             Pass `--no-daemon-relaunch` (or set CUA_DRIVER_MCP_NO_RELAUNCH=1) \
@@ -410,26 +410,32 @@ struct MCPCommand: ParsableCommand {
         // live NSApplication event loop to draw. When the cursor's
         // never enabled, this costs us one idle run-loop.
         AppKitBootstrap.runBlockingAppKitWith {
+            // Warm config before the TCC preflight: AX-only mode does not
+            // need Screen Recording, which matters on Ventura-compatible
+            // builds where pixel capture may be intentionally unavailable.
+            let config = await ConfigStore.shared.load()
+
             // Preflight TCC grants. When both are already active this
             // returns immediately; otherwise a small panel guides the
             // user through granting them and we resume once everything
             // flips green. User closing the panel without granting ->
             // exit with a clear message.
-            let granted = await MainActor.run {
-                PermissionsGate.shared
-            }.ensureGranted()
+            let granted: Bool
+            if config.captureMode == .ax {
+                let status = await Permissions.currentStatus()
+                granted = status.accessibility
+            } else {
+                granted = await MainActor.run {
+                    PermissionsGate.shared
+                }.ensureGranted()
+            }
             if !granted {
                 FileHandle.standardError.write(
                     Data(
-                        "cua-driver: required permissions (Accessibility + Screen Recording) not granted; MCP server exiting.\n"
+                        "cua-driver: required permissions not granted; MCP server exiting.\n"
                             .utf8))
                 throw AppKitBootstrapError.permissionsDenied
             }
-
-            // Same startup-warm as `serve`: surface any config decode
-            // warnings on the host's stderr before the first tool call
-            // hits the disk-read path.
-            let config = await ConfigStore.shared.load()
 
             // Apply persisted agent-cursor preferences to the live
             // singleton so stdio MCP sessions also honor the user's
@@ -490,7 +496,7 @@ extension MCPCommand {
         if !DaemonClient.isDaemonListening(socketPath: socketPath) {
             FileHandle.standardError.write(
                 Data(
-                    "cua-driver: mcp launched without CuaDriver.app's TCC grants; auto-launching the daemon via `open -n -g -a CuaDriver --args serve` and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process.\n"
+                    "cua-driver: mcp launched without CuaDriver.app's TCC grants; auto-launching the daemon through CuaDriver.app and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process.\n"
                         .utf8))
             try launchDaemonViaOpen()
             try waitForDaemon(socketPath: socketPath, timeout: 10.0)
@@ -519,20 +525,22 @@ extension MCPCommand {
         }
     }
 
-    /// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve`. Mirror of
-    /// `ServeCommand.relaunchViaOpen` minus the post-launch probe (we
-    /// poll separately via `waitForDaemon`, since the timeout there is
+    /// Spawn the installed CuaDriver.app executable with `serve --no-relaunch`.
+    /// Mirror of `ServeCommand.relaunchViaOpen` minus the post-launch probe
+    /// (we poll separately via `waitForDaemon`, since the timeout there is
     /// MCP-specific).
     fileprivate func launchDaemonViaOpen() throws {
+        guard let executablePath = resolvedCuaDriverAppExecutablePath() else {
+            FileHandle.standardError.write(
+                Data(
+                    "cua-driver: installed CuaDriver.app executable not found. Check that `/Applications/CuaDriver.app` is installed, or pass --no-daemon-relaunch to bypass.\n"
+                        .utf8))
+            throw ExitCode(1)
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        // -n: force a new instance. CuaDriver.app may already be
-        //     running from a previous `mcp` (different MCP client
-        //     session); without -n, `open -a` would re-use it and
-        //     drop our `--args serve`, leaving no daemon up.
-        // -g: keep the new instance backgrounded. CuaDriver.app is
-        //     LSUIElement=true anyway, but this makes that explicit.
-        process.arguments = ["-n", "-g", "-a", "CuaDriver", "--args", "serve"]
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = ["serve", "--no-relaunch"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
@@ -540,15 +548,7 @@ extension MCPCommand {
         } catch {
             FileHandle.standardError.write(
                 Data(
-                    "cua-driver: failed to exec `/usr/bin/open`: \(error). Pass --no-daemon-relaunch to bypass.\n"
-                        .utf8))
-            throw ExitCode(1)
-        }
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            FileHandle.standardError.write(
-                Data(
-                    "cua-driver: `open -n -g -a CuaDriver --args serve` exited \(process.terminationStatus). Check that `/Applications/CuaDriver.app` is installed, or pass --no-daemon-relaunch to bypass.\n"
+                    "cua-driver: failed to exec CuaDriver.app daemon: \(error). Pass --no-daemon-relaunch to bypass.\n"
                         .utf8))
             throw ExitCode(1)
         }
@@ -569,7 +569,7 @@ extension MCPCommand {
         }
         FileHandle.standardError.write(
             Data(
-                "cua-driver: daemon did not appear on \(socketPath) within \(Int(timeout))s. If this is the first launch, grant Accessibility + Screen Recording to CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch to stay in-process.\n"
+                "cua-driver: daemon did not appear on \(socketPath) within \(Int(timeout))s. If this is the first launch, grant Accessibility to CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch to stay in-process.\n"
                     .utf8))
         throw ExitCode(1)
     }

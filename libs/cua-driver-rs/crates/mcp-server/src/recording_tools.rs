@@ -180,29 +180,48 @@ impl Tool for ReplayTrajectoryTool {
     fn def(&self) -> &ToolDef {
         REPLAY_DEF.get_or_init(|| ToolDef {
             name: "replay_trajectory".into(),
-            description: "Replay a recorded trajectory by invoking each \
-                turn-NNNNN/action.json tool call in lexical order.".into(),
+            // Description ported from Swift `ReplayTrajectoryTool.swift`
+            // with its caveats about element-indexed actions and recording-
+            // during-replay semantics.
+            description: "Replay a recorded trajectory by re-invoking every turn's tool call \
+                in lexical order. `dir` must point at a directory previously written by \
+                `set_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the \
+                recorded tool is called with its recorded `arguments` via the same dispatch \
+                path an MCP / CLI call uses.\n\n\
+                Caveats:\n\
+                - Element-indexed actions (`click({pid, element_index})` etc.) will fail \
+                  because element indices are per-snapshot and don't survive across \
+                  sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools \
+                  replay cleanly. Failures are reported but don't stop replay unless \
+                  `stop_on_error` is true.\n\
+                - `get_window_state` and other read-only tools are NOT currently recorded, \
+                  so replays do not re-populate the per-(pid, window_id) element cache.\n\
+                - If recording is ENABLED while replay runs, the replay itself is recorded \
+                  into the currently configured output directory.  That's deliberate: \
+                  recording a replay against a new build and diffing the two trajectories \
+                  is the regression-test workflow.".into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["dir"],
                 "properties": {
-                    "dir":           { "type": "string",  "description": "Trajectory directory written by set_recording." },
-                    "delay_ms":      { "type": "integer", "description": "Milliseconds between turns (default 500)." },
-                    "stop_on_error": { "type": "boolean", "description": "Stop replay on the first error (default true)." }
+                    "dir":           { "type": "string",  "description": "Trajectory directory previously written by `set_recording`. Absolute or ~-rooted." },
+                    "delay_ms":      { "type": "integer", "minimum": 0, "maximum": 10000, "description": "Milliseconds to sleep between turns, for human-observable pacing. Default 500." },
+                    "stop_on_error": { "type": "boolean", "description": "Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory." }
                 },
                 "additionalProperties": false
             }),
             read_only: false,
             destructive: true,
             idempotent: false,
-            open_world: true,
+            open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // Swift error wording 1:1.
         let dir_str = match args.get("dir").and_then(|v| v.as_str()) {
-            Some(v) => v.to_owned(),
-            None => return ToolResult::error("Missing required parameter: dir"),
+            Some(v) if !v.is_empty() => v.to_owned(),
+            _ => return ToolResult::error("Missing required string field `dir`."),
         };
         let delay_ms = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(500).min(10_000);
         let stop_on_error = args.get("stop_on_error").and_then(|v| v.as_bool()).unwrap_or(true);

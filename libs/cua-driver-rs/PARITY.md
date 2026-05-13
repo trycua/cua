@@ -990,3 +990,26 @@ Swift.
 `drag_parity.exe`:
 - Missing-coordinates error ✓
 - Real drag: `"✅ Posted drag to pid 62156 from window-pixel (100, 100) → (102, 102), screen (101, 168) → (103, 170) in 50ms / 2 steps."` ✓
+
+---
+
+## MCP tool: `replay_trajectory`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ReplayTrajectoryTool.swift:18-end`
+- Rust: shared `crates/mcp-server/src/recording_tools.rs` (cross-platform)
+- Status: VERIFIED
+- Test: `crates/platform-windows/examples/replay_trajectory_parity.rs`
+
+### Fixed
+1. **Error wording** — was `"Missing required parameter: dir"`; now Swift's
+   `"Missing required string field \`dir\`."`. Empty-string `dir` now also
+   rejected (was silently passing the empty path through).
+2. **`open_world: false`** — was `true`; Swift uses `false` (replays only
+   recorded actions, no fresh world interactions).
+3. **Description** — multi-paragraph port from Swift covering caveats
+   (element-index actions fail on replay; read-only tools not recorded;
+   recording-during-replay deliberate).
+
+### Verified on Windows
+`replay_trajectory_parity.exe`:
+- Empty-dir: `"Missing required string field \`dir\`."` ✓
+- Nonexistent dir: `"Trajectory directory does not exist: <path>"` ✓

@@ -1093,3 +1093,31 @@ Changes:
 `set_agent_cursor_style_parity.exe`:
 - Set gradient + bloom: `"✅ cursor style: gradient_colors=[#FF6B6B,#FF8E53] bloom_color=#A855F7"` ✓
 - Revert all: `"✅ cursor style: reverted to default"` ✓
+
+---
+
+## MCP tool: `zoom`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ZoomTool.swift:12-end`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ZoomTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/zoom_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"Zoom (X,Y)–(X,Y) → WxH px JPEG."`; now Swift's
+   verbatim multi-line message starting `"✅ Zoomed region captured at
+   native resolution."` with the `from_zoom=true` integration hint.
+2. **Error wording**: `"Missing required integer field pid."` /
+   `"Missing required integer field window_id."` /
+   `"Missing required region coordinates (x1, y1, x2, y2)."` /
+   `"Invalid region: x2 must be > x1 and y2 must be > y1."` /
+   `"Zoom region too wide: N px > 500 px max. ..."` — all match Swift.
+3. **Schema** — `pid` now also required (Swift requires it).
+4. **`idempotent: false`** — was `true`; Swift uses `false`.
+
+### Intentional Rust-only
+- **`window_id` required** — Swift uses pid+frontmost-window; Windows
+  uses HWND directly since there's no clean Win32 analogue without an
+  explicit HWND.
+
+### Verified on Windows
+`zoom_parity.exe`: invalid-region, too-wide, and real-zoom paths all OK.

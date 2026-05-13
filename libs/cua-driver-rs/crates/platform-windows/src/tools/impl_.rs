@@ -2503,32 +2503,59 @@ impl Tool for ZoomTool {
     fn def(&self) -> &ToolDef {
         ZOOM_DEF.get_or_init(|| ToolDef {
             name: "zoom".into(),
-            description: "Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in \
-                screenshot pixels, with 20% padding. Output is at most 500 px wide.\n\n\
-                After a zoom, pass from_zoom=true to click/type_text to auto-translate \
-                coordinates back to full-window space.".into(),
+            // Description ported from Swift `ZoomTool.swift`.
+            description: "Zoom into a rectangular region of a window screenshot at full (native) \
+                resolution. Use this when `get_window_state` returned a resized image and you \
+                need to read small text, identify icons, or verify UI details.\n\n\
+                Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot \
+                returned by `get_window_state` (i.e. the resized image if `max_image_dimension` \
+                is active). The maximum zoom region width is 500 px in scaled-image coordinates.\n\n\
+                A 20% padding is automatically added on every side of the requested region so \
+                the target remains visible even if the caller's coordinates are slightly off.\n\n\
+                After a zoom, pass `from_zoom=true` to click/type_text to auto-translate \
+                coordinates back to full-window space.\n\n\
+                Windows-specific: `window_id` is the canonical addressing field (HWND). \
+                `pid` is also required (used to scope the zoom translation registry, matching \
+                Swift's per-pid zoom context).".into(),
             input_schema: json!({
-                "type":"object","required":["window_id","x1","y1","x2","y2"],"properties":{
-                    "window_id":{"type":"integer"},
-                    "pid":{"type":"integer","description":"Target pid — required for from_zoom click/type translation."},
-                    "x1":{"type":"number"},"y1":{"type":"number"},
-                    "x2":{"type":"number"},"y2":{"type":"number"}
+                "type":"object","required":["pid","window_id","x1","y1","x2","y2"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND of the target window."},
+                    "x1":{"type":"number","description":"Left edge of the region (resized-image pixels)."},
+                    "y1":{"type":"number","description":"Top edge of the region (resized-image pixels)."},
+                    "x2":{"type":"number","description":"Right edge of the region (resized-image pixels)."},
+                    "y2":{"type":"number","description":"Bottom edge of the region (resized-image pixels)."}
                 },"additionalProperties":false
             }),
-            read_only: true, destructive: false, idempotent: true, open_world: false,
+            // Swift annotation: idempotent: false.
+            read_only: true, destructive: false, idempotent: false, open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let hwnd = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v, None => return ToolResult::error("Missing required parameter: window_id"),
+        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) => p,
+            None    => return ToolResult::error("Missing required integer field pid."),
         };
-        let pid = args.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let x1 = match args.get("x1").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing x1") };
-        let y1 = match args.get("y1").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing y1") };
-        let x2 = match args.get("x2").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing x2") };
-        let y2 = match args.get("y2").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing y2") };
-        if x2 <= x1 || y2 <= y1 { return ToolResult::error("x2 must be > x1 and y2 must be > y1"); }
+        let pid = Some(raw_pid as u32);
+        let hwnd = match args.get("window_id").and_then(|v| v.as_u64()) {
+            Some(v) => v,
+            None    => return ToolResult::error("Missing required integer field window_id."),
+        };
+        let coerce = |k: &str| args.get(k).and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)));
+        let (x1, y1, x2, y2) = match (coerce("x1"), coerce("y1"), coerce("x2"), coerce("y2")) {
+            (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
+            _ => return ToolResult::error("Missing required region coordinates (x1, y1, x2, y2)."),
+        };
+        if x2 <= x1 || y2 <= y1 {
+            return ToolResult::error("Invalid region: x2 must be > x1 and y2 must be > y1.");
+        }
+        if x2 - x1 > 500.0 {
+            return ToolResult::error(format!(
+                "Zoom region too wide: {} px > 500 px max. Use a narrower region (max 500 px in scaled-image coordinates).",
+                (x2 - x1) as i64
+            ));
+        }
 
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -2549,10 +2576,16 @@ impl Tool for ZoomTool {
                 let b64 = B64.encode(&crop.jpeg_bytes);
                 let (w, h) = (crop.out_w, crop.out_h);
                 use mcp_server::protocol::Content;
+                // Match Swift's text format 1:1.
+                let summary = "✅ Zoomed region captured at native resolution. \
+                    To click a target in this image, use \
+                    `click(pid, x, y, from_zoom=true)` where x,y are pixel \
+                    coordinates in THIS zoomed image — the driver maps them \
+                    back automatically.".to_owned();
                 ToolResult {
                     content: vec![
                         Content::image_jpeg(b64),
-                        Content::text(format!("Zoom ({x1:.0},{y1:.0})–({x2:.0},{y2:.0}) → {w}×{h} px JPEG.")),
+                        Content::text(summary),
                     ],
                     is_error: None,
                     structured_content: Some(json!({ "width": w, "height": h, "format": "jpeg" })),

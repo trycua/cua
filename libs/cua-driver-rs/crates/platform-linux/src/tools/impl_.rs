@@ -28,7 +28,7 @@ impl ResizeRegistry {
     pub fn new() -> Self { Self { ratios: std::sync::Mutex::new(Default::default()) } }
     pub fn set_ratio(&self, pid: u32, ratio: f64) { self.ratios.lock().unwrap().insert(pid, ratio); }
     pub fn clear_ratio(&self, pid: u32) { self.ratios.lock().unwrap().remove(&pid); }
-    pub fn ratio(&self, pid: u32) -> Option<f64> { *self.ratios.lock().unwrap().get(&pid) }
+    pub fn ratio(&self, pid: u32) -> Option<f64> { self.ratios.lock().unwrap().get(&pid).copied() }
 }
 
 /// Per-process zoom context — stores padded crop origin and resize scale from
@@ -563,9 +563,10 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+        let key_for_task = key.clone();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-            crate::input::send_key(xid, &key, &m)
+            crate::input::send_key(xid, &key_for_task, &m)
         }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key}'.")),
@@ -687,8 +688,9 @@ impl Tool for SetValueTool {
             Some(v) => v.to_owned(),
             None => return ToolResult::error("Missing required parameter: value"),
         };
+        let value_for_task = value.clone();
         let result = tokio::task::spawn_blocking(move || {
-            crate::atspi::set_value(pid, idx, &value)
+            crate::atspi::set_value(pid, idx, &value_for_task)
         }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("Set value of element [{idx}] to '{value}'.")),
@@ -1364,9 +1366,10 @@ impl Tool for SetAgentCursorStyleTool {
                     cursor_overlay::CursorShape::load(&path_owned)
                 }).await {
                     Ok(Ok(shape)) => {
-                        let mut current = self.state.cursor_registry.get_or_create(&cursor_id);
-                        current.config.cursor_icon = Some(path.to_owned());
-                        self.state.cursor_registry.update_config(current.config);
+                        let path_for_cfg = path.to_owned();
+                        self.state.cursor_registry.update_config(&cursor_id, |cfg| {
+                            cfg.cursor_icon = Some(path_for_cfg);
+                        });
                         Some(cursor_overlay::OverlayCommand::SetShape(Some(shape)))
                     }
                     Ok(Err(e)) => return ToolResult::error(format!("Failed to load image_path: {e}")),

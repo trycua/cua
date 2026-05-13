@@ -113,7 +113,7 @@ pub fn send_drag(
         let iy = from_y + ((to_y - from_y) as f64 * t).round() as i32;
         let motion = MotionNotifyEvent {
             response_type: MOTION_NOTIFY_EVENT,
-            detail: MotionNotifyDetail::NORMAL,
+            detail: Motion::NORMAL,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
             root, event: window, child: x11rb::NONE,

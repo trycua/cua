@@ -377,7 +377,10 @@ fn draw_default_arrow(
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCommand>) {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
+    use x11rb::protocol::xproto::ConnectionExt as _;
     use x11rb::protocol::shape::*;
+    use x11rb::protocol::shape::ConnectionExt as _;
+    use x11rb::wrapper::ConnectionExt as _;
     use x11rb::COPY_FROM_PARENT;
 
     // Connect to X11.
@@ -527,6 +530,7 @@ fn find_argb_visual(
     conn: &impl x11rb::connection::Connection,
     screen: &x11rb::protocol::xproto::Screen,
 ) -> Option<(u32, u8, u32)> {
+    use x11rb::protocol::xproto::VisualClass;
     // Walk all depth entries looking for a 32-bit ARGB visual.
     for depth_entry in &screen.allowed_depths {
         if depth_entry.depth != 32 { continue; }
@@ -551,6 +555,7 @@ fn paint_x11(
     pm: &tiny_skia::Pixmap,
 ) {
     use x11rb::protocol::xproto::*;
+    use x11rb::protocol::xproto::ConnectionExt as _;
     if pm.width() == 0 || pm.height() == 0 { return; }
 
     // Create a GC for the window if we don't have one.

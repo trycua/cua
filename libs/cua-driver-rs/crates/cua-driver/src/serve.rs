@@ -299,7 +299,13 @@ pub async fn run_serve(
                                 }
                             }
                             "call" => {
-                                let tool_name = req.name.as_deref().unwrap_or("").to_owned();
+                                let raw_name = req.name.as_deref().unwrap_or("").to_owned();
+                                // Deprecated alias: `type_text_chars` → `type_text`.
+                                // Mirrors Swift's `ToolRegistry.call` aliasing.
+                                let tool_name = if raw_name == "type_text_chars" {
+                                    eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
+                                    "type_text".to_owned()
+                                } else { raw_name.clone() };
                                 let args = req.args.unwrap_or(serde_json::Value::Object(
                                     serde_json::Map::new()
                                 ));
@@ -457,7 +463,11 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
-                                let tool_name = req.name.as_deref().unwrap_or("").to_owned();
+                                let raw_name = req.name.as_deref().unwrap_or("").to_owned();
+                                let tool_name = if raw_name == "type_text_chars" {
+                                    eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
+                                    "type_text".to_owned()
+                                } else { raw_name.clone() };
                                 let args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);

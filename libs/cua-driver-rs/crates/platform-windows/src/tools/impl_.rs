@@ -2646,7 +2646,12 @@ pub fn build_registry() -> ToolRegistry {
     r.register(Box::new(SetConfigTool { state: state.clone() }));
     r.register(Box::new(GetAccessibilityTreeTool));
     r.register(Box::new(ZoomTool { state: state.clone() }));
-    r.register(Box::new(TypeTextCharsTool { state: state.clone() }));
+    // `type_text_chars` is intentionally NOT registered — Swift treats it
+    // as a deprecated alias for `type_text` resolved at invoke time in
+    // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
+    // means it doesn't show up in `tools/list` either, matching Swift's
+    // ToolRegistry.swift (`type_text_chars` not in `handlers`).
+    let _: &TypeTextCharsTool = &TypeTextCharsTool { state: state.clone() }; // touch struct so it stays in this crate for now
     r.register_recording_tools();
     r
 }

@@ -1039,3 +1039,36 @@ status 0.  Now matches Swift byte-for-byte.
 - `stop` running: silent stdout (was printing extra line) ✓
 - `status` not-running: exit 1 + stderr message ✓
 - `stop` not-running: exit 1 + stderr message ✓
+
+---
+
+## MCP tool alias: `type_text_chars` → `type_text`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/ToolRegistry.swift:55-70`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/serve.rs` (both pipe variants)
+  + `libs/cua-driver-rs/crates/mcp-server/src/tool.rs::ToolRegistry::invoke`
+- Status: VERIFIED
+- Test: `crates/platform-windows/examples/type_text_chars_alias_parity.rs`
+
+### Fixed
+Swift treats `type_text_chars` as a **deprecated alias** for `type_text`:
+the aliased name is NOT in `tools/list`, but invoking it with the old name
+works (resolves to `type_text`) AND emits a stderr deprecation warning.
+Rust was previously registering `type_text_chars` as a fully-fledged
+separate tool with its own description and a different text format.
+
+Changes:
+- Remove `TypeTextCharsTool` from the registration in
+  `platform-windows/src/tools/impl_.rs::build_registry` (the struct is
+  kept in the crate for now via a no-op binding to avoid the dead-code
+  warning during incremental cleanup).
+- `serve.rs`: both `"call"` dispatch sites (Unix-socket + Windows-pipe
+  variants) now resolve `type_text_chars` → `type_text` before the
+  registry lookup, with the stderr deprecation message.
+- `mcp-server/src/tool.rs::ToolRegistry::invoke`: also resolves the
+  alias as a defense-in-depth for direct in-process callers.
+
+### Verified on Windows
+`type_text_chars_alias_parity.exe`:
+- `tools/list` does NOT contain `"type_text_chars"` ✓
+- Invoking `type_text_chars` with a 1-char text resolves to `type_text`'s
+  response: `"✅ Typed 1 char(s) on pid 62156 via PostMessage (30ms delay)."` ✓

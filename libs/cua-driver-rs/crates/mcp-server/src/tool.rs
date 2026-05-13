@@ -119,10 +119,27 @@ impl ToolRegistry {
         // Capture start time for recording timestamps.
         let start_ms = now_ms();
 
-        let result = match self.tools.get(name) {
+        // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
+        // ToolRegistry.swift keeps the same alias (with stderr warning) for
+        // backwards compatibility with hermes-agent builds that still emit
+        // the old name.  Aliased name is intentionally not registered, so it
+        // never appears in tools/list.
+        let resolved_name: &str = match name {
+            "type_text_chars" => {
+                eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
+                "type_text"
+            }
+            other => other,
+        };
+
+        let result = match self.tools.get(resolved_name) {
             Some(tool) => tool.invoke(args.clone()).await,
             None => return ToolResult::error(format!("Unknown tool: {name}")),
         };
+        // Use the original name for downstream code paths below so the
+        // exit-code matching and recording paths keep treating the alias
+        // as a distinct call site.
+        let name = resolved_name;
 
         // Record non-read-only, non-recording tool calls.
         let should_record = self.tools.get(name)

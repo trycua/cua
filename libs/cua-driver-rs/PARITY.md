@@ -1150,3 +1150,27 @@ Changes:
 
 ### Verified on Windows
 `zoom_parity.exe`: invalid-region, too-wide, and real-zoom paths all OK.
+
+---
+
+## CLI subcommand: `mcp-config`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/CuaDriverCommand.swift:37-150`
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_mcp_config`
+- Status: VERIFIED (no fixes needed — already matched Swift)
+- Test: `crates/platform-windows/examples/mcp_config_parity.rs`
+
+### Already correct
+- Default (no `--client`): generic mcpServers JSON snippet ✓
+- `--client claude`: `claude mcp add --transport stdio cua-driver -- <bin> mcp` ✓
+- `--client codex`: `codex mcp add cua-driver -- <bin> mcp` ✓
+- `--client cursor`: JSON with `type: stdio` ✓
+- `--client openclaw`: `openclaw mcp set ...` ✓
+- `--client opencode`: opencode.json snippet with type=local ✓
+- `--client hermes`: YAML snippet ✓
+- `--client pi`: shell-tool fallback message ✓
+- Unknown client: exit 2 + stderr message ✓
+
+### Verified on Windows
+`mcp_config_parity.exe` runs all 8 client variants + the unknown-client
+error path against the in-process binary, asserting each output contains
+the right needles. All pass on first try.

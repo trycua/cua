@@ -381,3 +381,61 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Missing-target: `"Provide element_index or (x, y) to address the click target."` ✓
 - Pixel click: `"✅ Posted click to pid 62156."` ✓
 - Double-click (`count: 2`): `"✅ Posted double-click to pid 62156."` ✓
+
+---
+
+## MCP tool: `launch_app`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/LaunchAppTool.swift:6-490`
+- Rust:
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (LaunchAppTool)
+  - macos=`crates/platform-macos/src/tools/launch_app.rs` (TBD audit)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
+- Status:
+  - windows: VERIFIED
+  - macos: OPEN
+  - linux: OPEN
+- Test: `crates/platform-windows/examples/launch_app_parity.rs`
+
+### Fixed (Windows)
+
+1. **pid capture** — was using `ShellExecuteW` which returns only an
+   HINSTANCE that's useless for pid lookup.  Now uses
+   `ShellExecuteExW` with `SEE_MASK_NOCLOSEPROCESS` so we read the
+   spawned process handle and call `GetProcessId` → real pid in the
+   response, matching Swift's `AppLauncher.launch.info.pid`.
+2. **Structured response** — was missing entirely.  Now returns
+   `{pid, bundle_id, name, running, active, windows}` matching Swift's
+   `LaunchResult` shape exactly.  `bundle_id` is null on Windows.
+3. **Text format** — was `"Launched 'X' (no focus steal)."`; now
+   `"✅ Launched <name> (pid <N>) in background."` + a `Windows:` block
+   listing per-window `"- <title|(no title)> [window_id: ID]"` lines
+   and a `→ Call get_window_state(...)` hint, matching Swift verbatim.
+4. **`bundle_id` parameter** — accepted as an alias for `name` (Windows
+   has no bundle-identifier concept). Cross-platform callers can use
+   the same field name.
+5. **`additional_arguments`** — honored, passed as `lpParameters` to
+   `ShellExecuteExW`.
+6. **Window-resolution retry** — ports Swift's 5-attempt 100/200ms
+   retry to absorb Win32 window-creation lag after `ShellExecuteEx`
+   returns.
+7. **Error wording** — `"Provide either bundle_id or name to identify
+   the app to launch."` matches Swift's `errorResult` text.
+8. **`active: false`** — hardcoded; `SW_SHOWNOACTIVATE` is the
+   Windows-equivalent of Swift's background-launch invariant.
+9. **Description** — multi-paragraph port from Swift with explicit
+   Windows-specific notes (path takes precedence; bundle_id alias).
+
+### Intentional Rust-only fields accepted (no-op)
+
+- `electron_debugging_port`, `webkit_inspector_port`,
+  `creates_new_application_instance` — Swift-specific.  Accepted in
+  the schema so cross-platform callers can pass them; currently
+  no-ops on Windows. Documented as follow-up.
+
+### Verified on Windows
+
+`launch_app_parity.exe` launches Notepad:
+- Header `"✅ Launched notepad.exe (pid 30612) in background."` ✓
+- `structuredContent.pid` is the actual ShellExecuteEx pid ✓
+- `bundle_id: null`, `running: true`, `active: false` ✓
+- Notepad killed on test exit. ✓

@@ -441,100 +441,162 @@ impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
-            description: "Launch a Windows app in the background. Provide path (full exe path), \
-                name (app name to launch via ShellExecute), or urls (list of URLs to open).".into(),
+            // Description ported from Swift `LaunchAppTool.swift` with
+            // Windows-specific notes. `bundle_id` is accepted as an alias
+            // for `name` (Windows has no bundle-identifier concept).
+            description: "Launch a Windows app hidden — the driver never brings the target to \
+                the foreground, the target's window is launched with SW_SHOWNOACTIVATE so it \
+                does not steal focus from whatever is currently frontmost.\n\n\
+                Provide either `bundle_id` / `name` (resolved via ShellExecuteEx's PATH search) \
+                or `path` (full path to an executable). If both `name` and `path` are given, \
+                `path` wins. `urls` opens each URL in the default browser without activating it.\n\n\
+                Returns the launched app's pid, name, active flag, AND a `windows` array — \
+                same per-window shape `list_windows` returns. When the launch settles but no \
+                window has materialized yet (transient; rare), `windows` comes back empty — \
+                call `list_windows(pid)` explicitly a moment later.\n\n\
+                Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via \
+                LaunchServices; Windows has no LaunchServices, so `path` is the canonical form). \
+                The macOS-specific `electron_debugging_port`, `webkit_inspector_port`, \
+                `creates_new_application_instance`, and `additional_arguments` fields are \
+                accepted; `additional_arguments` is honored, the others currently no-op on \
+                Windows.".into(),
             input_schema: json!({"type":"object","properties":{
-                "path":{"type":"string","description":"Full path to executable."},
-                "name":{"type":"string","description":"App name (passed to ShellExecute as the operation target)."},
-                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in default browser."}
+                "bundle_id":{"type":"string","description":"Alias for `name` on Windows (no bundle-id concept). Either bundle_id or name must be provided when path is absent."},
+                "name":{"type":"string","description":"App display name passed to ShellExecuteEx."},
+                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id."},
+                "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."},
+                "electron_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
+                "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
+                "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."}
             },"additionalProperties":false}),
-            read_only: false, destructive: false, idempotent: false, open_world: true,
+            read_only: false, destructive: false, idempotent: true, open_world: true,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let path_opt = args.get("path").and_then(|v| v.as_str()).map(str::to_owned);
         let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
+        let bundle_id_opt = args.get("bundle_id").and_then(|v| v.as_str()).map(str::to_owned);
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
+        let extra_args: Vec<String> = args.get("additional_arguments").and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+            .unwrap_or_default();
 
-        if path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
-            return ToolResult::error("Provide at least one of: path, name, or urls.");
+        // Resolve target — path > name > bundle_id (alias of name on Windows).
+        let target = path_opt.clone()
+            .or(name_opt.clone())
+            .or(bundle_id_opt.clone());
+
+        if target.is_none() && urls.is_empty() {
+            // Match Swift's wording verbatim.
+            return ToolResult::error("Provide either bundle_id or name to identify the app to launch.");
         }
 
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-            // Launch by full path with no focus steal.
-            if let Some(path) = path_opt {
-                use windows::Win32::UI::Shell::ShellExecuteW;
-                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
-                use windows::core::PCWSTR;
-                fn to_wide_lp(s: &str) -> Vec<u16> {
-                    s.encode_utf16().chain(std::iter::once(0)).collect()
-                }
-                let op   = to_wide_lp("open");
-                let file = to_wide_lp(&path);
-                let ret  = unsafe {
-                    ShellExecuteW(None, PCWSTR(op.as_ptr()), PCWSTR(file.as_ptr()),
-                        PCWSTR::null(), PCWSTR::null(), SW_SHOWNOACTIVATE)
+        // Single launch path: use ShellExecuteExW with SEE_MASK_NOCLOSEPROCESS
+        // so we can read the spawned process's pid back.
+        let display = target.clone().unwrap_or_else(|| urls.join(", "));
+        let extra_joined = extra_args.join(" ");
+        let urls_clone = urls.clone();
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+            use windows::Win32::UI::Shell::{
+                ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS,
+            };
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+            use windows::Win32::System::Threading::GetProcessId;
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::core::PCWSTR;
+
+            fn to_wide(s: &str) -> Vec<u16> {
+                s.encode_utf16().chain(std::iter::once(0)).collect()
+            }
+            let op_w   = to_wide("open");
+            let file_w = to_wide(if let Some(t) = target.as_deref() { t } else { urls_clone.first().map(|s| s.as_str()).unwrap_or("") });
+            let args_w = to_wide(&extra_joined);
+
+            let mut info = SHELLEXECUTEINFOW {
+                cbSize:       std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                fMask:        SEE_MASK_NOCLOSEPROCESS,
+                lpVerb:       PCWSTR(op_w.as_ptr()),
+                lpFile:       PCWSTR(file_w.as_ptr()),
+                lpParameters: if extra_joined.is_empty() { PCWSTR::null() } else { PCWSTR(args_w.as_ptr()) },
+                nShow:        SW_SHOWNOACTIVATE.0,
+                ..Default::default()
+            };
+            unsafe { ShellExecuteExW(&mut info)?; }
+            let pid = if !info.hProcess.is_invalid() {
+                let p = unsafe { GetProcessId(info.hProcess) };
+                unsafe { let _ = CloseHandle(info.hProcess); }
+                p
+            } else { 0 };
+
+            // Open any additional URLs in the default browser (no focus
+            // steal, no pid capture for these — Swift's NSWorkspace flow
+            // behaves the same way for secondary URLs).
+            for url in &urls_clone[urls_clone.len().min(1)..] {
+                let file = to_wide(url);
+                let mut url_info = SHELLEXECUTEINFOW {
+                    cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                    lpVerb: PCWSTR(op_w.as_ptr()),
+                    lpFile: PCWSTR(file.as_ptr()),
+                    nShow:  SW_SHOWNOACTIVATE.0,
+                    ..Default::default()
                 };
-                if ret.0 as usize <= 32 {
-                    return Err(anyhow::anyhow!("ShellExecuteW failed (ret={:?})", ret.0));
-                }
-                return Ok(format!("Launched '{}' (no focus steal).", path));
+                unsafe { let _ = ShellExecuteExW(&mut url_info); }
             }
-            // Open URLs in default browser (no focus steal via ShellExecuteW).
-            if !urls.is_empty() {
-                use windows::Win32::UI::Shell::ShellExecuteW;
-                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
-                use windows::core::PCWSTR;
-                fn to_wide_url(s: &str) -> Vec<u16> {
-                    s.encode_utf16().chain(std::iter::once(0)).collect()
-                }
-                let op = to_wide_url("open");
-                for url in &urls {
-                    let file = to_wide_url(url);
-                    unsafe {
-                        ShellExecuteW(None, PCWSTR(op.as_ptr()), PCWSTR(file.as_ptr()),
-                            PCWSTR::null(), PCWSTR::null(), SW_SHOWNOACTIVATE);
-                    }
-                }
-                return Ok(format!("Opened {} URL(s) (no focus steal).", urls.len()));
-            }
-            // Launch by name via ShellExecuteW with SW_SHOWNOACTIVATE (no focus steal).
-            if let Some(name) = name_opt {
-                use windows::Win32::UI::Shell::ShellExecuteW;
-                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
-                use windows::core::PCWSTR;
-                fn to_wide(s: &str) -> Vec<u16> {
-                    s.encode_utf16().chain(std::iter::once(0)).collect()
-                }
-                let op  = to_wide("open");
-                let file = to_wide(&name);
-                let result = unsafe {
-                    ShellExecuteW(
-                        None,
-                        PCWSTR(op.as_ptr()),
-                        PCWSTR(file.as_ptr()),
-                        PCWSTR::null(),
-                        PCWSTR::null(),
-                        SW_SHOWNOACTIVATE,
-                    )
-                };
-                // ShellExecuteW returns >32 on success.
-                if result.0 as usize <= 32 {
-                    return Err(anyhow::anyhow!("ShellExecuteW failed (ret={:?})", result.0));
-                }
-                return Ok(format!("Launched '{}' (no focus steal).", name));
-            }
-            unreachable!()
+
+            Ok(pid)
         }).await;
 
-        match result {
-            Ok(Ok(msg)) => ToolResult::text(msg),
-            Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+        let pid = match result {
+            Ok(Ok(p))  => p,
+            Ok(Err(e)) => return ToolResult::error(format!("Failed to launch: {e}")),
+            Err(e)     => return ToolResult::error(format!("Task error: {e}")),
+        };
+
+        // Resolve the pid's windows so the caller can skip a list_windows
+        // round-trip — same approach as Swift's `resolveWindows`.  Retry
+        // 5×200ms; Win32 window registration can lag the launch.
+        let mut windows_json: Vec<serde_json::Value> = Vec::new();
+        for _ in 0..5 {
+            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                .await.unwrap_or_default();
+            if !wins.is_empty() {
+                windows_json = wins.iter().map(|w| json!({
+                    "window_id": w.hwnd, "title": w.title,
+                    "bounds":    { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                    "layer":     0,
+                    "z_index":   0,           // single-window context; per-record z_index already in list_windows
+                    "is_on_screen": true,
+                })).collect();
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+
+        // Match Swift text format 1:1.
+        let mut summary = format!("✅ Launched {display} (pid {pid}) in background.");
+        if !windows_json.is_empty() {
+            summary.push_str("\n\nWindows:");
+            for w in &windows_json {
+                let title = w["title"].as_str().unwrap_or("");
+                let title_disp = if title.is_empty() { "(no title)".to_owned() } else { format!("\"{title}\"") };
+                let wid = w["window_id"].as_u64().unwrap_or(0);
+                summary.push_str(&format!("\n- {title_disp} [window_id: {wid}]"));
+            }
+            summary.push_str(&format!("\n→ Call get_window_state(pid: {pid}, window_id) to inspect."));
+        }
+        let structured = json!({
+            "pid":       pid,
+            "bundle_id": serde_json::Value::Null,
+            "name":      display,
+            "running":   true,
+            "active":    false,  // SW_SHOWNOACTIVATE — Swift's background-launch invariant
+            "windows":   windows_json,
+        });
+        ToolResult::text(summary).with_structured(structured)
     }
 }
 

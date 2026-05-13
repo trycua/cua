@@ -34,5 +34,6 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
     "Win32_Storage_Xps",
     "Win32_UI_Shell",
+    "Win32_Media",
 ] }
 base64 = { workspace = true }

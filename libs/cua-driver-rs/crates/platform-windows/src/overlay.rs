@@ -53,6 +53,13 @@ pub fn is_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Returns the current cursor position in screen coordinates.
+pub fn current_position() -> (f64, f64) {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.pos))
+        .unwrap_or((-200.0, -200.0))
+}
+
 /// Returns true if the cursor is still at the off-screen initial position
 /// (-200, -200), meaning it has never been positioned on screen yet.
 pub fn is_at_initial_position() -> bool {
@@ -109,6 +116,9 @@ struct RenderState {
     idle_secs:  f64,
     idle_alpha: f64,
     pinned_wid: Option<u64>,
+    gradient_colors: Vec<[u8; 4]>,
+    bloom_override: Option<[u8; 4]>,
+    last_tick: Instant,
     // Virtual screen dimensions set after window creation.
     virt_x: i32,
     virt_y: i32,
@@ -138,22 +148,24 @@ impl RenderState {
             idle_secs:  0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
+            gradient_colors: vec![],
+            bloom_override: None,
+            last_tick: Instant::now(),
             virt_x: 0, virt_y: 0, virt_w: 1920, virt_h: 1080,
         }
     }
 
     fn tick(&mut self, dt: f64) {
-        let glide_ms  = self.motion.glide_duration_ms;
         let spring_k  = self.motion.spring * 400.0;
         let spring_c  = self.motion.spring * 20.0;
 
         if let Some(ref p) = self.path {
-            let total_ms = glide_ms.max(50.0);
-            let elapsed  = self.start_t.elapsed().as_millis() as f64;
-            let u        = (elapsed / total_ms).min(1.0);
-            let profile  = 30.0 * u * u * (1.0 - u) * (1.0 - u);
-            let peak_speed = p.length / (total_ms / 1000.0);
-            let speed = (50.0 + (peak_speed - 50.0) * profile).max(50.0);
+            // Speed-based motion: 16*u²*(1-u)² peaks at exactly 1.0 at u=0.5,
+            // matching Swift AgentCursorRenderer (peakSpeed=900, min=300/200).
+            let path_frac = (self.dist / p.length.max(1.0)).clamp(0.0, 1.0);
+            let profile   = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
+            let floor     = if path_frac < 0.5 { self.motion.min_start_speed } else { self.motion.min_end_speed };
+            let speed     = (floor + (self.motion.peak_speed - floor) * profile).max(floor);
             self.dist += speed * dt;
 
             let path_len = p.length.max(1.0);
@@ -269,10 +281,14 @@ impl RenderState {
             OverlayCommand::PinAbove(wid) => {
                 self.pinned_wid = Some(wid);
             }
-            // Custom cursor shape/gradient/focus-rect — not yet rendered on Windows;
-            // accepted silently so the tool doesn't return an error.
-            OverlayCommand::SetShape(_) | OverlayCommand::SetGradient { .. }
-            | OverlayCommand::ShowFocusRect(_) => {}
+            OverlayCommand::SetGradient { gradient_colors, bloom_color } => {
+                self.gradient_colors = gradient_colors;
+                self.bloom_override = bloom_color;
+            }
+            OverlayCommand::SetShape(shape) => {
+                self.shape = shape;
+            }
+            OverlayCommand::ShowFocusRect(_) => {}
         }
     }
 }
@@ -303,11 +319,19 @@ fn render_frame(rs: &RenderState) -> tiny_skia::Pixmap {
     let heading     = rs.heading;
     let alpha_scale = rs.idle_alpha as f32;
 
-    // Bloom.
+    // Bloom — use runtime bloom_override if set.
     let bloom_r: f32 = 22.0;
-    let [br, bg, bb, _] = rs.palette.bloom_inner;
+    let (br, bg, bb) = if let Some([r, g, b, _]) = rs.bloom_override {
+        (r, g, b)
+    } else {
+        let [r, g, b, _] = rs.palette.bloom_inner; (r, g, b)
+    };
+    let (or_, og, ob) = if let Some([r, g, b, _]) = rs.bloom_override {
+        (r, g, b)
+    } else {
+        let [r, g, b, _] = rs.palette.bloom_outer; (r, g, b)
+    };
     let bloom_inner = tiny_skia::Color::from_rgba8(br, bg, bb, (115.0 * alpha_scale) as u8);
-    let [or_, og, ob, _] = rs.palette.bloom_outer;
     let bloom_outer = tiny_skia::Color::from_rgba8(or_, og, ob, (26.0 * alpha_scale) as u8);
     let bloom_zero  = tiny_skia::Color::from_rgba8(or_, og, ob, 0);
 
@@ -366,7 +390,8 @@ fn render_frame(rs: &RenderState) -> tiny_skia::Pixmap {
             pm.draw_pixmap(0, 0, pix, &paint, transform, None);
         }
     } else {
-        draw_default_arrow(&mut pm, &rs.palette, px as f32, py as f32, heading as f32, alpha_scale);
+        let grad_override = if rs.gradient_colors.is_empty() { None } else { Some(&rs.gradient_colors) };
+        draw_default_arrow(&mut pm, &rs.palette, grad_override, px as f32, py as f32, heading as f32, alpha_scale);
     }
 
     pm
@@ -375,6 +400,7 @@ fn render_frame(rs: &RenderState) -> tiny_skia::Pixmap {
 fn draw_default_arrow(
     pm: &mut tiny_skia::Pixmap,
     palette: &Palette,
+    gradient_override: Option<&Vec<[u8; 4]>>,
     px: f32, py: f32,
     heading: f32,
     alpha_scale: f32,
@@ -394,9 +420,15 @@ fn draw_default_arrow(
 
     let tip  = pts[0];
     let tail = ((pts[1].0 + pts[3].0) / 2.0, (pts[1].1 + pts[3].1) / 2.0);
-    let [r0, g0, b0, _] = palette.cursor_start;
-    let [r1, g1, b1, _] = palette.cursor_mid;
-    let [r2, g2, b2, _] = palette.cursor_end;
+    let (r0, g0, b0) = if let Some(g) = gradient_override.and_then(|g| g.first()) {
+        (g[0], g[1], g[2])
+    } else { let [r, g, b, _] = palette.cursor_start; (r, g, b) };
+    let (r1, g1, b1) = if let Some(g) = gradient_override.and_then(|g| g.get(1).or_else(|| g.first())) {
+        (g[0], g[1], g[2])
+    } else { let [r, g, b, _] = palette.cursor_mid; (r, g, b) };
+    let (r2, g2, b2) = if let Some(g) = gradient_override.and_then(|g| g.last()) {
+        (g[0], g[1], g[2])
+    } else { let [r, g, b, _] = palette.cursor_end; (r, g, b) };
     let a = (255.0 * alpha_scale) as u8;
 
     let fill_paint = {
@@ -432,8 +464,15 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     use windows::Win32::Foundation::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
     use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::Media::timeBeginPeriod;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::core::PCWSTR;
+
+    // Raise multimedia timer resolution to 1ms so SetTimer can deliver
+    // WM_TIMER messages at ~8ms intervals (default is ~15ms).
+    // Mirrors `_timerResolutionRaised = timeBeginPeriod(1) == 0` in the
+    // .NET reference (AgentCursorOverlay.cs).
+    unsafe { let _ = timeBeginPeriod(1); }
 
     // Collect virtual screen bounds (all monitors).
     let virt_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
@@ -541,13 +580,14 @@ unsafe extern "system" fn wnd_proc(
 
     match msg {
         WM_TIMER => {
-            let dt = 0.008_f64;
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
 
-            // Drain commands and tick animation.
+            // Drain commands and tick animation.  Measure real dt from last
+            // tick — Windows timer resolution defaults to 15ms so the
+            // hardcoded 8ms was running the animation at half speed.
             let pixmap = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(rs) = guard.as_mut() {
@@ -559,6 +599,9 @@ unsafe extern "system" fn wnd_proc(
                             }
                         }
                     }
+                    let now = std::time::Instant::now();
+                    let dt = now.duration_since(rs.last_tick).as_secs_f64().clamp(0.0, 0.05);
+                    rs.last_tick = now;
                     rs.tick(dt);
                     Some(render_frame(rs))
                 } else {
@@ -700,16 +743,16 @@ unsafe fn reapply_z_order(hwnd: windows::Win32::Foundation::HWND) {
         if IsWindow(target).as_bool() {
             target
         } else {
-            HWND_TOP
+            HWND_TOPMOST
         }
     } else {
-        HWND_TOP
+        HWND_TOPMOST
     };
 
     let _ = SetWindowPos(
         hwnd,
         insert_after,
         0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER,
     );
 }

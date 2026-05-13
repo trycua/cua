@@ -115,17 +115,14 @@ impl RenderState {
     }
 
     fn tick(&mut self, dt: f64) {
-        let glide_ms  = self.motion.glide_duration_ms;
         let spring_k  = self.motion.spring * 400.0;
         let spring_c  = self.motion.spring * 20.0;
 
         if let Some(ref p) = self.path {
-            let total_ms = glide_ms.max(50.0);
-            let elapsed  = self.start_t.elapsed().as_millis() as f64;
-            let u        = (elapsed / total_ms).min(1.0);
-            let profile  = 30.0 * u * u * (1.0 - u) * (1.0 - u);
-            let peak_speed = p.length / (total_ms / 1000.0);
-            let speed    = (50.0 + (peak_speed - 50.0) * profile).max(50.0);
+            let path_frac = (self.dist / p.length.max(1.0)).clamp(0.0, 1.0);
+            let profile   = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
+            let floor     = if path_frac < 0.5 { self.motion.min_start_speed } else { self.motion.min_end_speed };
+            let speed     = (floor + (self.motion.peak_speed - floor) * profile).max(floor);
             self.dist   += speed * dt;
 
             let path_len = p.length.max(1.0);

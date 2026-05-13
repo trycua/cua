@@ -10,16 +10,21 @@ use async_trait::async_trait;
 /// so we snap to the target with a ClickPulse first and skip the glide wait.
 async fn overlay_glide_to(sx: f64, sy: f64) {
     if !crate::overlay::is_enabled() { return; }
-    if crate::overlay::is_at_initial_position() {
-        // Snap to target; no animation to wait for.
+    let pos = crate::overlay::current_position();
+    if pos.0 < 0.0 && pos.1 < 0.0 {
+        // Snap to target on first use; no animation to wait for.
         crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
         return;
     }
+    // Compute travel time from distance and speed (matches Swift: peak=900, avg~467 pts/sec).
+    let dist = ((sx - pos.0).powi(2) + (sy - pos.1).powi(2)).sqrt();
+    let avg_speed = 467.0_f64; // (300 + 900 + 200) / 3 ≈ Swift avg
+    let ms = (dist / avg_speed * 1000.0).clamp(80.0, 600.0) as u64;
+    // Always arrive at 45° (upper-left) — matches Swift's endAngleDegrees: 45.0.
     crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
-        x: sx, y: sy, end_heading_radians: 0.0,
+        x: sx, y: sy, end_heading_radians: std::f64::consts::FRAC_PI_4,
     });
-    let ms = crate::overlay::glide_duration_ms();
-    tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
 }
 use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
@@ -218,7 +223,7 @@ impl Tool for GetWindowStateTool {
 
         let state = self.state.clone();
         let q = query.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
                 Some(crate::uia::walk_tree(hwnd, q.as_deref()))
             } else {
@@ -240,10 +245,18 @@ impl Tool for GetWindowStateTool {
                 None
             };
             Ok((tree_result, screenshot))
-        }).await;
+        });
+        // Timeout: Chrome's UIA provider can block indefinitely on property reads.
+        let result: Result<anyhow::Result<_>, _> = match tokio::time::timeout(
+            std::time::Duration::from_secs(4), blocking).await
+        {
+            Ok(join_result) => join_result.map_err(|e| anyhow::anyhow!("task panic: {e}")),
+            Err(_elapsed) => Err(anyhow::anyhow!("get_window_state timed out after 4s (UIA provider unresponsive)")),
+        };
+        let result = result.and_then(|r| r);
 
         match result {
-            Ok(Ok((tree_opt, screenshot_opt))) => {
+            Ok((tree_opt, screenshot_opt)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
@@ -269,8 +282,7 @@ impl Tool for GetWindowStateTool {
 
                 ToolResult { content, is_error: None, structured_content: Some(structured) }
             }
-            Ok(Err(e)) => ToolResult::error(format!("Capture error: {e}")),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Error: {e}")),
         }
     }
 }
@@ -448,7 +460,6 @@ impl Tool for ClickTool {
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
                 x: cx as f64, y: cy as f64,
             });
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(hwnd));
             let btn = button.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 // cx/cy are screen coords from CurrentBoundingRectangle; use
@@ -474,13 +485,16 @@ impl Tool for ClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            // Animate cursor to target (screen coords = window-client coords here).
-            overlay_glide_to(px, py).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: px, y: py });
-            // Pin overlay just above the target window.
-            if let Some(h) = hwnd_opt {
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(h));
-            }
+            // px/py are window-client coords. Convert to screen for the overlay.
+            let (sx, sy) = unsafe {
+                use windows::Win32::Foundation::{HWND, POINT};
+                use windows::Win32::Graphics::Gdi::ClientToScreen;
+                let mut pt = POINT { x: px as i32, y: py as i32 };
+                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
+                (pt.x as f64, pt.y as f64)
+            };
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let btn = button.clone();
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
@@ -968,7 +982,6 @@ impl Tool for DoubleClickTool {
             };
             overlay_glide_to(cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(hwnd));
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
                 Ok(format!("✅ Double-clicked element [{idx}] at screen ({},{}).", cx, cy))
@@ -991,8 +1004,15 @@ impl Tool for DoubleClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            overlay_glide_to(px, py).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: px, y: py });
+            let (sx, sy) = unsafe {
+                use windows::Win32::Foundation::{HWND, POINT};
+                use windows::Win32::Graphics::Gdi::ClientToScreen;
+                let mut pt = POINT { x: px as i32, y: py as i32 };
+                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
+                (pt.x as f64, pt.y as f64)
+            };
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let (xi, yi) = (px as i32, py as i32);
             let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 2, "left")).await;
             match result {
@@ -1060,7 +1080,6 @@ impl Tool for RightClickTool {
             };
             overlay_glide_to(cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(hwnd));
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
                 Ok(format!("✅ Right-clicked element [{idx}] at screen ({},{}).", cx, cy))
@@ -1083,8 +1102,15 @@ impl Tool for RightClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            overlay_glide_to(px, py).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: px, y: py });
+            let (sx, sy) = unsafe {
+                use windows::Win32::Foundation::{HWND, POINT};
+                use windows::Win32::Graphics::Gdi::ClientToScreen;
+                let mut pt = POINT { x: px as i32, y: py as i32 };
+                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
+                (pt.x as f64, pt.y as f64)
+            };
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let (xi, yi) = (px as i32, py as i32);
             let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 1, "right")).await;
             match result {
@@ -1270,7 +1296,12 @@ impl Tool for MoveCursorTool {
         let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
         self.state.cursor_registry.update_position(cursor_id, x, y);
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 });
+        // End pointing upper-left (45°) — matches Swift's
+        // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
+        // the cursor settles to the natural macOS-style pose.
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
+            x, y, end_heading_radians: std::f64::consts::FRAC_PI_4,
+        });
         ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
     }
 }

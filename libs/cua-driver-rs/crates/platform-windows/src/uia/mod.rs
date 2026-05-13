@@ -5,20 +5,21 @@
 //!   `INDENT- ControlType = "Value"` (non-indexed read-only elements)
 //!
 //! Uses IUIAutomation COM interface (available Windows 7+).
-//! TreeWalker.ControlViewWalker is the primary traversal path (matches
-//! the reference C# UiAutomationTree.cs).
+//! Uses IUIAutomationCacheRequest to batch-fetch all properties in one RPC
+//! (avoids per-property cross-process calls that make Chrome's 5000-node tree
+//!  take >4s when reading each property individually).
 
-use std::collections::HashMap;
-use std::sync::Mutex;
 use windows::core::{Interface, BSTR};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
-    UIA_AutomationIdPropertyId, UIA_ControlTypePropertyId, UIA_HelpTextPropertyId,
+    CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
+    UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
+    UIA_ControlTypePropertyId, UIA_HelpTextPropertyId,
     UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
     UIA_ValueValuePropertyId, UIA_InvokePatternId, UIA_SelectionItemPatternId,
     UIA_TogglePatternId, UIA_ExpandCollapsePatternId, UIA_TextPatternId,
     UIA_ValuePatternId, UIA_ScrollPatternId,
+    TreeScope_Subtree,
 };
 
 pub mod cache;
@@ -55,7 +56,6 @@ pub fn walk_tree(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
 }
 
 unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
-    // Initialize COM on this thread.
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
     let automation: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
@@ -66,19 +66,55 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
         },
     };
 
-    let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
-    let root_elem = match automation.ElementFromHandle(hwnd_win) {
-        Ok(e) => e,
+    // Build a cache request that fetches everything we need in ONE bulk RPC.
+    let cache_req: IUIAutomationCacheRequest = match automation.CreateCacheRequest() {
+        Ok(r) => r,
         Err(e) => return UiaTreeResult {
-            tree_markdown: format!("ElementFromHandle failed: {e}"),
+            tree_markdown: format!("CreateCacheRequest failed: {e}"),
             nodes: Vec::new(),
         },
     };
 
-    let walker = match automation.ControlViewWalker() {
-        Ok(w) => w,
+    // Properties to pre-fetch.
+    for prop in &[
+        UIA_ControlTypePropertyId,
+        UIA_NamePropertyId,
+        UIA_ValueValuePropertyId,
+        UIA_AutomationIdPropertyId,
+        UIA_HelpTextPropertyId,
+        UIA_IsEnabledPropertyId,
+        UIA_IsOffscreenPropertyId,
+        UIA_BoundingRectanglePropertyId,
+    ] {
+        let _ = cache_req.AddProperty(*prop);
+    }
+
+    // Patterns to pre-fetch (for action detection).
+    for pat in &[
+        UIA_InvokePatternId,
+        UIA_TogglePatternId,
+        UIA_SelectionItemPatternId,
+        UIA_ExpandCollapsePatternId,
+        UIA_ValuePatternId,
+        UIA_TextPatternId,
+        UIA_ScrollPatternId,
+    ] {
+        let _ = cache_req.AddPattern(*pat);
+    }
+
+    // Fetch entire subtree in one call.
+    let _ = cache_req.SetTreeScope(TreeScope_Subtree);
+
+    // Apply control-view filter (same as ControlViewWalker).
+    if let Ok(ctrl_cond) = automation.ControlViewCondition() {
+        let _ = cache_req.SetTreeFilter(&ctrl_cond);
+    }
+
+    let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
+    let root_elem = match automation.ElementFromHandleBuildCache(hwnd_win, &cache_req) {
+        Ok(e) => e,
         Err(e) => return UiaTreeResult {
-            tree_markdown: format!("ControlViewWalker failed: {e}"),
+            tree_markdown: format!("ElementFromHandleBuildCache failed: {e}"),
             nodes: Vec::new(),
         },
     };
@@ -88,7 +124,7 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     let mut counter = 0usize;
     let mut total = 0usize;
 
-    walk_element(&root_elem, &walker, 0, &mut nodes, &mut lines, &mut counter, &mut total);
+    walk_cached(&root_elem, 0, &mut nodes, &mut lines, &mut counter, &mut total);
 
     let raw_md = render_lines(&lines);
     let tree_markdown = if let Some(q) = query {
@@ -100,9 +136,8 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     UiaTreeResult { tree_markdown, nodes }
 }
 
-unsafe fn walk_element(
+unsafe fn walk_cached(
     element: &IUIAutomationElement,
-    walker: &IUIAutomationTreeWalker,
     depth: usize,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
@@ -114,34 +149,28 @@ unsafe fn walk_element(
     }
     *total += 1;
 
-    // Read properties, silently skipping errors.
-    let control_type = read_control_type(element);
-    let name = read_bstr(element, UIA_NamePropertyId);
-    let value = read_bstr(element, UIA_ValueValuePropertyId);
-    let automation_id = read_bstr(element, UIA_AutomationIdPropertyId);
-    let help_text = read_bstr(element, UIA_HelpTextPropertyId);
-    let is_enabled = read_bool(element, UIA_IsEnabledPropertyId).unwrap_or(true);
-    let is_offscreen = read_bool(element, UIA_IsOffscreenPropertyId).unwrap_or(false);
+    let control_type = read_cached_control_type(element);
+    let name = read_cached_bstr_name(element);
+    let value = read_cached_bstr_value(element);
+    let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
+    let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
+    let is_enabled = read_cached_bool(element, UIA_IsEnabledPropertyId).unwrap_or(true);
+    let is_offscreen = read_cached_bool(element, UIA_IsOffscreenPropertyId).unwrap_or(false);
 
-    let actions = detect_actions(element, is_enabled);
+    let actions = detect_cached_actions(element, is_enabled);
     let is_actionable = !actions.is_empty() && is_enabled && !is_offscreen;
     let has_content = name.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
         || value.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
 
     if is_actionable || has_content {
-        // Retain the element so it lives in the cache.
         let retained: IUIAutomationElement = element.clone();
         let ptr = retained.as_raw() as usize;
-        std::mem::forget(retained); // We own the AddRef from clone; cache Drop will release.
-
-        // Capture center now, on this COM thread, so click never needs to call COM.
-        let (center_x, center_y) = element.CurrentBoundingRectangle()
-            .map(|r| ((r.left + r.right) / 2, (r.top + r.bottom) / 2))
-            .unwrap_or((0, 0));
+        std::mem::forget(retained);
 
         let node = if is_actionable {
             let idx = *counter;
             *counter += 1;
+            let (center_x, center_y) = read_cached_bounding_rect(element);
             UiaNode {
                 element_index: Some(idx),
                 control_type: control_type.clone(),
@@ -164,8 +193,8 @@ unsafe fn walk_element(
                 help_text: help_text.clone(),
                 actions: vec![],
                 element_ptr: ptr,
-                center_x,
-                center_y,
+                center_x: 0,
+                center_y: 0,
             }
         };
 
@@ -173,25 +202,97 @@ unsafe fn walk_element(
         nodes.push(node);
     }
 
-    // Recurse into children.
-    if let Ok(first_child) = walker.GetFirstChildElement(element) {
-        let mut current = first_child;
-        loop {
-            walk_element(&current, walker, depth + 1, nodes, lines, counter, total);
-            match walker.GetNextSiblingElement(&current) {
-                Ok(next) => current = next,
-                Err(_) => break,
+    // Recurse using cached children (no additional RPC).
+    if let Ok(children) = element.GetCachedChildren() {
+        let len = children.Length().unwrap_or(0);
+        for i in 0..len {
+            if let Ok(child) = children.GetElement(i) {
+                walk_cached(&child, depth + 1, nodes, lines, counter, total);
             }
         }
     }
 }
 
-fn read_control_type(element: &IUIAutomationElement) -> String {
+fn read_cached_control_type(element: &IUIAutomationElement) -> String {
     unsafe {
-        element.CurrentControlType().ok()
+        element.CachedControlType().ok()
             .map(|ct| control_type_name(ct.0))
             .unwrap_or_else(|| "Unknown".into())
     }
+}
+
+fn read_cached_bstr_name(element: &IUIAutomationElement) -> Option<String> {
+    unsafe {
+        let bstr = element.CachedName().ok()?;
+        let s = bstr.to_string();
+        if s.trim().is_empty() { None } else { Some(s) }
+    }
+}
+
+fn read_cached_bstr_value(element: &IUIAutomationElement) -> Option<String> {
+    read_cached_bstr(element, UIA_ValueValuePropertyId)
+}
+
+fn read_cached_bstr(element: &IUIAutomationElement, property_id: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID) -> Option<String> {
+    unsafe {
+        let variant = element.GetCachedPropertyValue(property_id).ok()?;
+        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
+            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
+            let s = bstr.to_string();
+            std::mem::forget(bstr);
+            if s.trim().is_empty() { None } else { Some(s) }
+        } else {
+            None
+        }
+    }
+}
+
+fn read_cached_bool(element: &IUIAutomationElement, property_id: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID) -> Option<bool> {
+    unsafe {
+        let variant = element.GetCachedPropertyValue(property_id).ok()?;
+        if variant.as_raw().Anonymous.Anonymous.vt == 11 {
+            Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
+        } else {
+            None
+        }
+    }
+}
+
+fn read_cached_bounding_rect(element: &IUIAutomationElement) -> (i32, i32) {
+    unsafe {
+        element.CachedBoundingRectangle()
+            .map(|r| ((r.left + r.right) / 2, (r.top + r.bottom) / 2))
+            .unwrap_or((0, 0))
+    }
+}
+
+fn detect_cached_actions(element: &IUIAutomationElement, is_enabled: bool) -> Vec<String> {
+    if !is_enabled { return vec![]; }
+    let mut actions = Vec::new();
+    unsafe {
+        if element.GetCachedPattern(UIA_InvokePatternId).is_ok() {
+            actions.push("invoke".into());
+        }
+        if element.GetCachedPattern(UIA_TogglePatternId).is_ok() {
+            actions.push("toggle".into());
+        }
+        if element.GetCachedPattern(UIA_SelectionItemPatternId).is_ok() {
+            actions.push("select".into());
+        }
+        if element.GetCachedPattern(UIA_ExpandCollapsePatternId).is_ok() {
+            actions.push("expand".into());
+        }
+        if element.GetCachedPattern(UIA_ValuePatternId).is_ok() {
+            actions.push("set_value".into());
+        }
+        if element.GetCachedPattern(UIA_TextPatternId).is_ok() {
+            actions.push("text".into());
+        }
+        if element.GetCachedPattern(UIA_ScrollPatternId).is_ok() {
+            actions.push("scroll".into());
+        }
+    }
+    actions
 }
 
 fn control_type_name(id: i32) -> String {
@@ -239,63 +340,6 @@ fn control_type_name(id: i32) -> String {
         50040 => "AppBar",
         _ => "Unknown",
     }.into()
-}
-
-fn read_bstr(element: &IUIAutomationElement, property_id: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID) -> Option<String> {
-    unsafe {
-        let variant = element.GetCurrentPropertyValue(property_id).ok()?;
-        // VT_BSTR = 8
-        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
-            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
-            let s = bstr.to_string();
-            std::mem::forget(bstr); // Variant owns the BSTR; let variant handle cleanup.
-            if s.trim().is_empty() { None } else { Some(s) }
-        } else {
-            None
-        }
-    }
-}
-
-fn read_bool(element: &IUIAutomationElement, property_id: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID) -> Option<bool> {
-    unsafe {
-        let variant = element.GetCurrentPropertyValue(property_id).ok()?;
-        // VT_BOOL = 11, VARIANT_TRUE = -1, VARIANT_FALSE = 0
-        if variant.as_raw().Anonymous.Anonymous.vt == 11 {
-            Some(variant.as_raw().Anonymous.Anonymous.Anonymous.boolVal != 0)
-        } else {
-            None
-        }
-    }
-}
-
-fn detect_actions(element: &IUIAutomationElement, is_enabled: bool) -> Vec<String> {
-    if !is_enabled { return vec![]; }
-    let mut actions = Vec::new();
-    unsafe {
-        // Check which patterns are supported.
-        if element.GetCurrentPattern(UIA_InvokePatternId).is_ok() {
-            actions.push("invoke".into());
-        }
-        if element.GetCurrentPattern(UIA_TogglePatternId).is_ok() {
-            actions.push("toggle".into());
-        }
-        if element.GetCurrentPattern(UIA_SelectionItemPatternId).is_ok() {
-            actions.push("select".into());
-        }
-        if element.GetCurrentPattern(UIA_ExpandCollapsePatternId).is_ok() {
-            actions.push("expand".into());
-        }
-        if element.GetCurrentPattern(UIA_ValuePatternId).is_ok() {
-            actions.push("set_value".into());
-        }
-        if element.GetCurrentPattern(UIA_TextPatternId).is_ok() {
-            actions.push("text".into());
-        }
-        if element.GetCurrentPattern(UIA_ScrollPatternId).is_ok() {
-            actions.push("scroll".into());
-        }
-    }
-    actions
 }
 
 fn format_node_line(node: &UiaNode) -> String {

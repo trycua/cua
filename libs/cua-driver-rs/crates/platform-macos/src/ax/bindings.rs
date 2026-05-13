@@ -69,6 +69,11 @@ extern "C" {
     ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
     pub fn AXIsProcessTrusted() -> bool;
+    /// `AXIsProcessTrustedWithOptions(options)` — when called with
+    /// `{kAXTrustedCheckOptionPrompt: true}` raises the system Accessibility
+    /// prompt if the process isn't already trusted.  Returns the post-prompt
+    /// trust state (may still be false if the user dismissed the prompt).
+    pub fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef) -> bool;
 
     /// Private SPI: maps an AX window element to its CGWindowID.
     /// Stable since macOS 10.9; used by yabai, Hammerspoon, Accessibility Inspector.

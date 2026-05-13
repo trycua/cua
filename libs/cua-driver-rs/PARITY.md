@@ -154,3 +154,59 @@ documented Swift behavior.
 the text response.  Swift returns text only.  Same rationale as
 `get_cursor_position` — backwards-compatible MCP enrichment, text format
 still matches Swift exactly.
+
+---
+
+## MCP tool: `check_permissions`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/CheckPermissionsTool.swift:6-59`
+        + `libs/cua-driver/Sources/CuaDriverCore/Permissions/Permissions.swift`
+- Rust:
+  - macos=`crates/platform-macos/src/tools/check_permissions.rs` (FIXED, pending macOS run)
+  - windows=`crates/platform-windows/src/tools/impl_.rs` (CheckPermissionsTool)
+  - linux=`crates/platform-linux/src/tools/impl_.rs` (CheckPermissionsTool)
+- Status:
+  - macos: OPEN (fixed in source; macOS runner needed to verify)
+  - windows / linux: INTENTIONAL_DIVERGENCE
+- Test: TODO macOS — needs a macOS machine or CI runner to drive the daemon
+  and assert the text format + structured response.
+
+### Fixed divergences (macOS)
+
+1. **Schema** — added `prompt: boolean` parameter matching Swift's
+   `inputSchema.properties.prompt`.
+2. **Default behavior** — Swift defaults `prompt: true` and raises
+   the macOS Accessibility + Screen Recording TCC prompts via
+   `AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": true})`
+   and `CGRequestScreenCaptureAccess()`.  Rust previously never prompted.
+   Both APIs are now wired up via `link(name = "ApplicationServices"|"CoreGraphics")`.
+3. **Text format** — was `"Accessibility API: ✅ granted\nScreen Recording: ✅ granted"`;
+   now matches Swift exactly: `"✅ Accessibility: granted.\n✅ Screen Recording: granted."`.
+4. **Annotation** — `read_only: false` (was `true`) matching Swift's
+   `readOnlyHint: false` — the default path can mutate state by raising a dialog.
+5. **Description** — copied from Swift verbatim.
+6. **Screen Recording probe** — Swift uses `SCShareableContent.excludingDesktopWindows`
+   (ScreenCaptureKit), which is hard to call from Rust without large bindings.
+   Approximation: `CGPreflightScreenCaptureAccess()` (preflight C API) with
+   fallback to the existing window-enumeration heuristic.  May report
+   false negatives for some subprocess-launched apps (same caveat that
+   prompted Swift to switch to SCShareableContent).  Documented as a
+   known approximation.
+
+### Windows / Linux intentional divergence
+
+`check_permissions` on macOS is fundamentally about TCC (Apple's per-app
+permission database).  Neither Windows nor Linux have an equivalent.  The
+Rust ports retain the tool name and the read-only-status structure, but
+return platform-specific content:
+
+- **Windows** reports process elevation (admin vs standard) and confirms
+  PostMessage + UIA work without elevated rights.  The whole premise of
+  cua-driver-rs on Windows is that background automation needs no
+  special permissions, so the tool's role is to *confirm* that.
+- **Linux** reports X11 display reachability, D-Bus session presence,
+  and XSendEvent availability — the inputs the X11 backends actually
+  need to work.
+
+These divergences are intentional and not fixable without making the tool
+no-op on Windows/Linux (worse UX than returning the platform-specific
+status).

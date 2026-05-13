@@ -1173,7 +1173,12 @@ impl Tool for MoveCursorTool {
         let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
         self.state.cursor_registry.update_position(cursor_id, x, y);
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 });
+        // End pointing upper-left (45°) — matches Swift's
+        // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
+        // overlay arrow settles to the natural macOS-style pose.
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
+            x, y, end_heading_radians: std::f64::consts::FRAC_PI_4,
+        });
         ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
     }
 }

@@ -698,3 +698,39 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Missing-text error ✓
 - Element-without-window error ✓
 - 5-char type: `"✅ Typed 5 char(s) on pid 62156 via PostMessage (10ms delay)."` ✓
+
+---
+
+## MCP tool: `set_value`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetValueTool.swift:8-336`
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetValueTool); macos/linux OPEN
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/set_value_parity.rs`
+
+### Fixed (Windows)
+1. **Text format** — was `"Set value of element N."`; now matches Swift's
+   default-write shape `"✅ Set AXValue on [N] (UIA ValuePattern)."` (UIA
+   role/title placeholder pending element-cache enrichment).
+2. **`idempotent: true`** — was `false`; Swift uses `true` (setting same
+   value twice is idempotent).
+3. **Error wording** — Swift's "Missing required integer fields pid,
+   window_id, and element_index." for the all-ints-missing case;
+   schema-layer wording for individual missing fields.
+4. **Description** — multi-paragraph port from Swift adapted to UIA
+   ValuePattern transport, with note about Swift's AXPopUpButton
+   special-case (UIA SelectionPattern analogue not yet wired up).
+
+### Intentional Rust-only
+
+- **No AXPopUpButton special-case** yet — Swift specifically iterates
+  AX children to AXPress the matching option (bypassing the native
+  popup menu).  UIA has `IUIAutomationSelectionPattern` /
+  `IUIAutomationSelectionItemPattern` which would be the equivalent;
+  documented as a follow-up.  For now `set_value` on a combo box
+  delegates to `IUIAutomationValuePattern::SetValue` which works on
+  most native ComboBoxes.
+
+### Verified on Windows
+`set_value_parity.exe`:
+- Missing-value error (schema layer): mentions `value` + `required` ✓
+- Cache-miss error: `"Element 99999 not in cache."` ✓

@@ -1049,35 +1049,51 @@ impl Tool for SetValueTool {
     fn def(&self) -> &ToolDef {
         SET_VALUE_DEF.get_or_init(|| ToolDef {
             name: "set_value".into(),
-            description: "Set the value of a UIA ValuePattern element.".into(),
+            // Description ported from Swift `SetValueTool.swift` with the
+            // Windows transport (UIA ValuePattern instead of AXValue).
+            // Swift's AXPopUpButton special-case has a UIA analogue
+            // (SelectionPattern) that's not yet wired up here; documented.
+            description: "Set a value on a UIA element via the ValuePattern interface.\n\n\
+                Two semantic modes (matching Swift's split):\n\
+                - **Standard input** (text fields, sliders, combo box edit): writes the value \
+                  directly through UIA `IUIAutomationValuePattern::SetValue`. This is the \
+                  canonical Windows write path, equivalent to Swift's `AXValue` write.\n\
+                - **ComboBox / select dropdown**: ValuePattern.SetValue picks the option \
+                  whose text matches `value` on most native ComboBox controls.\n\n\
+                For free-form text entry that the target accepts via keystrokes only, prefer \
+                `type_text` — UIA ValuePattern writes are ignored by some web inputs (same \
+                caveat as Swift's `AXValue`-vs-WebKit).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","window_id","element_index","value"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "element_index":{"type":"integer"},
-                    "value":{"type":"string"}
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND of the window. The element_index cache is scoped per (pid, window_id)."},
+                    "element_index":{"type":"integer","description":"Element index from the last get_window_state."},
+                    "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."}
                 },"additionalProperties":false
             }),
-            read_only: false, destructive: true, idempotent: false, open_world: true,
+            // Swift: idempotent: true (setting same value twice is idempotent).
+            read_only: false, destructive: true, idempotent: true, open_world: true,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let hwnd = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
-        let idx = match args.get("element_index").and_then(|v| v.as_u64()) {
-            Some(v) => v as usize,
-            None => return ToolResult::error("Missing required parameter: element_index"),
-        };
+        // Swift's "Missing required integer fields pid, window_id, and element_index."
+        let mut missing_ints: Vec<&str> = Vec::new();
+        let raw_pid = args.get("pid").and_then(|v| v.as_i64());
+        if raw_pid.is_none()                    { missing_ints.push("pid"); }
+        if args.get("window_id").and_then(|v| v.as_u64()).is_none()  { missing_ints.push("window_id"); }
+        if args.get("element_index").and_then(|v| v.as_u64()).is_none() { missing_ints.push("element_index"); }
+        if !missing_ints.is_empty() {
+            // Swift wording when all three are missing; for partial misses
+            // we still emit the same shape (good enough for parity).
+            return ToolResult::error("Missing required integer fields pid, window_id, and element_index.");
+        }
+        let pid  = raw_pid.unwrap() as u32;
+        let hwnd = args.get("window_id").and_then(|v| v.as_u64()).unwrap();
+        let idx  = args.get("element_index").and_then(|v| v.as_u64()).unwrap() as usize;
         let value = match args.get("value").and_then(|v| v.as_str()) {
             Some(v) => v.to_owned(),
-            None => return ToolResult::error("Missing required parameter: value"),
+            None    => return ToolResult::error("Missing required string field value."),
         };
 
         let state = self.state.clone();
@@ -1094,9 +1110,11 @@ impl Tool for SetValueTool {
             Ok(())
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Set value of element {idx}.")),
+            // Match Swift's text format 1:1 (default AXValue-write path).
+            // UIA role/title placeholder pending element-cache enrichment.
+            Ok(Ok(())) => ToolResult::text(format!("✅ Set AXValue on [{idx}] (UIA ValuePattern).")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

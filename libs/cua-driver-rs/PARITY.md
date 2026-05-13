@@ -845,3 +845,34 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - `enabled: false` → `"✅ Agent cursor disabled."` ✓
 - Motion update: `"✅ cursor motion: startHandle=0.4 endHandle=0.3 arcSize=0.3
   arcFlow=0 spring=0.8 glideDurationMs=500 dwellAfterClickMs=80 idleHideMs=20000"` ✓
+
+---
+
+## MCP tools: `get_recording_state` + `set_recording`
+- Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetRecordingStateTool.swift:11-72`
+  + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetRecordingTool.swift:12-160`
+- Rust: shared `crates/mcp-server/src/recording_tools.rs` (cross-platform)
+- Status: windows VERIFIED
+- Test: `crates/platform-windows/examples/recording_parity.rs`
+
+### Fixed
+1. **get_recording_state text** — was `"recording: enabled  output_dir=X  next_turn=N"`
+   (double-space-separated); now Swift's `"✅ recording: enabled output_dir=X next_turn=N"`
+   single-space. Disabled case: `"✅ recording: disabled"`.
+2. **set_recording text** — was `"Recording enabled → X"` (Unicode arrow);
+   now Swift's `"✅ Recording enabled -> X"` (ASCII arrow). Disabled:
+   `"✅ Recording disabled."`.
+3. **Error wording** — Swift's `"Missing required boolean field \`enabled\`."`
+   and `"`output_dir` is required when enabling recording."`.
+4. **`idempotent: true`** — was `false`; Swift uses `true`.
+5. **Descriptions** — both ported from Swift verbatim with full turn-folder
+   layout details.
+
+### Verified on Windows
+`recording_parity.exe`:
+- `"✅ recording: disabled"` ✓
+- Missing-enabled error ✓
+- Missing-output_dir error ✓
+- Enable: `"✅ Recording enabled -> <path>"` ✓
+- `"✅ recording: enabled output_dir=<path> next_turn=1"` ✓
+- Disable: `"✅ Recording disabled."` ✓

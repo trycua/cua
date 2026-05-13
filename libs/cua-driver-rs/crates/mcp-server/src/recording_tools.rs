@@ -49,36 +49,54 @@ impl Tool for SetRecordingTool {
     fn def(&self) -> &ToolDef {
         SET_REC_DEF.get_or_init(|| ToolDef {
             name: "set_recording".into(),
-            description: "Toggle trajectory recording. When enabled, each subsequent \
-                action tool call writes a turn-NNNNN/ folder containing action.json \
-                (and screenshot.png when a pid/window_id is present in the call args). \
-                Pass output_dir when enabling.".into(),
+            // Description ported from Swift `SetRecordingTool.swift`.
+            description: "Toggle trajectory recording. When enabled, every subsequent \
+                action-tool invocation (click, right_click, scroll, type_text, press_key, \
+                hotkey, set_value) writes a turn folder under `output_dir`:\n\n\
+                - `app_state.json` — post-action AX/UIA snapshot for the target pid.\n\
+                - `screenshot.png` — post-action per-window screenshot of the target's \
+                  frontmost on-screen window.\n\
+                - `action.json` — tool name, full input arguments, result summary, pid, \
+                  click point (when applicable), ISO-8601 timestamp.\n\
+                - `click.png` — for click-family actions only, `screenshot.png` with a \
+                  red dot drawn at the click point.\n\n\
+                Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
+                numbering restarts at 1 each time recording is (re-)enabled.\n\n\
+                Required when `enabled=true`: `output_dir`.  Ignored when \
+                `enabled=false`.\n\n\
+                State persists for the life of the daemon / MCP session; a restart \
+                resets to disabled with no on-disk state.".into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["enabled"],
                 "properties": {
-                    "enabled":    { "type": "boolean", "description": "true to start recording; false to stop." },
-                    "output_dir": { "type": "string",  "description": "Directory for turn folders. Required when enabled=true." },
+                    "enabled":    { "type": "boolean", "description": "True to start recording subsequent action tool calls; false to stop." },
+                    "output_dir": { "type": "string",  "description": "Absolute or ~-rooted directory where turn folders are written. Required when enabled=true." },
                     "video_experimental": {
                         "type": "boolean",
-                        "description": "Experimental: capture main display to <output_dir>/recording.mp4 (macOS only, requires screen-recording permission). Off by default. Ignored when enabled=false."
+                        "description": "Experimental: capture main display to <output_dir>/recording.mp4. Off by default. Ignored when enabled=false."
                     }
                 },
                 "additionalProperties": false
             }),
             read_only: false,
             destructive: false,
-            idempotent: false,
+            // Swift annotation: idempotentHint: true.
+            idempotent: true,
             open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // Swift error wording 1:1.
         let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
             Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: enabled"),
+            None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
         let output_dir = args.get("output_dir").and_then(|v| v.as_str());
+        if enabled && output_dir.map(|s| s.is_empty()).unwrap_or(true) {
+            return ToolResult::error("`output_dir` is required when enabling recording.");
+        }
         let video_experimental = args.get("video_experimental").and_then(|v| v.as_bool()).unwrap_or(false);
 
         match self.session.configure(enabled, output_dir) {
@@ -88,13 +106,15 @@ impl Tool for SetRecordingTool {
                     let video_note = if video_experimental {
                         " (video_experimental is not yet implemented on this platform)"
                     } else { "" };
-                    format!("Recording enabled → {}{video_note}", state.output_dir.as_deref().unwrap_or("?"))
+                    // Match Swift text format 1:1: `"✅ Recording enabled -> <path>"`.
+                    format!("✅ Recording enabled -> {}{video_note}",
+                        state.output_dir.as_deref().unwrap_or("?"))
                 } else {
-                    "Recording disabled.".into()
+                    "✅ Recording disabled.".to_owned()
                 };
                 ToolResult::text(msg).with_structured(recording_state_json(&state))
             }
-            Err(e) => ToolResult::error(format!("Failed to configure recording: {e}")),
+            Err(e) => ToolResult::error(format!("Failed to enable recording: {e}")),
         }
     }
 }
@@ -116,7 +136,13 @@ impl Tool for GetRecordingStateTool {
     fn def(&self) -> &ToolDef {
         GET_REC_DEF.get_or_init(|| ToolDef {
             name: "get_recording_state".into(),
-            description: "Return the current trajectory recording state.".into(),
+            // Description ported from Swift `GetRecordingStateTool.swift`.
+            description: "Report the current trajectory recorder state: whether recording \
+                is enabled, the output directory (when enabled), and the 1-based counter \
+                for the next turn folder that will be written. Counter increments on every \
+                recorded action tool call and resets to 1 each time recording is \
+                (re-)enabled.\n\n\
+                Pure read-only.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
             read_only: true,
             destructive: false,
@@ -127,16 +153,19 @@ impl Tool for GetRecordingStateTool {
 
     async fn invoke(&self, _args: Value) -> ToolResult {
         let state = self.session.current_state();
-        let msg = if state.enabled {
+        // Match Swift text format 1:1:
+        //   "✅ recording: enabled output_dir=<path> next_turn=<N>"
+        //   "✅ recording: disabled"
+        let summary = if state.enabled {
             format!(
-                "recording: enabled  output_dir={}  next_turn={}",
+                "recording: enabled output_dir={} next_turn={}",
                 state.output_dir.as_deref().unwrap_or("?"),
                 state.next_turn
             )
         } else {
-            "recording: disabled".into()
+            "recording: disabled".to_owned()
         };
-        ToolResult::text(msg).with_structured(recording_state_json(&state))
+        ToolResult::text(format!("✅ {summary}")).with_structured(recording_state_json(&state))
     }
 }
 

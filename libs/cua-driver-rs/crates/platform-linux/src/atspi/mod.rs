@@ -215,11 +215,11 @@ def walk(acc, depth=0, idx=[0]):
     indent = "  " * depth
     if n_actions > 0:
         act_str = ','.join(actions)
-        val_part = f' value="{value_str}"' if value_str else ''
-        print(f"{{indent}}- [{idx[0]}] {{role}} \"{name}\"{{val_part}} [actions=[{{act_str}}]]")
+        val_part = f' value="{{value_str}}"' if value_str else ''
+        print(f"{{indent}}- [{{idx[0]}}] {{role}} \"{{name}}\"{{val_part}} [actions=[{{act_str}}]]")
         idx[0] += 1
     elif name:
-        print(f"{{indent}}- {{role}} = \"{name}\"")
+        print(f"{{indent}}- {{role}} = \"{{name}}\"")
 
     for child in acc:
         walk(child, depth+1, idx)

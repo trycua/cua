@@ -100,8 +100,19 @@ VERSION="${TAG#${TAG_PREFIX}}"
 
 # Prefer the bare-binary tarball (single `cua-driver` file at the root) —
 # the directory tarball would require unpacking and copying, but the bare
-# form is curl-pipe-able. Both forms are published per release.
-TARBALL="cua-driver-rs-${VERSION}-${LABEL}-binary.tar.gz"
+# form is curl-pipe-able.
+#
+# macOS: the release workflow publishes one universal binary (arm64 + x86_64
+# lipo'd together) named `darwin-universal-binary`.  There are NO per-arch
+# bare-binary tarballs for macOS — only the directory tarballs are split
+# by arch (darwin-arm64 / darwin-x86_64).  The universal binary works on
+# both Apple Silicon and Intel, so we always fetch it on macOS.
+#
+# Linux: per-arch bare-binary tarballs exist (e.g. linux-x86_64-binary).
+case "$LABEL" in
+    darwin-*) TARBALL="cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz" ;;
+    *)        TARBALL="cua-driver-rs-${VERSION}-${LABEL}-binary.tar.gz" ;;
+esac
 URL="https://github.com/$REPO/releases/download/$TAG/$TARBALL"
 
 log "downloading $URL"

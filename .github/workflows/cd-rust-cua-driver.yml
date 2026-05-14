@@ -1,0 +1,327 @@
+name: "CD: Cua Driver RS (cross-platform)"
+
+# Matches the artifact convention from cd-swift-cua-driver.yml:
+#   - macOS: ONE universal binary tarball + bare universal binary
+#     (lipo arm64 + x86_64 in a single job, no separate per-arch matrix)
+#   - Windows: cua-driver.exe bare + .zip
+#   - Linux:   cua-driver bare + .tar.gz
+#
+# Bare binaries let curlable installers do
+# `curl -L .../cua-driver-rs-vN-darwin-universal-binary.tar.gz | tar -xz`
+# without needing to unpack a directory structure first.
+
+on:
+  push:
+    tags:
+      - "cua-driver-rs-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (without v prefix)"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Linux x86_64 ─────────────────────────────────────────────────────────────
+  build-linux:
+    name: linux-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            libs/cua-driver-rs/target
+          key: rust-cua-driver-rs-linux-x86_64-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+          restore-keys: |
+            rust-cua-driver-rs-linux-x86_64-
+      - name: Build (release)
+        working-directory: libs/cua-driver-rs
+        run: cargo build -p cua-driver --release --target x86_64-unknown-linux-gnu
+      - name: Package
+        working-directory: libs/cua-driver-rs
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          LABEL="linux-x86_64"
+          STAGE="cua-driver-rs-${VERSION}-${LABEL}"
+          mkdir -p "release/${STAGE}"
+          cp "target/x86_64-unknown-linux-gnu/release/cua-driver" "release/${STAGE}/"
+          cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+          (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
+          # Bare binary tarball — single file (cua-driver) at the archive root,
+          # mirroring the Swift cua-driver `*-binary.tar.gz` convention.
+          tar -czf "release/${STAGE}-binary.tar.gz" -C "release/${STAGE}" cua-driver
+          ls -lh "release/${STAGE}.tar.gz" "release/${STAGE}-binary.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-rs-linux-x86_64
+          path: libs/cua-driver-rs/release/cua-driver-rs-*-linux-x86_64*.tar.gz
+          if-no-files-found: error
+
+  # ── Windows x86_64 ───────────────────────────────────────────────────────────
+  build-windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            libs/cua-driver-rs/target
+          key: rust-cua-driver-rs-windows-x86_64-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+          restore-keys: |
+            rust-cua-driver-rs-windows-x86_64-
+      - name: Build (release)
+        working-directory: libs/cua-driver-rs
+        run: cargo build -p cua-driver --release --target x86_64-pc-windows-msvc
+      - name: Package
+        working-directory: libs/cua-driver-rs
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $label   = "windows-x86_64"
+          $stage   = "cua-driver-rs-${version}-${label}"
+          New-Item -ItemType Directory -Force -Path "release/$stage" | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/cua-driver.exe" "release/$stage/"
+          if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
+          Compress-Archive -Path "release/$stage/*" -DestinationPath "release/$stage.zip" -Force
+          # Bare binary (cua-driver.exe by itself) — matches Swift's
+          # `*-binary.tar.gz` convention but as .zip since Windows tools
+          # don't always have tar on PATH.
+          Compress-Archive -Path "release/$stage/cua-driver.exe" -DestinationPath "release/$stage-binary.zip" -Force
+          Get-ChildItem "release/$stage*.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-rs-windows-x86_64
+          path: libs/cua-driver-rs/release/cua-driver-rs-*-windows-x86_64*.zip
+          if-no-files-found: error
+
+  # ── macOS universal (arm64 + x86_64 → lipo) ─────────────────────────────────
+  # Mirrors cd-swift-cua-driver.yml's approach: build both arches in one job
+  # on macos-15, then combine into a universal binary via `lipo -create`.
+  # The same universal binary is used in BOTH the arm64 and x86_64 named
+  # tarballs (so callers that download by arch still get the universal
+  # binary), plus a third `darwin-universal` tarball and a bare binary.
+  build-macos-universal:
+    name: darwin-universal
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            libs/cua-driver-rs/target
+          key: rust-cua-driver-rs-darwin-universal-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+          restore-keys: |
+            rust-cua-driver-rs-darwin-universal-
+      - name: Build arm64
+        working-directory: libs/cua-driver-rs
+        run: cargo build -p cua-driver --release --target aarch64-apple-darwin
+      - name: Build x86_64
+        working-directory: libs/cua-driver-rs
+        run: cargo build -p cua-driver --release --target x86_64-apple-darwin
+      - name: Create universal binary (lipo)
+        working-directory: libs/cua-driver-rs
+        run: |
+          ARM64="target/aarch64-apple-darwin/release/cua-driver"
+          X86="target/x86_64-apple-darwin/release/cua-driver"
+          mkdir -p release/universal
+          lipo -create "$ARM64" "$X86" -output release/universal/cua-driver
+          lipo -info release/universal/cua-driver
+      - name: Package
+        working-directory: libs/cua-driver-rs
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          for LABEL in darwin-arm64 darwin-x86_64 darwin-universal; do
+            STAGE="cua-driver-rs-${VERSION}-${LABEL}"
+            mkdir -p "release/${STAGE}"
+            # Same universal binary in all three named tarballs — callers
+            # that download by arch still get the universal slice
+            # (matches the Swift `cd-swift-cua-driver.yml` convention).
+            cp release/universal/cua-driver "release/${STAGE}/"
+            cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+            (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
+          done
+          # Bare universal binary — single-file tarball matching Swift's
+          # `cua-driver-${VERSION}-darwin-universal-binary.tar.gz`.
+          tar -czf "release/cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz" \
+            -C release/universal cua-driver
+          ls -lh release/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-rs-darwin
+          path: libs/cua-driver-rs/release/cua-driver-rs-*-darwin-*.tar.gz
+          if-no-files-found: error
+
+  # ── Release ──────────────────────────────────────────────────────────────────
+  release:
+    needs: [build-linux, build-windows, build-macos-universal]
+    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage release files
+        run: |
+          mkdir -p release-upload
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) \
+            -exec cp {} release-upload/ \;
+          echo "Release files:"
+          ls -lh release-upload/
+
+      - name: Generate SHA256 checksums
+        id: checksums
+        run: |
+          cd release-upload
+          {
+            echo "## SHA256 Checksums"
+            echo '```'
+            shasum -a 256 cua-driver-rs-*.{tar.gz,zip} 2>/dev/null | sort
+            echo '```'
+          } > checksums.txt
+          checksums=$(cat checksums.txt)
+          echo "checksums<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$checksums" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Generate path-filtered release notes
+        id: notes
+        run: |
+          PREV_TAG=$(git tag -l "cua-driver-rs-v*" --sort=-v:refname \
+            | grep -v "^${{ github.ref_name }}$" \
+            | head -n 1 || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver-rs" | head -50)
+          else
+            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver-rs" | head -50)
+          fi
+          [ -z "$NOTES" ] && NOTES="* No path-specific changes found"
+          {
+            echo "RELEASE_NOTES<<EOF"
+            echo "## What's Changed"
+            echo ""
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-upload/*
+          # The `prerelease: true` flag + the explicit BETA banner make it
+          # clear to anyone landing on the release page that cua-driver-rs
+          # is the cross-platform Rust port of the Swift cua-driver and is
+          # still in BETA — the Swift cua-driver remains the production
+          # macOS binary.
+          prerelease: true
+          body: |
+            > ⚠️ **BETA — cua-driver-rs**
+            >
+            > `cua-driver-rs` is the **cross-platform Rust port** of the original Swift
+            > [`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver),
+            > introducing **Windows and Linux support** to the cua-driver tool surface.
+            >
+            > - **Windows** and **Linux**: feature-complete, recommended for testing /
+            >   integration work.
+            > - **macOS**: parity with the Swift cua-driver is in progress; for production
+            >   macOS automation prefer the Swift binary
+            >   (`cua-driver-v*` releases, installed via the Swift `install.sh`).
+            >
+            > The Rust port and the Swift driver publish to the same GitHub repo under
+            > **distinct tag prefixes** (`cua-driver-rs-v*` vs `cua-driver-v*`), so their
+            > installers do not collide.
+
+            ${{ steps.notes.outputs.RELEASE_NOTES }}
+
+            ${{ steps.checksums.outputs.checksums }}
+
+            ### Install (Linux / macOS)
+
+            ```bash
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+            ```
+
+            ### Install (Windows)
+
+            Download `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64-binary.zip` from the
+            assets below, unzip to a location on your PATH (`%LOCALAPPDATA%\Programs\cua-driver-rs\`
+            is the convention), then run `cua-driver.exe list-tools` to confirm.
+
+            ### Artifacts
+
+            **macOS (universal — arm64 + x86_64 in one binary, like the Swift cua-driver)**
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal.tar.gz` — directory tarball with LICENSE
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz` — same universal binary, named for arm64 callers
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-x86_64.tar.gz` — same universal binary, named for x86_64 callers
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root)
+
+            **Linux**
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — directory tarball
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — bare binary
+
+            **Windows**
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64.zip` — directory zip
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64-binary.zip` — bare `cua-driver.exe`
+          generate_release_notes: false
+          make_latest: false

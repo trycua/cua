@@ -28,6 +28,7 @@ on:
           - npm/cuabot
           - lume
           - cua-driver
+          - cua-driver-rs
           - docker/cuabot
           - docker/kasm
           - docker/xfce
@@ -43,6 +44,11 @@ on:
           - patch
           - minor
           - major
+      target_branch:
+        description: "Branch to push the bump commit + tag to"
+        required: false
+        type: string
+        default: "main"
 
 permissions:
   contents: write
@@ -135,6 +141,10 @@ jobs:
               echo "directory=libs/cua-driver" >> $GITHUB_OUTPUT
               echo "type=cua-driver" >> $GITHUB_OUTPUT
               ;;
+            "cua-driver-rs")
+              echo "directory=libs/cua-driver-rs" >> $GITHUB_OUTPUT
+              echo "type=cua-driver-rs" >> $GITHUB_OUTPUT
+              ;;
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
@@ -174,6 +184,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.target_branch || 'main' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -393,6 +404,14 @@ jobs:
           echo "cua-driver version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Capture bumped cua-driver-rs version
+        if: ${{ inputs.service == 'cua-driver-rs' }}
+        id: cua_driver_rs_version
+        run: |
+          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver-rs/Cargo.toml)
+          echo "cua-driver-rs version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped cuabot version
         if: ${{ inputs.service == 'npm/cuabot' }}
         id: cuabot_version
@@ -410,9 +429,10 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
-      - name: Push release to main
+      - name: Push release to target branch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_BRANCH: ${{ inputs.target_branch || 'main' }}
         run: |
           # Configure git to use the app token
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
@@ -439,15 +459,15 @@ jobs:
             echo ""
             echo "=== Attempt $RETRY_COUNT/$MAX_RETRIES ==="
 
-            # Fetch latest main to check if we need to rebase
-            git fetch origin main
+            # Fetch latest target branch to check if we need to rebase
+            git fetch origin "${TARGET_BRANCH}"
 
-            # Check if our HEAD is a descendant of origin/main (fast-forward possible)
-            if ! git merge-base --is-ancestor origin/main HEAD; then
-              echo "Main branch has moved forward, rebasing..."
+            # Check if our HEAD is a descendant of origin/<branch> (fast-forward possible)
+            if ! git merge-base --is-ancestor "origin/${TARGET_BRANCH}" HEAD; then
+              echo "Branch ${TARGET_BRANCH} has moved forward, rebasing..."
 
-              # Rebase our commit(s) onto the latest main
-              git rebase origin/main
+              # Rebase our commit(s) onto the latest branch
+              git rebase "origin/${TARGET_BRANCH}"
 
               # Update the tag to point to the rebased commit
               for tag in $ALL_TAGS; do
@@ -464,13 +484,13 @@ jobs:
             echo "Pushing to temp branch..."
             git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
 
-            # Try to update main branch via API
-            echo "Updating main branch via API..."
-            if gh api -X PATCH /repos/${{ github.repository }}/git/refs/heads/main \
+            # Try to update target branch via API
+            echo "Updating ${TARGET_BRANCH} branch via API..."
+            if gh api -X PATCH "/repos/${{ github.repository }}/git/refs/heads/${TARGET_BRANCH}" \
               -f sha="${COMMIT_SHA}" \
               -F force=false 2>&1; then
 
-              echo "Successfully updated main branch!"
+              echo "Successfully updated ${TARGET_BRANCH} branch!"
 
               # Create tag via API (only after main is successfully updated)
               echo "Creating tag via API..."
@@ -490,11 +510,11 @@ jobs:
               exit 0
             fi
 
-            echo "Failed to update main (not a fast-forward), will retry..."
+            echo "Failed to update ${TARGET_BRANCH} (not a fast-forward), will retry..."
             sleep 2
           done
 
-          echo "ERROR: Failed to update main branch after $MAX_RETRIES attempts"
+          echo "ERROR: Failed to update ${TARGET_BRANCH} branch after $MAX_RETRIES attempts"
           exit 1
 
   # NOTE: Publishing is handled by tag-triggered workflows (cd-py-*.yml, cd-ts-*.yml, cd-swift-lume.yml)

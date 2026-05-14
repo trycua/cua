@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cua-driver",
+    "crates/mcp-server",
+    "crates/platform-macos",
+    "crates/platform-windows",
+    "crates/platform-linux",
+    "crates/cursor-overlay",
+    "crates/focus-monitor-win",
+]
+
+[workspace.package]
+version = "0.1.3"
+edition = "2021"
+authors = ["trycua"]
+license = "MIT"
+repository = "https://github.com/trycua/cua"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

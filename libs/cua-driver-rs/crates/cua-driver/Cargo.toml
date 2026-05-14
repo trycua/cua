@@ -1,0 +1,39 @@
+[package]
+name = "cua-driver"
+version.workspace = true
+edition.workspace = true
+description = "Cross-platform background computer-use automation daemon (MCP server)"
+default-run = "cua-driver"
+
+[[bin]]
+name = "cua-driver"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+mcp-server = { path = "../mcp-server" }
+cursor-overlay = { path = "../cursor-overlay" }
+async-trait = "0.1"
+base64 = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+platform-macos = { path = "../platform-macos" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-linux = { path = "../platform-linux" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+image = { workspace = true }
+base64 = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+platform-windows = { path = "../platform-windows" }

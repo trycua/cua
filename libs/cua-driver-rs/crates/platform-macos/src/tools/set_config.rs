@@ -3,7 +3,7 @@ use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
-use super::ToolState;
+use super::{write_driver_config_key, ToolState};
 
 pub struct SetConfigTool {
     state: Arc<ToolState>,
@@ -49,9 +49,11 @@ impl Tool for SetConfigTool {
         let mut cfg = self.state.config.write().unwrap();
         if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
             cfg.capture_mode = mode.to_owned();
+            write_driver_config_key("capture_mode", &Value::String(mode.to_owned()));
         }
         if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
             cfg.max_image_dimension = dim as u32;
+            write_driver_config_key("max_image_dimension", &Value::Number(dim.into()));
         }
         ToolResult::text(format!(
             "Config updated: capture_mode={}, max_image_dimension={}",

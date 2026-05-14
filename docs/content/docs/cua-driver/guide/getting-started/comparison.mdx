@@ -11,7 +11,7 @@ This page compares Cua Driver with other macOS computer-use tools. All are quali
 
 | Feature              | Cua Driver              | Codex Computer Use   | Claude Computer Use  | Lume                    |
 | -------------------- | ----------------------- | -------------------- | -------------------- | ----------------------- |
-| **License**          | MIT                     | Closed source        | Closed source        | MIT                     |
+| **License**          | AGPL-3.0-or-later       | Closed source        | Closed source        | AGPL-3.0-or-later       |
 | **Drives host Mac**  | Yes                     | Yes                  | No (sandbox only)    | No (hosts VMs)          |
 | **Sandbox / VM**     | No                      | No                   | Yes (Cowork VM)      | Yes (macOS + Linux VMs) |
 | **Backgrounded**     | Default                 | Default              | N/A (sandbox)        | N/A                     |
@@ -27,7 +27,7 @@ This page compares Cua Driver with other macOS computer-use tools. All are quali
 That's a fair description of what Codex does on macOS. Cua Driver differs on four axes:
 
 - **Agent-agnostic.** Cua Driver works with any agent that speaks MCP or shells out. Codex's computer-use is Codex-only.
-- **Open source, MIT licensed.** Codex is a closed product.
+- **Open source, AGPL-3.0-or-later licensed.** Codex is a closed product.
 - **MCP-native.** Cua Driver speaks MCP over stdio. Paste `cua-driver mcp-config` into your client and it's wired up. Codex has no MCP surface.
 - **Three capture modalities.** Codex is vision-only. Cua Driver ships `vision` (PNG only), `ax` (tree only), and `som` (both). AX mode skips Screen Recording entirely and gives deterministic element addressing; `som` gives both halves for disambiguation when labels repeat.
 
@@ -72,7 +72,7 @@ Cua Driver fits when all of these are true:
 - You want an agent to drive real apps on your own Mac (not a VM).
 - The user needs to keep working in another app while the agent operates.
 - You're building against any MCP-capable agent, not locked to one vendor.
-- MIT licensing matters.
+- AGPL-3.0-or-later (copyleft) licensing matters.
 
 The trade-offs you accept:
 

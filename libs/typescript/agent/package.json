@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.11.0",
   "description": "TypeScript SDK for Cua agent interaction",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/agent",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"

@@ -3,7 +3,7 @@ name = "cua-auto"
 version = "0.1.2"
 description = "Cross-platform automation library — mouse, keyboard, screen, window, clipboard, shell"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
@@ -19,7 +19,7 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

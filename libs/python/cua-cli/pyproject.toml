@@ -3,7 +3,7 @@ name = "cua-cli"
 version = "0.1.11"
 description = "Unified CLI for CUA - Computer-Use Agents"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
@@ -17,7 +17,7 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",

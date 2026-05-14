@@ -14,7 +14,7 @@ members = [
 version = "0.1.3"
 edition = "2021"
 authors = ["trycua"]
-license = "MIT"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/trycua/cua"
 
 [workspace.dependencies]

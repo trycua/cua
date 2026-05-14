@@ -8,7 +8,7 @@
     "url": "https://github.com/trycua/cua",
     "directory": "libs/cuabot"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "bin": {
     "cuabot": "./bin/cuabot.js"

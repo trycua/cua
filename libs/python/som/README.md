@@ -99,4 +99,4 @@ python examples/omniparser_examples.py examples/test_data/test_screen.png --runs
 
 ## License
 
-MIT License - See LICENSE file for details.
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) - See LICENSE file for details.

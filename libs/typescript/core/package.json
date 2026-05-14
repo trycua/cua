@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.11.0",
   "description": "Typescript SDK for Cua core.",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "homepage": "https://github.com/trycua/cua/tree/feature/computer/typescript/libs/typescript/computer",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"

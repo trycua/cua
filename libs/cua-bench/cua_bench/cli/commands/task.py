@@ -336,7 +336,7 @@ def cmd_create(args) -> int:
     project_name = default_project_name
     author_name = _prompt_input("Author name")
     author_email = _prompt_input("Author email")
-    license_name = _prompt_input("License", "MIT")
+    license_name = _prompt_input("License", "AGPL-3.0-or-later")
     description = _prompt_input("Task description")
     difficulty = _prompt_input("Task difficulty (easy|medium|hard)", "easy")
     category = _prompt_input("Task category (e.g., grounding, software-engineering)", "grounding")
@@ -430,7 +430,7 @@ def _scaffold_starter(prompt: str, dest_dir: Path, profile: dict) -> SimpleNames
     project_name = dest_dir.name.replace("_", "-").replace(" ", "-")
     pyproject_content = PYPROJECT_TEMPLATE.format(
         project_name=project_name,
-        license_name="MIT",
+        license_name="AGPL-3.0-or-later",
         author_name=profile.get("name", ""),
         author_email=profile.get("email", ""),
         description=prompt,

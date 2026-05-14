@@ -137,4 +137,4 @@ cp -R libs/cua-driver/Skills/cua-driver ~/.claude/skills/
 
 ## License
 
-MIT. Same license as the parent `trycua/cua` repo.
+AGPL-3.0-or-later. Same license as the parent `trycua/cua` repo.

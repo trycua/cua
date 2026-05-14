@@ -5,7 +5,7 @@
   "packageManager": "bun@1.1.38",
   "description": "[DEPRECATED] Command-line interface for Cua cloud sandboxes and authentication. Use pip install cua-cli instead.",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/cua-cli",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"

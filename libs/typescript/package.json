@@ -4,7 +4,7 @@
   "description": "The Cua typescript libs.",
   "keywords": [],
   "author": "cua",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",

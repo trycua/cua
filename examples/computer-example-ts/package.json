@@ -12,7 +12,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@10.12.3",
   "dependencies": {
     "@trycua/computer": "^0.1.3",

@@ -11,7 +11,7 @@ This page compares Lume with other macOS virtualization tools. All of these are 
 
 | Feature              | Lume                    | Tart           | Lima             | UTM             |
 | -------------------- | ----------------------- | -------------- | ---------------- | --------------- |
-| **License**          | MIT                     | Fair Source    | Apache 2.0       | Apache 2.0      |
+| **License**          | AGPL-3.0-or-later       | Fair Source    | Apache 2.0       | Apache 2.0      |
 | **macOS VMs**        | Yes                     | Yes            | No               | Yes             |
 | **Linux VMs**        | Yes                     | Yes            | Yes              | Yes             |
 | **HTTP API**         | Yes                     | No             | No               | No              |
@@ -26,7 +26,7 @@ This page compares Lume with other macOS virtualization tools. All of these are 
 
 **Key differences:**
 
-- **Licensing**: Tart uses a [Fair Source](https://fair.io/) license, which is source-available but not fully open source. Lume is MIT licensed.
+- **Licensing**: Tart uses a [Fair Source](https://fair.io/) license, which is source-available but not fully open source. Lume is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
 
 - **API access**: Lume includes an HTTP server (`lume serve`) for programmatic VM control. Tart is CLI-only—integrating it into applications requires wrapping CLI commands.
 
@@ -38,7 +38,7 @@ This page compares Lume with other macOS virtualization tools. All of these are 
 
 **When to choose Tart**: If you need proven CI/CD integrations, prefer a larger community, or if the Fair Source license works for your use case.
 
-**When to choose Lume**: If you need an HTTP API, MCP server integration, fully automated VM provisioning, MIT licensing, or are building AI agents that interact with macOS.
+**When to choose Lume**: If you need an HTTP API, MCP server integration, fully automated VM provisioning, AGPL-3.0 copyleft licensing, or are building AI agents that interact with macOS.
 
 ## Lima
 
@@ -95,6 +95,6 @@ Choose Lume if you need:
 - An HTTP API for programmatic VM control
 - MCP server integration for AI agents
 - Fully automated macOS VM provisioning
-- MIT-licensed tooling
+- AGPL-3.0-or-later tooling
 
 The Virtualization Framework means all Swift-based tools (Lume, Tart, VirtualBuddy) have the same underlying VM performance. The differences are in the interfaces, automation capabilities, and ecosystem integration.

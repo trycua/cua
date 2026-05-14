@@ -55,7 +55,7 @@
     }
   ],
   "keywords": ["automation", "computer-use", "desktop", "ai-agent", "productivity"],
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "user_config": {
     "api_key": {
       "type": "string",

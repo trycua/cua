@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.11.0",
   "description": "Reusable playground UI for Cua computer-use agents",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/playground",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"

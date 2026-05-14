@@ -50,4 +50,4 @@ pnpm build
 
 ## License
 
-[MIT](./LICENSE) License 2025 [Cua](https://github.com/trycua)
+[AGPL-3.0-or-later](./LICENSE) License 2024-2025 [Cua](https://github.com/trycua)

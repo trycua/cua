@@ -195,11 +195,14 @@ We welcome contributions! See our [Contributing Guidelines](CONTRIBUTING.md) for
 
 ## License
 
-MIT License — see [LICENSE](LICENSE.md) for details.
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later) — see [LICENSE](LICENSE.md) for details.
 
-Third-party components have their own licenses:
+For commercial licensing inquiries (e.g. if AGPL terms are incompatible with
+your intended use), contact `hello@trycua.com`.
 
-- [Kasm](libs/kasm/LICENSE) (MIT)
+Third-party components retain their original licenses:
+
+- [Kasm](libs/kasm/LICENSE) (originally MIT; the combined work is distributed under AGPL-3.0-or-later — see the file for full attribution)
 - [OmniParser](https://github.com/microsoft/OmniParser/blob/master/LICENSE) (CC-BY-4.0)
 - Optional `cua-agent[omni]` includes ultralytics (AGPL-3.0)
 

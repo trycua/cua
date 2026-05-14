@@ -1,7 +1,7 @@
 [project]
 name = "basic-click-icon-task-env"
 version = "0.1.0"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 authors = [
     { name = "Dillon DuPont", email = "dillon@trycua.com" }
 ]

@@ -55,7 +55,7 @@ Example:
   "github_url": "https://github.com/trycua/cua-bench-registry/tree/main/datasets/cua-bench-basic/click-button",
   "description": "Click a simple button.",
   "num_tasks": 42,
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "version": "0.1.0",
   "authors": [{ "name": "Jane Doe", "email": "jane@example.com" }],
   "difficulty": "easy",

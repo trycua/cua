@@ -145,14 +145,17 @@ pub fn load_driver_config() -> DriverConfig {
         cfg.capture_mode = v.to_owned();
     }
     if let Some(v) = json.get("max_image_dimension").and_then(|v| v.as_u64()) {
-        cfg.max_image_dimension = v as u32;
+        if let Ok(v32) = u32::try_from(v) {
+            cfg.max_image_dimension = v32;
+        }
     }
     cfg
 }
 
 /// Persist a single key/value pair to `~/.cua-driver/config.json`.
 /// Merges with any existing file contents so other keys are preserved.
-pub fn write_driver_config_key(key: &str, value: &serde_json::Value) {
+/// Returns `Err` if the directory cannot be created or the file cannot be written.
+pub fn write_driver_config_key(key: &str, value: &serde_json::Value) -> Result<(), String> {
     let path = config_file_path();
     let mut json: serde_json::Value = path
         .exists()
@@ -162,9 +165,11 @@ pub fn write_driver_config_key(key: &str, value: &serde_json::Value) {
         .unwrap_or_else(|| serde_json::json!({}));
     json[key] = value.clone();
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let _ = std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap_or_default());
+    let body = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Shared state passed to all tools.

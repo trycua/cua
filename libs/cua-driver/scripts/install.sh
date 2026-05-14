@@ -68,8 +68,14 @@ if [[ -n "${CUA_DRIVER_VERSION:-}" ]]; then
     log "using version from CUA_DRIVER_VERSION: $TAG"
 else
     log "resolving latest $TAG_PREFIX* release via GitHub API"
+    # `grep -v cua-driver-rs` is defense-in-depth — the Rust port (cua-driver-rs)
+    # publishes to the same repo under tag prefix `cua-driver-rs-v*` and the
+    # current grep regex `cua-driver-v[^"]+` already excludes it (differs at
+    # position 11: 'r' vs 'v'), but the negation guards against any future
+    # regex tweak that might accidentally widen the match.
     TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=40" \
         | grep -Eo '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' \
+        | grep -v 'cua-driver-rs' \
         | sed -E 's/.*"'"${TAG_PREFIX}"'([0-9]+[.][0-9]+[.][0-9]+)"/\1/' \
         | sort -t. -k1,1nr -k2,2nr -k3,3nr \
         | head -n 1 \

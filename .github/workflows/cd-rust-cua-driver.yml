@@ -269,10 +269,44 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release-upload/*
+          # The `prerelease: true` flag + the explicit BETA banner make it
+          # clear to anyone landing on the release page that cua-driver-rs
+          # is the cross-platform Rust port of the Swift cua-driver and is
+          # still in BETA — the Swift cua-driver remains the production
+          # macOS binary.
+          prerelease: true
           body: |
+            > ⚠️ **BETA — cua-driver-rs**
+            >
+            > `cua-driver-rs` is the **cross-platform Rust port** of the original Swift
+            > [`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver),
+            > introducing **Windows and Linux support** to the cua-driver tool surface.
+            >
+            > - **Windows** and **Linux**: feature-complete, recommended for testing /
+            >   integration work.
+            > - **macOS**: parity with the Swift cua-driver is in progress; for production
+            >   macOS automation prefer the Swift binary
+            >   (`cua-driver-v*` releases, installed via the Swift `install.sh`).
+            >
+            > The Rust port and the Swift driver publish to the same GitHub repo under
+            > **distinct tag prefixes** (`cua-driver-rs-v*` vs `cua-driver-v*`), so their
+            > installers do not collide.
+
             ${{ steps.notes.outputs.RELEASE_NOTES }}
 
             ${{ steps.checksums.outputs.checksums }}
+
+            ### Install (Linux / macOS)
+
+            ```bash
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+            ```
+
+            ### Install (Windows)
+
+            Download `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64-binary.zip` from the
+            assets below, unzip to a location on your PATH (`%LOCALAPPDATA%\Programs\cua-driver-rs\`
+            is the convention), then run `cua-driver.exe list-tools` to confirm.
 
             ### Artifacts
 

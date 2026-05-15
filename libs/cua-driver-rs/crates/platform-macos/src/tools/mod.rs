@@ -120,6 +120,58 @@ impl Default for DriverConfig {
     }
 }
 
+/// Path to the persistent JSON config file shared by the CLI and MCP session.
+pub fn config_file_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
+}
+
+/// Load `DriverConfig` from `~/.cua-driver/config.json`, falling back to
+/// defaults for any missing or unrecognised keys.  Called at MCP startup so
+/// that `cua-driver config set capture_mode vision` (CLI) carries over into
+/// the next MCP session without requiring a per-call `set_config`.
+pub fn load_driver_config() -> DriverConfig {
+    let mut cfg = DriverConfig::default();
+    let path = config_file_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return cfg,  // no file yet — use defaults
+    };
+    let json: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return cfg,  // malformed file — use defaults
+    };
+    if let Some(v) = json.get("capture_mode").and_then(|v| v.as_str()) {
+        cfg.capture_mode = v.to_owned();
+    }
+    if let Some(v) = json.get("max_image_dimension").and_then(|v| v.as_u64()) {
+        if let Ok(v32) = u32::try_from(v) {
+            cfg.max_image_dimension = v32;
+        }
+    }
+    cfg
+}
+
+/// Persist a single key/value pair to `~/.cua-driver/config.json`.
+/// Merges with any existing file contents so other keys are preserved.
+/// Returns `Err` if the directory cannot be created or the file cannot be written.
+pub fn write_driver_config_key(key: &str, value: &serde_json::Value) -> Result<(), String> {
+    let path = config_file_path();
+    let mut json: serde_json::Value = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json[key] = value.clone();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Shared state passed to all tools.
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
@@ -136,7 +188,9 @@ impl Default for ToolState {
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
-            config: Arc::new(std::sync::RwLock::new(DriverConfig::default())),
+            // Load persisted config from ~/.cua-driver/config.json so that
+            // `cua-driver config set` changes carry over into MCP sessions.
+            config: Arc::new(std::sync::RwLock::new(load_driver_config())),
         }
     }
 }

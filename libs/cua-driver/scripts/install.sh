@@ -62,10 +62,22 @@ for cmd in curl tar; do
 done
 
 # --- Resolve release tag ------------------------------------------------
+#
+# Version is resolved in priority order:
+#   1. CUA_DRIVER_VERSION env var (explicit pin)
+#   2. BAKED_VERSION below (set automatically by CD after each release — no API call needed)
+#   3. GitHub Releases API (fallback; unauthenticated = 60 req/hr per IP)
+#
+# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
+CUA_DRIVER_BAKED_VERSION="0.1.9"
+# ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_VERSION:-}" ]]; then
     TAG="${TAG_PREFIX}${CUA_DRIVER_VERSION#v}"
     log "using version from CUA_DRIVER_VERSION: $TAG"
+elif [[ -n "${CUA_DRIVER_BAKED_VERSION:-}" ]]; then
+    TAG="${TAG_PREFIX}${CUA_DRIVER_BAKED_VERSION}"
+    log "latest release: $TAG"
 else
     log "resolving latest $TAG_PREFIX* release via GitHub API"
     # `grep -v cua-driver-rs` is defense-in-depth — the Rust port (cua-driver-rs)
@@ -73,7 +85,7 @@ else
     # current grep regex `cua-driver-v[^"]+` already excludes it (differs at
     # position 11: 'r' vs 'v'), but the negation guards against any future
     # regex tweak that might accidentally widen the match.
-    TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=40" \
+    TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" \
         | grep -Eo '"tag_name":[[:space:]]*"'"${TAG_PREFIX}"'[^"]+"' \
         | grep -v 'cua-driver-rs' \
         | sed -E 's/.*"'"${TAG_PREFIX}"'([0-9]+[.][0-9]+[.][0-9]+)"/\1/' \

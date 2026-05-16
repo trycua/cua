@@ -23,6 +23,8 @@ pub mod browser;
 #[cfg(target_os = "macos")]
 pub mod focus_steal;
 #[cfg(target_os = "macos")]
+pub mod permissions;
+#[cfg(target_os = "macos")]
 pub mod tools;
 
 use mcp_server::tool::ToolRegistry;

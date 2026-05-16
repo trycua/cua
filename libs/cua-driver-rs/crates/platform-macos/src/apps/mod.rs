@@ -114,14 +114,14 @@ pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
 /// roots for `<Name>.app`, then fall back to a LaunchServices lookup
 /// in case the caller passed a bundle identifier in the `name` slot.
 pub fn launch_app_by_name(name: &str) -> anyhow::Result<i32> {
-    let app_url = locate_by_name(name)
+    let located = locate_by_name(name)
         .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
-    let bid = bundle_id_for_app_path(&app_url);
+    let (app_ref, bid) = located.app_ref_and_bundle_id();
     let cfg = nsworkspace::OpenConfig {
         apple_event_bundle_id: bid,
         ..Default::default()
     };
-    let running = nsworkspace::open_application(&app_url, &cfg)
+    let running = nsworkspace::open_application(&app_ref, &cfg)
         .map_err(|e| anyhow::anyhow!("Failed to launch '{name}': {e}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
@@ -178,9 +178,9 @@ pub fn launch_with_urls_by_name(
     env: &std::collections::HashMap<String, String>,
     creates_new_instance: bool,
 ) -> anyhow::Result<i32> {
-    let app_url = locate_by_name(name)
+    let located = locate_by_name(name)
         .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
-    let bid = bundle_id_for_app_path(&app_url);
+    let (app_ref, bid) = located.app_ref_and_bundle_id();
     // See `launch_with_urls_by_bundle` — skip `oapp` AppleEvent on
     // the URL-handoff path.
     let cfg = nsworkspace::OpenConfig {
@@ -190,9 +190,9 @@ pub fn launch_with_urls_by_name(
         apple_event_bundle_id: if urls.is_empty() { bid } else { None },
     };
     let running = if urls.is_empty() {
-        nsworkspace::open_application(&app_url, &cfg)
+        nsworkspace::open_application(&app_ref, &cfg)
     } else {
-        nsworkspace::open_urls_with_application(urls, &app_url, &cfg)
+        nsworkspace::open_urls_with_application(urls, &app_ref, &cfg)
     }
     .map_err(|e| anyhow::anyhow!("Failed to launch '{name}': {e}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
@@ -201,20 +201,68 @@ pub fn launch_with_urls_by_name(
 
 // ── Bundle resolution ────────────────────────────────────────────────────────
 
-/// Resolve a bundle id to an installed `.app` path via NSWorkspace.
-/// Returns the absolute filesystem path (no `file://` prefix); callers
-/// pass it back through `file_or_app_url` inside `nsworkspace::*`.
-pub(crate) fn resolve_bundle_id_to_path(bundle_id: &str) -> Option<String> {
+/// What `locate_by_name` resolved a display name into.
+///
+/// Two shapes because Cryptex-installed apps (Safari on macOS Sonoma+,
+/// and a growing set of other system apps) live under
+/// `/System/Cryptexes/App/...` — flattening their LaunchServices NSURL
+/// to a filesystem path via `-[NSURL path]` loses the
+/// alias/cryptex metadata LaunchServices needs to relaunch the bundle.
+/// The fix: when the resolver went through LaunchServices, hand the
+/// bundle id back to the launch helpers verbatim — they pass it
+/// straight through to `URLForApplicationWithBundleIdentifier` and
+/// use the resulting NSURL unmodified.
+pub(crate) enum AppLocator {
+    /// Found by filesystem scan (`/Applications/...`, `~/Applications/...`).
+    /// Path-based launch is safe here — these apps aren't Cryptex-installed.
+    Path(String),
+    /// Found via LaunchServices bundle-id lookup. Carry the bundle id
+    /// (NOT the lossy `url.path()`) so the launch helpers re-resolve
+    /// the live NSURL on demand and preserve cryptex metadata.
+    BundleId(String),
+}
+
+impl AppLocator {
+    /// `(app_ref_for_nsworkspace, optional_bundle_id_for_oapp_event)`.
+    ///
+    /// `app_ref` is the string the `nsworkspace::*` helpers consume —
+    /// a filesystem path or a bundle id; either flows through
+    /// `resolve_application_url` correctly. `bundle_id` is `Some(...)`
+    /// when known (either because LaunchServices gave it to us or
+    /// because we read it from the bundle's Info.plist) and `None`
+    /// when it couldn't be determined — callers use it for the `oapp`
+    /// AppleEvent attachment on the no-URL launch path.
+    pub(crate) fn app_ref_and_bundle_id(self) -> (String, Option<String>) {
+        match self {
+            AppLocator::Path(p) => {
+                let bid = bundle_id_for_app_path(&p);
+                (p, bid)
+            }
+            AppLocator::BundleId(bid) => (bid.clone(), Some(bid)),
+        }
+    }
+}
+
+/// Resolve a bundle id to its `AppLocator::BundleId` form.
+///
+/// Returns `None` if LaunchServices can't find an app for the given
+/// bundle id. Note: we deliberately do NOT call `-[NSURL path]` on
+/// the resolved URL — that's the fix for CodeRabbit #3 (Cryptex
+/// relaunch). Callers should pass the bundle id back to the
+/// `nsworkspace::*` helpers, which re-resolve the live NSURL.
+pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator> {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::NSString;
     unsafe {
         let ws = NSWorkspace::sharedWorkspace();
         let ns = NSString::from_str(bundle_id);
-        let url = ws.URLForApplicationWithBundleIdentifier(&ns)?;
-        // -[NSURL path] gives us the absolute filesystem path; convert
-        // to UTF-8.
-        let path = url.path()?;
-        Some(path.to_string())
+        // We only care about presence here — the live NSURL is
+        // re-fetched inside `nsworkspace::resolve_application_url`
+        // when the launch actually fires. Returning the bundle id
+        // (not a flattened `url.path()`) preserves the alias/cryptex
+        // metadata Safari needs to relaunch from `/System/Cryptexes/App/...`.
+        let _url = ws.URLForApplicationWithBundleIdentifier(&ns)?;
+        Some(AppLocator::BundleId(bundle_id.to_owned()))
     }
 }
 
@@ -223,11 +271,13 @@ pub(crate) fn resolve_bundle_id_to_path(bundle_id: &str) -> Option<String> {
 /// 1. filesystem lookup by bundle filename in the canonical roots
 ///    (system first so /Applications wins over ~/Applications);
 /// 2. LaunchServices bundle-id lookup, in case the caller passed a
-///    bundle identifier in the `name` slot;
+///    bundle identifier in the `name` slot — preserved as
+///    `AppLocator::BundleId` so the launch path uses the live NSURL
+///    (Cryptex-safe — see CodeRabbit #3);
 /// 3. (skipped) full localized-name scan — not yet needed by current
 ///    integration tests; can be added if we hit a non-English-name app
 ///    in the wild.
-fn locate_by_name(name: &str) -> Option<String> {
+fn locate_by_name(name: &str) -> Option<AppLocator> {
     let app_name = if name.ends_with(".app") {
         name.to_owned()
     } else {
@@ -245,14 +295,13 @@ fn locate_by_name(name: &str) -> Option<String> {
     for root in &roots {
         let path = format!("{root}/{app_name}");
         if std::path::Path::new(&path).is_dir() {
-            return Some(path);
+            return Some(AppLocator::Path(path));
         }
     }
-    // Fallback: maybe caller passed a bundle id as `name`.
-    if let Some(p) = resolve_bundle_id_to_path(name) {
-        return Some(p);
-    }
-    None
+    // Fallback: maybe caller passed a bundle id as `name`. Use the
+    // Cryptex-safe locator (carries the bundle id, never the lossy
+    // url.path()).
+    resolve_bundle_id_to_locator(name)
 }
 
 /// Read `CFBundleIdentifier` from an `.app` bundle's `Info.plist`.

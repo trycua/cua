@@ -246,6 +246,15 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
     if is_env_truthy("CUA_DRIVER_RS_MCP_NO_RELAUNCH") {
         return false;
     }
+    // Hidden test/escape hook: force proxy mode without requiring the
+    // executable to live inside CuaDriverRs.app. Used by the
+    // integration test (which spawns a daemon manually) and by users
+    // who've wrapped the binary in a custom bundle. Skips the
+    // launch_daemon_and_wait `open -a` step too — caller is expected
+    // to have a daemon already running on the chosen socket.
+    if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+        return true;
+    }
     if !is_executable_inside_cuadriverrs_app() {
         // Raw `cargo run` / dev binary — no installed bundle to land
         // in, so relaunching would fail. Stay in-process.
@@ -332,6 +341,17 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
     let socket_path = socket.unwrap_or_else(crate::serve::default_socket_path);
 
     if !crate::serve::is_daemon_listening(&socket_path) {
+        // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
+        // bundle setups) supply their own daemon — skip the `open -a`
+        // step, since they don't have an installed CuaDriverRs.app to
+        // relaunch into. Fail fast if no daemon is up at this point.
+        if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+            anyhow::bail!(
+                "CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on \
+                 {socket_path}. Start one with `cua-driver serve --socket {socket_path}` \
+                 and retry."
+            );
+        }
         eprintln!(
             "cua-driver-rs: mcp launched without CuaDriverRs.app's TCC grants; \
              auto-launching the daemon via `open -n -g -a CuaDriverRs --args serve` \

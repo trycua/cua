@@ -175,6 +175,18 @@ mkdir -p "$BIN_DIR"
 # different bundle id (com.trycua.cuadriverrs) so the two coexist.
 #
 # Linux / WSL: drop the bare binary directly into BIN_DIR (no .app).
+#
+# Fail fast on Darwin if the .app is missing — falling through to the
+# bare-binary install would silently produce a CLI that can never
+# auto-relaunch into a TCC-correct daemon. CodeRabbit #3.
+if [[ "$OS" == "Darwin" ]]; then
+    if [[ -z "${SRC_APP:-}" || ! -d "$SRC_APP" ]]; then
+        err "macOS install requires the .app bundle (SRC_APP not found at ${SRC_APP:-<unset>})"
+        err "  This usually means the downloaded tarball is missing CuaDriverRs.app — re-run the installer or"
+        err "  pin a known-good release via CUA_DRIVER_RS_VERSION=<version>."
+        exit 1
+    fi
+fi
 if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     if [[ ! -w "/Applications" ]]; then
         err "/Applications is not writable. Re-run this installer in a shell where it is, or grant write access."

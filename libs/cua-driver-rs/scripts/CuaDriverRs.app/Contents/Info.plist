@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Minimal .app bundle for cua-driver-rs.
+
+    Exists solely so the Rust port can use the same TCC-attribution
+    trick as the Swift cua-driver: `open -n -g -a CuaDriverRs --args serve`
+    relaunches into a process attributed to `com.trycua.cuadriverrs` (a
+    stable bundle identifier TCC keys grants against), instead of
+    inheriting the calling shell/IDE-terminal's TCC responsibility.
+
+    Bundle id intentionally distinct from the Swift driver's
+    `com.trycua.driver` so the two installs do NOT collide on TCC
+    grants — a user can have both installed and grant Accessibility +
+    Screen Recording to each independently.
+
+    LSUIElement=true keeps the bundle headless (no Dock icon, no menu
+    bar) so the daemon-spawn path doesn't flash any UI.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.trycua.cuadriverrs</string>
+    <key>CFBundleName</key>
+    <string>Cua Driver RS</string>
+    <key>CFBundleDisplayName</key>
+    <string>Cua Driver RS</string>
+    <key>CFBundleExecutable</key>
+    <string>cua-driver</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.3</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticTermination</key>
+    <true/>
+</dict>
+</plist>

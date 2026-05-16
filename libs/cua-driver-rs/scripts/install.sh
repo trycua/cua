@@ -32,6 +32,16 @@ TAG_PREFIX="cua-driver-rs-v"
 BIN_DIR="${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
 
+# macOS-only: name and install location of the .app bundle that wraps
+# the bare binary so the TCC auto-relaunch path in `cua-driver-rs mcp`
+# has a stable bundle id (com.trycua.cuadriverrs) to attribute the
+# daemon to. See libs/cua-driver-rs/scripts/CuaDriverRs.app/Contents/
+# Info.plist and the matching docs on `cua-driver-rs mcp`'s auto-
+# relaunch behavior. Distinct from the Swift driver's CuaDriver.app
+# (com.trycua.driver) so the two installs coexist on the same machine.
+APP_NAME="CuaDriverRs.app"
+APP_DEST="/Applications/$APP_NAME"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bin-dir) BIN_DIR="$2"; shift 2 ;;
@@ -98,19 +108,21 @@ VERSION="${TAG#${TAG_PREFIX}}"
 
 # --- Download bare-binary tarball ---------------------------------------
 
-# Prefer the bare-binary tarball (single `cua-driver` file at the root) —
-# the directory tarball would require unpacking and copying, but the bare
-# form is curl-pipe-able.
+# Tarball selection:
 #
-# macOS: the release workflow publishes one universal binary (arm64 + x86_64
-# lipo'd together) named `darwin-universal-binary`.  There are NO per-arch
-# bare-binary tarballs for macOS — only the directory tarballs are split
-# by arch (darwin-arm64 / darwin-x86_64).  The universal binary works on
-# both Apple Silicon and Intel, so we always fetch it on macOS.
+# macOS — fetch the directory tarball (cua-driver-rs-vN-darwin-universal.tar.gz).
+#   The directory layout includes `CuaDriverRs.app/` alongside the bare
+#   binary, which we need to install into /Applications so the TCC
+#   auto-relaunch path in `cua-driver-rs mcp` can resolve
+#   `com.trycua.cuadriverrs` via `open -n -g -a CuaDriverRs`. The
+#   directory variant carries the same universal binary as the
+#   bare-binary tarball, so users on both Apple Silicon and Intel
+#   get a working install from one download.
 #
-# Linux: per-arch bare-binary tarballs exist (e.g. linux-x86_64-binary).
+# Linux / Windows-via-WSL — keep using the bare-binary tarball.
+#   No bundle on these platforms, no TCC, no need to unpack a directory.
 case "$LABEL" in
-    darwin-*) TARBALL="cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz" ;;
+    darwin-*) TARBALL="cua-driver-rs-${VERSION}-darwin-universal.tar.gz" ;;
     *)        TARBALL="cua-driver-rs-${VERSION}-${LABEL}-binary.tar.gz" ;;
 esac
 URL="https://github.com/$REPO/releases/download/$TAG/$TARBALL"
@@ -124,8 +136,26 @@ fi
 log "extracting"
 tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
 
-# The bare-binary tarball contains exactly `cua-driver` at the root.
-SRC="$TMP_DIR/$BINARY_NAME"
+# Layout detection:
+#   macOS dir tarball expands to:
+#     cua-driver-rs-${VERSION}-darwin-universal/
+#       ├── cua-driver           (bare universal binary)
+#       ├── CuaDriverRs.app/     (minimal bundle; copy of the same binary
+#       │                         lives at Contents/MacOS/cua-driver)
+#       └── LICENSE
+#   Linux bare-binary tarball expands to:
+#     cua-driver               (single file at the archive root)
+case "$LABEL" in
+    darwin-*)
+        STAGE="cua-driver-rs-${VERSION}-darwin-universal"
+        SRC="$TMP_DIR/$STAGE/$BINARY_NAME"
+        SRC_APP="$TMP_DIR/$STAGE/$APP_NAME"
+        ;;
+    *)
+        SRC="$TMP_DIR/$BINARY_NAME"
+        SRC_APP=""
+        ;;
+esac
 if [[ ! -f "$SRC" ]]; then
     err "expected $BINARY_NAME in tarball but didn't find it"
     ls -la "$TMP_DIR"
@@ -135,8 +165,42 @@ fi
 # --- Install ------------------------------------------------------------
 
 mkdir -p "$BIN_DIR"
-install -m 0755 "$SRC" "$BIN_LINK"
-log "installed $BIN_LINK (version $VERSION)"
+
+# macOS: install the .app to /Applications first, then symlink the
+# bin into the bundle so `~/.local/bin/cua-driver` resolves into
+# `/Applications/CuaDriverRs.app/Contents/MacOS/cua-driver`. The
+# `realpath` walk in `is_executable_inside_cuadriverrs_app()` keys on
+# that resolved path to know whether the auto-relaunch heuristic
+# should fire. Same shape as the Swift `cua-driver` install path —
+# different bundle id (com.trycua.cuadriverrs) so the two coexist.
+#
+# Linux / WSL: drop the bare binary directly into BIN_DIR (no .app).
+if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
+    if [[ ! -w "/Applications" ]]; then
+        err "/Applications is not writable. Re-run this installer in a shell where it is, or grant write access."
+        err "  Without the .app bundle, \`cua-driver-rs mcp\` from an IDE terminal will not auto-relaunch into a TCC-correct daemon."
+        exit 1
+    fi
+    if [[ -e "$APP_DEST" ]]; then
+        log "removing existing $APP_DEST"
+        rm -rf "$APP_DEST"
+    fi
+    log "installing $APP_DEST"
+    # `ditto` preserves the bundle's metadata + nested symlinks the way
+    # Apple's installer would. `cp -R` works but doesn't preserve as
+    # much, and ditto is always present on macOS.
+    ditto "$SRC_APP" "$APP_DEST"
+    APP_BINARY="$APP_DEST/Contents/MacOS/$BINARY_NAME"
+    if [[ ! -x "$APP_BINARY" ]]; then
+        err "binary missing at $APP_BINARY (refusing to create broken symlink)"
+        exit 1
+    fi
+    ln -sf "$APP_BINARY" "$BIN_LINK"
+    log "symlinked $BIN_LINK -> $APP_BINARY"
+else
+    install -m 0755 "$SRC" "$BIN_LINK"
+    log "installed $BIN_LINK (version $VERSION)"
+fi
 
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
 if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then

@@ -78,44 +78,188 @@ fn parse_osascript_app_list(text: &str) -> Vec<AppInfo> {
     apps
 }
 
-/// Launch an app by bundle ID using `open -g -b` (background, no activation).
-/// Returns the pid on success.
+/// Launch an app by bundle ID via NSWorkspace, background only (no focus
+/// steal). Returns the pid on success.
+///
+/// Replaces a prior `open -g -b` shell-out. The NSWorkspace path:
+///   * honors `activates = false` so LaunchServices doesn't bring the
+///     target frontmost,
+///   * attaches an `aevt/oapp` AppleEvent descriptor so cold-launched
+///     apps (Calculator, etc) get their window-creation handler invoked
+///     reliably (the shell-out path silently skipped this for state-
+///     restored apps),
+///   * returns the actual `NSRunningApplication.processIdentifier`
+///     without needing a separate `list_running_apps` lookup, so we
+///     can't race a same-bundle-id helper that happens to be running.
 pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
-    let status = Command::new("open")
-        .args(["-g", "-b", bundle_id])
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("Failed to launch {bundle_id}");
-    }
-    // Give the app a moment to start.
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    // Find its pid.
-    let apps = list_running_apps();
-    for app in &apps {
-        if app.bundle_id.as_deref() == Some(bundle_id) {
-            return Ok(app.pid);
-        }
-    }
-    anyhow::bail!("Launched {bundle_id} but could not find its pid")
+    let app_url = resolve_bundle_id_to_path(bundle_id).ok_or_else(|| {
+        anyhow::anyhow!("Could not locate app with bundle_id '{bundle_id}'")
+    })?;
+    let cfg = nsworkspace::OpenConfig {
+        apple_event_bundle_id: Some(bundle_id.to_owned()),
+        ..Default::default()
+    };
+    let running = nsworkspace::open_application(&app_url, &cfg)
+        .map_err(|e| anyhow::anyhow!("Failed to launch {bundle_id}: {e}"))?;
+    let pid: i32 = unsafe { running.processIdentifier() };
+    Ok(pid)
 }
 
-/// Launch an app by display name using `open -g -a AppName` (background, no activation).
+/// Launch an app by display name via NSWorkspace. Background-only.
 /// Returns the pid on success.
+///
+/// Mirror of Swift `AppLauncher.locate(name:)`: scan the standard
+/// roots for `<Name>.app`, then fall back to a LaunchServices lookup
+/// in case the caller passed a bundle identifier in the `name` slot.
 pub fn launch_app_by_name(name: &str) -> anyhow::Result<i32> {
-    let status = Command::new("open")
-        .args(["-g", "-a", name])
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("Failed to launch app '{name}'");
+    let app_url = locate_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
+    let bid = bundle_id_for_app_path(&app_url);
+    let cfg = nsworkspace::OpenConfig {
+        apple_event_bundle_id: bid,
+        ..Default::default()
+    };
+    let running = nsworkspace::open_application(&app_url, &cfg)
+        .map_err(|e| anyhow::anyhow!("Failed to launch '{name}': {e}"))?;
+    let pid: i32 = unsafe { running.processIdentifier() };
+    Ok(pid)
+}
+
+/// Launch a bundle with URL handoff. Mirrors Swift's
+/// `NSWorkspace.open(urls:withApplicationAt:configuration:)` flow.
+///
+/// `additional_args` and `env` are merged into the `OpenConfig`.
+/// `creates_new_instance` corresponds to AppKit's
+/// `createsNewApplicationInstance = true`.
+pub fn launch_with_urls_by_bundle(
+    bundle_id: &str,
+    urls: &[String],
+    additional_args: &[String],
+    env: &std::collections::HashMap<String, String>,
+    creates_new_instance: bool,
+) -> anyhow::Result<i32> {
+    let app_url = resolve_bundle_id_to_path(bundle_id).ok_or_else(|| {
+        anyhow::anyhow!("Could not locate app with bundle_id '{bundle_id}'")
+    })?;
+    let cfg = nsworkspace::OpenConfig {
+        arguments: additional_args.to_vec(),
+        environment: env.clone(),
+        creates_new_instance,
+        apple_event_bundle_id: Some(bundle_id.to_owned()),
+    };
+    let running = if urls.is_empty() {
+        nsworkspace::open_application(&app_url, &cfg)
+    } else {
+        nsworkspace::open_urls_with_application(urls, &app_url, &cfg)
     }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let apps = list_running_apps();
-    for app in &apps {
-        if app.name.eq_ignore_ascii_case(name) {
-            return Ok(app.pid);
+    .map_err(|e| anyhow::anyhow!("Failed to launch {bundle_id}: {e}"))?;
+    let pid: i32 = unsafe { running.processIdentifier() };
+    Ok(pid)
+}
+
+/// Launch by name with URL handoff. Same contract as
+/// `launch_with_urls_by_bundle` but resolves the bundle URL by display
+/// name first.
+pub fn launch_with_urls_by_name(
+    name: &str,
+    urls: &[String],
+    additional_args: &[String],
+    env: &std::collections::HashMap<String, String>,
+    creates_new_instance: bool,
+) -> anyhow::Result<i32> {
+    let app_url = locate_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
+    let bid = bundle_id_for_app_path(&app_url);
+    let cfg = nsworkspace::OpenConfig {
+        arguments: additional_args.to_vec(),
+        environment: env.clone(),
+        creates_new_instance,
+        apple_event_bundle_id: bid,
+    };
+    let running = if urls.is_empty() {
+        nsworkspace::open_application(&app_url, &cfg)
+    } else {
+        nsworkspace::open_urls_with_application(urls, &app_url, &cfg)
+    }
+    .map_err(|e| anyhow::anyhow!("Failed to launch '{name}': {e}"))?;
+    let pid: i32 = unsafe { running.processIdentifier() };
+    Ok(pid)
+}
+
+// ── Bundle resolution ────────────────────────────────────────────────────────
+
+/// Resolve a bundle id to an installed `.app` path via NSWorkspace.
+/// Returns the absolute filesystem path (no `file://` prefix); callers
+/// pass it back through `file_or_app_url` inside `nsworkspace::*`.
+fn resolve_bundle_id_to_path(bundle_id: &str) -> Option<String> {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::NSString;
+    unsafe {
+        let ws = NSWorkspace::sharedWorkspace();
+        let ns = NSString::from_str(bundle_id);
+        let url = ws.URLForApplicationWithBundleIdentifier(&ns)?;
+        // -[NSURL path] gives us the absolute filesystem path; convert
+        // to UTF-8.
+        let path = url.path()?;
+        Some(path.to_string())
+    }
+}
+
+/// Mirror of Swift's `AppLauncher.locate(name:)`.
+///
+/// 1. filesystem lookup by bundle filename in the canonical roots
+///    (system first so /Applications wins over ~/Applications);
+/// 2. LaunchServices bundle-id lookup, in case the caller passed a
+///    bundle identifier in the `name` slot;
+/// 3. (skipped) full localized-name scan — not yet needed by current
+///    integration tests; can be added if we hit a non-English-name app
+///    in the wild.
+fn locate_by_name(name: &str) -> Option<String> {
+    let app_name = if name.ends_with(".app") {
+        name.to_owned()
+    } else {
+        format!("{name}.app")
+    };
+    let home = std::env::var("HOME").unwrap_or_default();
+    let roots = [
+        "/Applications".to_owned(),
+        "/System/Applications".to_owned(),
+        "/System/Applications/Utilities".to_owned(),
+        "/Applications/Utilities".to_owned(),
+        format!("{home}/Applications"),
+        format!("{home}/Applications/Chrome Apps.localized"),
+    ];
+    for root in &roots {
+        let path = format!("{root}/{app_name}");
+        if std::path::Path::new(&path).is_dir() {
+            return Some(path);
         }
     }
-    anyhow::bail!("Launched '{name}' but could not find its pid")
+    // Fallback: maybe caller passed a bundle id as `name`.
+    if let Some(p) = resolve_bundle_id_to_path(name) {
+        return Some(p);
+    }
+    None
+}
+
+/// Read `CFBundleIdentifier` from an `.app` bundle's `Info.plist`.
+/// Falls back to shelling out to `plutil` (already used elsewhere in
+/// this file) to avoid pulling in a plist crate just for this.
+fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
+    let plist = format!("{app_path}/Contents/Info.plist");
+    let out = Command::new("plutil")
+        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-", &plist])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let bid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if bid.is_empty() {
+        None
+    } else {
+        Some(bid)
+    }
 }
 
 /// Return all apps: running apps merged with installed-but-not-running apps.

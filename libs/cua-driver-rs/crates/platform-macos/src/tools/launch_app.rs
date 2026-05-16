@@ -122,17 +122,37 @@ impl Tool for LaunchAppTool {
         // bundle_id wins when both are supplied.
         let launch_result = tokio::task::spawn_blocking(move || {
             let pid = if let Some(ref bid) = bundle_id {
-                if urls.is_empty() && additional_arguments.is_empty() && env.is_empty() && !creates_new_instance {
+                if urls.is_empty()
+                    && additional_arguments.is_empty()
+                    && env.is_empty()
+                    && !creates_new_instance
+                {
                     crate::apps::launch_app(bid)?
                 } else {
-                    launch_with_urls_by_bundle(bid, &urls, &additional_arguments, &env, creates_new_instance)?
+                    crate::apps::launch_with_urls_by_bundle(
+                        bid,
+                        &urls,
+                        &additional_arguments,
+                        &env,
+                        creates_new_instance,
+                    )?
                 }
             } else {
                 let n = name.as_deref().unwrap();
-                if urls.is_empty() && additional_arguments.is_empty() && env.is_empty() && !creates_new_instance {
+                if urls.is_empty()
+                    && additional_arguments.is_empty()
+                    && env.is_empty()
+                    && !creates_new_instance
+                {
                     crate::apps::launch_app_by_name(n)?
                 } else {
-                    launch_with_urls_by_name(n, &urls, &additional_arguments, &env, creates_new_instance)?
+                    crate::apps::launch_with_urls_by_name(
+                        n,
+                        &urls,
+                        &additional_arguments,
+                        &env,
+                        creates_new_instance,
+                    )?
                 }
             };
 
@@ -196,64 +216,6 @@ impl Tool for LaunchAppTool {
 }
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
-
-/// Launch a bundle with optional URLs, extra args, env vars, and new-instance flag.
-fn launch_with_urls_by_bundle(
-    bundle_id: &str,
-    urls: &[String],
-    additional_args: &[String],
-    env: &std::collections::HashMap<String, String>,
-    new_instance: bool,
-) -> anyhow::Result<i32> {
-    let mut cmd = std::process::Command::new("open");
-    if new_instance { cmd.arg("-n"); }
-    cmd.args(["-g", "-b", bundle_id]);
-    for url in urls { cmd.arg(url); }
-    if !additional_args.is_empty() {
-        cmd.arg("--args");
-        for arg in additional_args { cmd.arg(arg); }
-    }
-    for (k, v) in env { cmd.env(k, v); }
-    let status = cmd.status()?;
-    if !status.success() {
-        anyhow::bail!("Failed to launch {bundle_id}");
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let apps = crate::apps::list_running_apps();
-    apps.into_iter()
-        .find(|a| a.bundle_id.as_deref() == Some(bundle_id))
-        .map(|a| a.pid)
-        .ok_or_else(|| anyhow::anyhow!("Launched {bundle_id} but could not find its pid"))
-}
-
-/// Launch by name with optional URLs, extra args, env vars, and new-instance flag.
-fn launch_with_urls_by_name(
-    name: &str,
-    urls: &[String],
-    additional_args: &[String],
-    env: &std::collections::HashMap<String, String>,
-    new_instance: bool,
-) -> anyhow::Result<i32> {
-    let mut cmd = std::process::Command::new("open");
-    if new_instance { cmd.arg("-n"); }
-    cmd.args(["-g", "-a", name]);
-    for url in urls { cmd.arg(url); }
-    if !additional_args.is_empty() {
-        cmd.arg("--args");
-        for arg in additional_args { cmd.arg(arg); }
-    }
-    for (k, v) in env { cmd.env(k, v); }
-    let status = cmd.status()?;
-    if !status.success() {
-        anyhow::bail!("Failed to launch '{name}'");
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let apps = crate::apps::list_running_apps();
-    apps.into_iter()
-        .find(|a| a.name.eq_ignore_ascii_case(name))
-        .map(|a| a.pid)
-        .ok_or_else(|| anyhow::anyhow!("Launched '{name}' but could not find its pid"))
-}
 
 /// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).

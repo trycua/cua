@@ -26,7 +26,10 @@ fn def() -> &'static ToolDef {
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
-             `get_window_state(pid, window_id)`."
+             `get_window_state(pid, window_id)`. When the focus-steal belt-and-braces \
+             demotion check ran (target pid ≠ prior frontmost), the response also includes \
+             `self_activation_suppressed: bool` — true if focus stayed with the prior \
+             frontmost, false if the launched app held focus despite the re-demote attempt."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -201,7 +204,16 @@ impl Tool for LaunchAppTool {
         // Upgrade to targeted suppression now that we know the real pid.
         // Keep the wildcard lease alive until immediately AFTER we've
         // armed the targeted one — that's the PR #1521 overlap window.
-        let mut self_activation_suppressed = false;
+        //
+        // `self_activation_suppressed` is the outcome of the belt-and-
+        // braces demotion check: `None` when the check didn't run
+        // (no prior frontmost / launch failed / pid == prior), `Some(true)`
+        // when the target was NOT frontmost after the suppression window
+        // (or we successfully re-demoted it), `Some(false)` when the
+        // re-demote failed and the target is still stealing focus.
+        // Surfaced in the structured response so callers can observe
+        // whether focus-steal prevention actually held.
+        let mut self_activation_suppressed: Option<bool> = None;
         if let Ok(Ok((pid, _, _))) = &launch_result {
             if let Some(prior) = prior_frontmost {
                 if *pid != prior {
@@ -225,16 +237,26 @@ impl Tool for LaunchAppTool {
                     // explicitly by re-activating the prior frontmost.
                     let frontmost_now = crate::apps::frontmost_pid();
                     if frontmost_now == Some(*pid) {
-                        crate::apps::activate_pid(prior);
-                        // Re-check; the structured warning depends on
+                        let activated = crate::apps::activate_pid(prior);
+                        // Re-check; the structured response depends on
                         // whether the demote actually took.
-                        if crate::apps::frontmost_pid() == Some(*pid) {
-                            self_activation_suppressed = false;
+                        let still_frontmost =
+                            crate::apps::frontmost_pid() == Some(*pid);
+                        if still_frontmost {
+                            tracing::warn!(
+                                target: "platform_macos::tools::launch_app",
+                                launched_pid = *pid,
+                                prior_pid = prior,
+                                activate_pid_returned = activated,
+                                "belt-and-braces demotion failed: launched app \
+                                 is still frontmost after re-activating prior"
+                            );
+                            self_activation_suppressed = Some(false);
                         } else {
-                            self_activation_suppressed = true;
+                            self_activation_suppressed = Some(true);
                         }
                     } else {
-                        self_activation_suppressed = true;
+                        self_activation_suppressed = Some(true);
                     }
                 } else {
                     // pid == prior frontmost (re-launch of an already-
@@ -246,7 +268,6 @@ impl Tool for LaunchAppTool {
             // Launch failed; just drop the lease.
             drop(wildcard_lease);
         }
-        let _ = self_activation_suppressed;
 
         match launch_result {
             Ok(Ok((pid, app_info, windows))) => {
@@ -282,12 +303,22 @@ impl Tool for LaunchAppTool {
                     "is_on_screen": w.is_on_screen,
                 })).collect();
 
-                ToolResult::text(summary).with_structured(serde_json::json!({
+                let mut structured = serde_json::json!({
                     "pid": pid,
                     "bundle_id": bid,
                     "name": app_name,
-                    "windows": windows_json
-                }))
+                    "windows": windows_json,
+                });
+                // Only emit `self_activation_suppressed` when the
+                // belt-and-braces demotion check actually ran. `None`
+                // means the launch didn't enter the focus-steal path
+                // (no prior frontmost, or pid == prior) — surfacing
+                // a stale `false` would be misleading.
+                if let Some(suppressed) = self_activation_suppressed {
+                    structured["self_activation_suppressed"] =
+                        serde_json::Value::Bool(suppressed);
+                }
+                ToolResult::text(summary).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("Launch failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),

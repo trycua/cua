@@ -206,20 +206,21 @@ fn build_configuration(cfg: &OpenConfig) -> Retained<NSWorkspaceOpenConfiguratio
         }
 
         if !cfg.environment.is_empty() {
-            // Merge the launching process's env with caller overrides — same
-            // contract as Swift `AppLauncher.launch`.
-            let mut merged: Vec<(String, String)> = std::env::vars().collect();
-            for (k, v) in &cfg.environment {
-                if let Some(slot) = merged.iter_mut().find(|(mk, _)| mk == k) {
-                    slot.1 = v.clone();
-                } else {
-                    merged.push((k.clone(), v.clone()));
-                }
-            }
+            // Pass ONLY the caller's explicit overrides — never merge in
+            // `std::env::vars()`. The launching process inherits its
+            // environment from the user's shell (or systemd/launchd
+            // service), which carries secrets, tokens, API keys, SSH
+            // agent sockets, etc. Forwarding any of that to every
+            // launched app is a real security leak.
+            //
+            // If `cfg.environment` is empty we don't set the field at
+            // all (above guard) — LaunchServices then applies the
+            // default app environment, same as a Finder double-click.
+            let entries: Vec<(&String, &String)> = cfg.environment.iter().collect();
             let keys: Vec<Retained<NSString>> =
-                merged.iter().map(|(k, _)| NSString::from_str(k)).collect();
+                entries.iter().map(|(k, _)| NSString::from_str(k)).collect();
             let vals: Vec<Retained<NSString>> =
-                merged.iter().map(|(_, v)| NSString::from_str(v)).collect();
+                entries.iter().map(|(_, v)| NSString::from_str(v)).collect();
             let key_refs: Vec<&NSString> = keys.iter().map(|s| s.as_ref()).collect();
             let dict = NSDictionary::from_vec(&key_refs, vals);
             config.setEnvironment(&dict);

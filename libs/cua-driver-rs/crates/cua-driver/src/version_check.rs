@@ -113,6 +113,11 @@ pub fn maybe_announce_update() {
 /// Idempotent. Failures (no HOME, IO error) are logged via
 /// `tracing::debug!` and silently dropped — dismissal is a UX nicety, not
 /// a correctness boundary.
+///
+/// Exposed publicly so a future interactive prompt (TUI, GUI helper) can
+/// wire it in without re-implementing the persistence layer. No call site
+/// in the current binary — the banner today is informational only.
+#[allow(dead_code)]
 pub fn dismiss_version(version: &str) {
     let mut cache = read_cache().unwrap_or_default();
     if !cache.dismissed_versions.iter().any(|v| v == version) {

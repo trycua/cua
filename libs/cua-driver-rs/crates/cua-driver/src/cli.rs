@@ -287,6 +287,20 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
 
+    // Forward `--socket <path>` to the relaunched daemon when the caller
+    // passed a non-default socket via `cua-driver mcp --socket /path`.
+    // Without this the daemon would listen on `default_socket_path()`,
+    // and the proxy would block forever waiting for a daemon on the
+    // user-supplied path that never comes up. Only added when the path
+    // actually differs from the default, so the common case keeps the
+    // shorter `open` argv (and matches Swift's invocation byte-for-byte).
+    let pass_socket = socket_path != crate::serve::default_socket_path();
+    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriverRs", "--args", "serve"];
+    if pass_socket {
+        open_args.push("--socket");
+        open_args.push(socket_path);
+    }
+
     let status = Cmd::new("/usr/bin/open")
         // `-n` forces a new instance: CuaDriverRs.app might already be
         // running from a previous MCP session, and without `-n`, `open
@@ -294,7 +308,7 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
         // daemon up. `-g` keeps the new instance backgrounded —
         // LSUIElement=true in Info.plist already does this but the
         // flag makes it explicit and matches Swift's invocation.
-        .args(["-n", "-g", "-a", "CuaDriverRs", "--args", "serve"])
+        .args(&open_args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -307,9 +321,10 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
 
     if !status.success() {
         anyhow::bail!(
-            "`open -n -g -a CuaDriverRs --args serve` exited {:?}. \
+            "`open -n -g -a CuaDriverRs --args serve{}` exited {:?}. \
              Check that `/Applications/CuaDriverRs.app` is installed, or \
              pass --no-daemon-relaunch to bypass.",
+            if pass_socket { format!(" --socket {socket_path}") } else { String::new() },
             status.code()
         );
     }
@@ -352,9 +367,14 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
                  and retry."
             );
         }
+        let socket_suffix = if socket_path != crate::serve::default_socket_path() {
+            format!(" --socket {socket_path}")
+        } else {
+            String::new()
+        };
         eprintln!(
             "cua-driver-rs: mcp launched without CuaDriverRs.app's TCC grants; \
-             auto-launching the daemon via `open -n -g -a CuaDriverRs --args serve` \
+             auto-launching the daemon via `open -n -g -a CuaDriverRs --args serve{socket_suffix}` \
              and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
         );
         launch_daemon_and_wait(&socket_path, 10)?;

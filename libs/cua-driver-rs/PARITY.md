@@ -1660,3 +1660,118 @@ side-effect without per-binary special-casing.
   uses `Task.sleep`; Rust's blocking `std::thread::sleep` is cheap to
   offload via `tokio::task::spawn_blocking` and keeps the runtime
   responsive to other in-flight work.
+
+---
+
+## Telemetry (PostHog)
+
+- Swift: `libs/cua-driver/Sources/CuaDriverCore/Telemetry/TelemetryClient.swift`
+- Rust:  `crates/cua-driver/src/telemetry.rs`
+- Status: VERIFIED (events emit on entry-point dispatch + install)
+- Test:  `crates/cua-driver/src/telemetry.rs` `#[cfg(test)] mod tests`
+         (8 unit tests: env parsing, opt-out default, CI detection,
+         payload shape, payload-key collision, install-id idempotent
+         persistence, ISO-8601 format, arch mapping)
+
+### Endpoint + event names (identical to Swift)
+
+- POST `https://eu.i.posthog.com/capture/`
+- API key: `phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14` (public —
+  ingest-only, can't read events)
+- Events: `cua_driver_install`, `cua_driver_mcp`, `cua_driver_serve`,
+  `cua_driver_stop`, `cua_driver_status`, `cua_driver_list_tools`,
+  `cua_driver_describe`, `cua_driver_recording`, `cua_driver_config`,
+  `cua_driver_mcp_config`, `cua_driver_dump_docs`, `cua_driver_update`,
+  `cua_driver_doctor`, `cua_driver_diagnose`,
+  `cua_driver_api_<tool>` (per-tool `call` invocations).
+
+Keeping the endpoint + names identical means Rust + Swift events land
+in the same PostHog project; `$lib = "cua-driver-rs"` vs
+`"cua-driver-swift"` is the only signal to split them.
+
+### Payload shape
+
+Each event sends:
+
+| Key | Value | Source |
+|-----|-------|--------|
+| `cua_driver_version` | CARGO_PKG_VERSION (e.g. `"0.1.3"`) | build-time |
+| `os` | `"macos"` / `"linux"` / `"windows"` | `std::env::consts::OS` |
+| `os_version` | OS-reported version string | `sw_vers -productVersion` / `/etc/os-release` / `cmd /c ver` |
+| `arch` | `"arm64"` / `"x86_64"` (aarch64 → arm64) | `std::env::consts::ARCH` |
+| `is_ci` | bool | env-var probe (see below) |
+| `$lib` | `"cua-driver-rs"` | hard-coded |
+| `$lib_version` | CARGO_PKG_VERSION | build-time |
+
+CI-environment detection probes the same vars Swift does: `CI`,
+`CONTINUOUS_INTEGRATION`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`,
+`CIRCLECI`.
+
+### Privacy posture (what we DO NOT send)
+
+Verified by unit test `build_payload_contains_required_keys` which
+asserts none of `$user`, `username`, `home_dir`, `cwd`, `argv` ever
+appear in a serialized payload:
+
+- No usernames or `$USER` / `$HOME`
+- No file paths (cwd, executable path, tool args, screenshot paths)
+- No tool arguments — `call <tool>` reports only the tool name as
+  `cua_driver_api_<tool>`
+- No user-typed content (text, key sequences, URLs)
+- No window titles, application names, or coordinates
+
+### Opt-out
+
+Set `CUA_DRIVER_RS_TELEMETRY_ENABLED=false` (or `0`, `no`, `off`) to
+disable ALL telemetry from the binary. Unset defaults to enabled
+(matches Swift's persisted-flag default of `true`).
+
+The **only** path that ignores the opt-out is `capture_install()`,
+which fires the one-shot `cua_driver_install` ping from `install.sh`'s
+post-install hook. Rationale: an opt-out user is still a counted
+install in the adoption metric; every subsequent event from the binary
+respects the flag normally. Guarded by `~/.cua-driver-rs/.installation_recorded`
+so re-running `install.sh` doesn't re-fire it.
+
+### Independence from Swift install
+
+The Rust port is deliberately partitioned from the Swift port at the
+filesystem + env-var layer:
+
+| Layer | Swift | Rust |
+|-------|-------|------|
+| Install dir | `~/.cua-driver/` | `~/.cua-driver-rs/` |
+| Install UUID | `~/.cua-driver/.telemetry_id` | `~/.cua-driver-rs/.telemetry_id` |
+| Install marker | `~/.cua-driver/.installation_recorded` | `~/.cua-driver-rs/.installation_recorded` |
+| Opt-out env var | `CUA_DRIVER_TELEMETRY_ENABLED` | `CUA_DRIVER_RS_TELEMETRY_ENABLED` |
+
+This means:
+- A machine with both installed shows up as two distinct adoption events
+  (we can count Rust adoption separately from Swift).
+- A user who opts out of one port stays opted-in for the other unless
+  they set both env vars.
+- The Rust port can ship telemetry changes without invalidating Swift's
+  install UUID (no shared on-disk state).
+
+### HTTP client
+
+`ureq` v3 with default features (rustls + gzip + json). Single POST,
+3-second timeout, fire-and-forget. Sent from `tokio::task::spawn_blocking`
+when a runtime is live (MCP server, serve daemon), else from a
+short-lived OS thread (synchronous CLI subcommands like `list-tools`).
+
+Network errors, timeouts, and 4xx/5xx responses are logged via
+`tracing::debug!(target: "cua_driver::telemetry", …)` only — never
+surfaced to stdout/stderr unless `CUA_DRIVER_RS_TELEMETRY_DEBUG=true`.
+
+### Intentional divergences from Swift
+
+- **No persisted config flag.** Swift falls back to a YAML
+  `telemetryEnabled` setting via `ConfigStore.loadSync()`. Rust honors
+  only the env var. The Rust port has no `ConfigStore` analogue yet, and
+  YAGNI suggests waiting until someone files a request.
+- **No `GUI_LAUNCH` emission.** Swift fires `cua_driver_gui_launch` when
+  the binary is launched bare (Finder / Dock double-click). Rust has no
+  GUI surface yet, so the constant is reserved but unused.
+- **`is_ci` uses env-var probing only.** Same probe list as Swift; no
+  extra Rust-specific signals.

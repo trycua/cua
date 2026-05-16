@@ -3,6 +3,10 @@ use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
+use crate::apps;
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
+
 use super::ToolState;
 
 pub struct ScrollTool {
@@ -94,18 +98,39 @@ impl Tool for ScrollTool {
         };
         let key = key.to_owned();
 
-        let result = tokio::task::spawn_blocking(move || {
-            for _ in 0..amount {
-                if let Err(e) = crate::input::keyboard::press_key(pid, &key, &[]) {
-                    return Err(e);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Ok(())
-        }).await;
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // Scroll keystrokes (PageDown / arrow) into search-box autocomplete
+        // can spawn floating helper windows; rare but real. Wrap for parity
+        // with the other action tools.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot();
+
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "scroll.CGEvent",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    for _ in 0..amount {
+                        if let Err(e) = crate::input::keyboard::press_key(pid, &key, &[]) {
+                            return Err(e);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    Ok(())
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Scrolled {direction} by {by} × {amount}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Scrolled {direction} by {by} × {amount}.{}",
+                changes.result_suffix()
+            )),
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

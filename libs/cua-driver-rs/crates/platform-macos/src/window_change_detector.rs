@@ -210,6 +210,18 @@ impl Snapshot {
         self.detect_with(DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL)
     }
 
+    /// Async wrapper around `detect()` — runs the synchronous poll
+    /// loop on a `spawn_blocking` thread so it doesn't stall the
+    /// tokio runtime. Most action-tool call sites should prefer this
+    /// over the blocking `detect()`.
+    pub async fn detect_async(self) -> Changes {
+        // Move the Snapshot (and its embedded lease) onto the blocking
+        // thread; the lease's Drop runs there when detect_with returns.
+        tokio::task::spawn_blocking(move || self.detect())
+            .await
+            .unwrap_or_else(|_| Changes::no_change())
+    }
+
     /// Same as `detect()` but with configurable timing — exposed for
     /// tests / callers that want a tighter or looser poll window.
     pub fn detect_with(self, timeout: Duration, poll_interval: Duration) -> Changes {

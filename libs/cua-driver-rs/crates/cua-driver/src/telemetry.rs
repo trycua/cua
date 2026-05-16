@@ -80,6 +80,10 @@ pub mod event {
     pub const DESCRIBE: &str = "cua_driver_describe";
     pub const RECORDING: &str = "cua_driver_recording";
     pub const CONFIG: &str = "cua_driver_config";
+    /// Bare-launch (no args) event — Swift uses it from
+    /// `runFirstLaunchGUI`. Rust has no GUI surface yet but ships the
+    /// constant for future parity.
+    #[allow(dead_code)]
     pub const GUI_LAUNCH: &str = "cua_driver_gui_launch";
 
     /// Prefix for per-MCP-tool events. `API_PREFIX + tool_name` produces

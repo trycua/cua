@@ -28,7 +28,6 @@ mod bundle;
 mod cli;
 mod proxy;
 mod serve;
-#[allow(dead_code)] // public API used by commit 2 (call-site wiring).
 mod telemetry;
 
 use std::sync::Arc;
@@ -44,6 +43,21 @@ fn init_logging() {
         .init();
 }
 
+/// Fire the per-entry-point telemetry event (e.g. `cua_driver_mcp`,
+/// `cua_driver_api_click`). Respects the opt-out env var — no-op when
+/// telemetry is disabled. Always returns immediately: the actual POST
+/// happens on a background thread or tokio task.
+///
+/// Mirrors Swift's `TelemetryClient.shared.record(event:)` call at the
+/// top of `CuaDriverCommand.main()`. The install ping is *not* emitted
+/// here — that's the dedicated `telemetry install-event` subcommand
+/// fired exactly once by the post-install script.
+fn emit_entry_telemetry(command: &cli::Command) {
+    if let Some(event_name) = cli::telemetry_entry_event(command) {
+        telemetry::capture(&event_name, None);
+    }
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -53,7 +67,18 @@ fn main() {
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
     // Handled before AppKit init so `list-tools` / `describe` / `call` exit
     // cleanly without starting the overlay or NSApplication.
-    match cli::parse_command() {
+    let command = cli::parse_command();
+    emit_entry_telemetry(&command);
+    match command {
+        cli::Command::TelemetryInstallEvent => {
+            // Fire-and-forget install ping. Block briefly so the spawned
+            // thread has time to send before the process exits — the
+            // installer doesn't want a 3s tail, but a sub-second wait is
+            // acceptable for the one-shot.
+            telemetry::capture_install();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            return;
+        }
         cli::Command::ListTools => {
             let reg = Arc::new(platform_macos::register_tools());
             cli::run_list_tools(&reg);
@@ -267,7 +292,16 @@ fn main() -> anyhow::Result<()> {
     // These commands create their own tokio runtimes internally, so they must
     // run on a plain OS thread — not inside a #[tokio::main] context which
     // would cause nested block_on panics.
-    match cli::parse_command() {
+    let command = cli::parse_command();
+    emit_entry_telemetry(&command);
+    match command {
+        cli::Command::TelemetryInstallEvent => {
+            // Fire-and-forget install ping. Block briefly so the spawned
+            // thread has time to send before the process exits.
+            telemetry::capture_install();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            return Ok(());
+        }
         cli::Command::ListTools => {
             let reg = Arc::new(build_registry_no_cursor());
             cli::run_list_tools(&reg);

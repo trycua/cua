@@ -146,7 +146,25 @@ fn main() {
             cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
             return;
         }
-        cli::Command::Mcp => {} // fall through to MCP server startup below
+        cli::Command::Mcp { no_daemon_relaunch, socket } => {
+            // TCC sidestep: if we're a shell-spawned bare binary that
+            // resolves into /Applications/CuaDriverRs.app, run the
+            // proxy path instead of the in-process MCP server. The
+            // proxy ensures a daemon is up under the bundle's TCC
+            // attribution and forwards stdio MCP through its socket.
+            // Issue #1525 / mirror of Swift PR #1479.
+            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                    eprintln!("cua-driver-rs: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            // Fall through to the in-process MCP server below. The
+            // `socket` flag is daemon-proxy-only; it has no meaning
+            // in the in-process path, so we drop it on the floor.
+            let _ = socket;
+        }
     }
 
     let cursor_cfg = cursor_overlay::CursorConfig::from_args();
@@ -307,7 +325,12 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Mcp => {} // fall through to MCP server startup below
+        cli::Command::Mcp { no_daemon_relaunch, socket } => {
+            // Non-macOS: TCC doesn't exist, no daemon proxy path. The
+            // flags parse cleanly so cross-platform MCP config
+            // snippets work, but we ignore them and run in-process.
+            let _ = (no_daemon_relaunch, socket);
+        }
     }
 
     // MCP server mode: this needs a full async tokio runtime.

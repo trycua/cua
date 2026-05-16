@@ -1,8 +1,3 @@
-// The proxy entry point is wired into `MCPCommand` in the next commit.
-// Silence the dead-code warning that fires until then so `cargo
-// build --release` stays warning-clean.
-#![allow(dead_code)]
-
 //! Stdio MCP proxy that forwards `tools/list` and `tools/call` through
 //! the running `cua-driver-rs serve` daemon over its Unix socket.
 //!

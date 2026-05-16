@@ -1,9 +1,3 @@
-// Functions in this module are wired up by `MCPCommand` in a follow-up
-// commit (the daemon-proxy / auto-relaunch path). Suppress the
-// dead-code warning that fires until then so `cargo build --release`
-// stays warning-clean.
-#![allow(dead_code)]
-
 //! macOS bundle-context detection for the TCC auto-relaunch path.
 //!
 //! Mirrors `libs/cua-driver/Sources/CuaDriverCLI/BundleHelpers.swift`'s

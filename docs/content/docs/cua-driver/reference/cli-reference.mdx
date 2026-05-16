@@ -142,6 +142,13 @@ Subsequent `cua-driver call/list-tools/describe` invocations auto-detect
 the socket and forward their requests, so the AppStateEngine's per-pid
 element_index cache survives across CLI calls.
 
+On macOS, `serve` runs a **first-launch permissions gate** before binding
+the socket. When TCC grants for Accessibility or Screen Recording are
+missing, it prints a banner listing exactly what is missing, auto-opens
+the matching `System Settings → Privacy & Security` pane(s), and polls
+every second until the user grants both. When grants are already active
+the gate is a transparent no-op.
+
 **Options:**
 
 | Name | Type | Default | Description |
@@ -153,6 +160,7 @@ element_index cache survives across CLI calls.
 | Name | Description |
 | ---- | ----------- |
 | `--no-relaunch` | Stay in the current process instead of re-execing via `open -n -g -a CuaDriver`. |
+| `--no-permissions-gate` | Skip the macOS TCC permissions gate at startup. Use for CI / headless runners where blocking on user input would deadlock the process. Also toggleable via `CUA_DRIVER_RS_PERMISSIONS_GATE=0`. |
 
 ### cua-driver stop
 

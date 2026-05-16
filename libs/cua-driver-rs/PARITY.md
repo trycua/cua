@@ -242,6 +242,66 @@ status).
 
 ---
 
+## Startup flow: permissions gate (`serve`)
+- Swift: `libs/cua-driver/Sources/CuaDriverCore/Permissions/PermissionsGate.swift`
+        (SwiftUI panel + AppKit window + 1 Hz polling)
+- Rust:
+  - macos=`crates/platform-macos/src/permissions/gate.rs`
+    (CLI banner + auto-open System Settings + 1 Hz polling)
+  - windows / linux: N/A — TCC is a macOS concept; the `--no-permissions-gate`
+    flag is accepted and silently ignored on those platforms for CLI uniformity.
+- Status:
+  - macos: PORTED with intentional UX divergence (CLI, not SwiftUI)
+  - windows / linux: N/A
+
+### Intentional UX divergence
+
+Swift surfaces a branded SwiftUI window on first launch.  The Rust port
+ships a terminal-driven banner instead.  Rationale:
+
+1. cua-driver-rs already drives an AppKit run loop on the main thread
+   for the cursor overlay; bolting on a second window invites
+   main-thread deadlocks.
+2. The Rust binary's primary deployment shape is the daemon under
+   `cua-driver serve` from a shell (Claude Code, Cursor, Codex), which
+   already has a terminal attached.
+3. Headless / CI use cases need an opt-out; a CLI flow with
+   `--no-permissions-gate` + `CUA_DRIVER_RS_PERMISSIONS_GATE=0` is the
+   straight-line approach.  Replicating Swift's window only to suppress
+   it under headless would be more code with no UX upside.
+
+The CLI gate still preserves the substantive Swift behaviours:
+
+- Lists exactly which TCC grants are missing (Accessibility / Screen
+  Recording), with the same rationale strings the SwiftUI panel uses.
+- Opens both `x-apple.systempreferences:` URLs at once so the user can
+  grant both in a single Settings visit.  (Swift's "chain to next pane
+  when one flips green" trick is unnecessary when both panes are
+  pre-opened.)
+- Polls at 1 Hz, identical cadence to the Swift `Timer`.
+- Auto-continues startup the moment all required grants are green.
+
+### Opt-out signals
+
+| Signal                                  | Effect      |
+| --------------------------------------- | ----------- |
+| `--no-permissions-gate` flag            | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=0`      | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=false`  | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=no`     | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=off`    | gate skipped |
+| any other env value                     | gate active  |
+
+Default deadline is 10 minutes; on timeout the gate logs an error and
+`serve` continues to start, mirroring the Swift "user closed the
+panel" path (individual tool calls then fail with the underlying TCC
+error).
+
+A native `NSAlert` via objc2 is tracked as a follow-up if the
+terminal-only flow proves insufficient; the CLI is the MVP.
+
+---
+
 ## MCP tool: `list_apps`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListAppsTool.swift:6-71`
         + `libs/cua-driver/Sources/CuaDriverCore/Apps/AppInfo.swift`

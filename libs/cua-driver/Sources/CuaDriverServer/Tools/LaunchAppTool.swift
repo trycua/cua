@@ -196,19 +196,24 @@ public enum LaunchAppTool {
                     NSWorkspace.shared.frontmostApplication
                 }
 
-                // Arm the preventer speculatively with targetPid=0; we'll
-                // replace it below once we know the real pid. The preventer
-                // matches by pid on each activation notification, so a
-                // placeholder won't fire false positives.
-                var handle: SuppressionHandle?
-                if let priorFrontmost {
-                    handle =
+                // Arm the preventer speculatively with a placeholder
+                // (targetPid=0 wildcard) BEFORE launch returns, so any
+                // activation the target emits while `AppLauncher.launch`
+                // is still running gets caught. Lease form: if `launch`
+                // throws, ARC fires `deinit` on the lease and the entry
+                // is released. We never have to thread a manual cleanup
+                // through the catch path.
+                let placeholderLease: SuppressionLease? =
+                    if let priorFrontmost {
                         await AppStateRegistry.systemFocusStealPreventer
-                        .beginSuppression(
-                            targetPid: 0,  // placeholder; replaced after launch
-                            restoreTo: priorFrontmost
-                        )
-                }
+                            .leaseSuppression(
+                                targetPid: 0,  // placeholder; replaced after launch
+                                restoreTo: priorFrontmost,
+                                origin: "LaunchAppTool.placeholder"
+                            )
+                    } else {
+                        nil
+                    }
 
                 var additionalArguments: [String] = rawExtraArgs.compactMap { $0.stringValue }
                 if let port = electronDebuggingPort {
@@ -234,6 +239,12 @@ public enum LaunchAppTool {
                     createsNewApplicationInstance: createsNewInstance
                 )
 
+                // Hand the placeholder lease back to the dispatcher now that
+                // launch returned. We're about to swap to a pid-specific
+                // entry — the placeholder has done its job catching any
+                // intra-`launch` activation.
+                await placeholderLease?.release()
+
                 // Replace the placeholder pid with the real one so any
                 // activation notification the target emits from now on is
                 // caught. Observed activations that fired DURING the launch
@@ -246,21 +257,22 @@ public enum LaunchAppTool {
                 let shouldSuppress =
                     priorFrontmost != nil
                     && priorFrontmost?.processIdentifier != info.pid
-                if shouldSuppress, let handle, let priorFrontmost {
-                    await AppStateRegistry.systemFocusStealPreventer
-                        .endSuppression(handle)
-                    let reArmedHandle =
-                        await AppStateRegistry.systemFocusStealPreventer
-                        .beginSuppression(
-                            targetPid: info.pid,
-                            restoreTo: priorFrontmost
-                        )
+                if shouldSuppress, let priorFrontmost {
+                    // Closure-scoped suppression around the 500ms wait —
+                    // the entry releases on every exit path (return,
+                    // throw, cancellation). No manual end pairing.
+                    //
                     // 500ms is enough for applicationDidFinishLaunching
                     // plus any reflex NSApp.activate to fire and get
                     // suppressed.
-                    try? await Task.sleep(nanoseconds: 500_000_000)
                     await AppStateRegistry.systemFocusStealPreventer
-                        .endSuppression(reArmedHandle)
+                        .withSuppression(
+                            targetPid: info.pid,
+                            restoreTo: priorFrontmost,
+                            origin: "LaunchAppTool.postLaunch"
+                        ) {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                        }
 
                     // Belt-and-braces: if the target is STILL frontmost
                     // after the suppression window (intra-`open` synchronous
@@ -275,9 +287,6 @@ public enum LaunchAppTool {
                             _ = priorFrontmost.activate(options: [])
                         }
                     }
-                } else if let handle {
-                    await AppStateRegistry.systemFocusStealPreventer
-                        .endSuppression(handle)
                 }
 
                 var summary = "✅ Launched \(info.name) (pid \(info.pid)) in background."

@@ -30,17 +30,32 @@ public enum WindowChangeDetector {
     }
 
     /// State captured before the action.
+    ///
+    /// Holds an ARC-managed ``SuppressionLease`` rather than a raw handle.
+    /// **This is the leak-proofing for the snapshot/detect pattern**: if a
+    /// caller drops the `Snapshot` without ever calling
+    /// ``WindowChangeDetector/detectChanges(snapshot:timeout:pollInterval:)``
+    /// (e.g. an early-return error path between snapshot and detect), the
+    /// lease's `deinit` releases the underlying entry. The cleanup happens
+    /// by the language, not by call-site discipline.
+    ///
+    /// `Snapshot` is a struct, so a copy retains the lease reference. The
+    /// final copy going out of scope is what fires deinit; explicit
+    /// `detectChanges` releases it earlier and turns deinit into a no-op.
     public struct Snapshot: Sendable {
         /// CGWindowIDs of all visible layer-0 windows at snapshot time.
         public let windowIds: Set<Int>
         /// PID of the frontmost application at snapshot time, or nil.
         public let frontPid: Int32?
-        /// Wildcard suppression handle armed at snapshot time.
+        /// Wildcard suppression lease armed at snapshot time.
         /// Active from `snapshot()` through `detectChanges()` so that any
         /// app that self-activates as a side-effect of the action (e.g.
         /// Safari opening from UTM Gallery) is blocked before the first
         /// compositor frame, not just after we notice it in the poll loop.
-        internal let suppressionHandle: SuppressionHandle?
+        ///
+        /// ARC-managed: dropping the Snapshot without calling
+        /// `detectChanges` is safe — `SuppressionLease.deinit` releases.
+        internal let suppressionLease: SuppressionLease?
     }
 
     /// What changed after the action.
@@ -103,15 +118,23 @@ public enum WindowChangeDetector {
         }
 
         // Arm the wildcard suppressor immediately — before the action fires.
-        var suppressionHandle: SuppressionHandle?
+        // Lease form: ARC releases on Snapshot drop even if detectChanges()
+        // is never called (early-return error path between snapshot and
+        // detect). origin tag surfaces in the unified log if a leak warning
+        // is ever triggered.
+        var lease: SuppressionLease?
         if let pid = frontPid,
            let restoreTo = NSRunningApplication(processIdentifier: pid)
         {
-            suppressionHandle = await AppStateRegistry.systemFocusStealPreventer
-                .beginSuppression(targetPid: 0, restoreTo: restoreTo)
+            lease = await AppStateRegistry.systemFocusStealPreventer
+                .leaseSuppression(
+                    targetPid: 0,
+                    restoreTo: restoreTo,
+                    origin: "WindowChangeDetector.snapshot"
+                )
         }
 
-        return Snapshot(windowIds: ids, frontPid: frontPid, suppressionHandle: suppressionHandle)
+        return Snapshot(windowIds: ids, frontPid: frontPid, suppressionLease: lease)
     }
 
     /// Poll for up to `timeout` seconds for new windows or a foreground-app
@@ -135,9 +158,16 @@ public enum WindowChangeDetector {
     ) async -> Changes {
         // End the wildcard suppressor that was armed in snapshot() once
         // we return — covers the full action + detection window.
+        //
+        // Explicit release awaits any pending reactivation tasks so the
+        // returned `Changes` reflects the final frontmost state. This is
+        // additive to the lease's `deinit` safety net: even if this
+        // detectChanges call is never reached (caller early-returns
+        // between snapshot and detect), ARC fires deinit on the dropped
+        // Snapshot and the entry is still released.
         defer {
-            if let handle = snapshot.suppressionHandle {
-                Task { await AppStateRegistry.systemFocusStealPreventer.endSuppression(handle) }
+            if let lease = snapshot.suppressionLease {
+                Task { await lease.release() }
             }
         }
 

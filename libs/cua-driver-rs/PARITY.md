@@ -415,15 +415,65 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `launch_app`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/LaunchAppTool.swift:6-490`
+  + Name resolution: `libs/cua-driver/Sources/CuaDriverCore/Apps/AppLauncher.swift`
+    `AppLauncher.locate(bundleId:name:)`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (LaunchAppTool)
-  - macos=`crates/platform-macos/src/tools/launch_app.rs` (TBD audit)
+  - macos=`crates/platform-macos/src/tools/launch_app.rs`
+    + Name resolution: `crates/platform-macos/src/apps.rs::locate_app_by_name`
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
 - Status:
   - windows: VERIFIED
-  - macos: OPEN
+  - macos: VERIFIED (name resolution parity per Swift PR #1492 ported)
   - linux: OPEN
-- Test: `crates/platform-windows/examples/launch_app_parity.rs`
+- Test:
+  - `crates/platform-windows/examples/launch_app_parity.rs` (Windows)
+  - `tests/integration/test_api_parity.py::test_mcp_launch_app_by_name_*`
+    and `::test_mcp_launch_app_unknown_name_raises_error` (macOS)
+
+### Fixed (macOS) — ported from Swift PR trycua/cua#1492
+
+`launch_app` previously accepted only the exact on-disk bundle filename
+when a `name` parameter was used (`open -g -a <name>`). Calls with a
+bundle identifier as `name` (`com.apple.calculator`) or a locale-specific
+display name (`計算機` on JP macOS) or a case-mismatched stem
+(`CALCULATOR`) all failed with "Could not locate app".
+
+`apps::locate_app_by_name` now mirrors Swift `AppLauncher.locate` with
+the same three-pass chain:
+
+1. **Filesystem lookup** — `<name>.app` in canonical roots
+   (`/Applications`, `/System/Applications[/Utilities]`,
+   `/Applications/Utilities`, `~/Applications`,
+   `~/Applications/Chrome Apps.localized`). Fast, locale-independent for
+   English display names whose on-disk bundle name matches.
+2. **LaunchServices bundle-ID lookup** —
+   `NSWorkspace.URLForApplicationWithBundleIdentifier:` via `objc2`.
+   Lets callers pass a bundle identifier as `name` without switching to
+   the `bundle_id` parameter.
+3. **Fuzzy scan, case-insensitive**:
+   a. Locale-aware `localizedName` from `NSRunningApplication`
+      (covers e.g. `計算機` for Calculator on a JP-locale system).
+   b. `CFBundleDisplayName` → `CFBundleName` from each candidate
+      bundle's Info.plist (via `plutil -extract`, matching the existing
+      `scan_installed_apps` pattern in this file).
+   c. Bundle URL stem (filename minus `.app`).
+
+When a match is found, the resolver prefers launching by bundle ID
+(`open -g -b`) — unambiguous and avoids a second LaunchServices lookup
+in `open`. Falls back to `open <path>` when no bundle ID is recovered,
+and finally to a raw `open -g -a <name>` if every resolver pass fails
+(preserves the pre-fix behavior for unusual installs LaunchServices
+already knows about).
+
+Verified on macOS with the three new parity tests against both binaries:
+
+```
+launch_app name="com.apple.calculator" → pid=…, bundle_id=com.apple.calculator
+launch_app name="CALCULATOR"           → pid=…, bundle_id=com.apple.calculator
+launch_app name="Calculator"           → pid=…, (regression guard)
+launch_app name="no_such_app_xyzzy"    → MCP error
+```
 
 ### Fixed (Windows)
 

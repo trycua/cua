@@ -227,6 +227,11 @@ fn launch_with_urls_by_bundle(
 }
 
 /// Launch by name with optional URLs, extra args, env vars, and new-instance flag.
+///
+/// Resolves `name` via `crate::apps::locate_app_by_name` (the 3-pass chain
+/// that handles bundle IDs and locale-specific display names) before
+/// delegating to the bundle-ID variant when possible. Falls back to a raw
+/// `open -g -a <name>` if the resolver finds nothing.
 fn launch_with_urls_by_name(
     name: &str,
     urls: &[String],
@@ -234,6 +239,34 @@ fn launch_with_urls_by_name(
     env: &std::collections::HashMap<String, String>,
     new_instance: bool,
 ) -> anyhow::Result<i32> {
+    if let Some(resolved) = crate::apps::locate_app_by_name(name) {
+        if let Some(bundle_id) = resolved.bundle_id.as_deref() {
+            return launch_with_urls_by_bundle(
+                bundle_id, urls, additional_args, env, new_instance,
+            );
+        }
+        // No bundle ID — fall through to `open <path>`.
+        let mut cmd = std::process::Command::new("open");
+        if new_instance { cmd.arg("-n"); }
+        cmd.args(["-g", &resolved.path]);
+        for url in urls { cmd.arg(url); }
+        if !additional_args.is_empty() {
+            cmd.arg("--args");
+            for arg in additional_args { cmd.arg(arg); }
+        }
+        for (k, v) in env { cmd.env(k, v); }
+        let status = cmd.status()?;
+        if !status.success() {
+            anyhow::bail!("Failed to launch '{}'", resolved.path);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let apps = crate::apps::list_running_apps();
+        return apps.into_iter()
+            .find(|a| a.name.eq_ignore_ascii_case(&resolved.display_name))
+            .map(|a| a.pid)
+            .ok_or_else(|| anyhow::anyhow!("Launched '{name}' but could not find its pid"));
+    }
+
     let mut cmd = std::process::Command::new("open");
     if new_instance { cmd.arg("-n"); }
     cmd.args(["-g", "-a", name]);
@@ -245,7 +278,7 @@ fn launch_with_urls_by_name(
     for (k, v) in env { cmd.env(k, v); }
     let status = cmd.status()?;
     if !status.success() {
-        anyhow::bail!("Failed to launch '{name}'");
+        anyhow::bail!("Could not locate app (name '{name}')");
     }
     std::thread::sleep(std::time::Duration::from_millis(500));
     let apps = crate::apps::list_running_apps();

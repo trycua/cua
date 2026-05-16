@@ -1032,6 +1032,57 @@ class _ParityMixin:
             "launch_app", {"bundle_id": "com.example.no_such_app_xyzzy"}
         )
 
+    # ── stdio MCP: launch_app name-resolution fallbacks ──────────────────────
+    #
+    # Locks the 3-pass `AppLauncher.locate` chain ported in PR #1492:
+    #   1) filesystem `<name>.app` lookup,
+    #   2) LaunchServices bundle-ID lookup (so `name` accepts a bundle ID),
+    #   3) fuzzy scan (locale-aware running-app `localizedName`, then
+    #      `CFBundleDisplayName`/`CFBundleName`/stem, case-insensitive).
+    # Both binaries must accept all three input shapes for the same app.
+
+    def test_mcp_launch_app_by_name_accepts_bundle_id(self) -> None:
+        """`name` parameter must accept a bundle ID (`com.apple.calculator`).
+
+        Pass 2 of the resolver: when `bundle_id` is omitted but `name`
+        looks like a bundle ID, LaunchServices is queried with it.
+        """
+        subprocess.run(["pkill", "-x", "Calculator"], check=False)
+        time.sleep(0.3)
+        with self._mcp() as c:
+            result = c.call_tool("launch_app", {"name": "com.apple.calculator"})
+        sc = result.get("structuredContent", result)
+        self.assertIn("pid", sc, f"launch_app result missing pid: {result}")
+        self.assertGreater(sc["pid"], 0)
+        self.assertEqual(sc.get("bundle_id"), "com.apple.calculator")
+
+    def test_mcp_launch_app_by_name_case_insensitive(self) -> None:
+        """`name` matching must be case-insensitive (`CALCULATOR` works).
+
+        Pass 3 of the resolver: filesystem lookup misses on the casing,
+        running-app `localizedName` and `CFBundleName` then match
+        case-insensitively.
+        """
+        subprocess.run(["pkill", "-x", "Calculator"], check=False)
+        time.sleep(0.3)
+        with self._mcp() as c:
+            result = c.call_tool("launch_app", {"name": "CALCULATOR"})
+        sc = result.get("structuredContent", result)
+        self.assertIn("pid", sc, f"launch_app result missing pid: {result}")
+        self.assertGreater(sc["pid"], 0)
+        self.assertEqual(sc.get("bundle_id"), "com.apple.calculator")
+
+    def test_mcp_launch_app_unknown_name_raises_error(self) -> None:
+        """A `name` that matches no installed bundle must signal an error.
+
+        Sentinel string is chosen so no real `.app` bundle, bundle ID, or
+        running app could plausibly match. All three resolver passes
+        should fail.
+        """
+        self._assert_tool_raises_mcp_error(
+            "launch_app", {"name": "no_such_app_xyzzy_parity"}
+        )
+
     # ── stdio MCP: set_agent_cursor_motion ────────────────────────────────────
 
     def test_mcp_set_agent_cursor_motion_spring(self) -> None:

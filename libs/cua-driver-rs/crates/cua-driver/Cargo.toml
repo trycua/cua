@@ -20,6 +20,11 @@ mcp-server = { path = "../mcp-server" }
 cursor-overlay = { path = "../cursor-overlay" }
 async-trait = "0.1"
 base64 = { workspace = true }
+uuid = { workspace = true }
+# Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
+# PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
+# rustls (default) so Linux/Windows builds don't require system OpenSSL.
+ureq = { version = "3", features = ["json"] }
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic

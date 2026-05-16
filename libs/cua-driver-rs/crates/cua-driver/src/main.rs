@@ -28,6 +28,8 @@ mod bundle;
 mod cli;
 mod proxy;
 mod serve;
+#[allow(dead_code)] // public API used by commit 2 (call-site wiring).
+mod telemetry;
 
 use std::sync::Arc;
 

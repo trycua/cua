@@ -416,12 +416,12 @@ filter at the tool layer.
 ## MCP tool: `click`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ClickTool.swift:29-595`
 - Rust:
-  - macOS=`crates/platform-macos/src/tools/click.rs` (TBD audit)
+  - macOS=`crates/platform-macos/src/tools/click.rs` (focus-suppression wrap VERIFIED; full audit pending)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ClickTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ClickTool)
 - Status:
   - windows: VERIFIED (text format + error wording); schema divergences documented below
-  - macOS: OPEN (already exists; line-by-line audit pending)
+  - macOS: VERIFIED (focus-suppression wrap — see [Per-action focus suppression](#per-action-focus-suppression)); full line-by-line audit pending
   - linux: OPEN
 - Test: `crates/platform-windows/examples/click_parity.rs`
 
@@ -579,9 +579,9 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/PressKeyTool.swift:20-202`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (PressKeyTool)
-  - macOS=`crates/platform-macos/src/tools/press_key.rs` (TBD)
+  - macOS=`crates/platform-macos/src/tools/press_key.rs` (focus-suppression wrap VERIFIED; full audit pending)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
-- Status: windows VERIFIED; macOS / linux OPEN
+- Status: windows VERIFIED; macOS VERIFIED (focus-suppression wrap — see [Per-action focus suppression](#per-action-focus-suppression)); linux OPEN
 - Test: `crates/platform-windows/examples/press_key_parity.rs`
 
 ### Fixed (Windows)
@@ -623,9 +623,9 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/HotkeyTool.swift:6-142`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (HotkeyTool)
-  - macOS=`crates/platform-macos/src/tools/hotkey.rs` (TBD)
+  - macOS=`crates/platform-macos/src/tools/hotkey.rs` (focus-suppression wrap VERIFIED; full audit pending)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
-- Status: windows VERIFIED; macOS / linux OPEN
+- Status: windows VERIFIED; macOS VERIFIED (focus-suppression wrap — see [Per-action focus suppression](#per-action-focus-suppression)); linux OPEN
 - Test: `crates/platform-windows/examples/hotkey_parity.rs`
 
 ### Fixed (Windows)
@@ -1497,11 +1497,15 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
 
 ## Focus-steal prevention
 
-Cross-cutting infrastructure (not an MCP tool) used by `launch_app` today
-and slated for use by `click`/`hotkey`/AX-action tools when those are
-ported to Rust macOS. Catches apps that self-activate during launch
-(Chrome, Electron, Safari) and re-activates the prior frontmost app
-before the user perceives the steal.
+Cross-cutting infrastructure (not an MCP tool) used by `launch_app` and
+by the 7 action tools (`click`, `type_text`, `hotkey`, `press_key`,
+`drag`, `scroll`, `set_value`) via the
+[Per-action focus suppression](#per-action-focus-suppression) wrap.
+Catches apps that self-activate during launch (Chrome, Electron,
+Safari) or as a side-effect of an action (Safari opening a new tab in
+response to AXPress, autocomplete pulling itself forward), and
+re-activates the prior frontmost app before the user perceives the
+steal.
 
 - Swift: `libs/cua-driver/Sources/CuaDriverCore/Focus/SystemFocusStealPreventer.swift`
 - Swift hardening: open PR [#1521](https://github.com/trycua/cua/pull/1521)
@@ -1549,13 +1553,109 @@ before the user perceives the steal.
 
 ### Intentional simplifications vs Swift
 
-- **No `FocusGuard.withFocusSuppressed` analogue yet** — Swift's
-  per-AX-action wrapper. The Rust `click` AX path doesn't exist yet, so
-  there's nothing to wrap. Port when the AX action path lands.
-- **No `WindowChangeDetector` analogue yet** — same reason; the Rust port
-  has no snapshot/detect cycle to wrap. Port when WindowChangeDetector
-  lands.
+- **`FocusGuard.withFocusSuppressed` ships layer 3 only** — see
+  [Per-action focus suppression](#per-action-focus-suppression). The
+  reactive suppressor is wired up across the 7 action tools; the
+  enablement (`AXManualAccessibility`/`AXEnhancedUserInterface`) and
+  synthetic-focus (`AXFocused`/`AXMain` write+restore) layers are
+  deferred because the AX assertion + attribute-write plumbing isn't
+  yet ported. Empirically the layer-3 guard combined with
+  `WindowChangeDetector`'s wildcard catches the majority of
+  side-effects on real-world workflows.
+- **`WindowChangeDetector` ported and wired** — see
+  [Per-action focus suppression](#per-action-focus-suppression).
 - **Janitor uses `tokio::sync::watch`** — Swift uses Task cancellation;
   Rust's tokio idiom is the watch-channel select pattern. Behavior is
   identical: idle dispatcher → janitor sleeps; new entry → janitor
   wakes; map drains → janitor exits and waits for the next add.
+
+---
+
+## Per-action focus suppression
+
+Per-action wrap around the 7 macOS action tools (`click`, `type_text`,
+`hotkey`, `press_key`, `drag`, `scroll`, `set_value`) that catches
+side-effect side-effects of dispatching an action on a backgrounded
+app — Safari opening a new tab in response to AXPress, a "Sign In"
+button opening a sheet, an autocomplete popover floating into view,
+etc. Mirrors Swift's `WindowChangeDetector` + `FocusGuard` cross-cutting
+helpers wired into ClickTool / TypeTextTool / SetValueTool.
+
+- Swift:
+  - `libs/cua-driver/Sources/CuaDriverServer/Tools/WindowChangeDetector.swift`
+  - `libs/cua-driver/Sources/CuaDriverCore/Focus/FocusGuard.swift`
+- Rust:
+  - `crates/platform-macos/src/window_change_detector.rs`
+  - `crates/platform-macos/src/focus_guard.rs`
+- Status: macOS VERIFIED (action tools wired up; result-suffix wording
+  matches Swift verbatim). windows/linux N/A (different focus model).
+- Tests:
+  - Rust unit: `window_change_detector::tests` (8 cases — diff +
+    result_suffix branches) and `focus_guard::tests` (4 cases —
+    arm/skip lifecycle).
+  - Integration: existing `tests/integration/test_focus_steal_parity.py`
+    + `tests/integration/test_api_parity.py` — confirmed no regression
+    after the action-tool wiring (identical pass/fail to main).
+
+### Snapshot → action → detect cycle
+
+Each wrapped action follows the same shape:
+
+```rust
+let prior = apps::frontmost_pid();
+let snapshot = WindowChangeDetector::snapshot();         // arms wildcard
+let result = focus_guard::with_focus_suppressed(
+    Some(target_pid), prior, "<tool>.<origin>",
+    || async { do_action(...).await }
+).await;
+let changes = snapshot.detect_async().await;             // drops wildcard
+// append changes.result_suffix() to success text
+```
+
+Two suppression entries are armed in series:
+
+1. **Wildcard** (armed in `snapshot()`, dropped in `detect()`) —
+   `target_pid = None`, `restore_to = current frontmost`. Catches any
+   activation other than the prior frontmost during the full
+   snapshot → action → detect window. Mirrors Swift's
+   `WindowChangeDetector.snapshot()` wildcard.
+2. **Targeted** (armed by `FocusGuard::with_focus_suppressed` around
+   the action call) — `target_pid = Some(action_pid)`,
+   `restore_to = prior frontmost`. Catches a target-self-activation
+   triggered by the AX call itself. Skipped when target ==
+   frontmost (no point fighting ourselves). 50ms post-action settle
+   before the lease drops, giving any in-flight reflex activation
+   time to be observed.
+
+### Result-suffix verbatim
+
+The `Changes.result_suffix()` wording matches Swift's
+`WindowChangeDetector.Changes.resultSuffix`:
+
+- New windows: `"\n\n🪟 Action opened new window(s): App (\"Title\")."`
+  (multiple windows grouped by app, titles in quotes, joined with `, `;
+  multiple apps joined with `; `; alphabetical by app name).
+- Foreground-only change (no new windows): `"\n\n🔀 Action caused a
+  different app to become frontmost."`.
+- No change: empty string.
+
+MCP callers can string-match on either lead emoji to detect a
+side-effect without per-binary special-casing.
+
+### Intentional simplifications vs Swift
+
+- **FocusGuard layers 1+2 (enablement, synthetic-focus) deferred** —
+  Swift's `AXManualAccessibility` / `AXEnhancedUserInterface`
+  assertion and `AXFocused`/`AXMain` write+restore aren't ported yet.
+  The Rust port ships only layer 3 (reactive suppressor). Empirically
+  the wildcard + targeted reactive pair catches the majority of
+  side-effects; layers 1+2 are a follow-up when the AX assertion
+  plumbing lands.
+- **Pure-function diff exposed for tests** — `Snapshot::diff` is
+  `pub(crate)` so unit tests can pin down opened/closed semantics
+  without driving the live `CGWindowList` enumerator. Swift tests
+  the same way via `currentWindowIds()` indirection.
+- **`detect_async()` runs on `spawn_blocking`** — Swift's poll loop
+  uses `Task.sleep`; Rust's blocking `std::thread::sleep` is cheap to
+  offload via `tokio::task::spawn_blocking` and keeps the runtime
+  responsive to other in-flight work.

@@ -29,6 +29,7 @@ mod cli;
 mod proxy;
 mod serve;
 mod telemetry;
+mod version_check;
 
 use std::sync::Arc;
 

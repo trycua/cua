@@ -796,23 +796,29 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
 /// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
 ///
-/// Uses `curl` to query the GitHub releases API (same as Swift reference).
-/// Pass `--apply` to download and install via the canonical install.sh.
+/// Shares the GitHub releases fetch with the startup banner via
+/// [`crate::version_check::fetch_latest_version`] so both code paths
+/// agree on tag filtering and HTTP semantics. Pass `--apply` to download
+/// and install via the canonical install.sh.
 pub fn run_update_cmd(apply: bool) {
     let current = env!("CARGO_PKG_VERSION");
     println!("Current version: {current}");
     println!("Checking for updates…");
 
-    let latest = fetch_latest_version();
+    let latest = crate::version_check::fetch_latest_version();
     match latest {
-        None => {
+        Err(e) => {
+            // The shared helper returns a human-readable error string for
+            // the CLI surface — pass it through so the user can see why
+            // (timeout, parse error, etc.) instead of just "unreachable".
+            tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
             println!("Could not reach GitHub — check your connection and try again.");
             process::exit(1);
         }
-        Some(v) if !is_version_newer(&v, current) => {
+        Ok(v) if !crate::version_check::is_newer(&v, current) => {
             println!("Already up to date.");
         }
-        Some(v) => {
+        Ok(v) => {
             println!("New version available: {v}");
 
             if !apply {
@@ -843,56 +849,6 @@ pub fn run_update_cmd(apply: bool) {
             }
         }
     }
-}
-
-/// Fetch the latest `cua-driver-v*` release tag from GitHub using curl.
-/// Returns the version string (e.g. "0.1.2") or `None` on any error.
-fn fetch_latest_version() -> Option<String> {
-    let out = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "4",
-               "-H", "Accept: application/vnd.github+json",
-               "https://api.github.com/repos/trycua/cua/releases?per_page=40"])
-        .output()
-        .ok()?;
-    if !out.status.success() { return None; }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let releases: serde_json::Value = serde_json::from_str(&text).ok()?;
-    // `cua-driver-rs-v*` releases are distinct from the Swift `cua-driver-v*`
-    // releases on the same repo — must filter by the Rust-port prefix or
-    // we'd recommend the Swift binary instead.
-    let prefix = "cua-driver-rs-v";
-    let mut versions: Vec<String> = releases.as_array()?.iter()
-        .filter_map(|r| {
-            let tag = r["tag_name"].as_str()?;
-            if !tag.starts_with(prefix) { return None; }
-            if r["draft"].as_bool().unwrap_or(false) { return None; }
-            if r["prerelease"].as_bool().unwrap_or(false) { return None; }
-            Some(tag[prefix.len()..].to_owned())
-        })
-        .collect();
-    // Sort descending (newest first).
-    versions.sort_by(|a, b| compare_versions(b, a));
-    versions.into_iter().next()
-}
-
-/// True when `candidate` is strictly newer than `current` (semver compare).
-fn is_version_newer(candidate: &str, current: &str) -> bool {
-    compare_versions(candidate, current) == std::cmp::Ordering::Greater
-}
-
-fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |s: &str| -> Vec<u64> {
-        s.split('.').filter_map(|p| p.parse().ok()).collect()
-    };
-    let pa = parts(a);
-    let pb = parts(b);
-    for (x, y) in pa.iter().zip(pb.iter()) {
-        match x.cmp(y) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    pa.len().cmp(&pb.len())
 }
 
 /// `cua-driver dump-docs [--pretty]` — output all MCP tool schemas as JSON.

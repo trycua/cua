@@ -38,7 +38,7 @@ Format per entry:
 ```
 ## <surface>
 - Swift: <path:line>
-- Rust:  macos=<path:line>, windows=<path:line>, linux=<path:line>
+- Rust:  macOS=<path:line>, windows=<path:line>, linux=<path:line>
 - Status: VERIFIED | INTENTIONAL_DIVERGENCE | OPEN
 - Test:   <path>
 - Notes:  ...
@@ -49,7 +49,7 @@ Format per entry:
 ## MCP tool: `move_cursor`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/MoveCursorTool.swift:6-60`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/move_cursor.rs`
+  - macOS=`crates/platform-macos/src/tools/move_cursor.rs`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (MoveCursorTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (MoveCursorTool)
 - Status: INTENTIONAL_DIVERGENCE (semantic) + VERIFIED (overlay behavior)
@@ -102,7 +102,7 @@ Unix socket).
 ## MCP tool: `get_cursor_position`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetCursorPositionTool.swift:6-37`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/get_cursor_position.rs`
+  - macOS=`crates/platform-macos/src/tools/get_cursor_position.rs`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (GetCursorPositionTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (GetCursorPositionTool)
 - Status: VERIFIED
@@ -146,7 +146,7 @@ documented Swift behavior.
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetScreenSizeTool.swift:6-46`
         + `libs/cua-driver/Sources/CuaDriverCore/Capture/ScreenInfo.swift`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/get_screen_size.rs`
+  - macOS=`crates/platform-macos/src/tools/get_screen_size.rs`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (GetScreenSizeTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (GetScreenSizeTool)
 - Status: VERIFIED
@@ -190,11 +190,11 @@ still matches Swift exactly.
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/CheckPermissionsTool.swift:6-59`
         + `libs/cua-driver/Sources/CuaDriverCore/Permissions/Permissions.swift`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/check_permissions.rs` (FIXED, pending macOS run)
+  - macOS=`crates/platform-macos/src/tools/check_permissions.rs` (FIXED, pending macOS run)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (CheckPermissionsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (CheckPermissionsTool)
 - Status:
-  - macos: OPEN (fixed in source; macOS runner needed to verify)
+  - macOS: OPEN (fixed in source; macOS runner needed to verify)
   - windows / linux: INTENTIONAL_DIVERGENCE
 - Test: TODO macOS — needs a macOS machine or CI runner to drive the daemon
   and assert the text format + structured response.
@@ -246,11 +246,11 @@ status).
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListAppsTool.swift:6-71`
         + `libs/cua-driver/Sources/CuaDriverCore/Apps/AppInfo.swift`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
+  - macOS=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListAppsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListAppsTool)
 - Status:
-  - macos: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
+  - macOS: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
   - windows: VERIFIED (text format + structured shape + `active` flag)
   - linux: OPEN (subagent currently fixing pre-existing compile errors)
 - Test: `crates/platform-windows/examples/list_apps_parity.rs`
@@ -298,12 +298,12 @@ at least one entry has `active: true` (the foreground app).
 ## MCP tool: `list_windows`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListWindowsTool.swift:6-245`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/list_windows.rs` (TBD audit)
+  - macOS=`crates/platform-macos/src/tools/list_windows.rs` (TBD audit)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListWindowsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListWindowsTool, blocked behind Linux compile fix)
 - Status:
   - windows: VERIFIED
-  - macos: OPEN (audit pending — macOS port already exists)
+  - macOS: OPEN (audit pending — macOS port already exists)
   - linux: OPEN
 - Test: `crates/platform-windows/examples/list_windows_parity.rs`
 
@@ -356,12 +356,12 @@ filter at the tool layer.
 ## MCP tool: `click`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ClickTool.swift:29-595`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/click.rs` (TBD audit)
+  - macOS=`crates/platform-macos/src/tools/click.rs` (TBD audit)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ClickTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ClickTool)
 - Status:
   - windows: VERIFIED (text format + error wording); schema divergences documented below
-  - macos: OPEN (already exists; line-by-line audit pending)
+  - macOS: OPEN (already exists; line-by-line audit pending)
   - linux: OPEN
 - Test: `crates/platform-windows/examples/click_parity.rs`
 
@@ -417,15 +417,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/LaunchAppTool.swift:6-490`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (LaunchAppTool)
-  - macos=`crates/platform-macos/src/tools/launch_app.rs` (full focus-steal contract)
+  - macOS=`crates/platform-macos/src/tools/launch_app.rs` (full focus-steal contract)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
 - Status:
   - windows: VERIFIED
-  - macos: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
+  - macOS: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
 - Tests:
   - windows=`crates/platform-windows/examples/launch_app_parity.rs`
-  - macos=`tests/integration/test_focus_steal_parity.py` + `crates/platform-macos/src/focus_steal.rs` (Rust unit tests)
+  - macOS=`tests/integration/test_focus_steal_parity.py` + `crates/platform-macos/src/focus_steal.rs` (Rust unit tests)
 
 ### Fixed (Windows)
 
@@ -519,9 +519,9 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/PressKeyTool.swift:20-202`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (PressKeyTool)
-  - macos=`crates/platform-macos/src/tools/press_key.rs` (TBD)
+  - macOS=`crates/platform-macos/src/tools/press_key.rs` (TBD)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
-- Status: windows VERIFIED; macos / linux OPEN
+- Status: windows VERIFIED; macOS / linux OPEN
 - Test: `crates/platform-windows/examples/press_key_parity.rs`
 
 ### Fixed (Windows)
@@ -563,9 +563,9 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/HotkeyTool.swift:6-142`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (HotkeyTool)
-  - macos=`crates/platform-macos/src/tools/hotkey.rs` (TBD)
+  - macOS=`crates/platform-macos/src/tools/hotkey.rs` (TBD)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
-- Status: windows VERIFIED; macos / linux OPEN
+- Status: windows VERIFIED; macOS / linux OPEN
 - Test: `crates/platform-windows/examples/hotkey_parity.rs`
 
 ### Fixed (Windows)
@@ -596,7 +596,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/DoubleClickTool.swift:28-327`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (DoubleClickTool)
-  - macos / linux: OPEN
+  - macOS / linux: OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/double_click_parity.rs`
 
@@ -639,7 +639,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `right_click`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/RightClickTool.swift:27-324`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (RightClickTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (RightClickTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/right_click_parity.rs`
 
@@ -667,7 +667,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `screenshot`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScreenshotTool.swift:5-170`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScreenshotTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScreenshotTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/screenshot_parity.rs`
 
@@ -703,7 +703,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `scroll`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScrollTool.swift:23-211`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScrollTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScrollTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/scroll_parity.rs`
 
@@ -741,7 +741,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `type_text`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/TypeTextTool.swift:13-225`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (TypeTextTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (TypeTextTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/type_text_parity.rs`
 
@@ -776,7 +776,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `set_value`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetValueTool.swift:8-336`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetValueTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetValueTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/set_value_parity.rs`
 
@@ -813,7 +813,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 ## MCP tools: `get_config` + `set_config`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetConfigTool.swift:13-79`
   + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetConfigTool.swift:25-167`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetConfigTool, SetConfigTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetConfigTool, SetConfigTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/config_parity.rs`
 
@@ -851,7 +851,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `get_agent_cursor_state`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetAgentCursorStateTool.swift:9-68`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetAgentCursorStateTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetAgentCursorStateTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/get_agent_cursor_state_parity.rs`
 
@@ -882,7 +882,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 ## MCP tools: `set_agent_cursor_enabled` + `set_agent_cursor_motion`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorEnabledTool.swift:8-85`
   + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorMotionTool.swift:11-187`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs`; macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs`; macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/agent_cursor_setters_parity.rs`
 
@@ -1005,7 +1005,7 @@ Swift.
 
 ## MCP tool: `get_window_state`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetWindowStateTool.swift:5-end`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetWindowStateTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetWindowStateTool); macOS/linux OPEN
 - Status: windows VERIFIED (error wording + validation); response shape already verified
 - Test: `crates/platform-windows/examples/get_window_state_parity.rs`
 
@@ -1042,7 +1042,7 @@ Swift.
 
 ## MCP tool: `drag`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/DragTool.swift:21-327`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (DragTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (DragTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/drag_parity.rs`
 
@@ -1150,7 +1150,7 @@ Changes:
 
 ## MCP tool: `set_agent_cursor_style`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorStyleTool.swift:10-111`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetAgentCursorStyleTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetAgentCursorStyleTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/set_agent_cursor_style_parity.rs`
 
@@ -1171,7 +1171,7 @@ Changes:
 
 ## MCP tool: `zoom`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ZoomTool.swift:12-end`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ZoomTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ZoomTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/zoom_parity.rs`
 
@@ -1293,7 +1293,7 @@ before the user perceives the steal.
   (4-layer leak prevention: closure scope, RAII lease, 5s monotonic
   deadline, 1s janitor)
 - Rust: `crates/platform-macos/src/focus_steal.rs`
-- Status: macos VERIFIED. windows/linux N/A (no equivalent OS focus-steal
+- Status: macOS VERIFIED. windows/linux N/A (no equivalent OS focus-steal
   surface area).
 - Tests:
   - Rust unit: `crates/platform-macos/src/focus_steal.rs` `#[cfg(test)] mod tests`

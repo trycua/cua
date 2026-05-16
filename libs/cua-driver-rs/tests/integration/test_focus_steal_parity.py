@@ -28,10 +28,14 @@ Test cases (mirror the plan's Verification section 1:1):
      a stale-state probe doesn't keep re-activating the prior
      frontmost.
 
-The frontmost-baseline app is FocusMonitorApp (shared fixture under
-`libs/cua-driver/Tests/FocusMonitorApp/`). It's launched as the
-baseline frontmost between tests so we have a stable, predictable
-"prior" pid.
+The frontmost-baseline app is Finder (`com.apple.finder`). It's the
+only app guaranteed to be running on every logged-in macOS session
+and it never self-activates on launch, which gives us a stable,
+predictable "prior" pid between tests. (Earlier iterations of this
+suite used a shared FocusMonitorApp fixture under
+`libs/cua-driver/Tests/FocusMonitorApp/`, but the dependency on a
+built helper made the integration tests flaky to bootstrap on a
+fresh runner — Finder removes that dependency.)
 
 Run:
     cd libs/cua-driver-rs/tests/integration
@@ -52,15 +56,6 @@ from driver_client import DriverClient, default_binary_path  # noqa: E402
 
 
 # ── Paths / fixtures ─────────────────────────────────────────────────────────
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_DRIVER_RS_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
-_LIBS_ROOT = os.path.dirname(_DRIVER_RS_ROOT)
-_FOCUS_APP_DIR = os.path.join(_LIBS_ROOT, "cua-driver", "Tests", "FocusMonitorApp")
-_FOCUS_APP_EXE = os.path.join(
-    _FOCUS_APP_DIR, "FocusMonitorApp.app", "Contents", "MacOS", "FocusMonitorApp"
-)
-
-
 def _swift_binary() -> str | None:
     """Locate the Swift binary, or None if not available."""
     from_env = os.environ.get("CUA_SWIFT_BINARY", "")
@@ -73,13 +68,6 @@ def _swift_binary() -> str | None:
         if p and os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return None
-
-
-def _build_focus_app() -> None:
-    if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run(
-            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
-        )
 
 
 def _frontmost_bundle_id() -> str | None:

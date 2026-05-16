@@ -21,6 +21,12 @@ cursor-overlay = { path = "../cursor-overlay" }
 async-trait = "0.1"
 base64 = { workspace = true }
 
+# Used by crate::bundle::parent_is_not_launchd() for the TCC
+# auto-relaunch detection path on Unix (only the macOS heuristic
+# actually fires, but the crate compiles on Linux too).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 platform-macos = { path = "../platform-macos" }
 

@@ -24,6 +24,7 @@
 //!
 //! On all other platforms `#[tokio::main]` is used directly.
 
+mod bundle;
 mod cli;
 mod serve;
 

@@ -204,11 +204,17 @@ async fn handle_proxy_request(
 
 /// Forward a single MCP `tools/call` to the daemon as a `call`
 /// request, then translate the `DaemonResponse` back into an MCP
-/// `CallTool.Result` envelope. Tool-level errors (`isError: true`)
-/// round-trip cleanly inside the result. Daemon-level failures
-/// (socket gone, unknown tool, decode error) surface as JSON-RPC
-/// errors so the MCP client sees the same shape it would for any
-/// other server-side failure.
+/// `CallTool.Result` envelope.
+///
+/// Error mapping:
+///   - Tool ran and reported failure (`!resp.ok`, including unknown
+///     tool / bad params) → JSON-RPC success with `result.isError =
+///     true`. Mirrors the in-process `mcp_server::server` path so
+///     MCP clients see identical envelopes either way.
+///   - Transport failure (UDS unreachable, decode error, blocking
+///     task panic) → JSON-RPC error (`-32603`), because the MCP
+///     client really does need to distinguish "tool said no" from
+///     "I couldn't reach the tool at all."
 async fn forward_tool_call(
     id: serde_json::Value,
     name: String,
@@ -247,12 +253,30 @@ async fn forward_tool_call(
     };
 
     if !resp.ok {
+        // MCP separates two failure modes:
+        //   - JSON-RPC errors → `Response::error(...)`, used for
+        //     transport / protocol failures (unknown method, bad
+        //     params shape, server crash).
+        //   - Tool-level errors → `Response::ok(...)` carrying a
+        //     `CallTool.Result` with `isError: true` and the error
+        //     message in `content[]`. The tool ran, returned a
+        //     well-formed result that says "I failed."
+        //
+        // A non-`ok` daemon response means the tool call reached the
+        // daemon and the daemon decided the tool returned an error
+        // (or rejected the call). That's tool-level, not transport-
+        // level, so the in-process `mcp_server::server` would surface
+        // it as `Response::ok` with `isError: true`. Mirror that
+        // shape here so MCP clients see identical envelopes either
+        // way — CodeRabbit #2.
         let msg = resp.error.unwrap_or_else(|| "daemon reported failure".into());
-        // exit_code 64 is EX_USAGE — bad params, surfaces as a
-        // JSON-RPC InvalidParams. Any other non-zero is treated as
-        // an internal error.
-        let code = if resp.exit_code == Some(64) { -32602 } else { -32603 };
-        return Response::error(id, code, msg);
+        let exit_code = resp.exit_code.unwrap_or(1);
+        let result = serde_json::json!({
+            "content": [{ "type": "text", "text": msg }],
+            "isError": true,
+            "structuredContent": { "exit_code": exit_code }
+        });
+        return Response::ok(id, result);
     }
 
     let result = resp.result.unwrap_or_else(|| {
@@ -262,4 +286,78 @@ async fn forward_tool_call(
         })
     });
     Response::ok(id, result)
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+//
+// Unit-test only the JSON shape of the proxy's tool-error envelope.
+// The full proxy loop is exercised by the macOS integration test
+// (CUA_DRIVER_RS_MCP_FORCE_PROXY harness in PARITY.md §"Manual smoke
+// test"); these tests just lock in the per-branch reshape so a
+// regression to `Response::error` for tool-level failures would fail
+// fast in CI on every platform.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serve::DaemonResponse;
+
+    /// Reconstruct the `!resp.ok` branch in isolation so we can assert
+    /// on the serialized shape without spinning up a real daemon /
+    /// tokio runtime. Keep this in sync with `forward_tool_call`.
+    fn build_tool_error_response(
+        id: serde_json::Value,
+        resp: DaemonResponse,
+    ) -> Response {
+        let msg = resp.error.unwrap_or_else(|| "daemon reported failure".into());
+        let exit_code = resp.exit_code.unwrap_or(1);
+        let result = serde_json::json!({
+            "content": [{ "type": "text", "text": msg }],
+            "isError": true,
+            "structuredContent": { "exit_code": exit_code }
+        });
+        Response::ok(id, result)
+    }
+
+    #[test]
+    fn daemon_tool_failure_wraps_as_jsonrpc_success_with_iserror_true() {
+        let daemon_resp = DaemonResponse {
+            ok: false,
+            result: None,
+            error: Some("missing required field `pid`".into()),
+            exit_code: Some(64),
+        };
+        let resp = build_tool_error_response(serde_json::json!(7), daemon_resp);
+        let value = serde_json::to_value(&resp).expect("serialize");
+
+        // Top-level JSON-RPC envelope: success (`result`), not error.
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], serde_json::json!(7));
+        assert!(value.get("error").is_none(),
+            "tool-level failure must NOT surface as JSON-RPC error: got {value}");
+        assert!(value.get("result").is_some(),
+            "tool-level failure must carry a `result` payload: got {value}");
+
+        // CallTool.Result inside `result`: isError + content text.
+        let result = &value["result"];
+        assert_eq!(result["isError"], serde_json::json!(true));
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "missing required field `pid`");
+        assert_eq!(result["structuredContent"]["exit_code"], 64);
+    }
+
+    #[test]
+    fn daemon_failure_with_no_error_message_uses_fallback_text() {
+        let daemon_resp = DaemonResponse {
+            ok: false,
+            result: None,
+            error: None,
+            exit_code: None,
+        };
+        let resp = build_tool_error_response(serde_json::json!("abc"), daemon_resp);
+        let value = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(value["result"]["isError"], serde_json::json!(true));
+        assert_eq!(value["result"]["content"][0]["text"], "daemon reported failure");
+        assert_eq!(value["result"]["structuredContent"]["exit_code"], 1);
+    }
 }

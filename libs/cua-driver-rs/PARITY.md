@@ -1775,3 +1775,109 @@ surfaced to stdout/stderr unless `CUA_DRIVER_RS_TELEMETRY_DEBUG=true`.
   GUI surface yet, so the constant is reserved but unused.
 - **`is_ci` uses env-var probing only.** Same probe list as Swift; no
   extra Rust-specific signals.
+
+## Startup flow: update-available banner (`mcp` / `serve` / `doctor`)
+
+- Swift: not present (the Swift port has no analogous banner today)
+- Rust:  `crates/cua-driver/src/version_check.rs`
+- Status: INTENTIONAL_ADDITION (Rust-only)
+- Test:   `crates/cua-driver/src/version_check.rs` `#[cfg(test)] mod tests`
+          (22 unit tests: semver edge cases, cache round-trip in a
+          tempdir, dismissal persistence, 20-hour refresh threshold,
+          env-var + config opt-out, JSON release-list filtering,
+          banner format, ISO-8601 timestamp)
+
+### Behavior
+
+On the long-running interactive entry points (`mcp`, `serve`,
+`doctor`) the binary kicks off a background HTTP check against
+`https://api.github.com/repos/trycua/cua/releases?per_page=40`,
+filters to the `cua-driver-rs-v*` tag prefix, and prints a two-line
+banner to **stderr** if the highest non-draft non-prerelease release
+is strictly newer than `CARGO_PKG_VERSION` and the user hasn't
+previously dismissed it:
+
+```
+✨ cua-driver v0.1.4 is available (you have v0.1.3).
+   Update with: cua-driver update
+   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
+```
+
+The check runs on `tokio::task::spawn_blocking` when a runtime is
+live, else a short-lived OS thread, so the daemon's start-up path
+is never delayed by network latency.
+
+### Cache
+
+The latest-version answer is cached on disk at
+`~/.cua-driver-rs/version_check.json`:
+
+```json
+{
+  "last_checked_unix": 1700000000,
+  "last_checked_at": "2023-11-14T22:13:20Z",
+  "latest_version": "0.1.4",
+  "dismissed_versions": []
+}
+```
+
+Refreshed only when the cached `last_checked_unix` is more than 20
+hours old, bounding outbound requests to roughly one per machine per
+day even on a hot reload loop. Failed HTTP fetches fall back to the
+cached value (better an old banner than none on a brief network blip).
+
+### Skipped contexts
+
+Only `mcp`, `serve`, and `doctor` call `maybe_announce_update()`.
+The following entry points are **NOT** instrumented because they're
+routinely piped from scripts and a banner would corrupt their
+parseable output:
+
+- `--version` / `-V`
+- `list-tools`
+- `describe <tool>`
+- `call <tool>`
+- `dump-docs`
+- `mcp-config`
+- `update`, `stop`, `status`, `recording`, `config`, `diagnose`,
+  `telemetry install-event`
+
+### Opt-out (three layers, any one disables the check)
+
+1. **Env var** `CUA_DRIVER_RS_UPDATE_CHECK=false` (also `0`, `no`,
+   `off`; case-insensitive) — single-invocation off.
+2. **Config flag** `update_check_enabled = false` in
+   `~/.cua-driver/config.json` — persistent off. Set via
+   `cua-driver config set update_check_enabled false`.
+3. **Pre-release build auto-skip** — any `CARGO_PKG_VERSION` that
+   carries a semver pre-release suffix (`-dev`, `-rc.1`, `-beta`)
+   short-circuits the check entirely. There is no matching published
+   release for a source / development build to recommend.
+
+### HTTP client
+
+`ureq` v3 with `Accept: application/vnd.github+json` and a
+`cua-driver-rs/<version>` user-agent. 4-second timeout. Single GET,
+fire-and-forget — the response body is read into `serde_json::Value`
+on the background task, never touching the foreground startup path.
+
+Network errors, timeouts, 4xx/5xx responses, and JSON-parse failures
+are logged via `tracing::debug!(target: "cua_driver::version_check",
+…)` only — never surfaced to stderr.
+
+### Shared with `cua-driver update`
+
+`run_update_cmd` calls into the same
+`version_check::fetch_latest_version()` and `version_check::is_newer()`
+helpers so the proactive banner and the manual subcommand agree on
+tag-filtering rules and semver compare semantics. This also removes
+the prior shell-out to `curl` from `cli::run_update_cmd`.
+
+### Dismissal API
+
+`version_check::dismiss_version(&str)` appends a version string to
+the `dismissed_versions` list on disk. No call site in the current
+binary (banner is informational only today); kept public so a future
+interactive prompt path (TUI helper, GUI extra) can persist the
+"skip until next version" choice without re-implementing the cache
+layer.

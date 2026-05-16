@@ -1633,8 +1633,9 @@ The `Changes.result_suffix()` wording matches Swift's
 `WindowChangeDetector.Changes.resultSuffix`:
 
 - New windows: `"\n\n🪟 Action opened new window(s): App (\"Title\")."`
-  (multiple windows grouped by app, titles in quotes, joined with `, `;
-  multiple apps joined with `; `; alphabetical by app name).
+  (multiple windows grouped by app, titles in quotes, joined with a
+  `,` (comma followed by a space); multiple apps joined with a `;`
+  (semicolon followed by a space); alphabetical by app name).
 - Foreground-only change (no new windows): `"\n\n🔀 Action caused a
   different app to become frontmost."`.
 - No change: empty string.

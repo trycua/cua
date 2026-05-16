@@ -13,6 +13,7 @@ tracing = { workspace = true }
 base64 = { workspace = true }
 image = { workspace = true }
 async-trait = "0.1"
+uuid = { workspace = true }
 mcp-server = { path = "../mcp-server" }
 cursor-overlay = { path = "../cursor-overlay" }
 
@@ -22,16 +23,21 @@ core-foundation = "0.10"
 core-graphics = { version = "0.24", features = ["highsierra", "elcapitan"] }
 foreign-types = "0.5"
 libc = "0.2"
+block2 = "0.5"
 # objc2 and its AppKit/CoreFoundation bindings
 objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = [
     "NSArray", "NSString", "NSDictionary", "NSRunLoop",
     "NSThread", "NSObject", "NSValue",
+    "NSAppleEventDescriptor", "NSNotification", "NSOperation",
+    "NSURL", "NSDate", "NSError",
+    "block2", "libc",
 ] }
 objc2-app-kit = { version = "0.2", features = [
     "NSApplication", "NSWindow", "NSScreen", "NSColor",
     "NSEvent", "NSRunningApplication", "NSWorkspace",
     "NSView", "NSGraphicsContext", "NSResponder",
+    "block2", "libc",
 ] }
 
 # QuartzCore for CALayer

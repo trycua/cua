@@ -1,5 +1,7 @@
 //! macOS app enumeration via NSWorkspace and NSRunningApplication.
 
+pub mod nsworkspace;
+
 use std::process::Command;
 use serde::{Deserialize, Serialize};
 

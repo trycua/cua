@@ -21,7 +21,12 @@
 //! ## Usage
 //!
 //! ```ignore
-//! let snapshot = WindowChangeDetector::snapshot();
+//! // Callers capture frontmost BEFORE the snapshot so the wildcard
+//! // suppressor and the snapshot's recorded frontmost agree on the
+//! // pid to restore to — avoids a race where another app activates
+//! // between the caller's `frontmost_pid()` and the detector's own.
+//! let prior_front = apps::frontmost_pid();
+//! let snapshot = WindowChangeDetector::snapshot(prior_front);
 //! // … perform action …
 //! let changes = snapshot.detect();
 //! // changes.result_suffix() — append to ToolResult text.
@@ -158,26 +163,34 @@ impl WindowChangeDetector {
     /// wildcard focus-steal suppressor. Call immediately before
     /// dispatching the action.
     ///
+    /// `prior_front` is the frontmost pid the **caller** already
+    /// observed — typically captured one line earlier via
+    /// `apps::frontmost_pid()` for the surrounding `focus_guard`
+    /// lease. We use the caller's value (not a fresh re-read) so the
+    /// wildcard suppressor's `restore_to` matches what the focus-guard
+    /// lease saw; a race where another app became frontmost between
+    /// the caller's read and this method would otherwise leave the
+    /// two leases targeting different pids.
+    ///
     /// Returns `Snapshot`. Drop ends suppression (via the held
     /// `SuppressionLease`); call `Snapshot::detect()` to consume the
     /// snapshot and get a `Changes` summary.
     ///
-    /// Safe to call from any thread — `CGWindowListCopyWindowInfo` and
-    /// `NSWorkspace.frontmostApplication` are both documented as
-    /// thread-safe.
-    pub fn snapshot() -> Snapshot {
+    /// Safe to call from any thread — `CGWindowListCopyWindowInfo` is
+    /// documented as thread-safe.
+    pub fn snapshot(prior_front: Option<i32>) -> Snapshot {
         let window_ids: HashSet<u32> = windows::visible_windows()
             .into_iter()
             .filter(|w| w.layer == 0)
             .map(|w| w.window_id)
             .collect();
-        let front_pid = apps::frontmost_pid();
 
         // Arm wildcard suppression — covers snapshot → detect window.
-        // restore_to = current frontmost; target = wildcard (any other pid).
-        // If there's no frontmost (rare — screensaver, login window), we
-        // skip the lease; foreground-change tracking still runs.
-        let lease = front_pid.map(|restore_to| {
+        // restore_to = caller-captured frontmost; target = wildcard
+        // (any other pid). If there's no frontmost (rare — screensaver,
+        // login window), we skip the lease; foreground-change tracking
+        // still runs.
+        let lease = prior_front.map(|restore_to| {
             focus_steal::begin_suppression(
                 None, // wildcard
                 restore_to,
@@ -187,7 +200,7 @@ impl WindowChangeDetector {
 
         Snapshot {
             window_ids,
-            front_pid,
+            front_pid: prior_front,
             _lease: lease,
         }
     }
@@ -451,5 +464,22 @@ mod tests {
         };
         // No title → just the app name, no parentheses.
         assert_eq!(c.result_suffix(), "\n\n🪟 Action opened new window(s): Finder.");
+    }
+
+    /// Regression: `snapshot(prior_front)` must store the caller's
+    /// captured front pid verbatim (rather than re-reading it inside
+    /// the function and racing with concurrent activations).
+    #[test]
+    fn snapshot_stores_caller_prior_front() {
+        // Use an obviously bogus pid so we'd notice if the impl silently
+        // fell back to the live frontmost on this test runner.
+        let bogus_prior = Some(424242_i32);
+        let snap = WindowChangeDetector::snapshot(bogus_prior);
+        assert_eq!(snap.front_pid(), bogus_prior);
+
+        // None must round-trip too — and must skip the lease without
+        // panicking (no frontmost to restore to).
+        let snap_none = WindowChangeDetector::snapshot(None);
+        assert_eq!(snap_none.front_pid(), None);
     }
 }

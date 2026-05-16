@@ -129,7 +129,7 @@ impl Tool for TypeTextTool {
         // helper windows. Wrap so callers see them in the result suffix
         // and the wildcard suppressor catches reflex activations.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),

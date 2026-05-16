@@ -144,7 +144,7 @@ impl Tool for ClickTool {
             // new-window / foreground side-effects and append a one-liner
             // suffix matching Swift's wording.
             let prior_front = apps::frontmost_pid();
-            let snapshot = WindowChangeDetector::snapshot();
+            let snapshot = WindowChangeDetector::snapshot(prior_front);
 
             // Run AX work on a blocking thread (can't block async executor).
             let action_clone = action.clone();
@@ -294,7 +294,7 @@ impl Tool for ClickTool {
             // or a Safari link that activates a new tab — same side-effect
             // shape as the AX path, so we wrap identically.
             let prior_front = apps::frontmost_pid();
-            let snapshot = WindowChangeDetector::snapshot();
+            let snapshot = WindowChangeDetector::snapshot(prior_front);
 
             let mods_owned = modifiers.clone();
             let result = focus_guard::with_focus_suppressed(

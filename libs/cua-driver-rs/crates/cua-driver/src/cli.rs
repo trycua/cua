@@ -1483,7 +1483,7 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
     use crate::telemetry::event;
     let name = match cmd {
-        Command::Mcp => event::MCP.to_owned(),
+        Command::Mcp { .. } => event::MCP.to_owned(),
         Command::Serve { .. } => event::SERVE.to_owned(),
         Command::Stop { .. } => event::STOP.to_owned(),
         Command::Status { .. } => event::STATUS.to_owned(),

@@ -214,6 +214,23 @@ else
     log "installed $BIN_LINK (version $VERSION)"
 fi
 
+# --- Fire the one-shot install telemetry ping ---------------------------
+#
+# Anonymous adoption signal — sends `cua_driver_install` to PostHog
+# exactly once per install (guarded by ~/.cua-driver-rs/.installation_recorded
+# on the binary side). The Rust port keeps its install signal independent
+# of the Swift `cua-driver` install (separate marker dir + separate env var)
+# so users can opt out of one without affecting the other.
+#
+# Bypasses the CUA_DRIVER_RS_TELEMETRY_ENABLED check by design — see
+# `telemetry::capture_install()` for the rationale (count adoption even
+# when users opt out immediately after install). Every subsequent event
+# from the binary respects the opt-out normally.
+#
+# Background + redirect so a slow / failed POST never blocks the install.
+"$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
+disown 2>/dev/null || true
+
 # Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
 if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""

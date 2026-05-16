@@ -25,6 +25,8 @@ pub mod focus_steal;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
+pub mod focus_guard;
+#[cfg(target_os = "macos")]
 pub mod window_change_detector;
 #[cfg(target_os = "macos")]
 pub mod tools;

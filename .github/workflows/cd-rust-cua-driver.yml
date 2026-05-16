@@ -193,15 +193,26 @@ jobs:
           # BETA release; production signing will land in a separate
           # change that wires up the notarization script the way the
           # Swift driver does.
+          VERSION="${{ steps.version.outputs.version }}"
           mkdir -p release/CuaDriverRs.app
           cp -R scripts/CuaDriverRs.app/Contents release/CuaDriverRs.app/Contents
           cp release/universal/cua-driver \
              release/CuaDriverRs.app/Contents/MacOS/cua-driver
           chmod +x release/CuaDriverRs.app/Contents/MacOS/cua-driver
+          # Stamp the release version into Info.plist so the bundle
+          # version tracks the tag instead of whatever was last
+          # checked in. Without this the in-tree Info.plist's
+          # CFBundleShortVersionString drifts from the release tag on
+          # every cut. CodeRabbit #4.
+          plutil -replace CFBundleShortVersionString -string "$VERSION" \
+            release/CuaDriverRs.app/Contents/Info.plist
+          plutil -replace CFBundleVersion -string "$VERSION" \
+            release/CuaDriverRs.app/Contents/Info.plist
           # Remove the .gitkeep we use in source control — it's not
           # part of the runtime bundle.
           rm -f release/CuaDriverRs.app/Contents/MacOS/.gitkeep
           ls -la release/CuaDriverRs.app/Contents/MacOS
+          plutil -p release/CuaDriverRs.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
       - name: Package
         working-directory: libs/cua-driver-rs
         run: |

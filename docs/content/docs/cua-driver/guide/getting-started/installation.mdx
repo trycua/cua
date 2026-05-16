@@ -93,8 +93,9 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   CUA_DRIVER_RS_PERMISSIONS_GATE=0 cua-driver serve
   ```
 
-  Accepted "off" values for the env-var: `0`, `false`, `no`, `off`. Any other
-  value (including unset) leaves the gate active.
+  Accepted "off" values for the env-var (case-insensitive): `0`, `false`,
+  `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any other value
+  (including unset) leaves the gate active.
 </Callout>
 
 ## Requirements

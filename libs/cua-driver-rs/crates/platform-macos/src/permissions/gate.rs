@@ -15,9 +15,10 @@
 //!   5. As soon as everything flips green, print a confirmation and
 //!      return — `serve` proceeds normally.
 //!
-//! Opt-out: `--no-permissions-gate` flag or `CUA_DRIVER_RS_PERMISSIONS_GATE=0`
-//! env-var skips the entire flow.  Intended for CI / headless automation
-//! where blocking on user input would deadlock the runner.
+//! Opt-out: `--no-permissions-gate` flag or
+//! `CUA_DRIVER_RS_PERMISSIONS_GATE` set to `0` / `false` / `no` / `off`
+//! (case-insensitive) skips the entire flow.  Intended for CI / headless
+//! automation where blocking on user input would deadlock the runner.
 //!
 //! Why no GUI window: the Swift gate uses AppKit + SwiftUI which would
 //! require a full overlay + NSApplication run loop just to display a
@@ -162,16 +163,23 @@ impl Default for GateOpts {
 }
 
 impl GateOpts {
-    /// Construct from the standard env-var (`CUA_DRIVER_RS_PERMISSIONS_GATE=0`
-    /// disables) and an explicit `--no-permissions-gate` flag.  Either signal
-    /// is sufficient to opt out.
+    /// Construct from the standard env-var
+    /// (`CUA_DRIVER_RS_PERMISSIONS_GATE` set to `0` / `false` / `no` /
+    /// `off`, case-insensitive, disables the gate) and an explicit
+    /// `--no-permissions-gate` flag.  Either signal is sufficient to opt
+    /// out.
     pub fn from_env_and_flag(no_gate_flag: bool) -> Self {
-        let env_disabled = matches!(
-            std::env::var("CUA_DRIVER_RS_PERMISSIONS_GATE")
-                .ok()
-                .as_deref(),
-            Some("0") | Some("false") | Some("no") | Some("off")
-        );
+        // Match the standard list of "off" sentinels case-insensitively so
+        // CI scripts can use any of `0`, `false`, `no`, `off`, `FALSE`,
+        // `Off`, etc. without surprises.  Anything not in this set leaves
+        // the gate active — fail-safe default for first-launch UX.
+        let env_disabled = std::env::var("CUA_DRIVER_RS_PERMISSIONS_GATE")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                matches!(lower.as_str(), "0" | "false" | "no" | "off")
+            })
+            .unwrap_or(false);
         Self {
             opt_out: no_gate_flag || env_disabled,
             ..Self::default()
@@ -209,7 +217,7 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     }
 
     let missing = missing_from_status(initial);
-    print_banner(&missing);
+    print_banner(&missing, opts.open_settings);
 
     if opts.also_raise_prompts {
         // These are no-ops when the grant is already active and are the
@@ -295,7 +303,7 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
     }
 }
 
-fn print_banner(missing: &[MissingPermission]) {
+fn print_banner(missing: &[MissingPermission], open_settings: bool) {
     println!();
     println!("──────────────────────────────────────────────────────────────");
     println!(" cua-driver needs your permission before `serve` can start");
@@ -307,12 +315,23 @@ fn print_banner(missing: &[MissingPermission]) {
         println!("       {}", m.rationale());
     }
     println!();
-    println!(" Opening System Settings → Privacy & Security now.");
+    if open_settings {
+        println!(" Opening System Settings → Privacy & Security now.");
+    } else {
+        // open_settings was suppressed by the caller — print the manual
+        // command(s) instead so the user still knows where to go.  Listing
+        // each pane keeps copy-paste working when only one grant is needed.
+        println!(" Open System Settings → Privacy & Security manually, e.g.:");
+        for m in missing {
+            println!("   open \"{}\"   # {}", m.settings_url(), m.label());
+        }
+    }
     println!(" Grant each item, then this prompt will auto-continue.");
     println!();
     println!(" Skip this gate (CI / headless): re-run with");
     println!("   cua-driver serve --no-permissions-gate");
-    println!(" or set CUA_DRIVER_RS_PERMISSIONS_GATE=0 in the environment.");
+    println!(" or set CUA_DRIVER_RS_PERMISSIONS_GATE to 0/false/no/off");
+    println!(" (case-insensitive) in the environment.");
     println!();
     let _ = std::io::stdout().flush();
 }
@@ -328,6 +347,23 @@ fn fmt_missing(missing: &[MissingPermission]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Serializes every test that mutates `CUA_DRIVER_RS_PERMISSIONS_GATE`.
+    /// `cargo test` runs tests in parallel by default and `std::env::set_var`
+    /// / `remove_var` touch a process-global table — without this lock the
+    /// env-var tests race and produce flaky failures.
+    static TEST_ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        // `lock()` can only fail if a previous holder panicked.  Recover the
+        // guard and keep going — the env var will be re-set/cleared by this
+        // test anyway, so a poisoned mutex carries no stale invariant.
+        TEST_ENV_MUTEX
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn opt_out_short_circuits_run_if_needed() {
@@ -349,9 +385,7 @@ mod tests {
 
     #[test]
     fn env_var_disables_gate() {
-        // Mutating the env in a test is generally suspect (parallel tests
-        // racing) but cargo runs unit tests in this crate sequentially and
-        // the var name is unique enough to avoid collisions.
+        let _guard = env_lock();
         std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_GATE", "0");
         let opts = GateOpts::from_env_and_flag(false);
         assert!(opts.opt_out, "env=0 must opt out");
@@ -360,6 +394,7 @@ mod tests {
 
     #[test]
     fn flag_disables_gate() {
+        let _guard = env_lock();
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");
         let opts = GateOpts::from_env_and_flag(true);
         assert!(opts.opt_out, "--no-permissions-gate must opt out");
@@ -367,6 +402,7 @@ mod tests {
 
     #[test]
     fn neither_flag_nor_env_does_not_opt_out() {
+        let _guard = env_lock();
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");
         let opts = GateOpts::from_env_and_flag(false);
         assert!(!opts.opt_out);
@@ -374,6 +410,7 @@ mod tests {
 
     #[test]
     fn env_var_truthy_values_do_not_opt_out() {
+        let _guard = env_lock();
         // Only the explicit "off" sentinels disable the gate.  Anything
         // else (including empty string or unknown garbage) leaves the gate
         // active — fail-safe default for first-launch UX.
@@ -383,6 +420,28 @@ mod tests {
             assert!(
                 !opts.opt_out,
                 "env={v:?} must not opt out (only 0/false/no/off do)"
+            );
+        }
+        std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");
+    }
+
+    #[test]
+    fn env_var_off_sentinels_are_case_insensitive() {
+        let _guard = env_lock();
+        // Every documented off-sentinel must opt out regardless of case so
+        // CI scripts can use whatever convention they prefer.
+        for v in &[
+            "0", "false", "FALSE", "False", "no", "NO", "No", "off", "OFF", "Off", "TrUe",
+        ] {
+            std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_GATE", v);
+            let opts = GateOpts::from_env_and_flag(false);
+            // "TrUe" is in the list intentionally — it must NOT opt out
+            // (it's not in the off-sentinel set), so split the assertion.
+            let expected_opt_out =
+                matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off");
+            assert_eq!(
+                opts.opt_out, expected_opt_out,
+                "env={v:?} opt_out mismatch (expected {expected_opt_out})"
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");

@@ -160,7 +160,7 @@ the gate is a transparent no-op.
 | Name | Description |
 | ---- | ----------- |
 | `--no-relaunch` | Stay in the current process instead of re-execing via `open -n -g -a CuaDriver`. |
-| `--no-permissions-gate` | Skip the macOS TCC permissions gate at startup. Use for CI / headless runners where blocking on user input would deadlock the process. Also toggleable via `CUA_DRIVER_RS_PERMISSIONS_GATE=0`. |
+| `--no-permissions-gate` | Skip the macOS TCC permissions gate at startup. Use for CI / headless runners where blocking on user input would deadlock the process. Also toggleable by setting `CUA_DRIVER_RS_PERMISSIONS_GATE` to any of `0`, `false`, `no`, or `off` (case-insensitive — e.g. `CUA_DRIVER_RS_PERMISSIONS_GATE=FALSE` works too). |
 
 ### cua-driver stop
 

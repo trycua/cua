@@ -417,13 +417,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/LaunchAppTool.swift:6-490`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (LaunchAppTool)
-  - macos=`crates/platform-macos/src/tools/launch_app.rs` (TBD audit)
+  - macos=`crates/platform-macos/src/tools/launch_app.rs` (full focus-steal contract)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
 - Status:
   - windows: VERIFIED
-  - macos: OPEN
+  - macos: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
-- Test: `crates/platform-windows/examples/launch_app_parity.rs`
+- Tests:
+  - windows=`crates/platform-windows/examples/launch_app_parity.rs`
+  - macos=`tests/integration/test_focus_steal_parity.py` + `crates/platform-macos/src/focus_steal.rs` (Rust unit tests)
 
 ### Fixed (Windows)
 
@@ -468,6 +470,48 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - `structuredContent.pid` is the actual ShellExecuteEx pid ✓
 - `bundle_id: null`, `running: true`, `active: false` ✓
 - Notepad killed on test exit. ✓
+
+### Fixed (macOS)
+
+1. **No more shell-out** — `apps::launch_app`, `launch_app_by_name`, and
+   `launch_with_urls_*` no longer `Command::new("open")`. All paths now
+   call `apps::nsworkspace::open_application` /
+   `open_urls_with_application` directly via objc2-app-kit's
+   `NSWorkspace.openApplication(at:configuration:completionHandler:)`
+   (no-URL) and `open(_:withApplicationAt:configuration:)` (URL-handoff)
+   variants. Matches Swift `AppLauncher.swift:106-131` byte-for-byte in
+   the launch semantics.
+2. **`activates = false` + `addsToRecentItems = false`** — set on every
+   launch via `NSWorkspaceOpenConfiguration`. Mirrors Swift
+   `AppLauncher.swift:65-66`.
+3. **`oapp` AppleEvent descriptor on the no-URL path** — hand-rolled
+   `extern_methods!` block in `apps/nsworkspace.rs` binds
+   `NSAppleEventDescriptor.init(eventClass:eventID:targetDescriptor:returnID:transactionID:)`
+   (not exposed by objc2-foundation 0.2.2). Without this, cold-launches
+   of state-restored apps (Calculator-class) are windowless. Matches
+   Swift `AppLauncher.swift:85-103`.
+4. **3-phase focus-steal wrap** — `LaunchAppTool::invoke` captures the
+   prior frontmost pid, arms a wildcard suppression entry, launches,
+   swaps to a targeted entry (with overlap, not drop-then-begin, to
+   avoid the hoang17 PR #1521 race), sleeps 500ms, drops the lease,
+   and belt-and-braces re-activates the prior frontmost if the target
+   is still on top. Matches Swift `LaunchAppTool.swift:181-281`.
+5. **Direct pid from completion handler** — the `NSRunningApplication`
+   returned by `openApplication` is used directly; no `list_running_apps`
+   scan-and-match race. Matches Swift.
+6. **Window-resolution retry** — same 5-attempt 100ms retry as before;
+   unchanged.
+
+### Verified on macOS
+
+`tests/integration/test_focus_steal_parity.py` covers:
+- Passive app launch (Calculator) — frontmost unchanged ✓
+- Self-activating app launch (Safari) — frontmost restored within 1.5s ✓
+- Launch with `urls=["about:blank"]` — frontmost preserved ✓
+- Cold launch creates a window (verifies the `oapp` AppleEvent) ✓
+- Back-to-back launches don't leak suppression state across calls ✓
+- 5s deadline reaper evicts leaked entries ✓ (Rust unit test
+  `focus_steal::tests::deadline_reaps_leaked_entry`)
 
 ---
 
@@ -1233,3 +1277,70 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
 - `--type=mcp`: top-level `{version, tools}` ✓
 - `--type=cli`: stub section ✓
 - `--pretty`: multi-line JSON (991 lines) ✓
+
+---
+
+## Focus-steal prevention
+
+Cross-cutting infrastructure (not an MCP tool) used by `launch_app` today
+and slated for use by `click`/`hotkey`/AX-action tools when those are
+ported to Rust macOS. Catches apps that self-activate during launch
+(Chrome, Electron, Safari) and re-activates the prior frontmost app
+before the user perceives the steal.
+
+- Swift: `libs/cua-driver/Sources/CuaDriverCore/Focus/SystemFocusStealPreventer.swift`
+- Swift hardening: open PR [#1521](https://github.com/trycua/cua/pull/1521)
+  (4-layer leak prevention: closure scope, RAII lease, 5s monotonic
+  deadline, 1s janitor)
+- Rust: `crates/platform-macos/src/focus_steal.rs`
+- Status: macos VERIFIED. windows/linux N/A (no equivalent OS focus-steal
+  surface area).
+- Tests:
+  - Rust unit: `crates/platform-macos/src/focus_steal.rs` `#[cfg(test)] mod tests`
+    — dispatcher add/remove/match, deadline reap, janitor start/stop
+    lifecycle.
+  - Integration: `tests/integration/test_focus_steal_parity.py` — runs
+    against both Swift and Rust binaries with `expectedFailure` on the
+    Swift Safari-URL case for the known Cryptex+`oapp` LaunchServices bug.
+
+### Design
+
+- Process-wide singleton (`OnceLock<Arc<FocusStealPreventer>>`) — mirrors
+  Swift's `AppStateRegistry.systemFocusStealPreventer`.
+- One `NSWorkspaceDidActivateApplicationNotification` observer, registered
+  on a **fresh background `NSOperationQueue`** (not `mainQueue`). This is
+  load-bearing: the binary's `Call` and `--no-overlay` Serve modes don't
+  run an NSApplication main-thread run loop, so an observer on `mainQueue`
+  would silently no-op. Background queue means the block fires regardless
+  of run-loop state.
+- Dispatcher: `Mutex<HashMap<Uuid, SuppressionEntry>>` where each entry is
+  `(target_pid: Option<i32>, restore_to: i32, deadline: Instant, origin)`.
+  `target_pid = None` is the wildcard (catches any activation other than
+  `restore_to`).
+- API:
+  - Closure: `with_suppression(target_pid, restore_to, origin, async fn)`.
+  - RAII: `begin_suppression(...) -> SuppressionLease`, `Drop` calls
+    `end_suppression` synchronously.
+- Deadline reaper: each entry stamped `Instant::now() + 5s`. Pruned on
+  every observer fire and by a 1s tokio interval task gated by a
+  `watch::Sender` (start on first-add, stop on last-remove). Mirrors
+  PR #1521's deadline + janitor layers; RAII (`SuppressionLease`)
+  subsumes Swift's `withSuppression` (layer 1) + `SuppressionLease`
+  (layer 2) into one Rust idiom.
+- Restore: when a notification matches an entry, the observer block
+  resolves `NSRunningApplication::runningApplicationWithProcessIdentifier(restore_to)`
+  and calls `activate(options:[])`. `-[NSRunningApplication activate:]`
+  is documented thread-safe — no main-thread hop needed.
+
+### Intentional simplifications vs Swift
+
+- **No `FocusGuard.withFocusSuppressed` analogue yet** — Swift's
+  per-AX-action wrapper. The Rust `click` AX path doesn't exist yet, so
+  there's nothing to wrap. Port when the AX action path lands.
+- **No `WindowChangeDetector` analogue yet** — same reason; the Rust port
+  has no snapshot/detect cycle to wrap. Port when WindowChangeDetector
+  lands.
+- **Janitor uses `tokio::sync::watch`** — Swift uses Task cancellation;
+  Rust's tokio idiom is the watch-channel select pattern. Behavior is
+  identical: idle dispatcher → janitor sleeps; new entry → janitor
+  wakes; map drains → janitor exits and waits for the next add.

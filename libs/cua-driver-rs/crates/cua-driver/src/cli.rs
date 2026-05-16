@@ -22,7 +22,14 @@ pub enum Command {
     Describe(String),
     Call { tool: String, json_args: Option<serde_json::Value>, screenshot_out_file: Option<String> },
     McpConfig { client: Option<String> },
-    Serve { socket: Option<String> },
+    Serve {
+        socket: Option<String>,
+        /// True when `--no-permissions-gate` is on argv.  The env-var
+        /// `CUA_DRIVER_RS_PERMISSIONS_GATE=0` short-circuits the gate too
+        /// (checked inside the gate itself), so the flag is only one of
+        /// two opt-out signals.
+        no_permissions_gate: bool,
+    },
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
@@ -93,7 +100,11 @@ pub fn parse_command() -> Command {
         None | Some("mcp") => Command::Mcp,
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
-        Some("serve") => Command::Serve { socket },
+        Some("serve") => Command::Serve {
+            socket,
+            // Bare flag — present anywhere on argv counts as "skip the gate".
+            no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
+        },
         Some("stop") => Command::Stop { socket },
         Some("status") => Command::Status { socket },
         Some("recording") => {

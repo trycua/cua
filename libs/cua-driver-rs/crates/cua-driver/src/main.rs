@@ -84,7 +84,25 @@ fn main() {
             cli::run_call(reg, &tool, json_args, screenshot_out_file);
             return;
         }
-        cli::Command::Serve { socket } => {
+        cli::Command::Serve { socket, no_permissions_gate } => {
+            // First-launch permissions gate (Swift PermissionsGate parity).
+            // Runs on every `serve` start; no-op when both grants are
+            // already active.  Honors --no-permissions-gate and
+            // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
+            //
+            // Failures (e.g. deadline elapsed without grants) are logged
+            // and the daemon continues to start — individual tool calls
+            // will then fail with the underlying TCC error, mirroring
+            // Swift's "user closed the panel" fallback.
+            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
+                no_permissions_gate,
+            );
+            if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
+                eprintln!("[cua-driver] permissions gate: {e}");
+                eprintln!("[cua-driver] continuing serve startup anyway — \
+                           expect tool calls touching AX or Screen Recording \
+                           to fail until you grant the missing TCC permissions.");
+            }
             mcp_server::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
                     platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
@@ -251,7 +269,11 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Serve { socket } => {
+        cli::Command::Serve { socket, no_permissions_gate } => {
+            // The Rust permissions gate is macOS-only (TCC concept).
+            // On Windows / Linux the flag is silently accepted for
+            // CLI uniformity and ignored.
+            let _ = no_permissions_gate;
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let reg = Arc::new(build_registry(cursor_cfg));

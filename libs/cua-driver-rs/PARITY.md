@@ -1118,10 +1118,85 @@ older clients that only read name/description still work.
 2. `CUA_DRIVER_RS_MCP_FORCE_PROXY=1 cua-driver mcp --socket /tmp/test.sock`
 3. From an MCP client, run the standard initialize → tools/list →
    tools/call get_screen_size handshake. Expect identical envelope
-   shape to the in-process path.
+   shape to the in-process path. Concretely:
+
+   `tools/list` response (the daemon caches and returns it once at
+   proxy startup — same shape as the in-process server's `tools/list`):
+
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+       "tools": [
+         { "name": "browser_eval",            "description": "…", "inputSchema": {…}, "annotations": {…} },
+         { "name": "check_permissions",       "description": "…", "inputSchema": {…}, "annotations": {…} },
+         { "name": "click",                   "description": "…", "inputSchema": {…}, "annotations": {…} },
+         { "name": "double_click",            "…": "…" },
+         { "name": "drag",                    "…": "…" },
+         { "name": "get_accessibility_tree",  "…": "…" },
+         { "name": "get_config",              "…": "…" },
+         { "name": "get_cursor_position",     "…": "…" },
+         { "name": "get_recording_state",     "…": "…" },
+         { "name": "get_screen_size",         "…": "…" },
+         { "name": "get_window_state",        "…": "…" },
+         { "name": "hotkey",                  "…": "…" },
+         { "name": "launch_app",              "…": "…" },
+         { "name": "list_apps",               "…": "…" },
+         { "name": "list_windows",            "…": "…" },
+         { "name": "page",                    "…": "…" },
+         { "name": "press_key",               "…": "…" },
+         { "name": "replay_trajectory",       "…": "…" },
+         { "name": "right_click",             "…": "…" },
+         { "name": "screenshot",              "…": "…" },
+         { "name": "scroll",                  "…": "…" },
+         { "name": "set_config",              "…": "…" },
+         { "name": "set_recording",           "…": "…" },
+         { "name": "set_value",               "…": "…" },
+         { "name": "type_text",               "…": "…" },
+         { "name": "zoom",                    "…": "…" }
+         // …plus the agent_cursor.* family when overlay is enabled.
+         // For an exact snapshot run: `cua-driver list-tools`
+       ]
+     }
+   }
+   ```
+
+   `tools/call get_screen_size` request + response:
+
+   ```json
+   // → stdin
+   {"jsonrpc":"2.0","id":2,"method":"tools/call",
+    "params":{"name":"get_screen_size","arguments":{}}}
+
+   // ← stdout
+   {"jsonrpc":"2.0","id":2,"result":{
+     "content":[{"type":"text","text":"{\"width\":1920,\"height\":1080}"}],
+     "structuredContent":{"width":1920,"height":1080},
+     "isError":false
+   }}
+   ```
+
+   The `result` envelope is identical to the in-process path —
+   structuredContent + text mirror, no proxy-specific wrapping.
+
 4. Without spawning the daemon first, repeat step 2. Expect
    non-zero exit and a "daemon not reachable" diagnostic on stderr
-   (the fail-fast contract that matches Swift `makeProxy`).
+   (the fail-fast contract that matches Swift `makeProxy`). Exact
+   stderr text emitted by `main.rs`'s proxy-error branch (wrapping
+   `proxy::run_proxy`'s pre-check):
+
+   ```
+   cua-driver-rs: cua-driver-rs daemon not reachable on /tmp/test.sock. Start it with `open -n -g -a CuaDriverRs --args serve` and retry.
+   ```
+
+   Process exits with status `1` before reading any MCP request on
+   stdin. With `CUA_DRIVER_RS_MCP_FORCE_PROXY=1` set, `cli.rs`'s
+   `run_mcp_via_daemon_proxy` emits the more specific:
+
+   ```
+   cua-driver-rs: CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on /tmp/test.sock. Start one with `cua-driver serve --socket /tmp/test.sock` and retry.
+   ```
 
 ---
 

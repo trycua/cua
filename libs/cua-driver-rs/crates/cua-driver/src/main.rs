@@ -26,6 +26,7 @@
 
 mod bundle;
 mod cli;
+mod proxy;
 mod serve;
 
 use std::sync::Arc;

@@ -228,8 +228,14 @@ impl Dispatcher {
         }
     }
 
-    /// Add an entry, return its handle. First-add of a fresh dispatcher
-    /// triggers the janitor task to start.
+    /// Add an entry, return its handle. Always attempts to start the
+    /// janitor task — `kick_janitor()` is idempotent and is the only
+    /// reliable path to recover if the very first add happened before
+    /// a tokio runtime was ready. Gating the kick on "map was empty"
+    /// (as we used to) lost the janitor permanently in that case:
+    /// subsequent adds would skip the kick and the janitor never
+    /// started, leaving deadline-reaping entirely up to the
+    /// `snapshot_matches` reap fallback (only fires on an activation).
     fn add(
         self: &Arc<Self>,
         target_pid: Option<i32>,
@@ -243,15 +249,12 @@ impl Dispatcher {
             deadline: Instant::now() + ENTRY_DEADLINE,
             origin,
         };
-        let needs_start = {
+        {
             let mut guard = self.entries.lock().unwrap();
-            let was_empty = guard.is_empty();
             guard.insert(id, entry);
-            was_empty
-        };
-        if needs_start {
-            self.kick_janitor();
         }
+        // Always kick — idempotent if the task is already running.
+        self.kick_janitor();
         // Signal the janitor that there's work to do (it will start a
         // fresh tokio interval on the next tick).
         let _ = self.janitor_active.send(true);
@@ -315,6 +318,15 @@ impl Dispatcher {
     }
 
     /// Start the janitor task on the current tokio runtime (idempotent).
+    ///
+    /// Safe to call from `add()` on every entry — returns immediately
+    /// when the task is already up. If the spawn cannot proceed (no
+    /// tokio runtime available — e.g. the first `add()` raced the
+    /// binary's runtime init), the `started` flag is intentionally left
+    /// `false` so the next add from a tokio-aware caller retries.
+    /// Without that retry path the janitor could go permanently
+    /// un-spawned and deadline-reaping would degrade to the
+    /// `snapshot_matches` reap fallback (only runs on an activation).
     fn kick_janitor(self: &Arc<Self>) {
         let mut started = self.janitor_started.lock().unwrap();
         if *started {
@@ -322,11 +334,17 @@ impl Dispatcher {
         }
         // If there's no tokio runtime available (e.g. the binary is in
         // the middle of an init path that runs before Tokio is up), skip
-        // — the next add from a tokio-aware caller will start it.
+        // — the next add from a tokio-aware caller will retry. We do NOT
+        // set `*started = true` in this branch so the retry actually
+        // takes the spawn path.
         if tokio::runtime::Handle::try_current().is_err() {
             return;
         }
-        *started = true;
+        // Mark started ONLY after a successful `tokio::spawn`. The
+        // spawn itself is infallible under the current API but we still
+        // sequence the flag update after the spawn so any future
+        // panic-from-spawn path would leave `started = false` and the
+        // next add would retry.
         let weak = Arc::downgrade(self);
         let mut rx = self.janitor_active.subscribe();
         tokio::spawn(async move {
@@ -362,6 +380,7 @@ impl Dispatcher {
                 }
             }
         });
+        *started = true;
     }
 }
 
@@ -581,6 +600,54 @@ mod tests {
         d.kick_janitor();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(d.len(), 1);
+    }
+
+    /// Verifies the CodeRabbit #2 fix: `add()` always calls
+    /// `kick_janitor()`, regardless of whether the map was empty.
+    ///
+    /// Scenario: first `add()` happens outside a tokio runtime —
+    /// `kick_janitor()` short-circuits via `Handle::try_current()` and
+    /// leaves `started = false`. A second `add()` from a tokio-aware
+    /// caller (the more common case in practice) must retry the spawn.
+    /// The old code skipped the kick because the map was non-empty,
+    /// stranding the janitor forever.
+    #[test]
+    fn add_always_kicks_janitor_after_initial_runtime_miss() {
+        let d = Arc::new(Dispatcher::new());
+        // Outside any tokio runtime — kick_janitor's `try_current` guard
+        // returns Err, the function returns without setting started.
+        let h1 = d.add(Some(1), 2, "test.no_runtime");
+        assert_eq!(d.len(), 1);
+        assert!(
+            !*d.janitor_started.lock().unwrap(),
+            "kick without a runtime must leave started=false so the next \
+             add retries"
+        );
+
+        // Now spin up a tokio runtime and add a second entry. The fix
+        // is that this *second* add still calls kick_janitor (the old
+        // code skipped because the map was already non-empty). Verify
+        // by asserting started flips to true.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime");
+        let d_in = Arc::clone(&d);
+        rt.block_on(async move {
+            let _h2 = d_in.add(Some(3), 4, "test.with_runtime");
+            assert_eq!(d_in.len(), 2);
+            assert!(
+                *d_in.janitor_started.lock().unwrap(),
+                "second add from inside the runtime must retry the spawn \
+                 (regression guard for CodeRabbit #2)"
+            );
+        });
+
+        // Clean up so the dispatcher doesn't outlive the runtime with
+        // a still-armed entry — not strictly needed (Dispatcher is
+        // `Send + Sync` and the spawned task holds only a Weak ref),
+        // but keeps the test self-contained.
+        d.remove(h1);
     }
 
     /// Snapshot ordering doesn't matter, but the restore pid set

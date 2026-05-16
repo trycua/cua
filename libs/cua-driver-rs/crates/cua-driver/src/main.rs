@@ -71,12 +71,12 @@ fn main() {
     emit_entry_telemetry(&command);
     match command {
         cli::Command::TelemetryInstallEvent => {
-            // Fire-and-forget install ping. Block briefly so the spawned
-            // thread has time to send before the process exits — the
-            // installer doesn't want a 3s tail, but a sub-second wait is
-            // acceptable for the one-shot.
+            // Synchronous install ping (see `telemetry::capture_install`).
+            // Blocks on the POST so the `.installation_recorded` marker
+            // is only written on HTTP success — failed POST means next
+            // launch retries. Installer script already runs us in the
+            // background via `&`, so blocking here is fine.
             telemetry::capture_install();
-            std::thread::sleep(std::time::Duration::from_secs(2));
             return;
         }
         cli::Command::ListTools => {
@@ -296,10 +296,12 @@ fn main() -> anyhow::Result<()> {
     emit_entry_telemetry(&command);
     match command {
         cli::Command::TelemetryInstallEvent => {
-            // Fire-and-forget install ping. Block briefly so the spawned
-            // thread has time to send before the process exits.
+            // Synchronous install ping (see `telemetry::capture_install`).
+            // Blocks on the POST so the `.installation_recorded` marker
+            // is only written on HTTP success — failed POST means next
+            // launch retries. Installer script already runs us in the
+            // background via `&`, so blocking here is fine.
             telemetry::capture_install();
-            std::thread::sleep(std::time::Duration::from_secs(2));
             return Ok(());
         }
         cli::Command::ListTools => {

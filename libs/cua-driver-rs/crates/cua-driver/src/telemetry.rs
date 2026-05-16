@@ -124,7 +124,23 @@ pub fn capture(event_name: &str, properties: Option<serde_json::Value>) {
 /// Rationale: we count adoption (one ping per install) so the Rust port's
 /// install metric is comparable to the Swift port's. Every subsequent
 /// event respects the opt-out normally.
+///
+/// Unlike [`capture`], this path posts **synchronously** so the marker
+/// file is only written when the POST actually succeeds. A failed POST
+/// (network, PostHog outage, timeout) leaves the marker absent so the
+/// next launch retries — without this, a single bad network at install
+/// time would silently drop the only adoption signal we have.
 pub fn capture_install() {
+    capture_install_with_poster(post_to_posthog);
+}
+
+/// Internal seam for [`capture_install`] so tests can inject a fake
+/// HTTP poster. Returns immediately if the marker already exists or if
+/// the HOME directory cannot be resolved.
+fn capture_install_with_poster<F>(post: F)
+where
+    F: FnOnce(&serde_json::Value) -> Result<u16, String>,
+{
     let home_dir = match telemetry_home_dir() {
         Some(p) => p,
         None => return,
@@ -135,16 +151,42 @@ pub fn capture_install() {
         return;
     }
 
-    // Send the install event *before* writing the marker. If the POST
-    // fails or the process dies, the next run retries. This is fine —
-    // PostHog dedupes by `distinct_id + event + timestamp` only loosely;
-    // a duplicate install ping for the same UUID is a minor noise floor,
-    // far better than silently dropping the only adoption signal.
-    spawn_capture(event::INSTALL.to_owned(), None, /*bypass_opt_out*/ true);
+    // Build the payload directly (we still bypass the opt-out check here,
+    // see module docs + capture_install rationale) and POST synchronously.
+    let distinct_id = get_or_create_install_id();
+    let payload = build_payload(event::INSTALL, None, &distinct_id);
+    let debug = debug_enabled();
+    if debug {
+        eprintln!("[telemetry] sending event: {} (sync)", event::INSTALL);
+    }
 
-    // Persist marker so subsequent launches skip re-sending. Best-effort:
-    // any IO error here just means the next launch sends another install
-    // event — non-fatal.
+    match post(&payload) {
+        Ok(status) if (200..300).contains(&status) => {
+            if debug {
+                eprintln!("[telemetry] {} status: {status}", event::INSTALL);
+            }
+        }
+        Ok(status) => {
+            // Non-2xx: treat as failure so the next launch retries. PostHog
+            // returns 200 on accepted capture; anything else (4xx auth /
+            // payload error, 5xx outage) is not a success.
+            debug_log(format_args!(
+                "{} non-success status {status}; marker not written, will retry",
+                event::INSTALL
+            ));
+            return;
+        }
+        Err(e) => {
+            debug_log(format_args!(
+                "{} failed: {e}; marker not written, will retry",
+                event::INSTALL
+            ));
+            return;
+        }
+    }
+
+    // Only reached on HTTP 2xx — persist the marker so subsequent launches
+    // skip re-sending. IO errors here are non-fatal (next launch retries).
     if let Err(e) = std::fs::create_dir_all(&home_dir) {
         debug_log(format_args!("failed to create {}: {e}", home_dir.display()));
         return;
@@ -649,4 +691,67 @@ mod tests {
         let a = arch();
         assert_ne!(a, "aarch64", "arm64 dashboards expect 'arm64' not 'aarch64'");
     }
+
+    /// Redirect HOME/USERPROFILE to a fresh temp dir for the duration of
+    /// the closure, then restore. Used by `capture_install_*` tests so
+    /// they don't pollute the real `~/.cua-driver-rs`.
+    fn with_isolated_home<R>(test: impl FnOnce(&std::path::Path) -> R) -> R {
+        let tmp = std::env::temp_dir().join(format!(
+            "cua-driver-rs-install-test-{}", uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let saved_home = std::env::var_os("HOME");
+        let saved_userprofile = std::env::var_os("USERPROFILE");
+        unsafe { std::env::set_var("HOME", &tmp); }
+        unsafe { std::env::set_var("USERPROFILE", &tmp); }
+
+        let result = test(&tmp);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        match saved_home {
+            Some(s) => unsafe { std::env::set_var("HOME", s); },
+            None => unsafe { std::env::remove_var("HOME"); },
+        }
+        match saved_userprofile {
+            Some(s) => unsafe { std::env::set_var("USERPROFILE", s); },
+            None => unsafe { std::env::remove_var("USERPROFILE"); },
+        }
+        result
+    }
+
+    #[test]
+    fn capture_install_does_not_write_marker_when_post_fails() {
+        // The whole point of the sync install path: if the POST fails,
+        // the marker must NOT be written, so the next launch retries.
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            let marker = home.join(HOME_SUBDIRECTORY).join(INSTALLATION_RECORDED_FILE_NAME);
+            assert!(!marker.exists(), "precondition: marker must not exist");
+
+            capture_install_with_poster(|_payload| {
+                Err("simulated network failure".to_owned())
+            });
+
+            assert!(!marker.exists(),
+                "marker must NOT be written when POST returns Err");
+        });
+    }
+
+    #[test]
+    fn capture_install_does_not_write_marker_when_post_returns_non_2xx() {
+        // PostHog returning e.g. 500 must also be treated as failure.
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            let marker = home.join(HOME_SUBDIRECTORY).join(INSTALLATION_RECORDED_FILE_NAME);
+
+            capture_install_with_poster(|_payload| Ok(500u16));
+            assert!(!marker.exists(),
+                "marker must NOT be written on 5xx response");
+
+            capture_install_with_poster(|_payload| Ok(401u16));
+            assert!(!marker.exists(),
+                "marker must NOT be written on 4xx response");
+        });
+    }
+
 }

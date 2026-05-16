@@ -92,14 +92,16 @@ fn parse_osascript_app_list(text: &str) -> Vec<AppInfo> {
 ///     without needing a separate `list_running_apps` lookup, so we
 ///     can't race a same-bundle-id helper that happens to be running.
 pub fn launch_app(bundle_id: &str) -> anyhow::Result<i32> {
-    let app_url = resolve_bundle_id_to_path(bundle_id).ok_or_else(|| {
-        anyhow::anyhow!("Could not locate app with bundle_id '{bundle_id}'")
-    })?;
+    // Pass the bundle id straight through — `nsworkspace::resolve_application_url`
+    // calls `URLForApplicationWithBundleIdentifier` and uses the resulting
+    // NSURL verbatim. Going via a `path` string and back loses the
+    // alias/cryptex metadata Safari (and other Cryptex-installed apps)
+    // need to relaunch from `/System/Cryptexes/App/...`.
     let cfg = nsworkspace::OpenConfig {
         apple_event_bundle_id: Some(bundle_id.to_owned()),
         ..Default::default()
     };
-    let running = nsworkspace::open_application(&app_url, &cfg)
+    let running = nsworkspace::open_application(bundle_id, &cfg)
         .map_err(|e| anyhow::anyhow!("Failed to launch {bundle_id}: {e}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
     Ok(pid)
@@ -138,19 +140,28 @@ pub fn launch_with_urls_by_bundle(
     env: &std::collections::HashMap<String, String>,
     creates_new_instance: bool,
 ) -> anyhow::Result<i32> {
-    let app_url = resolve_bundle_id_to_path(bundle_id).ok_or_else(|| {
-        anyhow::anyhow!("Could not locate app with bundle_id '{bundle_id}'")
-    })?;
+    // Pass the bundle id directly — see `launch_app` rationale above
+    // (Cryptex-installed apps).
+    //
+    // Only attach the `oapp` AppleEvent on the no-URL path. With URLs
+    // present, the URL-handoff path delivers its own `aevt/odoc` to
+    // the target and attaching `oapp` on top causes
+    // openURLs:withApplicationAtURL: to bail with "application not
+    // found" for Cryptex-installed apps (Safari). Verified empirically.
     let cfg = nsworkspace::OpenConfig {
         arguments: additional_args.to_vec(),
         environment: env.clone(),
         creates_new_instance,
-        apple_event_bundle_id: Some(bundle_id.to_owned()),
+        apple_event_bundle_id: if urls.is_empty() {
+            Some(bundle_id.to_owned())
+        } else {
+            None
+        },
     };
     let running = if urls.is_empty() {
-        nsworkspace::open_application(&app_url, &cfg)
+        nsworkspace::open_application(bundle_id, &cfg)
     } else {
-        nsworkspace::open_urls_with_application(urls, &app_url, &cfg)
+        nsworkspace::open_urls_with_application(urls, bundle_id, &cfg)
     }
     .map_err(|e| anyhow::anyhow!("Failed to launch {bundle_id}: {e}"))?;
     let pid: i32 = unsafe { running.processIdentifier() };
@@ -170,11 +181,13 @@ pub fn launch_with_urls_by_name(
     let app_url = locate_by_name(name)
         .ok_or_else(|| anyhow::anyhow!("Could not locate app with name '{name}'"))?;
     let bid = bundle_id_for_app_path(&app_url);
+    // See `launch_with_urls_by_bundle` — skip `oapp` AppleEvent on
+    // the URL-handoff path.
     let cfg = nsworkspace::OpenConfig {
         arguments: additional_args.to_vec(),
         environment: env.clone(),
         creates_new_instance,
-        apple_event_bundle_id: bid,
+        apple_event_bundle_id: if urls.is_empty() { bid } else { None },
     };
     let running = if urls.is_empty() {
         nsworkspace::open_application(&app_url, &cfg)
@@ -191,7 +204,7 @@ pub fn launch_with_urls_by_name(
 /// Resolve a bundle id to an installed `.app` path via NSWorkspace.
 /// Returns the absolute filesystem path (no `file://` prefix); callers
 /// pass it back through `file_or_app_url` inside `nsworkspace::*`.
-fn resolve_bundle_id_to_path(bundle_id: &str) -> Option<String> {
+pub(crate) fn resolve_bundle_id_to_path(bundle_id: &str) -> Option<String> {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::NSString;
     unsafe {
@@ -352,6 +365,34 @@ fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
         running: false,
         active: false,
     })
+}
+
+/// Return the pid of the current frontmost application via
+/// `NSWorkspace.shared.frontmostApplication`. `None` if there isn't one
+/// (rare — e.g. screensaver).
+pub fn frontmost_pid() -> Option<i32> {
+    use objc2_app_kit::NSWorkspace;
+    unsafe {
+        let ws = NSWorkspace::sharedWorkspace();
+        let app = ws.frontmostApplication()?;
+        let pid: i32 = app.processIdentifier();
+        Some(pid)
+    }
+}
+
+/// Re-activate the app with `pid` via
+/// `NSRunningApplication.runningApplicationWithProcessIdentifier(pid)?.activateWithOptions([])`.
+/// Returns `true` if the app was found and activate was attempted.
+/// Used as the belt-and-braces step in `LaunchAppTool` when the target
+/// has self-activated despite the focus-steal observer.
+pub fn activate_pid(pid: i32) -> bool {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    unsafe {
+        match NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+            Some(app) => app.activateWithOptions(NSApplicationActivationOptions(0)),
+            None => false,
+        }
+    }
 }
 
 /// Return the localized application name for a running process by PID.

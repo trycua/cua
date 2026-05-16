@@ -119,7 +119,37 @@ impl Tool for LaunchAppTool {
             s
         };
 
-        // bundle_id wins when both are supplied.
+        // ── Layer-3 focus-steal suppression (3-phase wrap) ───────────────
+        //
+        // Captures the prior frontmost pid, arms a wildcard suppression
+        // BEFORE the launch (covers self-activations the target fires
+        // synchronously during `open()`), then upgrades to a targeted
+        // suppression keyed to the actual launched pid. Briefly holds
+        // BOTH leases so a self-activation arriving in the wildcard→
+        // targeted gap is still caught — that race is what hoang17's
+        // Swift PR #1521 explicitly fixes; we do not regress it here.
+        //
+        // After 500ms (enough for `applicationDidFinishLaunching` +
+        // any reflex `NSApp.activate(...)` to fire and get suppressed)
+        // both leases are dropped. The belt-and-braces step at the end
+        // re-activates the prior frontmost if the target is still
+        // frontmost — handles the intra-`open()` synchronous activation
+        // that fired before we could arm with the real pid.
+        let prior_frontmost = crate::apps::frontmost_pid();
+
+        let wildcard_lease = prior_frontmost.map(|prior| {
+            crate::focus_steal::FocusStealPreventer::begin_suppression(
+                None,
+                prior,
+                "LaunchAppTool.pre",
+            )
+        });
+
+        // Move the launch closure inputs into spawn_blocking. The
+        // blocking task returns (pid, app_info, windows). Suppression
+        // upgrade happens AFTER the blocking call returns (back on the
+        // async runtime), then we sleep 500ms holding the targeted
+        // lease before releasing it.
         let launch_result = tokio::task::spawn_blocking(move || {
             let pid = if let Some(ref bid) = bundle_id {
                 if urls.is_empty()
@@ -167,6 +197,56 @@ impl Tool for LaunchAppTool {
 
             Ok::<_, anyhow::Error>((pid, app_info, windows))
         }).await;
+
+        // Upgrade to targeted suppression now that we know the real pid.
+        // Keep the wildcard lease alive until immediately AFTER we've
+        // armed the targeted one — that's the PR #1521 overlap window.
+        let mut self_activation_suppressed = false;
+        if let Ok(Ok((pid, _, _))) = &launch_result {
+            if let Some(prior) = prior_frontmost {
+                if *pid != prior {
+                    let targeted_lease =
+                        crate::focus_steal::FocusStealPreventer::begin_suppression(
+                            Some(*pid),
+                            prior,
+                            "LaunchAppTool.post",
+                        );
+                    // Now safe to drop the wildcard — targeted is armed.
+                    drop(wildcard_lease);
+                    // 500ms covers `applicationDidFinishLaunching` plus
+                    // any reflex `NSApp.activate(...)`. Matches Swift
+                    // LaunchAppTool.swift exactly.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    drop(targeted_lease);
+
+                    // Belt-and-braces: if the target is STILL frontmost
+                    // after the suppression window, the intra-`open()`
+                    // synchronous activation slipped through. Demote
+                    // explicitly by re-activating the prior frontmost.
+                    let frontmost_now = crate::apps::frontmost_pid();
+                    if frontmost_now == Some(*pid) {
+                        crate::apps::activate_pid(prior);
+                        // Re-check; the structured warning depends on
+                        // whether the demote actually took.
+                        if crate::apps::frontmost_pid() == Some(*pid) {
+                            self_activation_suppressed = false;
+                        } else {
+                            self_activation_suppressed = true;
+                        }
+                    } else {
+                        self_activation_suppressed = true;
+                    }
+                } else {
+                    // pid == prior frontmost (re-launch of an already-
+                    // frontmost app). Just drop the wildcard.
+                    drop(wildcard_lease);
+                }
+            }
+        } else {
+            // Launch failed; just drop the lease.
+            drop(wildcard_lease);
+        }
+        let _ = self_activation_suppressed;
 
         match launch_result {
             Ok(Ok((pid, app_info, windows))) => {

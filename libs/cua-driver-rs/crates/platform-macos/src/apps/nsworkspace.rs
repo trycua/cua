@@ -103,18 +103,30 @@ pub enum LaunchError {
 /// `activates = false` keeps the prior frontmost app on top, and the
 /// `oapp` AppleEvent attached to `cfg.appleEvent` triggers window creation
 /// on cold launch.
+/// `app_url` may be either:
+///   * a bundle id (`com.apple.Safari`) — resolved via
+///     `NSWorkspace.URLForApplicationWithBundleIdentifier`, preserving
+///     the NSURL exactly as LaunchServices returns it (avoids
+///     round-tripping through `path()` which can lose alias/cryptex
+///     metadata — Safari lives under `/System/Cryptexes/App/...` and
+///     can't be re-opened from its `path()` string),
+///   * a filesystem path to an `.app` bundle (`/Applications/Foo.app`),
+///   * a URL string with a scheme (`file:///...`, `http://...`).
 pub fn open_application(
     app_url: &str,
     cfg: &OpenConfig,
 ) -> Result<Retained<NSRunningApplication>, LaunchError> {
     let ws = unsafe { NSWorkspace::sharedWorkspace() };
-    let url = file_or_app_url(app_url)?;
+    let url = resolve_application_url(&ws, app_url)?;
     let config = build_configuration(cfg);
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<CompletionResult>(1);
     let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
     let block = make_completion_block(tx);
+
+    tracing::debug!(target: "platform_macos::apps::nsworkspace",
+        ?app_url, "calling openApplicationAtURL");
 
     unsafe {
         ws.openApplicationAtURL_configuration_completionHandler(
@@ -141,7 +153,7 @@ pub fn open_urls_with_application(
     cfg: &OpenConfig,
 ) -> Result<Retained<NSRunningApplication>, LaunchError> {
     let ws = unsafe { NSWorkspace::sharedWorkspace() };
-    let url = file_or_app_url(app_url)?;
+    let url = resolve_application_url(&ws, app_url)?;
     let config = build_configuration(cfg);
 
     let ns_urls: Vec<Retained<NSURL>> = urls
@@ -154,6 +166,9 @@ pub fn open_urls_with_application(
     let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
 
     let block = make_completion_block(tx);
+
+    tracing::debug!(target: "platform_macos::apps::nsworkspace",
+        ?app_url, urls_len = urls.len(), "calling openURLs:withApplicationAtURL");
 
     unsafe {
         ws.openURLs_withApplicationAtURL_configuration_completionHandler(
@@ -220,16 +235,48 @@ fn build_configuration(cfg: &OpenConfig) -> Retained<NSWorkspaceOpenConfiguratio
     config
 }
 
-/// Build an `NSURL` from a caller-supplied string. Accepts either a
-/// `file://` URL string or a plain filesystem path (`/Applications/Foo.app`).
+/// Resolve a caller-supplied app reference (bundle id, path, or URL
+/// string) into the `NSURL` LaunchServices wants. Bundle ids preferred
+/// when available — they preserve the NSURL exactly as LaunchServices
+/// hands it back, which is the only thing that reliably launches
+/// Cryptex-installed apps (Safari, etc).
+fn resolve_application_url(
+    ws: &NSWorkspace,
+    app_ref: &str,
+) -> Result<Retained<NSURL>, LaunchError> {
+    // Heuristic: bundle ids contain at least one '.' and no '/' and no
+    // '://'. Otherwise treat as a path / URL string.
+    let looks_like_bundle_id =
+        !app_ref.contains('/') && !app_ref.contains("://") && app_ref.contains('.');
+    if looks_like_bundle_id {
+        let ns = NSString::from_str(app_ref);
+        if let Some(url) = unsafe { ws.URLForApplicationWithBundleIdentifier(&ns) } {
+            return Ok(url);
+        }
+        // Fall through to the path/URL parse — caller might have passed
+        // something odd that happens to look like a bundle id (e.g. an
+        // app folder name).
+    }
+    file_or_app_url(app_ref)
+}
+
+/// Build an `NSURL` from a caller-supplied string.
+///
+/// * Strings containing `:` (any URL scheme — `http://`, `https://`,
+///   `file://`, `about:blank`, custom schemes) go through `URLWithString:`.
+///   The colon test catches `about:blank` (no `://`) which Swift's
+///   `URL(string:)` also handles.
+/// * Anything else is a bare filesystem path → `fileURLWithPath:`.
 fn file_or_app_url(s: &str) -> Result<Retained<NSURL>, LaunchError> {
     if s.is_empty() {
         return Err(LaunchError::BadUrl("empty".into()));
     }
-    // Anything with a scheme — `http`, `https`, `file`, custom URL schemes —
-    // goes through `URLWithString:`. Bare paths go through `fileURLWithPath:`.
     unsafe {
-        if s.contains("://") {
+        // A path can contain a colon (rare) but is far less likely to
+        // start with `scheme:`. Use a slightly stricter test: must
+        // contain a colon AND not start with `/` AND not start with `~`.
+        let looks_like_url = s.contains(':') && !s.starts_with('/') && !s.starts_with('~');
+        if looks_like_url {
             let ns = NSString::from_str(s);
             match NSURL::URLWithString(&ns) {
                 Some(u) => Ok(u),

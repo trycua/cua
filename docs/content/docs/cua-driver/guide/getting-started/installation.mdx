@@ -115,9 +115,12 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   call. Network failures are silent — the next launch retries.
 
   **Scripted / machine-readable entry points are NOT instrumented.**
-  `--version`, `list-tools`, `describe`, `call`, `dump-docs`, and the
-  other one-shot subcommands skip the banner so piped output (`cua-driver
-  list-tools | jq …`) stays clean.
+  The banner only fires from the long-running entry points (`mcp`,
+  `serve`, `doctor`). One-shot and machine-readable subcommands —
+  `--version`, `list-tools`, `describe`, `call`, `dump-docs`,
+  `mcp-config`, `update`, `stop`, `status`, `recording`, `config`,
+  `diagnose`, and `telemetry install-event` — all skip it so piped
+  output (`cua-driver list-tools | jq …`) stays clean.
 
   **Disable per-invocation:**
 

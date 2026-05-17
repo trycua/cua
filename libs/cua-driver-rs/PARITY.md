@@ -1797,7 +1797,7 @@ banner to **stderr** if the highest non-draft non-prerelease release
 is strictly newer than `CARGO_PKG_VERSION` and the user hasn't
 previously dismissed it:
 
-```
+```text
 ✨ cua-driver v0.1.4 is available (you have v0.1.3).
    Update with: cua-driver update
    Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4

@@ -37,6 +37,12 @@
 #                                    (default %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
 #                                    (default %USERPROFILE%\.cua-driver-rs)
+#   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
+#                                    release dirs after install; older ones
+#                                    are deleted (default 5; set 0 to
+#                                    disable GC entirely). Per-target —
+#                                    multi-arch dirs are pruned
+#                                    independently of each other.
 #
 # Param:
 #   -Release   release tag to install ("latest" or a bare version like "0.2.0").
@@ -95,6 +101,19 @@ if ($env:CUA_DRIVER_RS_HOME) {
 $PackagesDir = Join-Path $HomeDir   "packages"
 $ReleasesDir = Join-Path $PackagesDir "releases"
 $CurrentDir  = Join-Path $PackagesDir "current"
+
+# Post-install GC: how many per-version release dirs to retain. Validated
+# in Resolve-KeepVersions below; 0 means "never GC".
+$Script:KeepVersionsDefault = 5
+
+function Resolve-KeepVersions {
+    $raw = $env:CUA_DRIVER_RS_KEEP_VERSIONS
+    if (-not $raw) { return $Script:KeepVersionsDefault }
+    $n = 0
+    if ([int]::TryParse($raw, [ref]$n) -and $n -ge 0) { return $n }
+    Write-WarningStep "CUA_DRIVER_RS_KEEP_VERSIONS=$raw is not a non-negative integer; falling back to $($Script:KeepVersionsDefault)"
+    return $Script:KeepVersionsDefault
+}
 
 # ---------- Log helpers ----------------------------------------------------
 
@@ -435,6 +454,213 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     Write-Step "junction $linkPath -> $targetPath"
 }
 
+# ---------- Concurrent-install lockfile -----------------------------------
+#
+# A second install kicked off while a first is still running can race
+# on the junction retarget and leave a half-installed state. Serialize
+# installs per $HomeDir with a process-level mutex.
+#
+# Primitive: System.IO.FileStream opened with FileShare::None. Windows
+# kernel rejects a second open of the same file with sharing=None until
+# the first handle is closed, so the open call itself is the mutex
+# acquisition (no separate ACL trick or named-mutex registration needed,
+# no admin rights, no per-process cleanup gymnastics — close = release).
+#
+# Stale-lock recovery: if the holder dies without closing the handle
+# (process kill, host reboot mid-install), Windows reclaims the file
+# handle automatically — but only when the *kernel* notices the process
+# has exited. From another process's perspective the file is no longer
+# locked once that happens, so a fresh FileStream open succeeds without
+# any timeout dance.
+#
+# However if the prior process is somehow still alive but stuck (e.g.
+# wedged on a network call), we still want to recover after a bounded
+# wait. After $Script:LockStaleAfterSeconds the polling loop probes
+# the lockfile by attempting an exclusive open against the same
+# FileShare::None primitive: success means the previous holder really
+# is gone (its FileStream handle was reclaimed) and the leftover file
+# is safe to delete; IOException means the holder is alive but slow,
+# and we keep waiting rather than corrupting an in-flight install.
+# This is the Windows equivalent of the Linux mkdir-mutex's "force
+# release" path, but guarded by a liveness check instead of a blind
+# Remove-Item.
+
+$Script:LockPollIntervalSeconds = 1
+$Script:LockStaleAfterSeconds   = 600
+$Script:StandaloneRoot          = $HomeDir
+$Script:LockFilePath            = Join-Path $Script:StandaloneRoot "install.lock"
+$Script:LockStream              = $null
+
+function Release-InstallLock {
+    if ($Script:LockStream) {
+        try { $Script:LockStream.Close() } catch {}
+        try { $Script:LockStream.Dispose() } catch {}
+        $Script:LockStream = $null
+    }
+    # Best-effort delete of the lockfile so subsequent installs don't
+    # see a stale-but-unlocked file (cosmetic — the FileShare::None
+    # primitive doesn't care if the file exists).
+    if (Test-Path -LiteralPath $Script:LockFilePath) {
+        try { Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
+function Acquire-InstallLock {
+    # Ensure parent dir exists before we try to open the file in it.
+    if (-not (Test-Path -LiteralPath $Script:StandaloneRoot)) {
+        New-Item -ItemType Directory -Force -Path $Script:StandaloneRoot | Out-Null
+    }
+    $waited = 0
+    $announced = $false
+    while ($true) {
+        try {
+            # Mode=OpenOrCreate so the first install creates the file
+            # and subsequent installs reuse it. Access=ReadWrite so we
+            # can stamp pid/timestamp info after acquiring. Share=None
+            # is the actual mutex — second open returns IOException.
+            $Script:LockStream = [System.IO.FileStream]::new(
+                $Script:LockFilePath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None)
+            break
+        }
+        catch [System.IO.IOException] {
+            if (-not $announced) {
+                Write-Step "another cua-driver-rs install is already in progress (lock at $($Script:LockFilePath)); waiting..."
+                $announced = $true
+            }
+            Start-Sleep -Seconds $Script:LockPollIntervalSeconds
+            $waited += $Script:LockPollIntervalSeconds
+            if ($waited -ge $Script:LockStaleAfterSeconds) {
+                # Don't yank the lock from a live install. Probe the
+                # file with the same Share=None primitive — if the open
+                # succeeds, the previous holder's FileStream is really
+                # gone (process exited, kernel reclaimed the handle)
+                # and the lockfile is just a stale leftover safe to
+                # delete. If it still throws IOException, the holder is
+                # alive but slow (big download, wedged network); keep
+                # waiting rather than corrupting an in-flight install.
+                $probeStream = $null
+                try {
+                    $probeStream = [System.IO.FileStream]::new(
+                        $Script:LockFilePath,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::ReadWrite,
+                        [System.IO.FileShare]::None)
+                    # Acquisition succeeded → previous holder is gone.
+                    # Close the probe so we can Remove-Item cleanly,
+                    # then fall through to the next loop iteration
+                    # which will reopen via the normal OpenOrCreate path
+                    # (and re-stamp the info blob).
+                    $probeStream.Close()
+                    $probeStream.Dispose()
+                    $probeStream = $null
+                    try { Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue } catch {}
+                    Write-WarningStep "previous install lock at $($Script:LockFilePath) appeared stale and was released"
+                    $waited = 0
+                }
+                catch [System.IO.IOException] {
+                    # Still locked by a live process. Reset waited so we
+                    # re-check after another full window rather than
+                    # spamming this branch every poll interval.
+                    Write-Step "lock at $($Script:LockFilePath) still held by a live process; continuing to wait"
+                    $waited = 0
+                }
+                finally {
+                    if ($probeStream) {
+                        try { $probeStream.Close() } catch {}
+                        try { $probeStream.Dispose() } catch {}
+                    }
+                }
+            }
+        }
+    }
+    # Stamp pid + ISO timestamp + argv into the lockfile so a user
+    # investigating a stuck install can see who holds it (Get-Content
+    # $env:USERPROFILE\.cua-driver-rs\install.lock).
+    try {
+        $info = "pid=$PID`nstarted=$([DateTime]::UtcNow.ToString('o'))`ninvocation=install.ps1 -Release $Release`n"
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($info)
+        $Script:LockStream.SetLength(0)
+        $Script:LockStream.Write($bytes, 0, $bytes.Length)
+        $Script:LockStream.Flush()
+    }
+    catch {
+        # Non-fatal — failing to stamp info doesn't affect the lock.
+    }
+}
+
+# ---------- Per-version release dir GC ------------------------------------
+#
+# Prune per-version release dirs under $ReleasesDir for the current
+# $target, keeping the N most recent (by LastWriteTime). The dir that
+# the `current` junction resolves to is always preserved on top of the
+# keep budget — so the worst-case post-GC count is keep + 1 (active
+# fell outside the keep window, e.g. after a rollback), common case
+# is exactly keep. Per-target filtering keeps a multi-arch dev's
+# x86_64 and arm64 histories independent of each other.
+
+function Invoke-OldReleasesGc {
+    param(
+        [string]$releasesDir,
+        [string]$currentDir,
+        [string]$target,
+        [int]$keep
+    )
+
+    if ($keep -eq 0) {
+        Write-Step "version GC disabled (`$env:CUA_DRIVER_RS_KEEP_VERSIONS=0)"
+        return
+    }
+    if (-not (Test-Path -LiteralPath $releasesDir)) { return }
+
+    # Resolve $currentDir's junction target so we can exempt it from the
+    # prune list. Get-JunctionTarget returns $null on non-junction paths,
+    # in which case nothing is exempted (still safe — we only prune the
+    # excess past $keep newest).
+    $currentTarget = $null
+    if (Test-Path -LiteralPath $currentDir) {
+        if (Test-IsJunction $currentDir) {
+            $currentTarget = Get-JunctionTarget $currentDir
+            if ($currentTarget) { $currentTarget = $currentTarget.TrimEnd('\') }
+        }
+    }
+
+    # Filter to dirs whose name ends in "-$target". Sort newest-first.
+    # Wrap in @(...) so a single-result match doesn't get unwrapped to a
+    # bare object (PowerShell's classic foot-gun).
+    $candidates = @(Get-ChildItem -LiteralPath $releasesDir -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like "*-$target" } |
+                    Sort-Object LastWriteTime -Descending)
+
+    if ($candidates.Count -eq 0) { return }
+
+    $toPrune = @()
+    $kept = 0
+    foreach ($cand in $candidates) {
+        $isCurrent = ($currentTarget -and ($cand.FullName.TrimEnd('\') -ieq $currentTarget))
+        if ($kept -lt $keep) {
+            $kept += 1
+            continue
+        }
+        if ($isCurrent) {
+            # Active install fell outside the keep window — preserve
+            # anyway (never delete the dir backing the active junction).
+            continue
+        }
+        $toPrune += $cand
+    }
+
+    if ($toPrune.Count -eq 0) { return }
+
+    Write-Step "pruning $($toPrune.Count) old release dir(s) (keeping $keep most recent for $target):"
+    foreach ($d in $toPrune) {
+        Write-Step "  - $($d.Name)"
+        Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------- Release resolution --------------------------------------------
 
 function Resolve-Version {
@@ -533,6 +759,13 @@ Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
 
+# Serialize concurrent installs per $HomeDir. The lock is released in
+# the finally below — covers normal exit, errors, and Ctrl-C (which
+# triggers PowerShell's pipeline-stop = finally still runs).
+Acquire-InstallLock
+
+try {
+
 $target    = Get-TargetTriple
 $archLabel = Get-AssetArchLabel $target
 Write-Step "  target      : $target"
@@ -568,6 +801,13 @@ if (-not $skipDownload) {
 # is what gives users a stable PATH entry.
 Ensure-Junction $CurrentDir    $versionedDir
 Ensure-Junction $VisibleBinDir $CurrentDir
+
+# Post-install GC of old per-version release dirs. Runs AFTER the junction
+# retarget above so the about-to-be-active version is never a deletion
+# candidate (it's both the newest by mtime and exempted via the
+# current-junction check inside Invoke-OldReleasesGc).
+$keepVersions = Resolve-KeepVersions
+Invoke-OldReleasesGc -releasesDir $ReleasesDir -currentDir $CurrentDir -target $target -keep $keepVersions
 
 # ---------- Fire-and-forget install telemetry ping ------------------------
 #
@@ -633,3 +873,11 @@ Write-Host ""
 Write-Host "WARNING — BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
 Write-Host "          cua-driver. Windows and Linux support is feature-complete; macOS" -ForegroundColor Yellow
 Write-Host "          parity is in progress." -ForegroundColor Yellow
+
+}
+finally {
+    # Always release the lock — success, error, Ctrl-C, or `exit` all
+    # land here. A partial install + held lock would wedge every
+    # subsequent install for the full $LockStaleAfterSeconds window.
+    Release-InstallLock
+}

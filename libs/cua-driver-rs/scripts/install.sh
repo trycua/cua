@@ -27,6 +27,12 @@
 #                                        packages/releases/<v>-<target>/ and
 #                                        packages/current/ on Linux/Windows.
 #   CUA_DRIVER_RS_NO_MODIFY_PATH=1       same as --no-modify-path
+#   CUA_DRIVER_RS_KEEP_VERSIONS=N        keep the N most recent per-version
+#                                        release dirs after install; older
+#                                        ones are deleted (default 5; set 0
+#                                        to disable GC entirely). Per-target
+#                                        — multi-arch dirs are pruned
+#                                        independently of each other.
 #
 # On-disk layout (Linux; macOS keeps its .app-in-/Applications layout, see
 # below):
@@ -42,8 +48,15 @@
 # dir, then rename(2)-swaps the `current` symlink to point at it. A
 # running daemon keeps its already-mmap'd binary open across the swap
 # (open file handles survive). Rollback: re-point `current` at any older
-# entry under `releases/`. No auto-cleanup of old releases — that's the
-# feature, not an oversight.
+# entry under `releases/`.
+#
+# Post-install GC trims the per-target release dirs so disk usage stays
+# bounded (each release dir is ~15 MB, so an indefinite series of
+# upgrades grows without bound). The N most-recent dirs are kept (default
+# 5, override via CUA_DRIVER_RS_KEEP_VERSIONS); the dir that `current`
+# resolves to is always preserved even if its mtime would otherwise drop
+# it off the list. GC runs after the atomic swap so the about-to-be-active
+# version is never a deletion candidate.
 #
 # ⚠️  This is a BETA release. The Rust port is feature-complete on Windows
 # and Linux; macOS parity with the Swift cua-driver is in progress. For
@@ -58,6 +71,11 @@ TAG_PREFIX="cua-driver-rs-v"
 BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
 HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
+# Post-install GC: how many per-version release dirs to retain. Validated
+# below as a non-negative integer; 0 means "never GC". The dir that
+# `current` resolves to is always preserved regardless of cutoff.
+KEEP_VERSIONS_DEFAULT=5
+KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver-rs mcp`
@@ -78,12 +96,219 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate KEEP_VERSIONS up front so a typo (e.g. "five") falls back to
+# the default instead of silently disabling GC. Accepts any non-negative
+# integer; 0 is the documented "never GC" sentinel.
+if ! [[ "$KEEP_VERSIONS" =~ ^[0-9]+$ ]]; then
+    printf 'warning: CUA_DRIVER_RS_KEEP_VERSIONS=%s is not a non-negative integer; falling back to %d\n' \
+        "$KEEP_VERSIONS" "$KEEP_VERSIONS_DEFAULT" >&2
+    KEEP_VERSIONS="$KEEP_VERSIONS_DEFAULT"
+fi
+
 BIN_LINK="$BIN_DIR/$BINARY_NAME"
 TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
+
+# --- Concurrent-install lockfile ---------------------------------------
+#
+# A second install kicked off while a first is still running can race
+# on the atomic `current` symlink swap and produce a half-installed
+# state (e.g. the symlink points at a dir whose binary the first install
+# hasn't finished copying). Serialize installs per $HOME_DIR with a
+# process-level mutex.
+#
+# Primitive: mkdir on POSIX is atomic. The first install to create
+# $LOCK_DIR holds the lock; concurrent attempts get EEXIST and poll.
+# Released via trap on every exit path (success, error, signal) so
+# a half-finished install always frees the lock for the next one.
+#
+# Stale-lock recovery: if the holder dies without releasing (kill -9,
+# OOM, host reboot mid-install), the lock dir sits around forever and
+# every subsequent install hangs. After $LOCK_STALE_AFTER_SECONDS of
+# waiting we probe the holder's liveness via `kill -0 <pid>` (the pid
+# is stamped into $LOCK_INFO right after acquisition) — if the holder
+# is alive we keep waiting (slow download / wedged network is not the
+# same as a crashed install and we must not yank the lock out from
+# under a live process), if it's dead we force-release with a loud log
+# and proceed. The alternative (hang forever) leaves users in a
+# permanently wedged state with no clear recovery path beyond `rm -rf`
+# on an internal-looking dir.
+LOCK_PACKAGES_DIR="$HOME_DIR/packages"
+LOCK_DIR="$LOCK_PACKAGES_DIR/.install.lock.d"
+LOCK_INFO="$LOCK_DIR/info"
+LOCK_POLL_INTERVAL_SECONDS=1
+LOCK_STALE_AFTER_SECONDS=600
+
+LOCK_HELD=0
+release_install_lock() {
+    if (( LOCK_HELD == 1 )); then
+        rm -rf "$LOCK_DIR" 2>/dev/null || true
+        LOCK_HELD=0
+    fi
+}
+
+# Combine TMP_DIR cleanup with lock release in a single trap so neither
+# clobbers the other. INT/TERM also re-raise via $? so the user-visible
+# exit code reflects the signal.
+cleanup_on_exit() {
+    rm -rf "$TMP_DIR" 2>/dev/null || true
+    release_install_lock
+}
+trap cleanup_on_exit EXIT
+trap 'cleanup_on_exit; trap - INT;  kill -INT  $$' INT
+trap 'cleanup_on_exit; trap - TERM; kill -TERM $$' TERM
+
+acquire_install_lock() {
+    mkdir -p "$LOCK_PACKAGES_DIR"
+    local waited=0
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+        if (( waited == 0 )); then
+            log "another cua-driver-rs install is already in progress (lock at $LOCK_DIR); waiting..."
+        fi
+        sleep "$LOCK_POLL_INTERVAL_SECONDS"
+        waited=$((waited + LOCK_POLL_INTERVAL_SECONDS))
+        if (( waited >= LOCK_STALE_AFTER_SECONDS )); then
+            # Don't yank the lock from a live install. Parse pid= from
+            # the info file (written by the holder right after mkdir);
+            # if that pid is still alive per kill -0, the holder is just
+            # slow (big download, wedged network) — keep waiting. Only
+            # reclaim when there's no live holder.
+            #
+            # Missing/unreadable info file → holder didn't get far enough
+            # to stamp pid, so assume dead and reclaim. Unparseable pid
+            # line → same. Either way we err on the side of progress
+            # rather than hanging forever once the 600s window elapses.
+            local holder_pid=""
+            if [[ -r "$LOCK_INFO" ]]; then
+                holder_pid=$(grep -E '^pid=' "$LOCK_INFO" 2>/dev/null | head -1 | cut -d= -f2)
+            fi
+            if [[ -n "$holder_pid" ]] && kill -0 "$holder_pid" 2>/dev/null; then
+                log "lock at $LOCK_DIR still held by live pid $holder_pid; continuing to wait"
+                # Reset waited so we re-check after another full window
+                # rather than spamming this branch every poll interval.
+                waited=0
+                continue
+            fi
+            log "lock at $LOCK_DIR appears stale (>${LOCK_STALE_AFTER_SECONDS}s, no live holder); forcing release"
+            rm -rf "$LOCK_DIR" 2>/dev/null || true
+            waited=0
+        fi
+    done
+    LOCK_HELD=1
+    # Drop pid + ISO timestamp + invocation args into the lock dir so a
+    # user investigating a stuck install can see who holds it (`cat
+    # $HOME_DIR/packages/.install.lock.d/info`).
+    {
+        printf 'pid=%s\n' "$$"
+        printf 'started=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)"
+        printf 'argv=%s\n' "$0 $*"
+    } > "$LOCK_INFO" 2>/dev/null || true
+}
+
+acquire_install_lock "$@"
+
+# Prune per-version release dirs under $RELEASES_DIR for the current
+# $TARGET, keeping the N most recent (by mtime). The dir that the
+# `current` symlink resolves to is always preserved — even if it's
+# older than the cutoff — so we never delete the active install.
+#
+# Filtering is by target-triple suffix so a multi-arch dev with both
+# (e.g.) aarch64-apple-darwin and x86_64-unknown-linux-gnu under the
+# same $HOME_DIR keeps each target's history independently. Other-arch
+# dirs are invisible to this prune pass.
+#
+# Args: $1 = releases dir, $2 = current symlink path, $3 = target triple,
+#       $4 = keep count (non-negative integer; 0 = skip).
+prune_old_releases() {
+    local releases_dir="$1" current_link="$2" target="$3" keep="$4"
+
+    if [[ "$keep" == "0" ]]; then
+        log "version GC disabled (CUA_DRIVER_RS_KEEP_VERSIONS=0)"
+        return 0
+    fi
+    if [[ ! -d "$releases_dir" ]]; then
+        return 0
+    fi
+
+    # Resolve the dir `current` points at so we can exempt it from the
+    # prune candidates. `readlink -f` would canonicalize, but BSD readlink
+    # (macOS — which doesn't reach here in production but is tested from
+    # a dev shell) lacks -f, so use the more portable two-step.
+    local current_target=""
+    if [[ -L "$current_link" ]]; then
+        local link_value
+        link_value=$(readlink "$current_link" 2>/dev/null || true)
+        if [[ -n "$link_value" ]]; then
+            case "$link_value" in
+                /*) current_target="$link_value" ;;
+                *)  current_target="$(dirname "$current_link")/$link_value" ;;
+            esac
+        fi
+    fi
+
+    # `ls -dt` sorts dirs by mtime, newest-first. The trailing slash on
+    # the glob filters to dirs only. Skip if no matching dirs (the glob
+    # would otherwise pass through literally under shopt -s nullglob being
+    # off — guard with 2>/dev/null and an `|| true`).
+    local candidates=()
+    while IFS= read -r dir; do
+        [[ -n "$dir" ]] || continue
+        # Strip trailing slash for consistent comparison with $current_target.
+        dir="${dir%/}"
+        # Only consider dirs whose name ends in the current target triple.
+        local base="${dir##*/}"
+        case "$base" in
+            *-"$target") candidates+=("$dir") ;;
+            *) ;;
+        esac
+    done < <(ls -dt "$releases_dir"/*/ 2>/dev/null || true)
+
+    if [[ ${#candidates[@]} -le "$keep" ]]; then
+        return 0
+    fi
+
+    # Walk candidates newest-first. The first $keep are retained by mtime
+    # (active install counts toward the budget in the common case where
+    # the install just happened — it's the newest by mtime). The active
+    # install is *additionally* preserved even if it would otherwise fall
+    # outside the keep window (e.g. user rolled back to an old version),
+    # so the worst-case post-GC count is $keep + 1, common case is exactly
+    # $keep.
+    local to_prune=()
+    local kept=0
+    local i
+    for ((i=0; i<${#candidates[@]}; i++)); do
+        local cand="${candidates[$i]}"
+        local is_current=0
+        if [[ -n "$current_target" && "${cand%/}" == "${current_target%/}" ]]; then
+            is_current=1
+        fi
+        if (( kept < keep )); then
+            kept=$((kept + 1))
+            continue
+        fi
+        if (( is_current == 1 )); then
+            # Active install fell outside the keep window — preserve
+            # anyway (never delete the dir that's about to serve the
+            # next `cua-driver` invocation).
+            continue
+        fi
+        to_prune+=("$cand")
+    done
+
+    if [[ ${#to_prune[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    log "pruning ${#to_prune[@]} old release dir(s) (keeping $keep most recent for $target):"
+    local p
+    for p in "${to_prune[@]}"; do
+        log "  - ${p##*/}"
+    done
+    printf '%s\0' "${to_prune[@]}" | xargs -0 rm -rf
+}
 
 # --- Resolve OS/arch ----------------------------------------------------
 
@@ -343,6 +568,12 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
+
+    # Post-install GC of old per-version release dirs. Runs AFTER the
+    # atomic `current` swap above so the about-to-be-active version is
+    # never a deletion candidate (it's both the newest by mtime and
+    # exempted via the current-symlink check inside prune_old_releases).
+    prune_old_releases "$RELEASES_DIR" "$CURRENT_LINK" "$TARGET" "$KEEP_VERSIONS"
 fi
 
 # --- Fire the one-shot install telemetry ping ---------------------------

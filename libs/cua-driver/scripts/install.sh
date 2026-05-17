@@ -157,7 +157,7 @@ done
 #   3. GitHub Releases API (fallback; unauthenticated = 60 req/hr per IP)
 #
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-CUA_DRIVER_BAKED_VERSION="0.1.9"
+CUA_DRIVER_BAKED_VERSION="0.2.0"
 # ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_VERSION:-}" ]]; then

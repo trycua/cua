@@ -377,13 +377,31 @@ jobs:
           generate_release_notes: false
           make_latest: true
 
+      # The bump-version workflow uses this same GitHub App so its pushes
+      # bypass the "Changes must be made through a pull request" ruleset
+      # on main. The default GITHUB_TOKEN (github-actions[bot]) is NOT on
+      # the bypass list and gets rejected here. Mirror the bump workflow's
+      # auth setup so the bake-version push lands.
+      - name: Generate GitHub App token (for bake-version push)
+        id: app-token
+        if: startsWith(github.ref, 'refs/tags/cua-driver-v')
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
       - name: Bake version into install.sh
         if: startsWith(github.ref, 'refs/tags/cua-driver-v')
         env:
           VERSION: ${{ steps.set_version.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          # Fetch main so we update the live branch, not the detached tag HEAD.
+          # Re-authenticate the origin remote with the app token so the
+          # push uses the bypass-enabled identity, not the default
+          # github-actions[bot] credentials baked in by actions/checkout.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git fetch origin main
           git checkout -B bake-version origin/main
 
@@ -392,8 +410,8 @@ jobs:
             "s/^CUA_DRIVER_BAKED_VERSION=.*/CUA_DRIVER_BAKED_VERSION=\"${VERSION}\"/" \
             libs/cua-driver/scripts/install.sh
 
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
           git add libs/cua-driver/scripts/install.sh
           git commit -m "chore(cua-driver): bake version ${VERSION} into install.sh [skip ci]"
           git push origin bake-version:main

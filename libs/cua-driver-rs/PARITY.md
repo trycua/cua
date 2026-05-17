@@ -1881,3 +1881,81 @@ binary (banner is informational only today); kept public so a future
 interactive prompt path (TUI helper, GUI extra) can persist the
 "skip until next version" choice without re-implementing the cache
 layer.
+
+## Installer: version-resolution chain (`env > baked > API`)
+
+Both Rust installers (`scripts/install.sh`, `scripts/install.ps1`)
+resolve the release tag in the same priority order as the Swift
+`cua-driver` installer:
+
+1. **Explicit env pin** —
+   `CUA_DRIVER_RS_VERSION` (`$env:CUA_DRIVER_RS_VERSION` on Windows).
+2. **Baked-in default** —
+   a sentinel-block-wrapped constant carried in the install script
+   itself, updated by the CD `Bake version into install scripts` step
+   after each `cua-driver-rs-v*` tag push. Matches the Swift driver's
+   `CUA_DRIVER_BAKED_VERSION` shape.
+3. **GitHub Releases API fallback** —
+   only consulted when the env override is absent *and* the baked
+   line hasn't been updated yet (dev branches, pre-release checkouts).
+
+### Why this exists
+
+The Swift installer adopted this pattern after we hit two failure
+modes the API-only chain couldn't dodge:
+
+- **API outages / rate limits** — unauthenticated GitHub Releases is
+  capped at 60 req/hr per source IP. A shared egress IP (CI runner,
+  corporate NAT, dev laptop on a busy office network) can exhaust
+  that and turn every `curl … | bash` install into a hard failure.
+- **Tag-prefix pagination drift** — the repo ships both
+  `cua-driver-v*` (Swift) and `cua-driver-rs-v*` (Rust) tags, plus
+  unrelated tags from other libs. As release cadence grows, the
+  first page of `/releases?per_page=N` is no longer guaranteed to
+  include any matching tag, and a single-page fetch will silently
+  resolve nothing.
+
+Baking the version turns both of those into non-issues for the
+common-case install (curl-against-main / irm-against-main). The API
+path is still exercised by dev installs from un-baked branches, so
+the pagination fix in `install.ps1` (commit `3425af0b`) stays
+valuable; `install.sh` keeps its single-page fetch for now, which
+is a follow-up candidate once the baked default is shipped (it is
+fallback-only and not hit by the default curl-from-main path).
+
+### Sentinel-block markers (kept byte-identical across both scripts)
+
+```
+# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="<version>"
+# ~~~ END_BAKED_VERSION ~~~
+```
+
+The PowerShell variant swaps the bash assignment for
+`$Script:CuaDriverRsBakedVersion = "<version>"` but reuses the same
+marker comments. The CD step's `sed` patterns key on the assignment
+line, not the markers, so the markers are a human cue only.
+
+### CD wiring
+
+`.github/workflows/cd-rust-cua-driver.yml` runs a `Bake version into
+install scripts` step at the end of the `release` job after each
+`cua-driver-rs-v*` tag push. It runs on `ubuntu-latest` (GNU sed)
+and the equivalent Swift step runs on `macos-15` (BSD sed), so the
+two workflows use slightly different `sed -i` syntax:
+
+| Workflow | Runner | `sed -i` form |
+|---|---|---|
+| `cd-rust-cua-driver.yml` (this) | `ubuntu-latest` | `sed -i 's/.../.../`  (GNU) |
+| `cd-swift-cua-driver.yml` | `macos-15` | `sed -i '' 's/.../.../`  (BSD) |
+
+Both push the rewritten files back to `main` using a GitHub App
+token (`RELEASE_APP_ID` + `RELEASE_APP_PRIVATE_KEY`) so the push
+bypasses the "Changes must be made through a pull request" ruleset
+on `main` — the default `GITHUB_TOKEN` (github-actions[bot]) is
+rejected by that ruleset.
+
+The commit author is `trycua-release[bot]` and the message is
+`chore(cua-driver-rs): bake version <V> into install scripts [skip ci]`
+(the `[skip ci]` suppresses the recursive CD trigger from the
+bake-push hitting `main`).

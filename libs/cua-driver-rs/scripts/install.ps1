@@ -62,6 +62,22 @@ $Repo       = "trycua/cua"
 $TagPrefix  = "cua-driver-rs-v"
 $BinaryName = "cua-driver.exe"
 
+# Baked-version constant — kept in lock-step with the latest published
+# cua-driver-rs-v* release tag by the CD workflow's bake-version step
+# (see .github/workflows/cd-rust-cua-driver.yml). The sentinel-block
+# markers must stay byte-identical to the matching block in install.sh
+# so the CD `sed` command can update both files with one pattern.
+#
+# Precedence at resolve time: $env:CUA_DRIVER_RS_VERSION > -Release arg >
+# this baked value > GitHub Releases API. Baked means the `irm | iex`
+# one-liner against `main` is API-free in the common case; the API is
+# only consulted as a fallback when this script is run from a branch
+# where the baked line hasn't been updated yet.
+#
+# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
+$Script:CuaDriverRsBakedVersion = "0.2.0"
+# ~~~ END_BAKED_VERSION ~~~
+
 # ---------- Path resolution ------------------------------------------------
 
 if ($env:CUA_DRIVER_RS_INSTALL_DIR) {
@@ -430,6 +446,14 @@ function Resolve-Version {
     if ($Release -ne "latest") {
         $v = $Release -replace '^v', ''
         Write-Step "using -Release $v"
+        return $v
+    }
+    # Baked-version fallback — set by the CD workflow after each release
+    # so the default `irm | iex` install path doesn't hit the GitHub API.
+    # See the BAKED_VERSION sentinel-block near the top of this file.
+    if ($Script:CuaDriverRsBakedVersion) {
+        $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
+        Write-Step "using baked release: $TagPrefix$v"
         return $v
     }
     Write-Step "resolving latest $TagPrefix* release via GitHub API"

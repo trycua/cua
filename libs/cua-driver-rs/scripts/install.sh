@@ -137,10 +137,30 @@ for cmd in curl tar; do
 done
 
 # --- Resolve release tag ------------------------------------------------
+#
+# Version is resolved in priority order:
+#   1. CUA_DRIVER_RS_VERSION env var (explicit pin)
+#   2. CUA_DRIVER_RS_BAKED_VERSION below (set automatically by CD after
+#      each release — no API call needed)
+#   3. GitHub Releases API (fallback for dev / un-baked checkouts;
+#      unauthenticated = 60 req/hr per IP)
+#
+# The baked value is the common-case default: `curl ... | bash` against
+# `main` resolves the version locally with zero API calls, so an API
+# outage / rate limit / network blip can't break a default install. The
+# API fallback only fires when this script is run from a branch where
+# the baked line hasn't been updated yet (dev / pre-release checkouts).
+#
+# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="0.2.0"
+# ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
     TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
     log "using version from CUA_DRIVER_RS_VERSION: $TAG"
+elif [[ -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
+    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
+    log "using baked release: $TAG"
 else
     log "resolving latest $TAG_PREFIX* release via GitHub API"
     # Pinned to the exact `cua-driver-rs-v*` prefix so this script can never

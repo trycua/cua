@@ -33,9 +33,14 @@ pub struct InstalledApp {
     pub bundle_id: String,
     /// `"desktop"` for `.lnk`-backed apps, `"uwp"` for packaged apps.
     pub kind: String,
-    /// What `launch_app(launch_path=...)` would consume.
-    ///   - Desktop: absolute `.exe` path.
-    ///   - UWP: `shell:appsFolder\{PackageFamilyName}!App`.
+    /// What `launch_app(path=...)` would consume.
+    ///   - Desktop: absolute `.exe` path, plus any commandline arguments the
+    ///     source `.lnk` carries (e.g.
+    ///     `"C:\\Path\\chrome.exe" --profile-directory="Profile 2"`).
+    ///     The exe path is quoted when it contains whitespace.
+    ///   - UWP: `shell:appsFolder\{PackageFamilyName}!{AppId}` — `{AppId}`
+    ///     falls back to `App` when the package manifest doesn't surface a
+    ///     specific `Application.Id`.
     pub launch_path: String,
     /// RFC3339 mtime of the launcher (`.lnk` for desktop, package install
     /// path for UWP), when readable; `None` otherwise.
@@ -110,8 +115,15 @@ fn walk_for_lnks(dir: &Path, sink: &mut Vec<InstalledApp>) -> std::io::Result<()
 
 /// Resolve a `.lnk` to its target via IShellLinkW. Returns `None` if the
 /// target isn't a `.exe` or the resolve failed.
+///
+/// The `launch_path` is the full commandline — the resolved executable path
+/// followed by `IShellLinkW::GetArguments` when non-empty. Many real-world
+/// shortcuts encode behavior in their arguments (Chrome profile launchers,
+/// per-workspace VS Code shortcuts), so dropping the args would break
+/// `launch_app(path=...)` round-trips. The `bundle_id` stays as the exe
+/// path alone so the by-basename merge logic in list_apps still works.
 fn resolve_lnk(lnk_path: &Path) -> Option<InstalledApp> {
-    let target = unsafe { read_lnk_target(lnk_path) }.ok()?;
+    let (target, args) = unsafe { read_lnk_target(lnk_path) }.ok()?;
     if !target.to_ascii_lowercase().ends_with(".exe") {
         return None;
     }
@@ -128,26 +140,51 @@ fn resolve_lnk(lnk_path: &Path) -> Option<InstalledApp> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| unix_secs_to_rfc3339(d.as_secs() as i64));
 
+    let launch_path = if args.trim().is_empty() {
+        target.clone()
+    } else {
+        // Quote the exe path if it contains whitespace so a shell-style
+        // parse round-trips correctly. Arguments are passed through as
+        // received from the shortcut — Windows preserves their own quoting.
+        let exe_token = if target.contains(' ') {
+            format!("\"{target}\"")
+        } else {
+            target.clone()
+        };
+        format!("{exe_token} {}", args.trim())
+    };
+
     Some(InstalledApp {
         name,
-        bundle_id: target.clone(),
+        bundle_id: target,
         kind: "desktop".to_owned(),
-        launch_path: target,
+        launch_path,
         last_used,
     })
 }
 
-/// COM-call into IShellLinkW / IPersistFile to read the target `.exe` path.
-unsafe fn read_lnk_target(lnk_path: &Path) -> windows::core::Result<String> {
+/// COM-call into IShellLinkW / IPersistFile to read the target `.exe` path and
+/// any commandline arguments encoded in the shortcut. Returns `(target, args)`
+/// — `args` is the empty string when the shortcut carries no arguments.
+unsafe fn read_lnk_target(lnk_path: &Path) -> windows::core::Result<(String, String)> {
     let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
     let persist: IPersistFile = shell_link.cast()?;
 
     let wide_path = to_wide_nul(lnk_path.to_string_lossy().as_ref());
     persist.Load(PCWSTR(wide_path.as_ptr()), STGM(0))?;
 
-    let mut buf = vec![0u16; MAX_PATH as usize + 1];
-    shell_link.GetPath(&mut buf, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)?;
-    Ok(decode_wstr(&buf))
+    let mut path_buf = vec![0u16; MAX_PATH as usize + 1];
+    shell_link.GetPath(&mut path_buf, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)?;
+
+    // INFOTIPSIZE (1024) is the documented upper bound for the LNK
+    // arguments field; allocate one extra slot for the NUL terminator.
+    let mut args_buf = vec![0u16; 1025];
+    // GetArguments succeeds with an empty string when no args are set —
+    // we don't need to special-case that case.
+    let args_res = shell_link.GetArguments(&mut args_buf);
+    let args = if args_res.is_ok() { decode_wstr(&args_buf) } else { String::new() };
+
+    Ok((decode_wstr(&path_buf), args))
 }
 
 fn to_wide_nul(s: &str) -> Vec<u16> {

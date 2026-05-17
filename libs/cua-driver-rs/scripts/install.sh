@@ -127,9 +127,14 @@ err() { printf 'error: %s\n' "$*" >&2; }
 # Stale-lock recovery: if the holder dies without releasing (kill -9,
 # OOM, host reboot mid-install), the lock dir sits around forever and
 # every subsequent install hangs. After $LOCK_STALE_AFTER_SECONDS of
-# waiting we force-release with a loud log and proceed — the alternative
-# is leaving users in a permanently wedged state with no clear recovery
-# path beyond `rm -rf` on an internal-looking dir.
+# waiting we probe the holder's liveness via `kill -0 <pid>` (the pid
+# is stamped into $LOCK_INFO right after acquisition) — if the holder
+# is alive we keep waiting (slow download / wedged network is not the
+# same as a crashed install and we must not yank the lock out from
+# under a live process), if it's dead we force-release with a loud log
+# and proceed. The alternative (hang forever) leaves users in a
+# permanently wedged state with no clear recovery path beyond `rm -rf`
+# on an internal-looking dir.
 LOCK_PACKAGES_DIR="$HOME_DIR/packages"
 LOCK_DIR="$LOCK_PACKAGES_DIR/.install.lock.d"
 LOCK_INFO="$LOCK_DIR/info"
@@ -165,7 +170,28 @@ acquire_install_lock() {
         sleep "$LOCK_POLL_INTERVAL_SECONDS"
         waited=$((waited + LOCK_POLL_INTERVAL_SECONDS))
         if (( waited >= LOCK_STALE_AFTER_SECONDS )); then
-            log "lock appears stale (>${LOCK_STALE_AFTER_SECONDS}s), forcing release"
+            # Don't yank the lock from a live install. Parse pid= from
+            # the info file (written by the holder right after mkdir);
+            # if that pid is still alive per kill -0, the holder is just
+            # slow (big download, wedged network) — keep waiting. Only
+            # reclaim when there's no live holder.
+            #
+            # Missing/unreadable info file → holder didn't get far enough
+            # to stamp pid, so assume dead and reclaim. Unparseable pid
+            # line → same. Either way we err on the side of progress
+            # rather than hanging forever once the 600s window elapses.
+            local holder_pid=""
+            if [[ -r "$LOCK_INFO" ]]; then
+                holder_pid=$(grep -E '^pid=' "$LOCK_INFO" 2>/dev/null | head -1 | cut -d= -f2)
+            fi
+            if [[ -n "$holder_pid" ]] && kill -0 "$holder_pid" 2>/dev/null; then
+                log "lock at $LOCK_DIR still held by live pid $holder_pid; continuing to wait"
+                # Reset waited so we re-check after another full window
+                # rather than spamming this branch every poll interval.
+                waited=0
+                continue
+            fi
+            log "lock at $LOCK_DIR appears stale (>${LOCK_STALE_AFTER_SECONDS}s, no live holder); forcing release"
             rm -rf "$LOCK_DIR" 2>/dev/null || true
             waited=0
         fi

@@ -475,11 +475,15 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
 #
 # However if the prior process is somehow still alive but stuck (e.g.
 # wedged on a network call), we still want to recover after a bounded
-# wait. After $Script:LockStaleAfterSeconds we delete the lockfile and
-# retry — Remove-Item on a file held by another process fails on
-# Windows by default, but it succeeds once that other process has
-# exited, so this is the equivalent of the Linux mkdir-mutex's "force
-# release" path.
+# wait. After $Script:LockStaleAfterSeconds the polling loop probes
+# the lockfile by attempting an exclusive open against the same
+# FileShare::None primitive: success means the previous holder really
+# is gone (its FileStream handle was reclaimed) and the leftover file
+# is safe to delete; IOException means the holder is alive but slow,
+# and we keep waiting rather than corrupting an in-flight install.
+# This is the Windows equivalent of the Linux mkdir-mutex's "force
+# release" path, but guarded by a liveness check instead of a blind
+# Remove-Item.
 
 $Script:LockPollIntervalSeconds = 1
 $Script:LockStaleAfterSeconds   = 600
@@ -529,9 +533,46 @@ function Acquire-InstallLock {
             Start-Sleep -Seconds $Script:LockPollIntervalSeconds
             $waited += $Script:LockPollIntervalSeconds
             if ($waited -ge $Script:LockStaleAfterSeconds) {
-                Write-Step "lock appears stale (>$($Script:LockStaleAfterSeconds)s), forcing release"
-                try { Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue } catch {}
-                $waited = 0
+                # Don't yank the lock from a live install. Probe the
+                # file with the same Share=None primitive — if the open
+                # succeeds, the previous holder's FileStream is really
+                # gone (process exited, kernel reclaimed the handle)
+                # and the lockfile is just a stale leftover safe to
+                # delete. If it still throws IOException, the holder is
+                # alive but slow (big download, wedged network); keep
+                # waiting rather than corrupting an in-flight install.
+                $probeStream = $null
+                try {
+                    $probeStream = [System.IO.FileStream]::new(
+                        $Script:LockFilePath,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::ReadWrite,
+                        [System.IO.FileShare]::None)
+                    # Acquisition succeeded → previous holder is gone.
+                    # Close the probe so we can Remove-Item cleanly,
+                    # then fall through to the next loop iteration
+                    # which will reopen via the normal OpenOrCreate path
+                    # (and re-stamp the info blob).
+                    $probeStream.Close()
+                    $probeStream.Dispose()
+                    $probeStream = $null
+                    try { Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue } catch {}
+                    Write-WarningStep "previous install lock at $($Script:LockFilePath) appeared stale and was released"
+                    $waited = 0
+                }
+                catch [System.IO.IOException] {
+                    # Still locked by a live process. Reset waited so we
+                    # re-check after another full window rather than
+                    # spamming this branch every poll interval.
+                    Write-Step "lock at $($Script:LockFilePath) still held by a live process; continuing to wait"
+                    $waited = 0
+                }
+                finally {
+                    if ($probeStream) {
+                        try { $probeStream.Close() } catch {}
+                        try { $probeStream.Dispose() } catch {}
+                    }
+                }
             }
         }
     }

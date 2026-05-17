@@ -61,6 +61,8 @@ Drive any native macOS app **in the background** — agents click, type, and ver
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
 
+> Want to try the cross-platform Rust port early? Add `-- --experimental-rust` to the line above — it delegates to the [`cua-driver-rs`](libs/cua-driver-rs/) installer (separate bundle, coexists with the Swift binary).
+
 Full tool reference, architecture notes, and the Claude Code skill ship with the package: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
 
 ---

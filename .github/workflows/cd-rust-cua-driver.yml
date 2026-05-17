@@ -20,6 +20,11 @@ on:
         description: "Version to release (without v prefix)"
         required: true
         default: "0.1.0"
+      notarize:
+        description: "Codesign + notarize the macOS artifacts (set false to skip during iteration)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -138,6 +143,12 @@ jobs:
   build-macos-universal:
     name: darwin-universal
     runs-on: macos-15
+    # Notarize on tag push (real release); on workflow_dispatch honor the
+    # `notarize` input so we can iterate on the build pipeline without
+    # touching the Apple notary service.
+    env:
+      DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
+      KEYCHAIN_PASSWORD: temporary-cd-keychain-pwd
     steps:
       - uses: actions/checkout@v4
       - name: Determine version
@@ -150,6 +161,34 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Import code-signing certificate
+        if: env.DO_NOTARIZE == 'true'
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          # Create a temporary keychain just for this job (mirrors the
+          # pattern from cd-swift-cua-driver.yml). The keychain is torn
+          # down with the runner when the job exits.
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -l build.keychain
+
+          echo "$APPLICATION_CERT_BASE64" | base64 --decode > application.p12
+          security import application.p12 -k build.keychain -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign > /dev/null 2>&1
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain > /dev/null 2>&1
+          rm application.p12
+
+          CERT_COUNT=$(security find-identity -v -p codesigning build.keychain | grep -c "Developer ID Application" || echo 0)
+          if [ "$CERT_COUNT" -eq 0 ]; then
+            echo "Error: no Developer ID Application certificate imported" >&2
+            security find-identity -v -p codesigning build.keychain
+            exit 1
+          fi
+          echo "Imported $CERT_COUNT Developer ID Application certificate(s)"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -176,6 +215,17 @@ jobs:
           mkdir -p release/universal
           lipo -create "$ARM64" "$X86" -output release/universal/cua-driver
           lipo -info release/universal/cua-driver
+      - name: Codesign universal binary (hardened runtime)
+        if: env.DO_NOTARIZE == 'true'
+        working-directory: libs/cua-driver-rs
+        env:
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
+          codesign --force --timestamp --options runtime \
+            --sign "$IDENTITY" release/universal/cua-driver
+          codesign --verify --strict --verbose=2 release/universal/cua-driver
       - name: Assemble CuaDriverRs.app bundle
         working-directory: libs/cua-driver-rs
         run: |
@@ -213,6 +263,42 @@ jobs:
           rm -f release/CuaDriverRs.app/Contents/MacOS/.gitkeep
           ls -la release/CuaDriverRs.app/Contents/MacOS
           plutil -p release/CuaDriverRs.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
+      - name: Codesign + notarize + staple CuaDriverRs.app
+        if: env.DO_NOTARIZE == 'true'
+        working-directory: libs/cua-driver-rs
+        env:
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: |
+          IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
+
+          # Sign the .app — `--deep` covers the embedded binary too, but
+          # since we already pre-signed the binary explicitly above this
+          # is essentially a no-op on the binary and a fresh signature
+          # on the bundle wrapper.
+          codesign --force --deep --timestamp --options runtime \
+            --sign "$IDENTITY" release/CuaDriverRs.app
+          codesign --verify --strict --verbose=2 release/CuaDriverRs.app
+
+          # notarytool wants a zip (or .dmg / .pkg). Build one next to
+          # the .app, submit, wait, then staple the bundle in place.
+          /usr/bin/ditto -c -k --keepParent release/CuaDriverRs.app \
+            release/CuaDriverRs.app.zip
+
+          xcrun notarytool submit release/CuaDriverRs.app.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_SPECIFIC_PASSWORD" \
+            --wait --timeout 20m
+
+          xcrun stapler staple release/CuaDriverRs.app
+          spctl -a -vv -t exec release/CuaDriverRs.app
+
+          # The zip we used to submit is throwaway; the packaging step
+          # below builds the final tarballs from the stapled .app.
+          rm -f release/CuaDriverRs.app.zip
       - name: Package
         working-directory: libs/cua-driver-rs
         run: |

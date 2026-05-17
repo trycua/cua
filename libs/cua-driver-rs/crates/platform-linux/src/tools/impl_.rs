@@ -88,24 +88,146 @@ impl Tool for ListAppsTool {
     fn def(&self) -> &ToolDef {
         LIST_APPS_DEF.get_or_init(|| ToolDef {
             name: "list_apps".into(),
-            description: "List running processes via /proc filesystem.".into(),
+            description: "List Linux apps — both currently running and installed-but-not-running — \
+                with per-app state flags:\n\n\
+                - running: is a process for this app live? (pid is 0 when false)\n\
+                - active: reserved (Linux X11/Wayland focus model differs from frontmost-app); \
+                always false.\n\
+                - kind: `\"desktop\"` for XDG `.desktop` launcher entries.\n\
+                - launch_path: the launcher command from `Exec=` (field codes stripped). \
+                Pass to `launch_app(launch_path=...)`.\n\
+                - bundle_id: the `.desktop` file's basename without the `.desktop` extension, \
+                following the XDG Desktop Entry Spec's \"desktop file id\" convention.\n\
+                - last_used: RFC3339 mtime of the `.desktop` file, when readable.\n\n\
+                Running apps come from `/proc`. Installed apps come from XDG Desktop Entry \
+                files in $XDG_DATA_HOME/applications and each $XDG_DATA_DIRS entry's \
+                applications/ subdir. Entries with `NoDisplay=true` or `Hidden=true` are \
+                filtered. A `.desktop` file whose launcher matches a running process \
+                (by basename) is merged into a single entry with `running: true`.\n\n\
+                Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
+                state — visibility, geometry, titles — call list_windows instead.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let procs = tokio::task::spawn_blocking(|| crate::proc_fs::list_processes()).await.unwrap_or_default();
-        let mut lines = vec![format!("Found {} processes:", procs.len())];
-        for p in &procs {
-            let cmd = if p.cmdline.is_empty() { p.name.clone() } else { p.cmdline.clone() };
-            lines.push(format!("  {} (pid {})", cmd, p.pid));
+        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
+            let procs = crate::proc_fs::list_processes();
+            let installed = crate::installed_apps::list_installed_apps();
+
+            // Match running processes to installed apps by executable
+            // basename (Exec=firefox %u → "firefox"; cmdline /usr/bin/firefox
+            // → "firefox").
+            let mut by_exe: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (i, app) in installed.iter().enumerate() {
+                let basename = exec_basename(&app.launch_path);
+                if !basename.is_empty() {
+                    by_exe.insert(basename, i);
+                }
+            }
+
+            let mut consumed: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            let mut out = Vec::new();
+            for p in &procs {
+                let key_source = if !p.cmdline.is_empty() { &p.cmdline } else { &p.name };
+                let basename = exec_basename(key_source);
+                if basename.is_empty() { continue }
+                let merged = by_exe.get(&basename).copied();
+                if let Some(idx) = merged { consumed.insert(idx); }
+                let (name, bundle_id, launch_path, kind, last_used) = match merged {
+                    Some(idx) => {
+                        let a = &installed[idx];
+                        (
+                            a.name.clone(),
+                            Some(a.bundle_id.clone()),
+                            Some(a.launch_path.clone()),
+                            Some("desktop".to_owned()),
+                            a.last_used.clone(),
+                        )
+                    }
+                    None => (
+                        if !p.name.is_empty() { p.name.clone() } else { basename.clone() },
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                };
+                out.push(json!({
+                    "pid":         p.pid,
+                    "bundle_id":   bundle_id,
+                    "name":        name,
+                    "running":     true,
+                    "active":      false,
+                    "kind":        kind,
+                    "launch_path": launch_path,
+                    "last_used":   last_used,
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            for (i, app) in installed.iter().enumerate() {
+                if consumed.contains(&i) { continue }
+                out.push(json!({
+                    "pid":         0,
+                    "bundle_id":   app.bundle_id.clone(),
+                    "name":        app.name.clone(),
+                    "running":     false,
+                    "active":      false,
+                    "kind":        "desktop",
+                    "launch_path": app.launch_path.clone(),
+                    "last_used":   app.last_used.clone(),
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            out
+        }).await.unwrap_or_default();
+
+        let running_count = apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)).count();
+        let total = apps.len();
+        let installed_only = total - running_count;
+        let mut lines = vec![format!(
+            "✅ Found {total} app(s): {running_count} running, {installed_only} installed-not-running."
+        )];
+        for app in apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)) {
+            let name = app["name"].as_str().unwrap_or("?");
+            let pid  = app["pid"].as_u64().unwrap_or(0);
+            lines.push(format!("- {name} (pid {pid})"));
         }
-        let structured = json!({ "processes": procs.iter().map(|p| json!({
-            "pid": p.pid, "name": p.name, "cmdline": p.cmdline
-        })).collect::<Vec<_>>() });
+        // Unified `apps` array + legacy `processes` alias for older callers.
+        let structured = json!({
+            "apps": apps,
+            "processes": apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false))
+                .map(|a| json!({
+                    "pid":  a["pid"], "name": a["name"]
+                })).collect::<Vec<_>>(),
+        });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
+}
+
+/// Return the lowercase basename of an executable token, stripping any
+/// leading shell-wrapper words and quoting. `env FOO=1 /usr/bin/firefox %U`
+/// → `firefox`. `firefox %u` → `firefox`.
+fn exec_basename(s: &str) -> String {
+    // Take the first whitespace-separated token that looks like a binary,
+    // skipping `env`-style prefixes and `K=V` assignments.
+    for tok in s.split_whitespace() {
+        if tok == "env" { continue }
+        if tok.contains('=') && !tok.starts_with('/') && !tok.starts_with('-') {
+            // `FOO=bar` env-var assignment — skip.
+            continue;
+        }
+        let cleaned = tok.trim_matches(|c| c == '"' || c == '\'');
+        let basename = std::path::Path::new(cleaned)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(cleaned);
+        return basename.to_ascii_lowercase();
+    }
+    String::new()
 }
 
 // ── list_windows ─────────────────────────────────────────────────────────────

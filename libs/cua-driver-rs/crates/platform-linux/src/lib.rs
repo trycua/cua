@@ -25,6 +25,9 @@ pub mod input;
 pub mod proc_fs;
 
 #[cfg(target_os = "linux")]
+pub mod installed_apps;
+
+#[cfg(target_os = "linux")]
 pub mod capture;
 
 #[cfg(target_os = "linux")]

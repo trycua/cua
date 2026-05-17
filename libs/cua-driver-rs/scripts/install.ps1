@@ -37,6 +37,12 @@
 #                                    (default %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
 #                                    (default %USERPROFILE%\.cua-driver-rs)
+#   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
+#                                    release dirs after install; older ones
+#                                    are deleted (default 5; set 0 to
+#                                    disable GC entirely). Per-target —
+#                                    multi-arch dirs are pruned
+#                                    independently of each other.
 #
 # Param:
 #   -Release   release tag to install ("latest" or a bare version like "0.2.0").
@@ -95,6 +101,19 @@ if ($env:CUA_DRIVER_RS_HOME) {
 $PackagesDir = Join-Path $HomeDir   "packages"
 $ReleasesDir = Join-Path $PackagesDir "releases"
 $CurrentDir  = Join-Path $PackagesDir "current"
+
+# Post-install GC: how many per-version release dirs to retain. Validated
+# in Resolve-KeepVersions below; 0 means "never GC".
+$Script:KeepVersionsDefault = 5
+
+function Resolve-KeepVersions {
+    $raw = $env:CUA_DRIVER_RS_KEEP_VERSIONS
+    if (-not $raw) { return $Script:KeepVersionsDefault }
+    $n = 0
+    if ([int]::TryParse($raw, [ref]$n) -and $n -ge 0) { return $n }
+    Write-WarningStep "CUA_DRIVER_RS_KEEP_VERSIONS=$raw is not a non-negative integer; falling back to $($Script:KeepVersionsDefault)"
+    return $Script:KeepVersionsDefault
+}
 
 # ---------- Log helpers ----------------------------------------------------
 
@@ -435,6 +454,76 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     Write-Step "junction $linkPath -> $targetPath"
 }
 
+# ---------- Per-version release dir GC ------------------------------------
+#
+# Prune per-version release dirs under $ReleasesDir for the current
+# $target, keeping the N most recent (by LastWriteTime). The dir that
+# the `current` junction resolves to is always preserved on top of the
+# keep budget — so the worst-case post-GC count is keep + 1 (active
+# fell outside the keep window, e.g. after a rollback), common case
+# is exactly keep. Per-target filtering keeps a multi-arch dev's
+# x86_64 and arm64 histories independent of each other.
+
+function Invoke-OldReleasesGc {
+    param(
+        [string]$releasesDir,
+        [string]$currentDir,
+        [string]$target,
+        [int]$keep
+    )
+
+    if ($keep -eq 0) {
+        Write-Step "version GC disabled (`$env:CUA_DRIVER_RS_KEEP_VERSIONS=0)"
+        return
+    }
+    if (-not (Test-Path -LiteralPath $releasesDir)) { return }
+
+    # Resolve $currentDir's junction target so we can exempt it from the
+    # prune list. Get-JunctionTarget returns $null on non-junction paths,
+    # in which case nothing is exempted (still safe — we only prune the
+    # excess past $keep newest).
+    $currentTarget = $null
+    if (Test-Path -LiteralPath $currentDir) {
+        if (Test-IsJunction $currentDir) {
+            $currentTarget = Get-JunctionTarget $currentDir
+            if ($currentTarget) { $currentTarget = $currentTarget.TrimEnd('\') }
+        }
+    }
+
+    # Filter to dirs whose name ends in "-$target". Sort newest-first.
+    # Wrap in @(...) so a single-result match doesn't get unwrapped to a
+    # bare object (PowerShell's classic foot-gun).
+    $candidates = @(Get-ChildItem -LiteralPath $releasesDir -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like "*-$target" } |
+                    Sort-Object LastWriteTime -Descending)
+
+    if ($candidates.Count -eq 0) { return }
+
+    $toPrune = @()
+    $kept = 0
+    foreach ($cand in $candidates) {
+        $isCurrent = ($currentTarget -and ($cand.FullName.TrimEnd('\') -ieq $currentTarget))
+        if ($kept -lt $keep) {
+            $kept += 1
+            continue
+        }
+        if ($isCurrent) {
+            # Active install fell outside the keep window — preserve
+            # anyway (never delete the dir backing the active junction).
+            continue
+        }
+        $toPrune += $cand
+    }
+
+    if ($toPrune.Count -eq 0) { return }
+
+    Write-Step "pruning $($toPrune.Count) old release dir(s) (keeping $keep most recent for $target):"
+    foreach ($d in $toPrune) {
+        Write-Step "  - $($d.Name)"
+        Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------- Release resolution --------------------------------------------
 
 function Resolve-Version {
@@ -568,6 +657,13 @@ if (-not $skipDownload) {
 # is what gives users a stable PATH entry.
 Ensure-Junction $CurrentDir    $versionedDir
 Ensure-Junction $VisibleBinDir $CurrentDir
+
+# Post-install GC of old per-version release dirs. Runs AFTER the junction
+# retarget above so the about-to-be-active version is never a deletion
+# candidate (it's both the newest by mtime and exempted via the
+# current-junction check inside Invoke-OldReleasesGc).
+$keepVersions = Resolve-KeepVersions
+Invoke-OldReleasesGc -releasesDir $ReleasesDir -currentDir $CurrentDir -target $target -keep $keepVersions
 
 # ---------- Fire-and-forget install telemetry ping ------------------------
 #

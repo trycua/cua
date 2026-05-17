@@ -1882,7 +1882,13 @@ interactive prompt path (TUI helper, GUI extra) can persist the
 "skip until next version" choice without re-implementing the cache
 layer.
 
-## Installer: version-resolution chain (`env > baked > API`)
+## Installer: layout + lifecycle
+
+This section covers the cross-platform Rust installer's runtime
+behaviors: how it picks a version, where it lands files, and how it
+keeps the on-disk state bounded across repeated upgrades.
+
+### Version-resolution chain (`env > baked > API`)
 
 Both Rust installers (`scripts/install.sh`, `scripts/install.ps1`)
 resolve the release tag in the same priority order as the Swift
@@ -1899,7 +1905,7 @@ resolve the release tag in the same priority order as the Swift
    only consulted when the env override is absent *and* the baked
    line hasn't been updated yet (dev branches, pre-release checkouts).
 
-### Why this exists
+#### Why this exists
 
 The Swift installer adopted this pattern after we hit two failure
 modes the API-only chain couldn't dodge:
@@ -1923,7 +1929,7 @@ valuable; `install.sh` keeps its single-page fetch for now, which
 is a follow-up candidate once the baked default is shipped (it is
 fallback-only and not hit by the default curl-from-main path).
 
-### Sentinel-block markers (kept byte-identical across both scripts)
+#### Sentinel-block markers (kept byte-identical across both scripts)
 
 ```
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
@@ -1936,7 +1942,7 @@ The PowerShell variant swaps the bash assignment for
 marker comments. The CD step's `sed` patterns key on the assignment
 line, not the markers, so the markers are a human cue only.
 
-### CD wiring
+#### CD wiring
 
 `.github/workflows/cd-rust-cua-driver.yml` runs a `Bake version into
 install scripts` step at the end of the `release` job after each
@@ -1959,3 +1965,91 @@ The commit author is `trycua-release[bot]` and the message is
 `chore(cua-driver-rs): bake version <V> into install scripts [skip ci]`
 (the `[skip ci]` suppresses the recursive CD trigger from the
 bake-push hitting `main`).
+
+### Per-version release-dir GC (`CUA_DRIVER_RS_KEEP_VERSIONS`)
+
+Each install drops the binary into a fresh
+`$HOME_DIR/packages/releases/<version>-<target>/` directory and
+retargets `current` at it. Old per-version dirs are kept on disk so
+rollback is `ln -sfn` / junction-retarget away with no re-download.
+Disk usage grows ~15 MB per upgrade, so the installer runs a
+post-install GC pass to trim oldest dirs back to a configurable cap.
+
+#### Defaults + override
+
+- Default: **keep 5** most recent per-version dirs per target triple.
+- Override: `CUA_DRIVER_RS_KEEP_VERSIONS=<N>` (env). `<N>` is any
+  non-negative integer; `0` disables GC entirely (legacy behavior —
+  retains every version forever). Non-integer or negative values fall
+  back to the default with a `warning:` log.
+
+#### Invariants
+
+1. **Per-target** — only dirs whose name suffix matches the current
+   platform's `${TARGET}` triple are eligible to prune. A multi-arch
+   dev with both `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu`
+   under one `$HOME_DIR` (rare but possible — e.g. shared home over
+   NFS) has each target's history GC'd independently.
+2. **Active install is always preserved** — even if the dir that
+   `current` resolves to is older than the keep window (e.g. user
+   rolled back to an old version). Worst-case post-GC dir count is
+   `keep + 1`; common-case is exactly `keep`.
+3. **Runs after the atomic swap** — `prune_old_releases` (sh) /
+   `Invoke-OldReleasesGc` (ps1) is invoked only after `current` has
+   been retargeted at the new install, so the about-to-be-active
+   version is never a deletion candidate.
+4. **macOS path unchanged** — the macOS `/Applications/CuaDriverRs.app`
+   install is an in-place replacement (no per-version directory
+   accumulation), so the GC pass is a no-op there by construction
+   (the Darwin branch never enters the versioned-dirs install path).
+
+#### Implementation shape
+
+- `install.sh` — `prune_old_releases` uses `ls -dt "$RELEASES_DIR"/*/`
+  for mtime-sorted candidates, filters by `*-$TARGET`, skips the dir
+  that `readlink "$CURRENT_LINK"` resolves to, and `xargs -0 rm -rf`s
+  the excess past the keep window.
+- `install.ps1` — `Invoke-OldReleasesGc` uses
+  `Get-ChildItem -Directory | Where-Object Name -like "*-$target" |
+  Sort-Object LastWriteTime -Descending`, resolves
+  `Get-JunctionTarget $CurrentDir` to find and exempt the active
+  install, and `Remove-Item -Recurse -Force`s the excess.
+
+#### Verification recipes
+
+**Linux** (pin three versions, observe GC):
+
+```bash
+# Install three pinned versions in sequence. Each one drops a new
+# per-version dir under ~/.cua-driver-rs/packages/releases/ and
+# retargets `current`.
+CUA_DRIVER_RS_VERSION=0.1.4 bash install.sh
+CUA_DRIVER_RS_VERSION=0.2.0 bash install.sh
+CUA_DRIVER_RS_VERSION=0.2.1 bash install.sh
+ls ~/.cua-driver-rs/packages/releases/
+# → 0.1.4-…, 0.2.0-…, 0.2.1-…  (3 dirs, GC saw ≤ default-5, no-op)
+
+# Force keep=2 — GC trims to 2 newest, current always preserved.
+CUA_DRIVER_RS_VERSION=0.2.1 CUA_DRIVER_RS_KEEP_VERSIONS=2 bash install.sh
+ls ~/.cua-driver-rs/packages/releases/
+# → 0.2.0-…, 0.2.1-…  (0.1.4 pruned)
+
+# keep=0 — GC disabled.
+CUA_DRIVER_RS_VERSION=0.2.1 CUA_DRIVER_RS_KEEP_VERSIONS=0 bash install.sh
+# (logs "version GC disabled", retains all on-disk dirs)
+```
+
+**Windows** (equivalent in PowerShell):
+
+```powershell
+$env:CUA_DRIVER_RS_VERSION = "0.1.4"; irm <url>/install.ps1 | iex
+$env:CUA_DRIVER_RS_VERSION = "0.2.0"; irm <url>/install.ps1 | iex
+$env:CUA_DRIVER_RS_VERSION = "0.2.1"; irm <url>/install.ps1 | iex
+Get-ChildItem ~\.cua-driver-rs\packages\releases\
+# → 3 dirs
+
+$env:CUA_DRIVER_RS_KEEP_VERSIONS = "2"
+$env:CUA_DRIVER_RS_VERSION = "0.2.1"; irm <url>/install.ps1 | iex
+Get-ChildItem ~\.cua-driver-rs\packages\releases\
+# → 2 dirs (0.1.4 pruned)
+```

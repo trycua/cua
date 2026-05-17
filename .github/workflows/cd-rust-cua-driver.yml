@@ -135,7 +135,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path "release/$stage" | Out-Null
           Copy-Item "target/$target/release/cua-driver.exe" "release/$stage/"
           if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
-          Compress-Archive -Path "release/$stage/*" -DestinationPath "release/$stage.zip" -Force
+          # Zip the directory itself (no trailing /*) so the archive contains
+          # the top-level "$stage" wrapper dir — install.ps1 walks into
+          # extracted/cua-driver-rs-<v>-<arch>/cua-driver.exe to find the
+          # binary. With "release/$stage/*" Compress-Archive strips the
+          # wrapper and dumps the files at the archive root, which breaks
+          # the installer's path lookup.
+          Compress-Archive -Path "release/$stage" -DestinationPath "release/$stage.zip" -Force
           # Bare binary (cua-driver.exe by itself) — matches Swift's
           # `*-binary.tar.gz` convention but as .zip since Windows tools
           # don't always have tar on PATH.

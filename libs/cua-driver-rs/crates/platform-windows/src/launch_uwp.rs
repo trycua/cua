@@ -121,9 +121,18 @@ pub fn is_aumid(s: &str) -> bool {
 }
 
 /// Single AppsFolder entry: display name + AUMID.
+///
+/// `lowercase_display_name` is a one-time precomputation of
+/// `display_name.to_lowercase()`, populated at enumeration time. The
+/// prefix-match pass in [`resolve_aumid_by_name`] runs over every cached
+/// entry on every lookup; without this field the loop would allocate a
+/// fresh lowercased `String` per entry per call (~150–300 allocations
+/// per resolve on a stock Win11 install). Caching it once turns the hot
+/// path into a borrow.
 #[derive(Clone)]
 struct AppsFolderEntry {
     display_name: String,
+    lowercase_display_name: String,
     aumid: String,
 }
 
@@ -178,11 +187,12 @@ pub fn resolve_aumid_by_name(display_name: &str) -> Option<String> {
         return Some(hit.aumid.clone());
     }
 
-    // Pass 2: shortest case-insensitive prefix match.
+    // Pass 2: shortest case-insensitive prefix match. Uses the
+    // precomputed `lowercase_display_name` to avoid a fresh allocation
+    // per entry per call (see `AppsFolderEntry` docs for rationale).
     let mut best: Option<&AppsFolderEntry> = None;
     for entry in entries.iter() {
-        let dn_lower = entry.display_name.to_lowercase();
-        if dn_lower.starts_with(query_stripped) {
+        if entry.lowercase_display_name.starts_with(query_stripped) {
             match best {
                 None => best = Some(entry),
                 Some(current) if entry.display_name.len() < current.display_name.len() => {
@@ -274,7 +284,8 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
             continue;
         }
 
-        entries.push(AppsFolderEntry { display_name, aumid });
+        let lowercase_display_name = display_name.to_lowercase();
+        entries.push(AppsFolderEntry { display_name, lowercase_display_name, aumid });
     }
 
     Ok(entries)

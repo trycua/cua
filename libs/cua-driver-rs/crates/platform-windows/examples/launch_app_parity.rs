@@ -106,24 +106,62 @@ fn main() {
         .pointer("/result/structuredContent/pid")
         .and_then(|n| n.as_u64());
     let bundle_id_aumid = v_aumid.pointer("/result/structuredContent/bundle_id");
-    match (pid_aumid, bundle_id_aumid) {
-        (Some(p), Some(b)) if p > 0 => {
+
+    // Always reap the pid first — even if the bundle_id round-trip
+    // check below fails, leaving Notepad running across runs would
+    // pollute later parity invocations.
+    if let Some(p) = pid_aumid.filter(|p| *p > 0) {
+        std::process::Command::new("taskkill")
+            .args(["/PID", &p.to_string(), "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status().ok();
+    }
+
+    match bundle_id_aumid {
+        Some(b) => {
+            let p = pid_aumid.expect("pid must be present when bundle_id is");
+            assert!(p > 0, "AUMID launch returned bundle_id but pid={p}");
             println!("AUMID launch returned pid={p}, bundle_id={b}");
             assert_eq!(
                 b.as_str(),
                 Some(aumid),
                 "bundle_id must round-trip the AUMID passed in"
             );
-            // Cleanup the packaged-app pid too.
-            std::process::Command::new("taskkill")
-                .args(["/PID", &p.to_string(), "/F"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status().ok();
         }
-        _ => {
-            // Not installed (Win10 host or stripped Win11 image) — fine.
-            println!("AUMID path: packaged Notepad not installed on this host; skipped");
+        None => {
+            // No bundle_id in structuredContent — the AUMID launch
+            // returned an error (the daemon serialises tool errors as
+            // {ok:false, error:"…"}, no `result` field). Inspect the
+            // error text: the *only* acceptable cause for skipping is
+            // "this AUMID is not installed on this host" (Win10, or a
+            // stripped Win11 image without packaged Notepad). Anything
+            // else — COM init failure, IApplicationActivationManager
+            // broken, packaging metadata corrupt — is a real regression
+            // that must surface, not be swallowed.
+            let err_text = v_aumid
+                .pointer("/error")
+                .and_then(|e| e.as_str())
+                .or_else(|| v_aumid.pointer("/result/content/0/text").and_then(|t| t.as_str()))
+                .unwrap_or("");
+            let err_lower = err_text.to_lowercase();
+            // Windows surfaces "AUMID not registered for current user"
+            // as E_INVALIDARG (HRESULT 0x80070057, "The parameter is
+            // incorrect."). That HRESULT *is* the canonical sentinel for
+            // "not installed" from ActivateApplication. Also accept the
+            // human-readable substrings in case a wrapper rephrases.
+            let looks_like_not_installed = err_lower.contains("not installed")
+                || err_lower.contains("not found")
+                || err_lower.contains("not registered")
+                || err_text.contains("0x80070057")
+                || err_text.contains("E_INVALIDARG")
+                || err_lower.contains("the parameter is incorrect");
+            assert!(
+                looks_like_not_installed,
+                "AUMID launch of {aumid:?} failed with an unexpected error \
+                 (not a 'not installed' signal): {err_text:?}"
+            );
+            println!("AUMID path: packaged Notepad not installed on this host; skipped ({err_text:?})");
         }
     }
 

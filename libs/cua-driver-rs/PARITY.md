@@ -468,7 +468,7 @@ already knows about).
 
 Verified on macOS with the three new parity tests against both binaries:
 
-```
+```text
 launch_app name="com.apple.calculator" → pid=…, bundle_id=com.apple.calculator
 launch_app name="CALCULATOR"           → pid=…, bundle_id=com.apple.calculator
 launch_app name="Calculator"           → pid=…, (regression guard)

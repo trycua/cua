@@ -124,9 +124,15 @@ pub fn launch_app_by_name(name: &str) -> anyhow::Result<i32> {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let apps = list_running_apps();
         for app in &apps {
-            if app.name.eq_ignore_ascii_case(&resolved.display_name)
-                || app.bundle_id.as_deref() == resolved.bundle_id.as_deref()
-            {
+            // Bundle-ID match must be a *both-Some* equality — comparing
+            // two `None`s would silently match an unrelated running app
+            // whose bundle_id we also failed to resolve, returning a wrong
+            // pid for the launch we just performed.
+            let bundle_id_match = matches!(
+                (app.bundle_id.as_deref(), resolved.bundle_id.as_deref()),
+                (Some(a), Some(b)) if a == b
+            );
+            if app.name.eq_ignore_ascii_case(&resolved.display_name) || bundle_id_match {
                 return Ok(app.pid);
             }
         }

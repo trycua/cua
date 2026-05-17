@@ -115,35 +115,53 @@ impl Tool for ListAppsTool {
     fn def(&self) -> &ToolDef {
         LIST_APPS_DEF.get_or_init(|| ToolDef {
             name: "list_apps".into(),
-            // Description copied from Swift `ListAppsTool.swift` and adapted —
-            // notes Windows-specific limitations (no bundle_id, no installed
-            // enumeration yet).  Same semantics for running/active state flags.
-            description: "List Windows apps that are currently running, with per-app state flags:\n\n\
+            description: "List Windows apps — both currently running and installed-but-not-running — \
+                with per-app state flags:\n\n\
                 - running: is a process for this app live? (pid is 0 when false)\n\
-                - active: is it the system-frontmost app? (implies running)\n\n\
-                Only processes that own at least one visible top-level window are included — \
-                background services and console processes are filtered out (mirrors Swift's \
-                NSApplicationActivationPolicyRegular filter).\n\n\
-                Use this for \"is X running?\". For per-window state — on-screen, minimized, \
-                window titles — call list_windows instead. For just opening an app — running \
-                or not — call launch_app({path: ...}) directly; list_apps is not a prerequisite.".into(),
+                - active: is it the system-frontmost app? (implies running)\n\
+                - kind: `\"desktop\"` for `.exe`-backed apps (resolved from Start-Menu \
+                shortcuts) or `\"uwp\"` for packaged store apps.\n\
+                - launch_path: what `launch_app` would consume.\n\
+                    * desktop: full `.exe` commandline (path + any arguments preserved from \
+                      the source `.lnk`; the exe is quoted when it contains whitespace).\n\
+                    * uwp: `shell:appsFolder\\{PackageFamilyName}!{AppId}` where `{AppId}` \
+                      falls back to `App` when the package manifest does not expose a \
+                      specific Application.Id.\n\
+                - last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, \
+                package install location for UWP), when readable.\n\n\
+                Running apps are derived from visible top-level windows + the foreground \
+                pid (mirrors NSApplicationActivationPolicyRegular's intent: background \
+                services and console processes are excluded). Installed apps are merged \
+                from Start-Menu `.lnk` enumeration and the WinRT PackageManager — running \
+                processes whose executable matches a Start-Menu target are folded into a \
+                single entry with `running: true`.\n\n\
+                Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
+                state — on-screen, minimized, window titles — call list_windows instead. \
+                For just opening an app — running or not — call launch_app({path: ...}) \
+                directly; list_apps is not a prerequisite.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // Strategy (port of `AppEnumerator.apps()` semantics):
-        // 1. Enumerate top-level visible windows; their owner pids are the
-        //    "running apps with a user-facing surface".
-        // 2. Look up each pid's executable name via the process table.
-        // 3. Mark `active` for the pid that owns GetForegroundWindow.
+        // Strategy:
+        // 1. Enumerate top-level visible windows → derive the set of running pids
+        //    that have a user-facing surface.
+        // 2. Enumerate the process table to map pid → executable name and full
+        //    path (used to merge against Start-Menu / UWP launch_paths).
+        // 3. Enumerate installed apps from Start-Menu shortcuts + WinRT
+        //    PackageManager. Each installed entry has a launch_path.
+        // 4. Merge: a running pid whose executable path matches an installed
+        //    desktop launch_path becomes a single entry with running=true and
+        //    that launch_path. Remaining installed entries are emitted with
+        //    running=false, pid=0. Remaining running pids (no installed-app
+        //    match) are emitted as running=true with launch_path=null.
         let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
             let wins = crate::win32::list_windows(None);
-            // Deduplicate by pid — one app may own several top-level windows.
             let mut seen_pids = std::collections::HashSet::new();
             let mut running_pids: Vec<u32> = Vec::new();
             for w in &wins {
@@ -158,44 +176,137 @@ impl Tool for ListAppsTool {
             };
 
             let procs = crate::win32::list_processes();
-            let pid_to_name: std::collections::HashMap<u32, &str> =
-                procs.iter().map(|p| (p.pid, p.name.as_str())).collect();
+            let pid_to_name: std::collections::HashMap<u32, String> =
+                procs.iter().map(|p| (p.pid, p.name.clone())).collect();
 
-            running_pids.iter().map(|&pid| {
-                let name = pid_to_name.get(&pid).copied().unwrap_or("<unknown>");
-                json!({
-                    "pid":       pid,
-                    "bundle_id": serde_json::Value::Null,  // Windows has no bundle ID concept
-                    "name":      name,
-                    "running":   true,
-                    "active":    pid == foreground_pid,
-                })
-            }).collect()
+            let installed = crate::win32::list_installed_apps();
+            // Lowercase-exe-basename → installed-app indices. We match running
+            // processes by basename rather than full path because the process
+            // table's executable name is `notepad.exe` while the Start-Menu
+            // shortcut target is `C:\Windows\System32\notepad.exe` — both
+            // sides need to be normalised to compare. Multiple Start-Menu
+            // shortcuts often target the same basename (different `chrome.exe`
+            // launchers, multiple `code.exe` profiles, …), so we bucket as
+            // `Vec<usize>` and let `disambiguate_installed_match` pick a
+            // winner per running pid rather than letting the last write win.
+            let mut by_exe: std::collections::HashMap<String, Vec<usize>> =
+                std::collections::HashMap::new();
+            for (i, app) in installed.iter().enumerate() {
+                if app.kind == "desktop" {
+                    let basename = std::path::Path::new(&app.launch_path)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if !basename.is_empty() {
+                        by_exe.entry(basename).or_default().push(i);
+                    }
+                }
+            }
+
+            let mut consumed_installed: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            let mut out: Vec<serde_json::Value> = Vec::new();
+
+            for &pid in &running_pids {
+                let name = pid_to_name.get(&pid).cloned().unwrap_or_else(|| "<unknown>".into());
+                let key = name.to_ascii_lowercase();
+                let candidates = by_exe.get(&key).map(|v| v.as_slice()).unwrap_or(&[]);
+                let merged = disambiguate_installed_match(candidates, &installed, &name);
+                if let Some(idx) = merged { consumed_installed.insert(idx); }
+                let (display_name, bundle_id, launch_path, kind, last_used) = match merged {
+                    Some(idx) => {
+                        let a = &installed[idx];
+                        (
+                            a.name.clone(),
+                            Some(a.bundle_id.clone()),
+                            Some(a.launch_path.clone()),
+                            Some(a.kind.clone()),
+                            a.last_used.clone(),
+                        )
+                    }
+                    None => (name, None, None, Some("desktop".to_owned()), None),
+                };
+                out.push(json!({
+                    "pid":         pid,
+                    "bundle_id":   bundle_id,
+                    "name":        display_name,
+                    "running":     true,
+                    "active":      pid == foreground_pid,
+                    "kind":        kind,
+                    "launch_path": launch_path,
+                    "last_used":   last_used,
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            for (i, app) in installed.iter().enumerate() {
+                if consumed_installed.contains(&i) { continue }
+                out.push(json!({
+                    "pid":         0,
+                    "bundle_id":   app.bundle_id.clone(),
+                    "name":        app.name.clone(),
+                    "running":     false,
+                    "active":      false,
+                    "kind":        app.kind.clone(),
+                    "launch_path": app.launch_path.clone(),
+                    "last_used":   app.last_used.clone(),
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            out
         }).await.unwrap_or_default();
 
         let running_count = apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)).count();
         let total = apps.len();
         let installed_only = total - running_count;
-        // Match Swift's text format: header line + bullet per running app.
         let mut lines = vec![format!(
             "✅ Found {total} app(s): {running_count} running, {installed_only} installed-not-running."
         )];
         for app in apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)) {
             let name = app["name"].as_str().unwrap_or("?");
             let pid  = app["pid"].as_u64().unwrap_or(0);
-            // Windows lacks bundle_id; omit the trailing [bundle] segment.
             lines.push(format!("- {name} (pid {pid})"));
         }
-        // `apps` key (matches Swift `Output.apps`); `processes` key kept as
-        // an alias for any pre-existing Rust callers that read the old shape.
+        // `apps` is the unified shape; `processes` retained for any pre-existing
+        // callers that consumed the old running-only shape.
         let structured = json!({
             "apps": apps,
-            "processes": apps.iter().map(|a| json!({
-                "pid":  a["pid"], "name": a["name"]
-            })).collect::<Vec<_>>(),
+            "processes": apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false))
+                .map(|a| json!({
+                    "pid":  a["pid"], "name": a["name"]
+                })).collect::<Vec<_>>(),
         });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
+}
+
+/// Pick which of several Start-Menu / UWP-derived installed apps best matches
+/// a running pid whose exe basename collided. Precedence:
+///   1. exact case-insensitive equality between `proc_exe_basename` and the
+///      installed app's launch_path basename (always true here; left for
+///      future per-path matches if we ever bucket on something coarser)
+///   2. most recently modified launcher (`last_used` desc — RFC3339 strings
+///      are lexicographically ordered the same as chronologically)
+///   3. first candidate (deterministic by source order)
+fn disambiguate_installed_match(
+    candidates: &[usize],
+    installed: &[crate::win32::InstalledApp],
+    _proc_exe_basename: &str,
+) -> Option<usize> {
+    if candidates.is_empty() { return None; }
+    if candidates.len() == 1 { return Some(candidates[0]); }
+
+    candidates
+        .iter()
+        .copied()
+        .max_by(|&a, &b| {
+            installed[a]
+                .last_used
+                .as_deref()
+                .unwrap_or("")
+                .cmp(installed[b].last_used.as_deref().unwrap_or(""))
+        })
+        .or_else(|| candidates.first().copied())
 }
 
 // ── list_windows ─────────────────────────────────────────────────────────────
@@ -484,6 +595,48 @@ impl Tool for GetWindowStateTool {
     }
 }
 
+/// Split a `launch_path` round-tripped from `list_apps` into a single
+/// ShellExecuteEx `lpFile` token plus a trailing arguments string. Handles
+/// three input shapes:
+///   - bare path (`C:\Windows\notepad.exe`): returns `(path, "")`
+///   - quoted-exe + args (`"C:\Path\chrome.exe" --foo --bar`): returns the
+///     unquoted path + the rest
+///   - AUMID / shell launch token (`shell:appsFolder\..!..`): returns the
+///     whole string as the file token with empty args (the shell resolver
+///     handles these directly)
+///
+/// Args are returned trimmed; their internal quoting is preserved as-is so
+/// `--profile-directory="Profile 2"` survives.
+fn split_launchable_target(s: &str) -> (String, String) {
+    let trimmed = s.trim();
+    if trimmed.is_empty() { return (String::new(), String::new()); }
+    // AUMID / shell launch tokens go through unchanged.
+    if trimmed.starts_with("shell:") || trimmed.contains('!') {
+        return (trimmed.to_owned(), String::new());
+    }
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        if let Some(close) = rest.find('"') {
+            let path = &rest[..close];
+            let args = rest[close + 1..].trim_start().to_owned();
+            return (path.to_owned(), args);
+        }
+        // Unterminated quote — fall through and hand the whole thing back.
+        return (trimmed.to_owned(), String::new());
+    }
+    // No quoting: be permissive. If the input contains a space and the
+    // first whitespace-separated token names a `.exe`, treat it as
+    // `<exe> <args>`. Otherwise hand the string back whole (lets bare paths
+    // with embedded spaces still work — most installs put `Program Files`
+    // shortcuts through the quoted branch above).
+    if let Some(first_space) = trimmed.find(char::is_whitespace) {
+        let (first, rest) = trimmed.split_at(first_space);
+        if first.to_ascii_lowercase().ends_with(".exe") {
+            return (first.to_owned(), rest.trim_start().to_owned());
+        }
+    }
+    (trimmed.to_owned(), String::new())
+}
+
 // ── launch_app ───────────────────────────────────────────────────────────────
 
 pub struct LaunchAppTool;
@@ -530,10 +683,11 @@ impl Tool for LaunchAppTool {
                 parameters or as the AUMID activation arguments string), the others currently \
                 no-op on Windows.".into(),
             input_schema: json!({"type":"object","properties":{
-                "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, or path must be provided."},
+                "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, path, or launch_path must be provided."},
                 "aumid":{"type":"string","description":"Explicit AUMID for a packaged app. Cleaner alternative to overloading `bundle_id`. Takes precedence over `bundle_id` / `name` when present."},
                 "name":{"type":"string","description":"App display name. Tried against the `shell:AppsFolder` index first for packaged-app lookup; on a miss, passed to ShellExecuteEx's PATH search."},
-                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid."},
+                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid (but not over `launch_path`)."},
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "electron_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
@@ -545,6 +699,7 @@ impl Tool for LaunchAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let launch_path_opt = args.get("launch_path").and_then(|v| v.as_str()).map(str::to_owned);
         let path_opt = args.get("path").and_then(|v| v.as_str()).map(str::to_owned);
         let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
         let bundle_id_opt = args.get("bundle_id").and_then(|v| v.as_str()).map(str::to_owned);
@@ -556,8 +711,12 @@ impl Tool for LaunchAppTool {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
-        // Resolve target — path > aumid > name > bundle_id (alias of name on Windows).
-        let target = path_opt.clone()
+        // Resolve target — launch_path > path > aumid > name > bundle_id
+        // (alias of name on Windows). launch_path is highest precedence for
+        // round-trip with list_apps; the value is handed to ShellExecuteEx
+        // unchanged (UWP routing below is bypassed when launch_path is set).
+        let target = launch_path_opt.clone()
+            .or(path_opt.clone())
             .or(aumid_opt.clone())
             .or(name_opt.clone())
             .or(bundle_id_opt.clone());
@@ -570,19 +729,23 @@ impl Tool for LaunchAppTool {
         // ── Packaged-app (UWP / MSIX) routing decision ──────────────────────
         //
         // Routing precedence — most explicit signal wins:
-        //   1. `aumid` parameter (any value): packaged path, AUMID = value.
-        //   2. `bundle_id` containing `!`: packaged path, AUMID = value
+        //   1. `launch_path` set: skip UWP routing entirely — round-trip
+        //      semantics demand the value be handed to ShellExecuteEx
+        //      unchanged. Callers wanting precise UWP pid capture should
+        //      pass `aumid` instead.
+        //   2. `aumid` parameter (any value): packaged path, AUMID = value.
+        //   3. `bundle_id` containing `!`: packaged path, AUMID = value
         //      (Win32 PATH lookups never produce a `!` in the executable
         //      name, so this is a safe marker of caller intent).
-        //   3. `name` with no `path`: try `shell:AppsFolder` lookup; on a
+        //   4. `name` with no `path`: try `shell:AppsFolder` lookup; on a
         //      hit, packaged path with the resolved AUMID. On miss, fall
         //      through to ShellExecuteExW (existing Win32 path).
-        //   4. Anything else: existing ShellExecuteExW path.
+        //   5. Anything else: existing ShellExecuteExW path.
         //
         // `path` is intentionally excluded from packaged routing — when
         // the caller has a concrete executable in mind they want
         // CreateProcess semantics, not Start Menu activation.
-        let aumid_for_uwp: Option<String> = if path_opt.is_some() {
+        let aumid_for_uwp: Option<String> = if launch_path_opt.is_some() || path_opt.is_some() {
             None
         } else if let Some(a) = aumid_opt.clone() {
             Some(a)
@@ -606,7 +769,35 @@ impl Tool for LaunchAppTool {
             .clone()
             .or_else(|| target.clone())
             .unwrap_or_else(|| urls.join(", "));
-        let extra_joined = extra_args.join(" ");
+
+        // When the resolved target came from `launch_path` it may carry
+        // shortcut arguments (e.g. `"C:\Path\chrome.exe" --profile-directory="Profile 2"`).
+        // Split it into a file token + arguments tail so ShellExecuteEx
+        // sees them separately — passing the whole string as lpFile would
+        // fail because the shell only resolves a single filesystem path
+        // there. No-op for AUMID tokens / plain paths without args / UWP
+        // `shell:appsFolder\..!..` tokens.
+        let (target_file_opt, extra_joined) = {
+            let base_extra = extra_args.join(" ");
+            if launch_path_opt.is_some() {
+                if let Some(t) = target.as_deref() {
+                    let (file, args_tail) = split_launchable_target(t);
+                    let combined = if args_tail.is_empty() {
+                        base_extra
+                    } else if base_extra.is_empty() {
+                        args_tail
+                    } else {
+                        format!("{args_tail} {base_extra}")
+                    };
+                    let file_opt = if file.is_empty() { None } else { Some(file) };
+                    (file_opt, combined)
+                } else {
+                    (None, base_extra)
+                }
+            } else {
+                (target.clone(), base_extra)
+            }
+        };
 
         // Branch: AUMID activation if we resolved one; else legacy
         // ShellExecuteExW. Both branches still need to handle `urls`
@@ -628,9 +819,10 @@ impl Tool for LaunchAppTool {
             }
         } else {
             // Legacy ShellExecuteExW path — unchanged behavior for plain
-            // Win32 apps and for callers passing an explicit `path`.
+            // Win32 apps and for callers passing an explicit `path` /
+            // `launch_path`.
             let urls_clone = urls.clone();
-            let target_for_shell = target.clone();
+            let target_for_shell = target_file_opt.clone();
             let extra_for_shell = extra_joined.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
                 use windows::Win32::UI::Shell::{

@@ -374,7 +374,19 @@ Print a paste-able bundle-path / cdhash / TCC-status report for support.
 
 ### cua-driver doctor
 
-Clean up stale install bits left from older cua-driver versions.
+Run platform-aware diagnostic probes and emit a structured report. Each probe is one tagged line — `[ok]`, `[warn]`, or `[err]` — covering version + install layout, telemetry state, and platform-specific environment checks:
+
+- **macOS** — opportunistic cleanup of legacy LaunchAgent + update-script bits left from older installs; pointer to `cua-driver diagnose` for a full TCC / cdhash dump.
+- **Windows** — interactive desktop session detection (warns when running in Session 0, where window-driving tools return empty results), UI Automation COM availability, top-level visible-window count.
+- **Linux** — `DISPLAY` / `WAYLAND_DISPLAY` detection, X11 connection reachability, AT-SPI accessibility bus availability hint.
+
+Exit code is `0` when every probe is `[ok]` or `[warn]`, non-zero only when at least one `[err]` probe failed (e.g. the binary cannot resolve its own install dir). Warnings never fail the run because misconfigured environments are sometimes the expected state (CI rendering the report).
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit the probe report as JSON for scripting. Skips the update-available banner so output stays parseable. |
 
 ## Other commands
 

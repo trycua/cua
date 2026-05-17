@@ -23,7 +23,9 @@ use windows::Win32::UI::Accessibility::{
 };
 
 pub mod cache;
+pub mod windows_enum;
 pub use cache::ElementCache;
+pub use windows_enum::enumerate_top_level_windows;
 
 const MAX_DEPTH: usize = 25;
 const MAX_TOTAL_ELEMENTS: usize = 5000;

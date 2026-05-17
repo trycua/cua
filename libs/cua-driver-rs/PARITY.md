@@ -362,10 +362,35 @@ at least one entry has `active: true` (the foreground app).
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListWindowsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListWindowsTool, blocked behind Linux compile fix)
 - Status:
-  - windows: VERIFIED
+  - windows: VERIFIED (EnumWindows-first enumeration; UIA contributes missing HWNDs only)
   - macOS: OPEN (audit pending — macOS port already exists)
   - linux: OPEN
 - Test: `crates/platform-windows/examples/list_windows_parity.rs`
+
+### Enumeration source (Windows)
+
+`crate::win32::list_windows` walks `EnumWindows` first — that's the Win32
+window manager's canonical top-to-bottom z-order, so it's the authoritative
+source for both window membership and ordering. It then asks UI Automation
+for any top-level windows EnumWindows missed
+(`AutomationElement::RootElement.FindAll(TreeScope::Children, TrueCondition)`,
+filtered to `IsOffscreen == false` + non-empty `GetWindowTextW`) and appends
+those at the end of the merged list, deduped by HWND. UIA elements contribute
+their `NativeWindowHandle` as the canonical HWND so downstream code keyed on
+`(pid, window_id)` keeps working unchanged.
+
+Why UIA at all: modern apps (WebView2-hosted Notepad, packaged-UWP frames,
+some Electron containers) sometimes hide their visible window inside a host
+HWND that `EnumWindows` either skips or surfaces with the wrong title/bounds.
+UIA's desktop-children walk surfaces the real interactable window — but only
+when EnumWindows didn't.
+
+Why EnumWindows-first (not UIA-first): UIA's `FindAll(TreeScope::Children)`
+gives no z-order guarantee; using it as the primary source would produce
+non-deterministic ordering. EnumWindows order IS the Win32 z-order.
+
+`filter_pid` is applied to the merged list, so a UWP app's pid that
+previously returned empty now returns its real window.
 
 ### Fixed divergences (Windows)
 
@@ -406,10 +431,10 @@ flat `x/y/width/height`) for any pre-existing callers; remove once they migrate.
 
 Windows Rust does **not** yet enumerate **off-screen / minimized windows**.
 Swift's default (`on_screen_only: false`) returns them; Windows currently
-filters them out at the `EnumWindows` callback level (`IsWindowVisible &&
-!IsIconic`).  The `on_screen_only` schema field is accepted but has no
-effect.  Follow-up to refactor `list_windows` to return everything and
-filter at the tool layer.
+filters them out at both enumeration sources (UIA's `IsOffscreen` flag and
+`EnumWindows`'s `IsWindowVisible && !IsIconic` callback). The
+`on_screen_only` schema field is accepted but has no effect. Follow-up to
+refactor `list_windows` to return everything and filter at the tool layer.
 
 ---
 

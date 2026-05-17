@@ -71,7 +71,11 @@ The cross-platform Rust port ships its own one-liners. Pick the one for your she
 irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
 ```
 
-The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases. It runs **without admin** and **without Developer Mode** — the install layout is wired with NTFS directory junctions, which any unprivileged user can create.
+The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
+
+It runs **without admin** and **without Developer Mode**.
+
+The install layout is wired with NTFS directory junctions (`IO_REPARSE_TAG_MOUNT_POINT`), which any unprivileged user can create — no elevated symlink privilege required.
 
 #### Versioned-dirs install layout
 
@@ -142,7 +146,7 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 | `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
 | `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver-rs` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
 | `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | n/a — Windows installer never auto-edits PATH | Skip the rc-file PATH append. |
-| `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install; older ones are deleted. `0` disables GC entirely (every version retained forever). Per-target — multi-arch dirs are pruned independently. The active install (whichever dir `current` points at) is always preserved even if it falls outside the keep window. |
+| `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants. |
 
 <Callout type="info">
 **How the installer picks a version.** Resolution order is:

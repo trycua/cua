@@ -4,14 +4,83 @@
 //! They never block, never touch the network, and never mutate state — they
 //! exist purely so `doctor` can report a structured snapshot of "is this
 //! process actually able to drive GUIs on this host".
+//!
+//! ## Why the session-id probe matters
+//!
+//! Window-driving tools (`list_windows`, `click`, `type_text`, `screenshot`,
+//! `get_window_state`) all bottom out in Win32 APIs that are scoped to the
+//! calling process's WindowStation + Desktop. A process that lives in
+//! Session 0 (services) — which is where Windows lands all SSH-launched
+//! processes by default — has no attached interactive desktop, so
+//! `EnumWindows` / `GetForegroundWindow` / `PrintWindow` silently return
+//! empty results. That looks like the tools are broken; they aren't. The
+//! session probe surfaces this misconfiguration directly so users know to
+//! re-run from an interactive logon (RDP, console, or a scheduled task in
+//! the user's session) instead of debugging a non-bug.
 
+#[cfg(target_os = "windows")]
+use windows::core::PCWSTR;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
 #[cfg(target_os = "windows")]
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+#[cfg(target_os = "windows")]
+use windows::Win32::System::StationsAndDesktops::{
+    CloseWindowStation, OpenWindowStationW,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Threading::GetCurrentProcessId;
+#[cfg(target_os = "windows")]
 use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+/// Session ID of the calling process via `ProcessIdToSessionId`.
+///
+/// Returns `None` only when the API call itself fails — a healthy process
+/// always has a session id, even if it's `0` (services session).
+#[cfg(target_os = "windows")]
+pub fn current_session_id() -> Option<u32> {
+    unsafe {
+        let pid = GetCurrentProcessId();
+        let mut sid: u32 = 0;
+        if ProcessIdToSessionId(pid, &mut sid).is_ok() {
+            Some(sid)
+        } else {
+            None
+        }
+    }
+}
+
+/// Whether the calling process has an attached interactive desktop.
+///
+/// Two-step check:
+///   1. `OpenWindowStationW(L"WinSta0", ...)` — succeeds when the
+///      interactive window station exists and we can open a handle.
+///   2. `GetForegroundWindow()` — returns a non-null HWND when a desktop
+///      with a foreground window is actually attached (i.e. an
+///      interactive logon session is active, not just a locked screen
+///      with no foreground app).
+///
+/// `Ok(true)` only when both succeed. `Ok(false)` when `OpenWindowStationW`
+/// succeeded but `GetForegroundWindow` returned null (locked desktop or
+/// transient state). `Err` when `OpenWindowStationW` failed outright.
+#[cfg(target_os = "windows")]
+pub fn interactive_desktop_check() -> Result<bool, String> {
+    unsafe {
+        let name: Vec<u16> = "WinSta0\0".encode_utf16().collect();
+        // 0 access mask = read-only probe; we never actually need to read
+        // or modify the station, just confirm a handle is openable.
+        let h = OpenWindowStationW(PCWSTR(name.as_ptr()), false, 0)
+            .map_err(|e| format!("OpenWindowStationW(WinSta0): {e}"))?;
+        let fg = GetForegroundWindow();
+        let _ = CloseWindowStation(h);
+        Ok(fg.0 != std::ptr::null_mut())
+    }
+}
 
 /// Probe whether `CoCreateInstance(CUIAutomation)` succeeds — the same
 /// COM call used by `get_window_state` / `list_windows` element-walks.
@@ -47,6 +116,16 @@ pub fn ui_automation_available() -> Result<(), String> {
 // they exist purely to keep the type-checker happy on macOS / Linux.
 
 #[cfg(not(target_os = "windows"))]
+pub fn current_session_id() -> Option<u32> {
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn interactive_desktop_check() -> Result<bool, String> {
+    Err("not a Windows host".to_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn ui_automation_available() -> Result<(), String> {
     Err("not a Windows host".to_owned())
 }
@@ -54,6 +133,14 @@ pub fn ui_automation_available() -> Result<(), String> {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_session_id_returns_some_on_windows() {
+        // ProcessIdToSessionId on the current process must always succeed.
+        // The value depends on the runner: an interactive dev box gives
+        // `>0`, CI running as SYSTEM gives `0`.
+        assert!(current_session_id().is_some());
+    }
 
     #[test]
     fn ui_automation_available_succeeds_in_test_runner() {

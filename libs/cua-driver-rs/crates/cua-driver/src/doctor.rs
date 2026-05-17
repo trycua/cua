@@ -239,6 +239,56 @@ fn home_dir() -> Option<PathBuf> {
 fn append_platform_probes(report: &mut Report) {
     use platform_windows::diagnostics as diag;
 
+    // Interactive desktop session probe — the critical Windows check. SSH
+    // (and most service contexts) land processes in Session 0 with no
+    // attached WindowStation+Desktop, which silently breaks every
+    // window-driving tool. Surface the misconfiguration directly so users
+    // don't waste hours debugging tools that are working as designed.
+    let in_session_0 = match diag::current_session_id() {
+        Some(0) => {
+            report.push(
+                Probe::warn(
+                    "interactive session",
+                    "running in Session 0 (services); window-driving tools (list_windows, click, type_text, screenshot, get_window_state) will return empty results — these APIs need an attached interactive desktop.",
+                )
+                .with_detail(
+                    "re-run cua-driver from an interactive logon (RDP, console, or a scheduled task in the user's session) for the GUI tools to function.",
+                ),
+            );
+            true
+        }
+        Some(sid) => {
+            match diag::interactive_desktop_check() {
+                Ok(true) => report.push(Probe::ok(
+                    "interactive session",
+                    format!(
+                        "session {sid} has an attached interactive desktop (WinSta0 + foreground window)"
+                    ),
+                )),
+                Ok(false) => report.push(
+                    Probe::warn(
+                        "interactive session",
+                        format!(
+                            "session {sid}: WinSta0 reachable but no foreground window — desktop may be locked or no app is in the foreground"
+                        ),
+                    ),
+                ),
+                Err(e) => report.push(Probe::warn(
+                    "interactive session",
+                    format!("session {sid} desktop probe failed: {e}"),
+                )),
+            }
+            false
+        }
+        None => {
+            report.push(Probe::warn(
+                "interactive session",
+                "ProcessIdToSessionId failed — cannot determine session id",
+            ));
+            false
+        }
+    };
+
     // COM / UI Automation availability.
     match diag::ui_automation_available() {
         Ok(()) => report.push(Probe::ok(
@@ -251,13 +301,22 @@ fn append_platform_probes(report: &mut Report) {
         )),
     }
 
-    // EnumWindows count — cross-check that the live process can actually
-    // enumerate top-level visible windows.
+    // EnumWindows count — cross-check the session probe. When Session 0
+    // is in play, this almost always reports zero visible windows, which
+    // reinforces the warning above instead of looking like a separate bug.
     let visible = platform_windows::win32::list_windows(None).len();
-    report.push(Probe::ok(
+    let probe = Probe::ok(
         "EnumWindows visible",
         format!("{visible} window{}", if visible == 1 { "" } else { "s" }),
-    ));
+    );
+    let probe = if visible == 0 && in_session_0 {
+        probe.with_detail(
+            "consistent with the Session 0 warning above — EnumWindows is scoped to the calling session's desktop.",
+        )
+    } else {
+        probe
+    };
+    report.push(probe);
 }
 
 #[cfg(target_os = "linux")]

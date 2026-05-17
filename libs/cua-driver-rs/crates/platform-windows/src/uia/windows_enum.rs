@@ -12,9 +12,8 @@
 //! UIA element's `NativeWindowHandle` — i.e. an honest Win32 HWND that downstream
 //! code can pass to `GetWindowRect`, `PostMessage`, etc.
 
-use std::sync::OnceLock;
+use std::cell::RefCell;
 
-use windows::core::Interface;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Com::{
@@ -35,61 +34,48 @@ use crate::win32::windows::WindowInfo;
 /// apartment. Safe to ignore — COM is up either way.
 const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
 
-/// Process-lifetime IUIAutomation singleton. Creating one is non-trivial
-/// (COM activation + cross-process marshalling setup), and the interface is
-/// thread-safe to share, so we stash it after the first successful build.
-///
-/// Stored as `usize` (raw pointer cast) because `IUIAutomation` is not `Send`
-/// in the windows-rs binding; we re-materialise the COM reference on each
-/// access via `from_raw` + `clone` + `forget` so the cached pointer never
-/// changes its refcount on lookup.
-static UIA_SINGLETON: OnceLock<usize> = OnceLock::new();
-
-/// Ensure COM is initialized on the current OS thread as STA. The UIA
-/// in-process server requires an STA; calling on an already-MTA thread is
-/// harmless (we swallow `RPC_E_CHANGED_MODE`).
-fn ensure_com_initialized() {
-    unsafe {
-        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
-            // Any other failure (e.g. CO_E_NOTINITIALIZED downstream) will
-            // surface from CoCreateInstance with a useful error.
-            tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");
-        }
-    }
+thread_local! {
+    /// Per-thread IUIAutomation instance. UIA / COM objects are
+    /// apartment-bound, so we deliberately do NOT share one across threads —
+    /// each OS thread that calls `enumerate_top_level_windows` initializes
+    /// COM as STA exactly once (the first time the cell is `None`) and caches
+    /// its own IUIAutomation. On failure the cell stays `None`, so the next
+    /// call retries from scratch instead of being stuck with a permanent
+    /// "init failed" sentinel.
+    static UIA_THREAD_LOCAL: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
 }
 
-/// Build or fetch the cached IUIAutomation instance.
+/// Build or fetch the per-thread IUIAutomation instance.
+///
+/// On the first successful call per OS thread this also initializes COM as
+/// STA (UIA's in-process server requires an STA; `RPC_E_CHANGED_MODE` from a
+/// pre-existing apartment is treated as "already up"). Any failure leaves
+/// the thread-local empty so subsequent calls retry.
 fn get_uia() -> Option<IUIAutomation> {
-    ensure_com_initialized();
-    let raw = UIA_SINGLETON.get_or_init(|| {
+    UIA_THREAD_LOCAL.with(|cell| {
+        if let Some(uia) = cell.borrow().as_ref() {
+            return Some(uia.clone());
+        }
+        // First (or post-failure) call on this thread: init COM + build UIA.
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
+                tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");
+            }
+        }
         let inst: IUIAutomation = match unsafe {
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
         } {
             Ok(a) => a,
             Err(e) => {
                 tracing::warn!(target: "uia_windows_enum", "CoCreateInstance(CUIAutomation) failed: {e}");
-                return 0;
+                return None;
             }
         };
-        let raw_ptr = inst.as_raw() as usize;
-        std::mem::forget(inst); // leak the strong ref so OnceLock owns it
-        raw_ptr
-    });
-    if *raw == 0 {
-        return None;
-    }
-    unsafe {
-        // SAFETY: the pointer was produced by `IUIAutomation::as_raw` on a
-        // strong reference we then `mem::forget`, so it stays valid for the
-        // process lifetime. `from_raw` takes ownership of one refcount, so we
-        // clone before returning (clone bumps refcount) and `forget` the
-        // owned handle to keep the singleton's refcount untouched.
-        let owned: IUIAutomation = IUIAutomation::from_raw(*raw as *mut _);
-        let dup = owned.clone();
-        std::mem::forget(owned);
+        let dup = inst.clone();
+        *cell.borrow_mut() = Some(inst);
         Some(dup)
-    }
+    })
 }
 
 /// Enumerate top-level windows visible to UI Automation.

@@ -62,6 +62,28 @@ err() { printf 'error: %s\n' "$*" >&2; }
 
 OS=$(uname -s)
 ARCH_RAW=$(uname -m)
+
+# Rosetta translation correction.
+#
+# `uname -m` reflects the architecture of the *running process*, not the
+# physical CPU. When an Apple Silicon Mac is driving an x86_64-translated
+# shell (Rosetta — e.g. `arch -x86_64 bash`, or a Homebrew install pinned
+# to /usr/local/), uname reports x86_64 even though the native arch is
+# arm64. We'd then download the x86_64 binary and run it under Rosetta —
+# slower, and an unnecessary translation when a native arm64 binary
+# exists on the release page.
+#
+# `sysctl.proc_translated` returns 1 when the current process is running
+# under Rosetta translation; absent/0 means native. Only meaningful on
+# macOS — the sysctl key is missing on Linux, so the redirect-to-null
+# keeps the check a silent no-op there.
+if [[ "$OS" == "Darwin" && "$ARCH_RAW" == "x86_64" ]]; then
+    if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; then
+        log "detected Rosetta-translated shell on Apple Silicon — switching to darwin-arm64"
+        ARCH_RAW="arm64"
+    fi
+fi
+
 case "$OS-$ARCH_RAW" in
     Darwin-arm64|Darwin-aarch64)     LABEL="darwin-arm64"   ;;
     Darwin-x86_64)                   LABEL="darwin-x86_64"  ;;

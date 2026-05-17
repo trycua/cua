@@ -12,6 +12,13 @@
 #                        ~/.local/bin (e.g. /usr/local/bin — that target needs sudo)
 #   --no-modify-path     skip auto-appending an `export PATH=...` line to your
 #                        shell rc when ~/.local/bin is missing from PATH
+#   --experimental-rust  opt into the experimental cua-driver-rs (Rust port)
+#                        backend instead of the Swift binary. Delegates to
+#                        libs/cua-driver-rs/scripts/install.sh — see that
+#                        script for backend-specific env vars. Installs to a
+#                        separate bundle (CuaDriverRs.app) so the Swift
+#                        binary is left untouched. Also accepted as
+#                        --backend=rust.
 #
 # Env overrides:
 #   CUA_DRIVER_VERSION=0.1.0   pin a specific release tag
@@ -30,15 +37,91 @@ APP_DEST="/Applications/$APP_NAME"
 BIN_DIR="${CUA_DRIVER_BIN_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CUA_DRIVER_NO_MODIFY_PATH:-0}"
 
+# Rust-backend delegation target. Kept in sync with the canonical path on
+# main; --experimental-rust below either execs the on-disk copy (when this
+# script runs from a checked-out tree) or curls this URL and pipes it to
+# bash (the `curl ... | bash` install path).
+RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh"
+
 # Lightweight flag parsing (avoid getopt; macOS getopt is GNU-incompatible).
+#
+# Two-pass shape:
+#   1. Walk all argv and collect every unrecognised arg into FORWARDED_ARGS.
+#      That bucket is what we'd hand off to the Rust installer if the user
+#      opted in. Recognised Swift-only flags (--bin-dir, --no-modify-path)
+#      are consumed in this pass and applied to local state.
+#   2. If --experimental-rust (or --backend=rust) was seen anywhere in argv,
+#      exec into the Rust installer with FORWARDED_ARGS and never reach the
+#      Swift install path below.
+#
+# This lets the experimental flag appear at any position, lets `--` end
+# Swift-flag parsing without breaking forwarding, and keeps both installers'
+# argv shapes (--bin-dir, --no-modify-path) bit-compatible so the same
+# command works regardless of backend.
+USE_RUST_BACKEND=0
+FORWARDED_ARGS=()
+PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
+    if [[ "$PASSTHROUGH" == "1" ]]; then
+        FORWARDED_ARGS+=("$1"); shift; continue
+    fi
     case "$1" in
-        --bin-dir) BIN_DIR="$2"; shift 2 ;;
-        --bin-dir=*) BIN_DIR="${1#*=}"; shift ;;
-        --no-modify-path) NO_MODIFY_PATH=1; shift ;;
-        *) shift ;;
+        --experimental-rust) USE_RUST_BACKEND=1; shift ;;
+        --backend=rust)      USE_RUST_BACKEND=1; shift ;;
+        --backend=swift)     shift ;;                 # explicit default — no-op
+        --backend=*)
+            printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
+            exit 2
+            ;;
+        --bin-dir)           BIN_DIR="$2"; FORWARDED_ARGS+=("$1" "$2"); shift 2 ;;
+        --bin-dir=*)         BIN_DIR="${1#*=}"; FORWARDED_ARGS+=("$1"); shift ;;
+        --no-modify-path)    NO_MODIFY_PATH=1; FORWARDED_ARGS+=("$1"); shift ;;
+        --)                  PASSTHROUGH=1; shift ;;  # forward the rest verbatim
+        *)                   FORWARDED_ARGS+=("$1"); shift ;;
     esac
 done
+
+# --- Optional delegation to the experimental Rust backend ---------------
+#
+# If the user opted in with --experimental-rust / --backend=rust, hand the
+# rest of argv to cua-driver-rs/scripts/install.sh and exit. The Swift
+# install path below is never touched in this case, so the Swift binary
+# (if present) is left exactly as-is — users can roll back by deleting
+# /Applications/CuaDriverRs.app and re-running this script without the flag.
+if [[ "$USE_RUST_BACKEND" == "1" ]]; then
+    printf 'note: installing experimental Rust backend (cua-driver-rs). The Swift binary won'"'"'t be touched.\n' >&2
+
+    # Prefer the on-disk copy when this script is running from a checked-out
+    # tree (dev / CI). Falls back to curling the canonical URL for the
+    # `curl ... | bash` install path, where $BASH_SOURCE is unset / -.
+    LOCAL_RUST_INSTALLER=""
+    if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
+        SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+        CANDIDATE="$SCRIPT_DIR/../../cua-driver-rs/scripts/install.sh"
+        if [[ -f "$CANDIDATE" ]]; then
+            LOCAL_RUST_INSTALLER="$CANDIDATE"
+        fi
+    fi
+
+    # macOS ships bash 3.2, which trips `set -u` when expanding an empty
+    # array via "${arr[@]}" — guard with the +alt-value pattern so the
+    # zero-arg case becomes a literal no-expansion.
+    if [[ -n "$LOCAL_RUST_INSTALLER" ]]; then
+        exec /bin/bash "$LOCAL_RUST_INSTALLER" ${FORWARDED_ARGS[@]+"${FORWARDED_ARGS[@]}"}
+    else
+        if ! command -v curl >/dev/null 2>&1; then
+            printf 'error: curl not found on PATH; cannot fetch %s\n' "$RUST_INSTALLER_URL" >&2
+            exit 1
+        fi
+        # `exec` so the Rust installer replaces this process — we don't want
+        # to fall through to the Swift install path on any error here.
+        RUST_INSTALLER_SCRIPT="$(curl -fsSL "$RUST_INSTALLER_URL")" || {
+            printf 'error: failed to download Rust installer from %s\n' "$RUST_INSTALLER_URL" >&2
+            exit 1
+        }
+        exec /bin/bash -c "$RUST_INSTALLER_SCRIPT" cua-driver-rs-install ${FORWARDED_ARGS[@]+"${FORWARDED_ARGS[@]}"}
+    fi
+fi
 
 BIN_LINK="$BIN_DIR/$BINARY_NAME"
 TMP_DIR=$(mktemp -d)

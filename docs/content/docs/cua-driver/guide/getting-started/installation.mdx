@@ -28,6 +28,33 @@ The install runs **without sudo**: `/Applications` is user-writable on personal 
 **Upgrading from v0.0.x?** The new installer puts the CLI at `~/.local/bin/cua-driver`. Any existing `/usr/local/bin/cua-driver` symlink is left in place so existing MCP client configs (Claude Code, Codex, etc.) keep working. Re-register them at your leisure to use the new path.
 </Callout>
 
+### Try the Rust backend (experimental)
+
+<Callout type="info">
+**`cua-driver-rs` is a cross-platform Rust port of Cua Driver** — same MCP tool surface, with native Windows and Linux support and macOS parity in progress. Opt in with a single flag to help us soak-test it ahead of GA:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" -- --experimental-rust
+```
+
+(Equivalent long form: `--backend=rust`.)
+
+The flag delegates to [`libs/cua-driver-rs/scripts/install.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/scripts/install.sh), which:
+
+- Installs `CuaDriverRs.app` to `/Applications/` — separate bundle id (`com.trycua.cuadriverrs`) from the Swift driver's `com.trycua.driver`. Both can coexist on the same machine with independent TCC grants and independent telemetry IDs.
+- Points `~/.local/bin/cua-driver` at the Rust binary. The Swift `CuaDriver.app` (if previously installed) is left untouched and still launchable via its bundle path (`/Applications/CuaDriver.app/Contents/MacOS/cua-driver`).
+- Same `--bin-dir` / `--no-modify-path` flags as the Swift installer — anything you put after `--experimental-rust` is forwarded to the Rust installer verbatim.
+
+**Switch back to Swift:**
+
+```bash
+rm -rf /Applications/CuaDriverRs.app
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+```
+
+The second command rewires the `~/.local/bin/cua-driver` symlink back to the Swift bundle.
+</Callout>
+
 ### Verify it worked
 
 ```bash

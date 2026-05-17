@@ -13,6 +13,7 @@ use mcp_server::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;
+pub mod diagnostics;
 
 #[cfg(target_os = "windows")]
 pub mod win32;

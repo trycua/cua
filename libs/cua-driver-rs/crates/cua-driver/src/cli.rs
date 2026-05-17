@@ -47,7 +47,7 @@ pub enum Command {
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
     DumpDocs { pretty: bool, doc_type: String },
     Update { apply: bool },
-    Doctor,
+    Doctor { json: bool },
     Diagnose,
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
@@ -96,6 +96,9 @@ pub fn parse_command() -> Command {
         println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
         println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
         println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
+        println!();
+        println!("doctor options:");
+        println!("  --json                  Emit the probe report as JSON for scripting.");
         std::process::exit(0);
     }
 
@@ -150,7 +153,12 @@ pub fn parse_command() -> Command {
             let apply = args.iter().any(|a| a == "--apply");
             Command::Update { apply }
         }
-        Some("doctor") => Command::Doctor,
+        Some("doctor") => {
+            // `--json` switches to machine-readable output for scripting.
+            // Bare flag — no value, position-independent.
+            let json = args.iter().any(|a| a == "--json");
+            Command::Doctor { json }
+        }
         Some("diagnose") => Command::Diagnose,
         Some("config") => {
             let subcommand = pos.next().map(str::to_owned);
@@ -1362,52 +1370,27 @@ pub fn run_config_cmd(
     }
 }
 
-/// `cua-driver doctor` — clean up stale install bits left from older cua-driver versions.
+/// `cua-driver doctor` — run platform-aware diagnostic probes and emit a
+/// structured report.
 ///
-/// Mirrors Swift `DoctorCommand`:
-///   - Removes the legacy LaunchAgent plist (~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist)
-///     via `launchctl unload` then `fs::remove_file`.
-///   - Removes the legacy update script (/usr/local/bin/cua-driver-update) if writable;
-///     otherwise prints the `sudo rm` command the user must run manually.
-pub fn run_doctor_cmd() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let legacy_plist = format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist");
-    let legacy_script = "/usr/local/bin/cua-driver-update";
+/// See [`crate::doctor`] for the probe catalog. Output is plain text by
+/// default; `--json` switches to a machine-readable shape for scripting.
+/// Exit code is `0` when every probe is `[ok]` or `[warn]`, non-zero when
+/// at least one `[err]` probe failed (e.g. the binary cannot resolve its
+/// own install dir).
+pub fn run_doctor_cmd(json: bool) {
+    let report = crate::doctor::run();
 
-    let mut cleaned_anything = false;
-
-    // — Legacy LaunchAgent plist —
-    if std::path::Path::new(&legacy_plist).exists() {
-        cleaned_anything = true;
-        println!("Removing legacy LaunchAgent: {legacy_plist}");
-
-        // Try to unload it first (ignore errors — may not be loaded).
-        let _ = std::process::Command::new("launchctl")
-            .args(["unload", &legacy_plist])
-            .status();
-
-        match std::fs::remove_file(&legacy_plist) {
-            Ok(()) => println!("  ✓ Removed."),
-            Err(e) => eprintln!("  ✗ Failed to remove {legacy_plist}: {e}"),
-        }
+    if json {
+        let val = report.to_json();
+        let out = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string());
+        println!("{out}");
+    } else {
+        print!("{}", report.to_text());
     }
 
-    // — Legacy update script —
-    if std::path::Path::new(legacy_script).exists() {
-        cleaned_anything = true;
-        println!("Removing legacy update script: {legacy_script}");
-        match std::fs::remove_file(legacy_script) {
-            Ok(()) => println!("  ✓ Removed."),
-            Err(_) => {
-                // Root-owned — user must sudo.
-                println!("  Could not remove (root-owned). Run manually:");
-                println!("    sudo rm -f {legacy_script}");
-            }
-        }
-    }
-
-    if !cleaned_anything {
-        println!("Nothing to clean — install is up to date.");
+    if report.has_errors() {
+        process::exit(1);
     }
 }
 
@@ -1463,7 +1446,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Config { .. } => event::CONFIG.to_owned(),
         Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
         Command::Update { .. } => "cua_driver_update".to_owned(),
-        Command::Doctor => "cua_driver_doctor".to_owned(),
+        Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
         Command::TelemetryInstallEvent => return None,
     };

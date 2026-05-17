@@ -23,24 +23,43 @@ public enum WindowChangeDetector {
 
     /// A lightweight record for a newly-appeared window.
     public struct WindowEvent: Sendable {
+        /// CGWindowID of the window. Stable for the window's lifetime.
         public let windowId: Int
+        /// Process id of the app that owns the window.
         public let pid: Int32
+        /// Owning app's localized name (e.g. "Safari").
         public let appName: String
+        /// Window title at the moment of detection. May be empty.
         public let title: String
     }
 
     /// State captured before the action.
+    ///
+    /// Holds an ARC-managed ``SuppressionLease`` rather than a raw handle.
+    /// **This is the leak-proofing for the snapshot/detect pattern**: if a
+    /// caller drops the `Snapshot` without ever calling
+    /// ``WindowChangeDetector/detectChanges(snapshot:timeout:pollInterval:)``
+    /// (e.g. an early-return error path between snapshot and detect), the
+    /// lease's `deinit` releases the underlying entry. The cleanup happens
+    /// by the language, not by call-site discipline.
+    ///
+    /// `Snapshot` is a struct, so a copy retains the lease reference. The
+    /// final copy going out of scope is what fires deinit; explicit
+    /// `detectChanges` releases it earlier and turns deinit into a no-op.
     public struct Snapshot: Sendable {
         /// CGWindowIDs of all visible layer-0 windows at snapshot time.
         public let windowIds: Set<Int>
         /// PID of the frontmost application at snapshot time, or nil.
         public let frontPid: Int32?
-        /// Wildcard suppression handle armed at snapshot time.
+        /// Wildcard suppression lease armed at snapshot time.
         /// Active from `snapshot()` through `detectChanges()` so that any
         /// app that self-activates as a side-effect of the action (e.g.
         /// Safari opening from UTM Gallery) is blocked before the first
         /// compositor frame, not just after we notice it in the poll loop.
-        internal let suppressionHandle: SuppressionHandle?
+        ///
+        /// ARC-managed: dropping the Snapshot without calling
+        /// `detectChanges` is safe — `SuppressionLease.deinit` releases.
+        internal let suppressionLease: SuppressionLease?
     }
 
     /// What changed after the action.
@@ -80,6 +99,9 @@ public enum WindowChangeDetector {
             }
         }
 
+        /// Sentinel returned when the detection window elapses with no
+        /// new windows and no foreground change. Reused so callers can
+        /// `return .noChange` cheaply.
         public static let noChange = Changes(newWindows: [], foregroundChanged: false)
     }
 
@@ -103,15 +125,23 @@ public enum WindowChangeDetector {
         }
 
         // Arm the wildcard suppressor immediately — before the action fires.
-        var suppressionHandle: SuppressionHandle?
+        // Lease form: ARC releases on Snapshot drop even if detectChanges()
+        // is never called (early-return error path between snapshot and
+        // detect). origin tag surfaces in the unified log if a leak warning
+        // is ever triggered.
+        var lease: SuppressionLease?
         if let pid = frontPid,
            let restoreTo = NSRunningApplication(processIdentifier: pid)
         {
-            suppressionHandle = await AppStateRegistry.systemFocusStealPreventer
-                .beginSuppression(targetPid: 0, restoreTo: restoreTo)
+            lease = await AppStateRegistry.systemFocusStealPreventer
+                .leaseSuppression(
+                    targetPid: 0,
+                    restoreTo: restoreTo,
+                    origin: "WindowChangeDetector.snapshot"
+                )
         }
 
-        return Snapshot(windowIds: ids, frontPid: frontPid, suppressionHandle: suppressionHandle)
+        return Snapshot(windowIds: ids, frontPid: frontPid, suppressionLease: lease)
     }
 
     /// Poll for up to `timeout` seconds for new windows or a foreground-app
@@ -133,16 +163,21 @@ public enum WindowChangeDetector {
         timeout: TimeInterval = 1.0,
         pollInterval: Int = 50
     ) async -> Changes {
-        // End the wildcard suppressor that was armed in snapshot() once
-        // we return — covers the full action + detection window.
-        defer {
-            if let handle = snapshot.suppressionHandle {
-                Task { await AppStateRegistry.systemFocusStealPreventer.endSuppression(handle) }
-            }
-        }
-
+        // Single-exit refactor so the lease can be torn down with a
+        // direct `await` (not a detached Task) before returning. The
+        // earlier defer-with-Task.detached form let `detectChanges`
+        // return while the wildcard suppressor was still active —
+        // a stale lease bleeding into the next action's snapshot
+        // window. Awaiting in-line is the only way to make the
+        // detection boundary the lease teardown boundary.
+        //
+        // The lease's `deinit` safety net still applies if this call
+        // is somehow skipped (caller early-return between snapshot and
+        // detect): ARC fires deinit when the Snapshot copy goes out of
+        // scope and the entry is released. Belt + suspenders.
+        var result: Changes = .noChange
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        pollLoop: while Date() < deadline {
             try? await Task.sleep(for: .milliseconds(pollInterval))
 
             // --- New windows ---
@@ -178,10 +213,23 @@ public enum WindowChangeDetector {
             }
 
             if !newEvents.isEmpty || foregroundChanged {
-                return Changes(newWindows: newEvents, foregroundChanged: foregroundChanged)
+                result = Changes(
+                    newWindows: newEvents, foregroundChanged: foregroundChanged
+                )
+                break pollLoop
             }
         }
-        return .noChange
+
+        // Tear down the wildcard suppressor BEFORE returning. Direct
+        // `await` (not `Task { ... }`) so the dispatcher entry and any
+        // in-flight delayed reactivation Tasks are fully drained before
+        // the caller sees `result`. Without this, the next caller's
+        // snapshot()  could observe the stale wildcard still firing on
+        // the next NSWorkspace activation.
+        if let lease = snapshot.suppressionLease {
+            await lease.release()
+        }
+        return result
     }
 
     /// Re-activate the previously-frontmost application, sending its window

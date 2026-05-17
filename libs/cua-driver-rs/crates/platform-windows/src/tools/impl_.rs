@@ -265,9 +265,11 @@ impl Tool for ListWindowsTool {
             }
         }
 
-        // z_index: EnumWindows on Win32 returns top-to-bottom; higher index =
-        // farther from front.  Swift convention: higher z_index = closer to
-        // front.  Invert via `(len - 1 - i)`.
+        // z_index: the underlying enumerator returns UIA-first (modern
+        // top-to-bottom) then any EnumWindows entries UIA missed (also
+        // roughly top-to-bottom). Higher list index = farther from front.
+        // Swift convention: higher z_index = closer to front. Invert via
+        // `(len - 1 - i)` so the front-most window gets the largest z.
         let n = windows.len();
         let records: Vec<serde_json::Value> = windows.iter().enumerate().map(|(i, w)| {
             let app_name = pid_to_name.get(&w.pid).cloned().unwrap_or_default();

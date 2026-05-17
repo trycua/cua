@@ -1,8 +1,21 @@
 //! Enumerate top-level windows on Windows.
 //!
-//! Uses EnumWindows + GetWindowTextW + GetWindowThreadProcessId.
-//! Returns only visible, non-minimized windows with a non-empty title.
+//! Two enumeration sources, then union + dedupe by HWND:
+//!
+//! 1. **UI Automation** (preferred) — walks the desktop's UIA children. UIA
+//!    surfaces modern apps (WebView2 hosts, packaged-UWP frames, Electron
+//!    container HWNDs) with their real titles + bounds, where `EnumWindows`
+//!    alone either misses the visible surface or returns a wrapper HWND.
+//!
+//! 2. **`EnumWindows`** (fallback union member) — UIA can miss specific
+//!    console window types and some installer dialogs, so we still walk the
+//!    Win32 list and merge in any HWND UIA didn't already report.
+//!
+//! Both sources apply the same filters (visible, non-iconic, non-empty
+//! title). The `filter_pid` argument is applied to the merged list so the
+//! union/dedupe pipeline runs unconditionally.
 
+use std::collections::HashSet;
 use std::sync::Mutex;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
 use windows::Win32::Graphics::Dwm::{
@@ -27,13 +40,45 @@ pub struct WindowInfo {
 }
 
 struct EnumState {
-    filter_pid: Option<u32>,
     windows: Vec<WindowInfo>,
 }
 
 /// List top-level visible windows. If `filter_pid` is Some, only that process.
+///
+/// Enumerates via UI Automation first, then unions with `EnumWindows`
+/// (deduped by HWND) to recover any windows UIA missed. The pid filter is
+/// applied to the merged list.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    let state = Mutex::new(EnumState { filter_pid, windows: Vec::new() });
+    let uia_windows = crate::uia::enumerate_top_level_windows();
+    let win32_windows = enumerate_via_enum_windows();
+
+    let mut seen: HashSet<u64> = HashSet::with_capacity(uia_windows.len() + win32_windows.len());
+    let mut merged: Vec<WindowInfo> = Vec::with_capacity(uia_windows.len() + win32_windows.len());
+
+    // UIA first — preserves UIA's preferred ordering for modern apps.
+    for w in uia_windows {
+        if seen.insert(w.hwnd) {
+            merged.push(w);
+        }
+    }
+    // Then any EnumWindows entry whose HWND wasn't already covered.
+    for w in win32_windows {
+        if seen.insert(w.hwnd) {
+            merged.push(w);
+        }
+    }
+
+    if let Some(fp) = filter_pid {
+        merged.retain(|w| w.pid == fp);
+    }
+    merged
+}
+
+/// Walk `EnumWindows` and collect every visible, non-iconic, non-empty-titled
+/// top-level window. No pid filter is applied here — the caller does that on
+/// the merged list.
+fn enumerate_via_enum_windows() -> Vec<WindowInfo> {
+    let state = Mutex::new(EnumState { windows: Vec::new() });
     let state_ptr = &state as *const Mutex<EnumState> as isize;
     unsafe {
         let _ = EnumWindows(Some(enum_windows_cb), LPARAM(state_ptr));
@@ -52,14 +97,6 @@ unsafe extern "system" fn enum_windows_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
     // Get pid.
     let mut pid: u32 = 0;
     GetWindowThreadProcessId(hwnd, Some(&mut pid));
-
-    // Filter by pid if requested.
-    {
-        let s = state.lock().unwrap();
-        if let Some(fp) = s.filter_pid {
-            if pid != fp { return TRUE; }
-        }
-    }
 
     // Get title (skip empty).
     let title_len = GetWindowTextLengthW(hwnd);

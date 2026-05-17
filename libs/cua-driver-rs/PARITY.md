@@ -2053,3 +2053,99 @@ $env:CUA_DRIVER_RS_VERSION = "0.2.1"; irm <url>/install.ps1 | iex
 Get-ChildItem ~\.cua-driver-rs\packages\releases\
 # → 2 dirs (0.1.4 pruned)
 ```
+
+### Per-host concurrent-install lockfile
+
+Two installs running at the same time (user clicks the one-liner while
+a CI script is also installing; two terminals; cron-driven reinstall
+racing a manual one) can race on the atomic `current` swap and leave
+the visible binary pointing at a partially-populated release dir.
+Serialize installs per `$HOME_DIR` with a process-level mutex.
+
+#### Primitive
+
+| Platform | Mutex |
+|---|---|
+| Linux (and Linux-via-WSL) | `mkdir $HOME_DIR/packages/.install.lock.d` — atomic on POSIX, no `flock` dependency. First install wins; concurrent attempts get `EEXIST` and poll. |
+| Windows | `System.IO.FileStream` opened on `$HomeDir\install.lock` with `FileShare::None`. Windows kernel rejects a second open until the first handle closes, so the open call itself is the acquisition. |
+
+Both primitives are unprivileged — no admin / sudo / Developer Mode.
+
+#### Wait + stale-detection UX
+
+- **Wait** — polls every 1s, prints `another cua-driver-rs install is
+  already in progress (lock at <path>); waiting...` exactly once.
+- **Stale threshold** — 600 seconds. Named constant in both scripts
+  (`LOCK_STALE_AFTER_SECONDS` / `$Script:LockStaleAfterSeconds`), not
+  a magic number, so future tuning is grep-able.
+- **Force-release** — after `LOCK_STALE_AFTER_SECONDS` of waiting we
+  log `lock appears stale (>600s), forcing release` and `rm -rf` /
+  `Remove-Item` the lock entry, then retry. The alternative (hang
+  forever) leaves users wedged with no obvious recovery path.
+
+#### Lock-info stamp
+
+After acquiring, the installer writes a tiny info blob into the lock
+so a user investigating a stuck install can see who holds it:
+
+```
+$ cat ~/.cua-driver-rs/packages/.install.lock.d/info
+pid=43210
+started=2026-05-17T09:14:22Z
+argv=install.sh
+```
+
+```powershell
+PS> Get-Content $env:USERPROFILE\.cua-driver-rs\install.lock
+pid=43210
+started=2026-05-17T09:14:22.123Z
+invocation=install.ps1 -Release latest
+```
+
+#### Release on every exit path
+
+Both scripts release the lock unconditionally:
+
+- `install.sh` — `trap cleanup_on_exit EXIT` plus per-signal traps
+  for `INT` and `TERM` that release then re-raise so the exit code
+  reflects the signal.
+- `install.ps1` — top-level `try { ... } finally { Release-InstallLock }`
+  wrapping the whole Main block. PowerShell's `finally` fires on
+  normal exit, exceptions, `exit`, and `Ctrl-C` (pipeline-stop).
+
+A half-finished install with a held lock would wedge every subsequent
+install for the full 600s stale window, so the cleanup wiring is
+non-optional.
+
+#### Verification recipes
+
+**Linux** — concurrent contention:
+
+```bash
+# Shell 1
+bash install.sh           # holds the lock, takes ~20s
+
+# Shell 2 (kick off while shell 1 is still running)
+bash install.sh
+# → "another cua-driver-rs install is already in progress (lock at
+#    ~/.cua-driver-rs/packages/.install.lock.d); waiting..."
+# (blocks until shell 1 finishes, then proceeds normally)
+```
+
+**Linux** — stale lock recovery:
+
+```bash
+# Simulate a dead holder.
+mkdir ~/.cua-driver-rs/packages/.install.lock.d
+echo "pid=99999" > ~/.cua-driver-rs/packages/.install.lock.d/info
+
+bash install.sh
+# → "another cua-driver-rs install is already in progress…; waiting..."
+# (waits 600s, then:)
+# → "lock appears stale (>600s), forcing release"
+# (proceeds normally)
+```
+
+**Windows** — equivalent in two PowerShell windows. The stale-recovery
+test in PowerShell is `New-Item -Path $env:USERPROFILE\.cua-driver-rs\install.lock`
+plus `Remove-Item` to clear after; same 600s wait.

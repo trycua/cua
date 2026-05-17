@@ -454,6 +454,102 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     Write-Step "junction $linkPath -> $targetPath"
 }
 
+# ---------- Concurrent-install lockfile -----------------------------------
+#
+# A second install kicked off while a first is still running can race
+# on the junction retarget and leave a half-installed state. Serialize
+# installs per $HomeDir with a process-level mutex.
+#
+# Primitive: System.IO.FileStream opened with FileShare::None. Windows
+# kernel rejects a second open of the same file with sharing=None until
+# the first handle is closed, so the open call itself is the mutex
+# acquisition (no separate ACL trick or named-mutex registration needed,
+# no admin rights, no per-process cleanup gymnastics — close = release).
+#
+# Stale-lock recovery: if the holder dies without closing the handle
+# (process kill, host reboot mid-install), Windows reclaims the file
+# handle automatically — but only when the *kernel* notices the process
+# has exited. From another process's perspective the file is no longer
+# locked once that happens, so a fresh FileStream open succeeds without
+# any timeout dance.
+#
+# However if the prior process is somehow still alive but stuck (e.g.
+# wedged on a network call), we still want to recover after a bounded
+# wait. After $Script:LockStaleAfterSeconds we delete the lockfile and
+# retry — Remove-Item on a file held by another process fails on
+# Windows by default, but it succeeds once that other process has
+# exited, so this is the equivalent of the Linux mkdir-mutex's "force
+# release" path.
+
+$Script:LockPollIntervalSeconds = 1
+$Script:LockStaleAfterSeconds   = 600
+$Script:StandaloneRoot          = $HomeDir
+$Script:LockFilePath            = Join-Path $Script:StandaloneRoot "install.lock"
+$Script:LockStream              = $null
+
+function Release-InstallLock {
+    if ($Script:LockStream) {
+        try { $Script:LockStream.Close() } catch {}
+        try { $Script:LockStream.Dispose() } catch {}
+        $Script:LockStream = $null
+    }
+    # Best-effort delete of the lockfile so subsequent installs don't
+    # see a stale-but-unlocked file (cosmetic — the FileShare::None
+    # primitive doesn't care if the file exists).
+    if (Test-Path -LiteralPath $Script:LockFilePath) {
+        try { Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
+function Acquire-InstallLock {
+    # Ensure parent dir exists before we try to open the file in it.
+    if (-not (Test-Path -LiteralPath $Script:StandaloneRoot)) {
+        New-Item -ItemType Directory -Force -Path $Script:StandaloneRoot | Out-Null
+    }
+    $waited = 0
+    $announced = $false
+    while ($true) {
+        try {
+            # Mode=OpenOrCreate so the first install creates the file
+            # and subsequent installs reuse it. Access=ReadWrite so we
+            # can stamp pid/timestamp info after acquiring. Share=None
+            # is the actual mutex — second open returns IOException.
+            $Script:LockStream = [System.IO.FileStream]::new(
+                $Script:LockFilePath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None)
+            break
+        }
+        catch [System.IO.IOException] {
+            if (-not $announced) {
+                Write-Step "another cua-driver-rs install is already in progress (lock at $($Script:LockFilePath)); waiting..."
+                $announced = $true
+            }
+            Start-Sleep -Seconds $Script:LockPollIntervalSeconds
+            $waited += $Script:LockPollIntervalSeconds
+            if ($waited -ge $Script:LockStaleAfterSeconds) {
+                Write-Step "lock appears stale (>$($Script:LockStaleAfterSeconds)s), forcing release"
+                try { Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue } catch {}
+                $waited = 0
+            }
+        }
+    }
+    # Stamp pid + ISO timestamp + argv into the lockfile so a user
+    # investigating a stuck install can see who holds it (Get-Content
+    # $env:USERPROFILE\.cua-driver-rs\install.lock).
+    try {
+        $info = "pid=$PID`nstarted=$([DateTime]::UtcNow.ToString('o'))`ninvocation=install.ps1 -Release $Release`n"
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($info)
+        $Script:LockStream.SetLength(0)
+        $Script:LockStream.Write($bytes, 0, $bytes.Length)
+        $Script:LockStream.Flush()
+    }
+    catch {
+        # Non-fatal — failing to stamp info doesn't affect the lock.
+    }
+}
+
 # ---------- Per-version release dir GC ------------------------------------
 #
 # Prune per-version release dirs under $ReleasesDir for the current
@@ -622,6 +718,13 @@ Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
 
+# Serialize concurrent installs per $HomeDir. The lock is released in
+# the finally below — covers normal exit, errors, and Ctrl-C (which
+# triggers PowerShell's pipeline-stop = finally still runs).
+Acquire-InstallLock
+
+try {
+
 $target    = Get-TargetTriple
 $archLabel = Get-AssetArchLabel $target
 Write-Step "  target      : $target"
@@ -729,3 +832,11 @@ Write-Host ""
 Write-Host "WARNING — BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
 Write-Host "          cua-driver. Windows and Linux support is feature-complete; macOS" -ForegroundColor Yellow
 Write-Host "          parity is in progress." -ForegroundColor Yellow
+
+}
+finally {
+    # Always release the lock — success, error, Ctrl-C, or `exit` all
+    # land here. A partial install + held lock would wedge every
+    # subsequent install for the full $LockStaleAfterSeconds window.
+    Release-InstallLock
+}

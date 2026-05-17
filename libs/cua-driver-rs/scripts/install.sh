@@ -107,10 +107,81 @@ fi
 
 BIN_LINK="$BIN_DIR/$BINARY_NAME"
 TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
 
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
+
+# --- Concurrent-install lockfile ---------------------------------------
+#
+# A second install kicked off while a first is still running can race
+# on the atomic `current` symlink swap and produce a half-installed
+# state (e.g. the symlink points at a dir whose binary the first install
+# hasn't finished copying). Serialize installs per $HOME_DIR with a
+# process-level mutex.
+#
+# Primitive: mkdir on POSIX is atomic. The first install to create
+# $LOCK_DIR holds the lock; concurrent attempts get EEXIST and poll.
+# Released via trap on every exit path (success, error, signal) so
+# a half-finished install always frees the lock for the next one.
+#
+# Stale-lock recovery: if the holder dies without releasing (kill -9,
+# OOM, host reboot mid-install), the lock dir sits around forever and
+# every subsequent install hangs. After $LOCK_STALE_AFTER_SECONDS of
+# waiting we force-release with a loud log and proceed — the alternative
+# is leaving users in a permanently wedged state with no clear recovery
+# path beyond `rm -rf` on an internal-looking dir.
+LOCK_PACKAGES_DIR="$HOME_DIR/packages"
+LOCK_DIR="$LOCK_PACKAGES_DIR/.install.lock.d"
+LOCK_INFO="$LOCK_DIR/info"
+LOCK_POLL_INTERVAL_SECONDS=1
+LOCK_STALE_AFTER_SECONDS=600
+
+LOCK_HELD=0
+release_install_lock() {
+    if (( LOCK_HELD == 1 )); then
+        rm -rf "$LOCK_DIR" 2>/dev/null || true
+        LOCK_HELD=0
+    fi
+}
+
+# Combine TMP_DIR cleanup with lock release in a single trap so neither
+# clobbers the other. INT/TERM also re-raise via $? so the user-visible
+# exit code reflects the signal.
+cleanup_on_exit() {
+    rm -rf "$TMP_DIR" 2>/dev/null || true
+    release_install_lock
+}
+trap cleanup_on_exit EXIT
+trap 'cleanup_on_exit; trap - INT;  kill -INT  $$' INT
+trap 'cleanup_on_exit; trap - TERM; kill -TERM $$' TERM
+
+acquire_install_lock() {
+    mkdir -p "$LOCK_PACKAGES_DIR"
+    local waited=0
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+        if (( waited == 0 )); then
+            log "another cua-driver-rs install is already in progress (lock at $LOCK_DIR); waiting..."
+        fi
+        sleep "$LOCK_POLL_INTERVAL_SECONDS"
+        waited=$((waited + LOCK_POLL_INTERVAL_SECONDS))
+        if (( waited >= LOCK_STALE_AFTER_SECONDS )); then
+            log "lock appears stale (>${LOCK_STALE_AFTER_SECONDS}s), forcing release"
+            rm -rf "$LOCK_DIR" 2>/dev/null || true
+            waited=0
+        fi
+    done
+    LOCK_HELD=1
+    # Drop pid + ISO timestamp + invocation args into the lock dir so a
+    # user investigating a stuck install can see who holds it (`cat
+    # $HOME_DIR/packages/.install.lock.d/info`).
+    {
+        printf 'pid=%s\n' "$$"
+        printf 'started=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)"
+        printf 'argv=%s\n' "$0 $*"
+    } > "$LOCK_INFO" 2>/dev/null || true
+}
+
+acquire_install_lock "$@"
 
 # Prune per-version release dirs under $RELEASES_DIR for the current
 # $TARGET, keeping the N most recent (by mtime). The dir that the

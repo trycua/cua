@@ -1931,7 +1931,7 @@ fallback-only and not hit by the default curl-from-main path).
 
 #### Sentinel-block markers (kept byte-identical across both scripts)
 
-```
+```bash
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
 CUA_DRIVER_RS_BAKED_VERSION="<version>"
 # ~~~ END_BAKED_VERSION ~~~
@@ -2088,7 +2088,7 @@ Both primitives are unprivileged — no admin / sudo / Developer Mode.
 After acquiring, the installer writes a tiny info blob into the lock
 so a user investigating a stuck install can see who holds it:
 
-```
+```bash
 $ cat ~/.cua-driver-rs/packages/.install.lock.d/info
 pid=43210
 started=2026-05-17T09:14:22Z

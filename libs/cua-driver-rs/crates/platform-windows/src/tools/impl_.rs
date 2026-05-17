@@ -177,12 +177,16 @@ impl Tool for ListAppsTool {
                 procs.iter().map(|p| (p.pid, p.name.clone())).collect();
 
             let installed = crate::win32::list_installed_apps();
-            // Lowercase-exe-basename → installed-app index. We match running
+            // Lowercase-exe-basename → installed-app indices. We match running
             // processes by basename rather than full path because the process
             // table's executable name is `notepad.exe` while the Start-Menu
             // shortcut target is `C:\Windows\System32\notepad.exe` — both
-            // sides need to be normalised to compare.
-            let mut by_exe: std::collections::HashMap<String, usize> =
+            // sides need to be normalised to compare. Multiple Start-Menu
+            // shortcuts often target the same basename (different `chrome.exe`
+            // launchers, multiple `code.exe` profiles, …), so we bucket as
+            // `Vec<usize>` and let `disambiguate_installed_match` pick a
+            // winner per running pid rather than letting the last write win.
+            let mut by_exe: std::collections::HashMap<String, Vec<usize>> =
                 std::collections::HashMap::new();
             for (i, app) in installed.iter().enumerate() {
                 if app.kind == "desktop" {
@@ -192,7 +196,7 @@ impl Tool for ListAppsTool {
                         .unwrap_or("")
                         .to_ascii_lowercase();
                     if !basename.is_empty() {
-                        by_exe.insert(basename, i);
+                        by_exe.entry(basename).or_default().push(i);
                     }
                 }
             }
@@ -204,7 +208,8 @@ impl Tool for ListAppsTool {
             for &pid in &running_pids {
                 let name = pid_to_name.get(&pid).cloned().unwrap_or_else(|| "<unknown>".into());
                 let key = name.to_ascii_lowercase();
-                let merged = by_exe.get(&key).copied();
+                let candidates = by_exe.get(&key).map(|v| v.as_slice()).unwrap_or(&[]);
+                let merged = disambiguate_installed_match(candidates, &installed, &name);
                 if let Some(idx) = merged { consumed_installed.insert(idx); }
                 let (display_name, bundle_id, launch_path, kind, last_used) = match merged {
                     Some(idx) => {
@@ -270,6 +275,35 @@ impl Tool for ListAppsTool {
         });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
+}
+
+/// Pick which of several Start-Menu / UWP-derived installed apps best matches
+/// a running pid whose exe basename collided. Precedence:
+///   1. exact case-insensitive equality between `proc_exe_basename` and the
+///      installed app's launch_path basename (always true here; left for
+///      future per-path matches if we ever bucket on something coarser)
+///   2. most recently modified launcher (`last_used` desc — RFC3339 strings
+///      are lexicographically ordered the same as chronologically)
+///   3. first candidate (deterministic by source order)
+fn disambiguate_installed_match(
+    candidates: &[usize],
+    installed: &[crate::win32::InstalledApp],
+    _proc_exe_basename: &str,
+) -> Option<usize> {
+    if candidates.is_empty() { return None; }
+    if candidates.len() == 1 { return Some(candidates[0]); }
+
+    candidates
+        .iter()
+        .copied()
+        .max_by(|&a, &b| {
+            installed[a]
+                .last_used
+                .as_deref()
+                .unwrap_or("")
+                .cmp(installed[b].last_used.as_deref().unwrap_or(""))
+        })
+        .or_else(|| candidates.first().copied())
 }
 
 // ── list_windows ─────────────────────────────────────────────────────────────

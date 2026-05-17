@@ -120,13 +120,17 @@ impl Tool for ListAppsTool {
 
             // Match running processes to installed apps by executable
             // basename (Exec=firefox %u → "firefox"; cmdline /usr/bin/firefox
-            // → "firefox").
-            let mut by_exe: std::collections::HashMap<String, usize> =
+            // → "firefox"). Many distros register multiple .desktop entries
+            // sharing the same basename (e.g. several `firefox` profiles, a
+            // `code` and a `code-insiders` both shelling `code`), so the
+            // bucket is `Vec<usize>` — we pick a winner per running process
+            // via `disambiguate_installed_match` instead of overwriting.
+            let mut by_exe: std::collections::HashMap<String, Vec<usize>> =
                 std::collections::HashMap::new();
             for (i, app) in installed.iter().enumerate() {
                 let basename = exec_basename(&app.launch_path);
                 if !basename.is_empty() {
-                    by_exe.insert(basename, i);
+                    by_exe.entry(basename).or_default().push(i);
                 }
             }
 
@@ -137,7 +141,8 @@ impl Tool for ListAppsTool {
                 let key_source = if !p.cmdline.is_empty() { &p.cmdline } else { &p.name };
                 let basename = exec_basename(key_source);
                 if basename.is_empty() { continue }
-                let merged = by_exe.get(&basename).copied();
+                let candidates = by_exe.get(&basename).map(|v| v.as_slice()).unwrap_or(&[]);
+                let merged = disambiguate_installed_match(candidates, &installed, key_source);
                 if let Some(idx) = merged { consumed.insert(idx); }
                 let (name, bundle_id, launch_path, kind, last_used) = match merged {
                     Some(idx) => {
@@ -208,6 +213,43 @@ impl Tool for ListAppsTool {
         });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
+}
+
+/// Pick which of several `.desktop`-derived installed apps best matches a
+/// running process whose basename collided. Precedence:
+///   1. exact full-launch-path equality with the process's cmdline token
+///      (so `/usr/bin/firefox` beats `/snap/firefox/current/firefox`)
+///   2. most recently modified launcher (`last_used` desc, RFC3339 string
+///      ordering is lexicographic-safe for our format)
+///   3. first candidate (deterministic by source order)
+fn disambiguate_installed_match(
+    candidates: &[usize],
+    installed: &[crate::installed_apps::InstalledApp],
+    proc_key_source: &str,
+) -> Option<usize> {
+    if candidates.is_empty() { return None; }
+    if candidates.len() == 1 { return Some(candidates[0]); }
+
+    // Look for an exact path match against the cmdline's first token.
+    let proc_path = proc_key_source.split_whitespace().next().unwrap_or("");
+    if !proc_path.is_empty() {
+        if let Some(&idx) = candidates.iter().find(|&&i| installed[i].launch_path == proc_path) {
+            return Some(idx);
+        }
+    }
+
+    // Fall back to the candidate with the most recent `last_used`.
+    candidates
+        .iter()
+        .copied()
+        .max_by(|&a, &b| {
+            installed[a]
+                .last_used
+                .as_deref()
+                .unwrap_or("")
+                .cmp(installed[b].last_used.as_deref().unwrap_or(""))
+        })
+        .or_else(|| candidates.first().copied())
 }
 
 /// Return the lowercase basename of an executable token, stripping any

@@ -382,22 +382,25 @@ function Get-JunctionTarget([string]$linkPath) {
 # Ensure a junction at $linkPath points at $targetPath. Refuses to clobber
 # an existing non-junction directory at $linkPath — the user may have
 # legitimate files there and we don't want to surprise them.
+#
+# Retarget is in-place and atomic: DeviceIoControl(FSCTL_SET_REPARSE_POINT)
+# on an existing reparse point overwrites the reparse-data buffer in a
+# single kernel call. The junction is never absent during the swap. This
+# is the only race-free retarget primitive NTFS exposes for directory
+# reparse points (CreateSymbolicLink + MoveFileEx-replace-existing only
+# works for files, not directories). For the initial-create case the path
+# is the same: Directory.CreateDirectory followed by SET_REPARSE_POINT.
 function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     if (Test-Path -LiteralPath $linkPath) {
         if (Test-IsJunction $linkPath) {
-            # Existing junction — retarget it. Removing the empty
-            # reparse-point dir and recreating it is the simplest way to
-            # change the target atomically from PowerShell's POV (the
-            # underlying DeviceIoControl will fail with "directory not
-            # empty" otherwise).
             $existingTarget = Get-JunctionTarget $linkPath
             if ($existingTarget -and ($existingTarget.TrimEnd('\') -ieq $targetPath.TrimEnd('\'))) {
                 Write-Step "junction $linkPath already points at $targetPath (no change)"
                 return
             }
-            # Remove-Item on a junction removes the link, not the target.
-            # -Force handles read-only / hidden attributes.
-            Remove-Item -LiteralPath $linkPath -Force -Recurse
+            # Fall through to in-place retarget via SetTarget. No
+            # Remove-Item first — that would open a window where PATH
+            # consumers see the junction as missing.
         }
         else {
             Write-ErrorStep "found existing non-junction directory at $linkPath; refusing to replace"
@@ -430,14 +433,27 @@ function Resolve-Version {
         return $v
     }
     Write-Step "resolving latest $TagPrefix* release via GitHub API"
-    # Pull the first 40 releases so we still find the latest one even when
-    # several unrelated tag prefixes have shipped recently. The cua-driver-rs
-    # tag prefix is distinct from the Swift cua-driver tag prefix (one extra
-    # "-rs-"), so the simple StartsWith filter is unambiguous.
-    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=40" `
-                                  -UseBasicParsing
-    $matches = $releases | Where-Object { $_.tag_name -like "$TagPrefix*" }
-    if (-not $matches) {
+    # Paginate the /releases endpoint until we've seen every release or
+    # collected enough $TagPrefix* matches to be confident the latest is
+    # in hand. A single page (even at per_page=100) is not guaranteed to
+    # include any cua-driver-rs-v* tag — the repo also ships Swift
+    # cua-driver-v* releases plus other unrelated tags, which can push
+    # our matches off the first page once the release cadence grows.
+    #
+    # Loop guards:
+    #   - max 10 pages = 1000 releases — way more than the repo will
+    #     ever hold, but cheap insurance against an unbounded loop.
+    #   - stop early when a page comes back empty (we've exhausted the
+    #     list).
+    $matches = @()
+    for ($page = 1; $page -le 10; $page++) {
+        $uri = "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page"
+        $batch = Invoke-RestMethod -Uri $uri -UseBasicParsing
+        if (-not $batch -or $batch.Count -eq 0) { break }
+        $matches += @($batch | Where-Object { $_.tag_name -like "$TagPrefix*" })
+        if ($batch.Count -lt 100) { break }
+    }
+    if (-not $matches -or $matches.Count -eq 0) {
         Write-ErrorStep "no release matching $TagPrefix* found on $Repo"
         exit 1
     }

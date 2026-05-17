@@ -124,7 +124,7 @@ case "$OS-$ARCH_RAW" in
     *)
         err "unsupported platform: $OS / $ARCH_RAW"
         err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64."
-        err "  Windows users: install via install.ps1 (irm <release-url>/install.ps1 | iex)."
+        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex)."
         exit 1
         ;;
 esac

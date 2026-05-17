@@ -68,7 +68,7 @@ The cross-platform Rust port ships its own one-liners. Pick the one for your she
 **Windows (PowerShell)**
 
 ```powershell
-irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
 ```
 
 The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases. It runs **without admin** and **without Developer Mode** — the install layout is wired with NTFS directory junctions, which any unprivileged user can create.
@@ -85,7 +85,8 @@ $CUA_DRIVER_RS_HOME/                          (default: ~/.cua-driver-rs)
     releases/
       0.2.0-x86_64-unknown-linux-gnu/cua-driver   (real binary, immutable)
       0.2.1-x86_64-unknown-linux-gnu/cua-driver   (real binary, immutable)
-    current/cua-driver -> ../releases/0.2.1-x86_64-unknown-linux-gnu/cua-driver  (symlink — active version)
+    current -> releases/0.2.1-x86_64-unknown-linux-gnu   (symlink — active version)
+    current/cua-driver                                    (= the binary inside the target dir)
 $CUA_DRIVER_RS_INSTALL_DIR/cua-driver -> $CUA_DRIVER_RS_HOME/packages/current/cua-driver
                                        (default: ~/.local/bin/cua-driver)
 ```
@@ -112,7 +113,9 @@ Both platforms ship every release into its own per-version directory under `pack
 **Linux — roll back to a specific version**
 
 ```bash
-ln -sfn ../releases/0.2.0-x86_64-unknown-linux-gnu ~/.cua-driver-rs/packages/.current.tmp
+# The symlink target is RELATIVE to ~/.cua-driver-rs/packages/, so just
+# "releases/<v>-<target>" (no leading "../") — matches what install.sh writes.
+ln -sfn releases/0.2.0-x86_64-unknown-linux-gnu ~/.cua-driver-rs/packages/.current.tmp
 mv -Tf ~/.cua-driver-rs/packages/.current.tmp ~/.cua-driver-rs/packages/current
 cua-driver --version    # → 0.2.0
 ```
@@ -125,7 +128,7 @@ Re-run the install one-liner with `$env:CUA_DRIVER_RS_VERSION` pinned to the ver
 
 ```powershell
 $env:CUA_DRIVER_RS_VERSION = "0.2.0"
-irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
 cua-driver --version    # → 0.2.0
 ```
 

@@ -370,11 +370,13 @@ jobs:
           mkdir -p release-upload
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) \
             -exec cp {} release-upload/ \;
-          # Ship the installer scripts as first-class release assets so the
-          # canonical one-liners hit
-          # github.com/trycua/cua/releases/latest/download/install.{sh,ps1}
-          # — that URL is stable across releases and survives a typo in
-          # the per-version tag.
+          # Ship the installer scripts as per-tag release assets too. The
+          # canonical one-liners both fetch from
+          # raw.githubusercontent.com/trycua/cua/main/... so they always
+          # serve the current installer regardless of release flags
+          # (prerelease excludes us from the /releases/latest/ endpoint).
+          # The tag-pinned asset URLs below are a convenience for users who
+          # want to audit the exact installer that shipped with a release.
           cp libs/cua-driver-rs/scripts/install.sh  release-upload/install.sh
           cp libs/cua-driver-rs/scripts/install.ps1 release-upload/install.ps1
           echo "Release files:"
@@ -455,7 +457,7 @@ jobs:
             ### Install (Windows)
 
             ```powershell
-            irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
             ```
 
             The installer auto-detects host architecture (x86_64 / arm64) and uses

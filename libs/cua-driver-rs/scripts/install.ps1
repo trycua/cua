@@ -5,11 +5,11 @@
 # required, no admin elevation.
 #
 # Usage (one-liner — recommended):
-#   irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
 #
 # Pin a version:
 #   $env:CUA_DRIVER_RS_VERSION = "0.2.0"
-#   irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
 #
 # Layout on disk (three tiers, two directory junctions):
 #

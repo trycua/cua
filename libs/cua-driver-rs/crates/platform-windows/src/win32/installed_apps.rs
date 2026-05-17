@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile,
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED, STGM,
 };
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
 
@@ -62,8 +62,22 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
     // machine-wide shortcut for the same .exe target.
     let mut seen = std::collections::HashSet::new();
     out.retain(|a| seen.insert((a.kind.clone(), a.bundle_id.clone())));
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by(app_sort_key);
     out
+}
+
+fn app_sort_key(a: &InstalledApp, b: &InstalledApp) -> std::cmp::Ordering {
+    // Keep recently-used apps near the top when we can infer usage recency.
+    // Interface-Agent's Windows adapter sorts by LastAccessTime; mirror that
+    // behavior here, with deterministic name-based fallback.
+    match (a.last_used.as_deref(), b.last_used.as_deref()) {
+        (Some(ax), Some(bx)) => bx
+            .cmp(ax)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    }
 }
 
 // ── Start Menu (.lnk) scan ───────────────────────────────────────────────────
@@ -88,11 +102,15 @@ fn start_menu_roots() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("ProgramData") {
         // CSIDL_COMMON_PROGRAMS — machine-wide Start Menu.
-        out.push(PathBuf::from(format!("{p}\\Microsoft\\Windows\\Start Menu\\Programs")));
+        out.push(PathBuf::from(format!(
+            "{p}\\Microsoft\\Windows\\Start Menu\\Programs"
+        )));
     }
     if let Ok(p) = std::env::var("APPDATA") {
         // CSIDL_PROGRAMS — per-user Start Menu.
-        out.push(PathBuf::from(format!("{p}\\Microsoft\\Windows\\Start Menu\\Programs")));
+        out.push(PathBuf::from(format!(
+            "{p}\\Microsoft\\Windows\\Start Menu\\Programs"
+        )));
     }
     out
 }
@@ -105,7 +123,12 @@ fn walk_for_lnks(dir: &Path, sink: &mut Vec<InstalledApp>) -> std::io::Result<()
             let _ = walk_for_lnks(&path, sink);
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()).map(|s| s.eq_ignore_ascii_case("lnk")) != Some(true) {
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.eq_ignore_ascii_case("lnk"))
+            != Some(true)
+        {
             continue;
         }
         if let Some(app) = resolve_lnk(&path) {
@@ -134,7 +157,9 @@ fn resolve_lnk(lnk_path: &Path) -> Option<InstalledApp> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_owned();
-    if name.is_empty() { return None; }
+    if name.is_empty() {
+        return None;
+    }
 
     let last_used = std::fs::metadata(lnk_path)
         .ok()
@@ -184,7 +209,11 @@ unsafe fn read_lnk_target(lnk_path: &Path) -> windows::core::Result<(String, Str
     // GetArguments succeeds with an empty string when no args are set —
     // we don't need to special-case that case.
     let args_res = shell_link.GetArguments(&mut args_buf);
-    let args = if args_res.is_ok() { decode_wstr(&args_buf) } else { String::new() };
+    let args = if args_res.is_ok() {
+        decode_wstr(&args_buf)
+    } else {
+        String::new()
+    };
 
     Ok((decode_wstr(&path_buf), args))
 }
@@ -225,27 +254,18 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
                 Ok(h) => h.to_string(),
                 Err(_) => continue,
             };
-            if family_name.is_empty() { continue }
+            if family_name.is_empty() {
+                continue;
+            }
 
-            let display = match pkg.DisplayName() {
-                Ok(h) => {
-                    let s = h.to_string();
-                    if s.is_empty() { family_name.clone() } else { s }
-                }
-                Err(_) => family_name.clone(),
-            };
+            let raw_display = pkg.DisplayName().ok().map(|h| h.to_string());
+            let display = normalize_uwp_display_name(raw_display, &pkg, &family_name);
 
-            // ApplicationModel::Package doesn't surface the per-app
-            // Application.Id list directly in the stable WinRT API; the
-            // canonical shell launch token "shell:appsFolder\{family}!{appid}"
-            // needs the AppId from the package manifest, which we don't
-            // fetch here to keep this enumeration cheap.
-            //
-            // Falling back to "shell:appsFolder\{family}!App" works for the
-            // overwhelming majority of single-entry packages (the manifest's
-            // default Application Id is literally "App"); for multi-entry
-            // packages the caller can read the manifest itself.
-            let launch_path = format!("shell:appsFolder\\{family_name}!App");
+            // Resolve manifest Application.Id when available so launch_path
+            // works for multi-entry packages too; fallback to "App" for
+            // compatibility with single-entry packages.
+            let app_id = read_uwp_application_id(&pkg).unwrap_or_else(|| "App".to_owned());
+            let launch_path = format!("shell:appsFolder\\{family_name}!{app_id}");
             let last_used = read_install_mtime(&pkg);
 
             out.push(InstalledApp {
@@ -265,11 +285,84 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
     }
 }
 
+/// Best-effort parse of AppxManifest.xml to extract the first Application Id.
+fn read_uwp_application_id(pkg: &windows::ApplicationModel::Package) -> Option<String> {
+    let base = pkg.InstalledPath().ok()?.to_string();
+    if base.is_empty() {
+        return None;
+    }
+    let manifest = std::path::Path::new(&base).join("AppxManifest.xml");
+    let xml = std::fs::read_to_string(manifest).ok()?;
+
+    // Look for the first <Application ... Id="..."> start tag.
+    let app_pos = xml.find("<Application")?;
+    let tail = &xml[app_pos..];
+    let tag_end = tail.find('>')?;
+    let start_tag = &tail[..tag_end];
+
+    let id_key = "Id=\"";
+    let id_pos = start_tag.find(id_key)? + id_key.len();
+    let rest = &start_tag[id_pos..];
+    let id_end = rest.find('"')?;
+    let app_id = rest[..id_end].trim();
+    if app_id.is_empty() {
+        None
+    } else {
+        Some(app_id.to_owned())
+    }
+}
+
+fn normalize_uwp_display_name(
+    raw_display: Option<String>,
+    pkg: &windows::ApplicationModel::Package,
+    family_name: &str,
+) -> String {
+    let trimmed = raw_display
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("");
+
+    if trimmed.is_empty() {
+        return family_name.to_owned();
+    }
+    // Many packaged apps expose an unresolved "ms-resource:" token via
+    // Package.DisplayName(). When that happens, prefer manifest
+    // Properties/DisplayName if it is a concrete user-facing string.
+    if trimmed.starts_with("ms-resource:") {
+        if let Some(manifest_name) = read_uwp_manifest_display_name(pkg) {
+            return manifest_name;
+        }
+    }
+    trimmed.to_owned()
+}
+
+/// Best-effort parse of AppxManifest.xml to extract `<Properties><DisplayName>`.
+fn read_uwp_manifest_display_name(pkg: &windows::ApplicationModel::Package) -> Option<String> {
+    let base = pkg.InstalledPath().ok()?.to_string();
+    if base.is_empty() {
+        return None;
+    }
+    let manifest = std::path::Path::new(&base).join("AppxManifest.xml");
+    let xml = std::fs::read_to_string(manifest).ok()?;
+    let key = "<DisplayName>";
+    let start = xml.find(key)? + key.len();
+    let rest = &xml[start..];
+    let end = rest.find("</DisplayName>")?;
+    let value = rest[..end].trim();
+    if value.is_empty() || value.starts_with("ms-resource:") {
+        None
+    } else {
+        Some(value.to_owned())
+    }
+}
 /// Resolve a UWP package's install-path mtime to an RFC3339 string.
 fn read_install_mtime(pkg: &windows::ApplicationModel::Package) -> Option<String> {
     let path_hstring = pkg.InstalledPath().ok()?;
     let path = path_hstring.to_string();
-    if path.is_empty() { return None }
+    if path.is_empty() {
+        return None;
+    }
     let meta = std::fs::metadata(&path).ok()?;
     let modified = meta.modified().ok()?;
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
@@ -297,5 +390,8 @@ fn unix_secs_to_rfc3339(secs: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
 
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hour, minute, second)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hour, minute, second
+    )
 }

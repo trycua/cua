@@ -308,50 +308,109 @@ terminal-only flow proves insufficient; the CLI is the MVP.
 - Rust:
   - macOS=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListAppsTool)
+           + `crates/platform-windows/src/win32/installed_apps.rs`
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListAppsTool)
+         + `crates/platform-linux/src/installed_apps.rs`
 - Status:
-  - macOS: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
-  - windows: VERIFIED (text format + structured shape + `active` flag)
-  - linux: OPEN (subagent currently fixing pre-existing compile errors)
-- Test: `crates/platform-windows/examples/list_apps_parity.rs`
+  - macOS: VERIFIED — unified shape + installed-app scan + running merge
+  - windows: VERIFIED for Win32 path (cross-target check), live-run pending on a Windows host
+  - linux: code ready (cross-target check pending Linux host)
+- Test: `tests/integration/test_api_parity.py::RustParityTests::test_call_list_apps_*`
+        + `crates/platform-windows/examples/list_apps_parity.rs`
 
-### Fixed divergences
+### Unified response shape (cross-platform)
 
-1. **Windows: returned every OS process** (System, Registry, csrss, etc.)
-   instead of "apps". Now filters to processes that own at least one
-   visible top-level window — the closest analogue to Swift's
-   `NSApplicationActivationPolicyRegular` filter (excludes background
-   helpers / agents).
-2. **Structured shape**: Swift returns `Output { apps: [AppInfo] }` with
-   `AppInfo = {pid, bundle_id, name, running, active}`. Windows was
-   returning `{ processes: [{pid, name}] }`. Now returns both keys —
-   `apps` (Swift shape) for new callers, `processes` (legacy shape) as a
-   transitional alias.
-3. **Text format**: Swift starts with `"✅ Found N app(s): R running, I installed-not-running."`.
-   macOS Rust was missing the `✅` prefix; Windows had a different
-   wording entirely (`"Found N processes:"`). Both now match Swift 1:1.
-4. **`active` flag** — Windows resolves it via `GetForegroundWindow` +
-   `GetWindowThreadProcessId` (only one app is `active` at a time).
-5. **Description** — copied verbatim from Swift on macOS; adapted with
-   Windows-specific caveats on Windows (no bundle_id, no installed-apps
-   enumeration yet).
+Single flat array. Every entry carries the same fields on every
+platform; values that don't apply to a given platform are `null`.
 
-### Known limitation (Windows / Linux)
+```jsonc
+{
+  "apps": [
+    {
+      "pid": 47291,                         // 0 when running=false
+      "name": "Visual Studio Code",
+      "bundle_id": "com.microsoft.VSCode",  // macOS bundle id, Win32 .exe path, or Linux desktop file id
+      "running": true,
+      "active": false,                       // true for the system-frontmost app (only one at a time)
+      "kind": "desktop",                    // "desktop" | "uwp" | null
+      "launch_path": "/Applications/Visual Studio Code.app",
+      "last_used": "2026-05-15T12:34:56Z", // RFC3339, null if unreadable
+      "windows": []                          // reserved — kept cheap; query list_windows for per-window state
+    }
+  ]
+}
+```
 
-Neither Rust port enumerates *installed but not running* apps yet — Swift
-scans `/Applications`, `~/Applications`, `/System/Applications`, etc.
-Windows would need to scan Start Menu shortcuts and the Registry
-Uninstall keys; Linux would need to scan `.desktop` files in
-`/usr/share/applications` and `~/.local/share/applications`. Marked as
-follow-up work; the running-app view is still useful and matches Swift's
-running subset exactly.
+### Per-platform enumeration
 
-### Verified on Windows
+- **macOS**: running set from `NSWorkspace` (via the existing
+  AppleScript bridge), installed set from a filesystem scan of
+  `/Applications`, `/Applications/Utilities`, `/System/Applications`,
+  `/System/Applications/Utilities`, `~/Applications`. Bundle metadata
+  read from each `.app/Contents/Info.plist` via `plutil`. Merged by
+  bundle id; `launch_path` and `last_used` (bundle mtime) are
+  backfilled onto running entries when the bundle id matches.
+- **Windows**: running set from visible top-level windows
+  (`EnumWindows` → owner pids) + `CreateToolhelp32Snapshot` for the
+  pid→exe table. Installed set is the union of Start-Menu
+  `.lnk` shortcuts (resolved via `IShellLinkW::GetPath`) and WinRT
+  `Management::Deployment::PackageManager::FindPackagesWithPackageTypes(Main)`.
+  Merged by exe basename. UWP entries carry
+  `launch_path = "shell:appsFolder\\{PackageFamilyName}!App"`.
+- **Linux**: running set from `/proc/<pid>/status` + `cmdline`.
+  Installed set from XDG `.desktop` files in `$XDG_DATA_HOME/applications`
+  and each `$XDG_DATA_DIRS` entry's `applications/` subdir. Entries
+  with `NoDisplay=true`, `Hidden=true`, or `Type!=Application` are
+  filtered. Merged by exe basename (after stripping `env`-style
+  prefixes and `Exec=` field codes).
 
-`list_apps_parity.exe`: header line matches `"✅ Found N app(s): R
-running, 0 installed-not-running."`; `structuredContent.apps` is an
-array of `{pid, bundle_id (null on Windows), name, running, active}`;
-at least one entry has `active: true` (the foreground app).
+### Backwards compatibility
+
+The unified shape is **additive**. `pid`, `name`, `bundle_id`,
+`running`, `active` keep their pre-change positions and types.
+The new keys (`launch_path`, `kind`, `last_used`, `windows`) are
+new. The legacy `processes` key (Linux/Windows) remains as a thin
+alias over the running subset so older callers that read the old
+running-only shape keep working.
+
+### Verification recipes
+
+**macOS** (verified live):
+```bash
+cargo build --release -p cua-driver
+./target/release/cua-driver call list_apps | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+running = [a for a in d['apps'] if a['running']]
+installed = [a for a in d['apps'] if not a['running']]
+print(f'{len(d[\"apps\"])} total: {len(running)} running, {len(installed)} installed-only')
+for a in d['apps'][:1]:
+    for k in ('pid','name','bundle_id','running','active','kind','launch_path','last_used','windows'):
+        assert k in a, f'missing field {k!r}'
+print('shape OK')
+"
+```
+
+**Windows** (cross-target check on macOS host succeeds; live run on a Windows host):
+```powershell
+cargo build --release -p cua-driver
+.\target\release\cua-driver.exe call list_apps | ConvertFrom-Json | ForEach-Object {
+    $_.apps | Group-Object kind | Format-Table Name, Count
+}
+```
+Expect at least one `desktop` group (Start-Menu hits) and on Win10+
+at least one `uwp` group (WinRT packages). Every entry should have
+a `launch_path` that's either an absolute `.exe` path or
+`shell:appsFolder\...`.
+
+**Linux**:
+```bash
+cargo build --release -p cua-driver
+./target/release/cua-driver call list_apps | jq '.apps | group_by(.running) | map({running: .[0].running, n: length})'
+```
+Expect two groups: one with `running: true` (live processes that
+matched a `.desktop` launcher), one with `running: false` (the
+installed-but-not-running tail).
 
 ---
 

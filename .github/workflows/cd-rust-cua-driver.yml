@@ -81,10 +81,22 @@ jobs:
           path: libs/cua-driver-rs/release/cua-driver-rs-*-linux-x86_64*.tar.gz
           if-no-files-found: error
 
-  # ── Windows x86_64 ───────────────────────────────────────────────────────────
+  # ── Windows (x86_64 + arm64) ─────────────────────────────────────────────────
+  # One matrixed job per Windows target. The arm64 build cross-compiles from
+  # the x86_64 windows-latest runner — Rust + MSVC have first-class support
+  # for that cross, so no separate arm64 runner is needed. install.ps1 picks
+  # the matching zip at install time based on the host's OS architecture.
   build-windows:
-    name: windows-x86_64
+    name: windows-${{ matrix.arch }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - name: Determine version
@@ -99,28 +111,29 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             libs/cua-driver-rs/target
-          key: rust-cua-driver-rs-windows-x86_64-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+          key: rust-cua-driver-rs-windows-${{ matrix.arch }}-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
           restore-keys: |
-            rust-cua-driver-rs-windows-x86_64-
+            rust-cua-driver-rs-windows-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver-rs
-        run: cargo build -p cua-driver --release --target x86_64-pc-windows-msvc
+        run: cargo build -p cua-driver --release --target ${{ matrix.target }}
       - name: Package
         working-directory: libs/cua-driver-rs
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $label   = "windows-x86_64"
+          $label   = "windows-${{ matrix.arch }}"
+          $target  = "${{ matrix.target }}"
           $stage   = "cua-driver-rs-${version}-${label}"
           New-Item -ItemType Directory -Force -Path "release/$stage" | Out-Null
-          Copy-Item "target/x86_64-pc-windows-msvc/release/cua-driver.exe" "release/$stage/"
+          Copy-Item "target/$target/release/cua-driver.exe" "release/$stage/"
           if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
           Compress-Archive -Path "release/$stage/*" -DestinationPath "release/$stage.zip" -Force
           # Bare binary (cua-driver.exe by itself) — matches Swift's
@@ -130,8 +143,8 @@ jobs:
           Get-ChildItem "release/$stage*.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: cua-driver-rs-windows-x86_64
-          path: libs/cua-driver-rs/release/cua-driver-rs-*-windows-x86_64*.zip
+          name: cua-driver-rs-windows-${{ matrix.arch }}
+          path: libs/cua-driver-rs/release/cua-driver-rs-*-windows-${{ matrix.arch }}*.zip
           if-no-files-found: error
 
   # ── macOS universal (arm64 + x86_64 → lipo) ─────────────────────────────────
@@ -357,6 +370,13 @@ jobs:
           mkdir -p release-upload
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) \
             -exec cp {} release-upload/ \;
+          # Ship the installer scripts as first-class release assets so the
+          # canonical one-liners hit
+          # github.com/trycua/cua/releases/latest/download/install.{sh,ps1}
+          # — that URL is stable across releases and survives a typo in
+          # the per-version tag.
+          cp libs/cua-driver-rs/scripts/install.sh  release-upload/install.sh
+          cp libs/cua-driver-rs/scripts/install.ps1 release-upload/install.ps1
           echo "Release files:"
           ls -lh release-upload/
 
@@ -434,9 +454,13 @@ jobs:
 
             ### Install (Windows)
 
-            Download `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64-binary.zip` from the
-            assets below, unzip to a location on your PATH (`%LOCALAPPDATA%\Programs\cua-driver-rs\`
-            is the convention), then run `cua-driver.exe list-tools` to confirm.
+            ```powershell
+            irm https://github.com/trycua/cua/releases/latest/download/install.ps1 | iex
+            ```
+
+            The installer auto-detects host architecture (x86_64 / arm64) and uses
+            directory junctions for the install layout, so it runs without admin
+            and without Developer Mode.
 
             ### Artifacts
 
@@ -453,5 +477,11 @@ jobs:
             **Windows**
             - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64.zip` — directory zip
             - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64-binary.zip` — bare `cua-driver.exe`
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-arm64.zip` — directory zip (Windows on ARM)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-arm64-binary.zip` — bare `cua-driver.exe` (Windows on ARM)
+
+            **Installer scripts**
+            - `install.sh` — Linux / macOS one-liner installer
+            - `install.ps1` — Windows one-liner installer
           generate_release_notes: false
           make_latest: false

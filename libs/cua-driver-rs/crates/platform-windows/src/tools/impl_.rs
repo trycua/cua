@@ -115,35 +115,50 @@ impl Tool for ListAppsTool {
     fn def(&self) -> &ToolDef {
         LIST_APPS_DEF.get_or_init(|| ToolDef {
             name: "list_apps".into(),
-            // Description copied from Swift `ListAppsTool.swift` and adapted —
-            // notes Windows-specific limitations (no bundle_id, no installed
-            // enumeration yet).  Same semantics for running/active state flags.
-            description: "List Windows apps that are currently running, with per-app state flags:\n\n\
+            description: "List Windows apps — both currently running and installed-but-not-running — \
+                with per-app state flags:\n\n\
                 - running: is a process for this app live? (pid is 0 when false)\n\
-                - active: is it the system-frontmost app? (implies running)\n\n\
-                Only processes that own at least one visible top-level window are included — \
-                background services and console processes are filtered out (mirrors Swift's \
-                NSApplicationActivationPolicyRegular filter).\n\n\
-                Use this for \"is X running?\". For per-window state — on-screen, minimized, \
-                window titles — call list_windows instead. For just opening an app — running \
-                or not — call launch_app({path: ...}) directly; list_apps is not a prerequisite.".into(),
+                - active: is it the system-frontmost app? (implies running)\n\
+                - kind: `\"desktop\"` for `.exe`-backed apps (resolved from Start-Menu \
+                shortcuts) or `\"uwp\"` for packaged store apps.\n\
+                - launch_path: what `launch_app` would consume.\n\
+                    * desktop: absolute `.exe` path.\n\
+                    * uwp: `shell:appsFolder\\{PackageFamilyName}!{AppId}`.\n\
+                - last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, \
+                package install location for UWP), when readable.\n\n\
+                Running apps are derived from visible top-level windows + the foreground \
+                pid (mirrors NSApplicationActivationPolicyRegular's intent: background \
+                services and console processes are excluded). Installed apps are merged \
+                from Start-Menu `.lnk` enumeration and the WinRT PackageManager — running \
+                processes whose executable matches a Start-Menu target are folded into a \
+                single entry with `running: true`.\n\n\
+                Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
+                state — on-screen, minimized, window titles — call list_windows instead. \
+                For just opening an app — running or not — call launch_app({path: ...}) \
+                directly; list_apps is not a prerequisite.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // Strategy (port of `AppEnumerator.apps()` semantics):
-        // 1. Enumerate top-level visible windows; their owner pids are the
-        //    "running apps with a user-facing surface".
-        // 2. Look up each pid's executable name via the process table.
-        // 3. Mark `active` for the pid that owns GetForegroundWindow.
+        // Strategy:
+        // 1. Enumerate top-level visible windows → derive the set of running pids
+        //    that have a user-facing surface.
+        // 2. Enumerate the process table to map pid → executable name and full
+        //    path (used to merge against Start-Menu / UWP launch_paths).
+        // 3. Enumerate installed apps from Start-Menu shortcuts + WinRT
+        //    PackageManager. Each installed entry has a launch_path.
+        // 4. Merge: a running pid whose executable path matches an installed
+        //    desktop launch_path becomes a single entry with running=true and
+        //    that launch_path. Remaining installed entries are emitted with
+        //    running=false, pid=0. Remaining running pids (no installed-app
+        //    match) are emitted as running=true with launch_path=null.
         let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
             let wins = crate::win32::list_windows(None);
-            // Deduplicate by pid — one app may own several top-level windows.
             let mut seen_pids = std::collections::HashSet::new();
             let mut running_pids: Vec<u32> = Vec::new();
             for w in &wins {
@@ -158,41 +173,100 @@ impl Tool for ListAppsTool {
             };
 
             let procs = crate::win32::list_processes();
-            let pid_to_name: std::collections::HashMap<u32, &str> =
-                procs.iter().map(|p| (p.pid, p.name.as_str())).collect();
+            let pid_to_name: std::collections::HashMap<u32, String> =
+                procs.iter().map(|p| (p.pid, p.name.clone())).collect();
 
-            running_pids.iter().map(|&pid| {
-                let name = pid_to_name.get(&pid).copied().unwrap_or("<unknown>");
-                json!({
-                    "pid":       pid,
-                    "bundle_id": serde_json::Value::Null,  // Windows has no bundle ID concept
-                    "name":      name,
-                    "running":   true,
-                    "active":    pid == foreground_pid,
-                })
-            }).collect()
+            let installed = crate::win32::list_installed_apps();
+            // Lowercase-exe-basename → installed-app index. We match running
+            // processes by basename rather than full path because the process
+            // table's executable name is `notepad.exe` while the Start-Menu
+            // shortcut target is `C:\Windows\System32\notepad.exe` — both
+            // sides need to be normalised to compare.
+            let mut by_exe: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (i, app) in installed.iter().enumerate() {
+                if app.kind == "desktop" {
+                    let basename = std::path::Path::new(&app.launch_path)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if !basename.is_empty() {
+                        by_exe.insert(basename, i);
+                    }
+                }
+            }
+
+            let mut consumed_installed: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            let mut out: Vec<serde_json::Value> = Vec::new();
+
+            for &pid in &running_pids {
+                let name = pid_to_name.get(&pid).cloned().unwrap_or_else(|| "<unknown>".into());
+                let key = name.to_ascii_lowercase();
+                let merged = by_exe.get(&key).copied();
+                if let Some(idx) = merged { consumed_installed.insert(idx); }
+                let (display_name, bundle_id, launch_path, kind, last_used) = match merged {
+                    Some(idx) => {
+                        let a = &installed[idx];
+                        (
+                            a.name.clone(),
+                            Some(a.bundle_id.clone()),
+                            Some(a.launch_path.clone()),
+                            Some(a.kind.clone()),
+                            a.last_used.clone(),
+                        )
+                    }
+                    None => (name, None, None, Some("desktop".to_owned()), None),
+                };
+                out.push(json!({
+                    "pid":         pid,
+                    "bundle_id":   bundle_id,
+                    "name":        display_name,
+                    "running":     true,
+                    "active":      pid == foreground_pid,
+                    "kind":        kind,
+                    "launch_path": launch_path,
+                    "last_used":   last_used,
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            for (i, app) in installed.iter().enumerate() {
+                if consumed_installed.contains(&i) { continue }
+                out.push(json!({
+                    "pid":         0,
+                    "bundle_id":   app.bundle_id.clone(),
+                    "name":        app.name.clone(),
+                    "running":     false,
+                    "active":      false,
+                    "kind":        app.kind.clone(),
+                    "launch_path": app.launch_path.clone(),
+                    "last_used":   app.last_used.clone(),
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            out
         }).await.unwrap_or_default();
 
         let running_count = apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)).count();
         let total = apps.len();
         let installed_only = total - running_count;
-        // Match Swift's text format: header line + bullet per running app.
         let mut lines = vec![format!(
             "✅ Found {total} app(s): {running_count} running, {installed_only} installed-not-running."
         )];
         for app in apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)) {
             let name = app["name"].as_str().unwrap_or("?");
             let pid  = app["pid"].as_u64().unwrap_or(0);
-            // Windows lacks bundle_id; omit the trailing [bundle] segment.
             lines.push(format!("- {name} (pid {pid})"));
         }
-        // `apps` key (matches Swift `Output.apps`); `processes` key kept as
-        // an alias for any pre-existing Rust callers that read the old shape.
+        // `apps` is the unified shape; `processes` retained for any pre-existing
+        // callers that consumed the old running-only shape.
         let structured = json!({
             "apps": apps,
-            "processes": apps.iter().map(|a| json!({
-                "pid":  a["pid"], "name": a["name"]
-            })).collect::<Vec<_>>(),
+            "processes": apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false))
+                .map(|a| json!({
+                    "pid":  a["pid"], "name": a["name"]
+                })).collect::<Vec<_>>(),
         });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }

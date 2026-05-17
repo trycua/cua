@@ -142,6 +142,7 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 | `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
 | `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver-rs` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
 | `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | n/a — Windows installer never auto-edits PATH | Skip the rc-file PATH append. |
+| `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install; older ones are deleted. `0` disables GC entirely (every version retained forever). Per-target — multi-arch dirs are pruned independently. The active install (whichever dir `current` points at) is always preserved even if it falls outside the keep window. |
 
 <Callout type="info">
 **How the installer picks a version.** Resolution order is:
@@ -155,6 +156,59 @@ So an API outage, an unauthenticated-rate-limit (60 req/hr per IP), or a transie
 
 <Callout type="info">
 **Why macOS uses a different layout.** On macOS the install still drops `CuaDriverRs.app` into `/Applications` and symlinks `~/.local/bin/cua-driver` into the bundle. The `.app` placement is the anchor for both **TCC attribution** (cdhash + bundle id) and **LaunchServices** (`open -a CuaDriverRs`); symlinking the `.app` from `/Applications` to a versioned dir under `$CUA_DRIVER_RS_HOME` would break both. The asymmetry is intentional — rollback on macOS = reinstall an older release tag with `CUA_DRIVER_RS_VERSION=<x.y.z>`.
+</Callout>
+
+<Callout type="info">
+**Old-version cleanup (Linux / Windows).** Every install drops the binary into a fresh `packages/releases/<version>-<target>/` directory and retargets the `current` symlink/junction at it. To keep disk usage bounded, the installer prunes old per-version dirs after each install — by default it keeps the **5 most recent** per platform target, deleting the rest.
+
+```bash
+# Keep more (or fewer) versions on disk
+CUA_DRIVER_RS_KEEP_VERSIONS=10 bash install.sh   # keep 10 most recent
+CUA_DRIVER_RS_KEEP_VERSIONS=0  bash install.sh   # disable GC entirely
+```
+
+Two invariants worth knowing:
+
+- **The active install is always preserved**, even if it would otherwise fall outside the keep window (e.g. you rolled back to an older version). Worst-case on-disk count is `keep + 1`.
+- **Per-target filtering** — a multi-arch dev with both `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` directories under the same `$CUA_DRIVER_RS_HOME` (rare, but possible with shared/NFS homes) gets each target's history GC'd independently of the other.
+
+The macOS install path is unaffected — `/Applications/CuaDriverRs.app` is an in-place replacement with no per-version accumulation.
+</Callout>
+
+<Callout type="info">
+**Concurrent-install lockfile.** Running two installs at the same time — e.g. clicking the one-liner while a CI script is also installing, or two terminals racing — used to risk a partially-installed state if both hit the atomic `current` swap simultaneously. The installer now takes a process-level lock per `$CUA_DRIVER_RS_HOME` so the second install waits for the first to finish:
+
+```
+==> another cua-driver-rs install is already in progress (lock at
+    ~/.cua-driver-rs/packages/.install.lock.d); waiting...
+```
+
+If you see this, the safe action is to let it block — it polls every 1 second and proceeds the moment the holding install finishes. The lock entry stamps the holder's pid, start time, and invocation args so you can confirm what's running:
+
+```bash
+cat ~/.cua-driver-rs/packages/.install.lock.d/info
+# pid=43210
+# started=2026-05-17T09:14:22Z
+# argv=install.sh
+```
+
+```powershell
+Get-Content $env:USERPROFILE\.cua-driver-rs\install.lock
+# pid=43210
+# started=2026-05-17T09:14:22.123Z
+# invocation=install.ps1 -Release latest
+```
+
+**Stale-lock recovery.** If the holding process died without releasing (kill -9, host reboot mid-install, OOM), the lock would otherwise wedge every subsequent install. After **600 seconds** of waiting, the installer assumes the lock is stale, force-releases it with a loud `lock appears stale (>600s), forcing release` log, and proceeds. So even in the pathological case the worst recovery is a 10-minute wait, not a manual `rm -rf` on internal-looking paths.
+
+Lock locations:
+
+| Platform | Lock |
+|---|---|
+| Linux | `$CUA_DRIVER_RS_HOME/packages/.install.lock.d/` (mkdir-based mutex) |
+| Windows | `$env:CUA_DRIVER_RS_HOME\install.lock` (`FileShare::None` mutex) |
+
+Both primitives are unprivileged — no sudo, no admin elevation, no Developer Mode. The lock is released on every script exit path (success, error, Ctrl-C, `exit`).
 </Callout>
 
 ### Verify it worked

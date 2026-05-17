@@ -7,6 +7,13 @@
 //! - At least one entry in `windows` array OR `windows: []` if the window
 //!   didn't materialize within the 5×200ms retry budget.
 //!
+//! On Win11 we additionally try the packaged-app path: an explicit AUMID
+//! via `bundle_id` should return a non-stub pid (i.e. the real Notepad
+//! UWP process). The legacy `notepad.exe` smoke-test above stays for
+//! Win10 / non-packaged-Notepad coverage; both should pass on Win11
+//! because the plain `name` path now goes through the AppsFolder
+//! lookup first.
+//!
 //! Cleans up: terminates the launched pid before exit.
 
 use std::io::{Read, Write};
@@ -68,10 +75,17 @@ fn main() {
 
     println!("Structured: pid={pid} name={name:?} running={running} active={active} windows={} bundle_id={bundle_id}", windows.len());
 
-    assert!(pid > 0, "pid must be captured from ShellExecuteEx");
+    assert!(pid > 0, "pid must be captured (ShellExecuteEx pid or packaged-app pid)");
     assert!(running, "running must be true");
     assert!(!active, "active must be false (background launch — Swift's invariant)");
-    assert!(bundle_id.is_null(), "bundle_id must be null on Windows");
+    // bundle_id is either null (plain Win32 launch — Win10 / unpackaged
+    // Notepad) or an AUMID string (Win11 — `notepad` resolved through
+    // shell:AppsFolder to the packaged Notepad). Both are correct.
+    assert!(
+        bundle_id.is_null()
+            || bundle_id.as_str().map(|s| s.contains('!')).unwrap_or(false),
+        "bundle_id must be null OR an AUMID (`pkg!app`); got {bundle_id}"
+    );
 
     // Cleanup: kill notepad.
     std::process::Command::new("taskkill")
@@ -79,6 +93,39 @@ fn main() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status().ok();
+
+    // 3. AUMID path (Win11 only — skipped silently on Win10 since the
+    //    AUMID won't be installed there).
+    let aumid = "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App";
+    let resp_aumid = req(
+        &mut pipe,
+        &format!(r#"{{"method":"call","name":"launch_app","args":{{"bundle_id":"{aumid}"}}}}"#),
+    );
+    let v_aumid: serde_json::Value = serde_json::from_str(resp_aumid.trim()).expect("parse");
+    let pid_aumid = v_aumid
+        .pointer("/result/structuredContent/pid")
+        .and_then(|n| n.as_u64());
+    let bundle_id_aumid = v_aumid.pointer("/result/structuredContent/bundle_id");
+    match (pid_aumid, bundle_id_aumid) {
+        (Some(p), Some(b)) if p > 0 => {
+            println!("AUMID launch returned pid={p}, bundle_id={b}");
+            assert_eq!(
+                b.as_str(),
+                Some(aumid),
+                "bundle_id must round-trip the AUMID passed in"
+            );
+            // Cleanup the packaged-app pid too.
+            std::process::Command::new("taskkill")
+                .args(["/PID", &p.to_string(), "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status().ok();
+        }
+        _ => {
+            // Not installed (Win10 host or stripped Win11 image) — fine.
+            println!("AUMID path: packaged Notepad not installed on this host; skipped");
+        }
+    }
 
     println!("\n✅ PASS: launch_app text format, pid capture, and Swift invariants verified");
 }

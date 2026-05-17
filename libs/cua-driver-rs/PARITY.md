@@ -502,10 +502,27 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    listing per-window `"- <title|(no title)> [window_id: ID]"` lines
    and a `→ Call get_window_state(...)` hint, matching Swift verbatim.
 4. **`bundle_id` parameter** — accepted as an alias for `name` (Windows
-   has no bundle-identifier concept). Cross-platform callers can use
-   the same field name.
+   has no bundle-identifier concept), with one extra meaning on Win11:
+   when the value matches an AUMID (`{PackageFamilyName}!{ApplicationId}`,
+   contains `!`), `launch_app` routes through
+   `IApplicationActivationManager::ActivateApplication` and returns
+   the real packaged-app pid. Without this routing, Win11 launches of
+   built-in apps (Notepad, Calculator, Paint, …) return the pid of
+   the ~7 KB System32 stub that exits within milliseconds — useless
+   for `list_windows`, `get_window_state`, etc.
+4a. **`name` → packaged-app lookup (Win11)** — `name` is now first
+    resolved against `shell:AppsFolder` (the Start Menu's "all apps"
+    index, cached for the lifetime of the driver process). On a hit
+    the lookup yields an AUMID and goes through the packaged path
+    (see #4); on a miss it falls back to `ShellExecuteExW`'s PATH
+    search. `.exe` suffix is stripped before matching so `"notepad"`
+    and `"notepad.exe"` both resolve to the packaged Notepad.
+4b. **`aumid` parameter** — optional explicit AUMID; cleaner than
+    overloading `bundle_id` when the caller has the AUMID in hand.
+    Takes precedence over `bundle_id`/`name`.
 5. **`additional_arguments`** — honored, passed as `lpParameters` to
-   `ShellExecuteExW`.
+   `ShellExecuteExW` (Win32 path) or as the activation `arguments`
+   string to `ActivateApplication` (packaged path).
 6. **Window-resolution retry** — ports Swift's 5-attempt 100/200ms
    retry to absorb Win32 window-creation lag after `ShellExecuteEx`
    returns.
@@ -527,9 +544,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 `launch_app_parity.exe` launches Notepad:
 - Header `"✅ Launched notepad.exe (pid 30612) in background."` ✓
-- `structuredContent.pid` is the actual ShellExecuteEx pid ✓
-- `bundle_id: null`, `running: true`, `active: false` ✓
+- `structuredContent.pid` is the actual ShellExecuteEx pid (Win10)
+  or the real packaged-app pid (Win11, after AppsFolder lookup) ✓
+- `bundle_id: null` on Win10 / unpackaged Notepad; AUMID string on
+  Win11 packaged Notepad ✓
+- `running: true`, `active: false` ✓
 - Notepad killed on test exit. ✓
+- On Win11 the parity binary additionally exercises an explicit-AUMID
+  launch via `bundle_id="Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"`
+  and asserts `bundle_id` round-trips identically. ✓
 
 ### Fixed (macOS)
 

@@ -243,7 +243,9 @@ fn enumerate_apps_folder() -> windows::core::Result<Vec<AppsFolderEntry>> {
         // — the documented sentinel for "iterator exhausted".
         let mut slot: [Option<IShellItem>; 1] = [None];
         let mut fetched: u32 = 0;
-        let _ = unsafe { enumerator.Next(&mut slot, Some(&mut fetched)) };
+        let _ = unsafe {
+            enumerator.Next(&mut slot, Some(&mut fetched as *mut u32))
+        };
         if fetched == 0 {
             break;
         }

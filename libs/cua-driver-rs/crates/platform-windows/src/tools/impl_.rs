@@ -491,29 +491,46 @@ impl Tool for LaunchAppTool {
             name: "launch_app".into(),
             // Description ported from Swift `LaunchAppTool.swift` with
             // Windows-specific notes. `bundle_id` is accepted as an alias
-            // for `name` (Windows has no bundle-identifier concept).
+            // for `name` on Windows, with one extra behavior: if the
+            // string looks like an AUMID (App User Model ID — contains
+            // `!`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`) we
+            // route through `IApplicationActivationManager` so packaged
+            // (Microsoft Store / UWP / MSIX) apps return the real
+            // process pid instead of a stub-redirect pid.
             description: "Launch a Windows app hidden — the driver never brings the target to \
                 the foreground, the target's window is launched with SW_SHOWNOACTIVATE so it \
                 does not steal focus from whatever is currently frontmost.\n\n\
-                Provide either `bundle_id` / `name` (resolved via ShellExecuteEx's PATH search) \
-                or `path` (full path to an executable). If both `name` and `path` are given, \
-                `path` wins. `urls` opens each URL in the default browser without activating it.\n\n\
+                Provide either `bundle_id` / `name` / `aumid` (resolved as below) or `path` \
+                (full path to an executable). If both `name` and `path` are given, `path` wins. \
+                `urls` opens each URL in the default browser without activating it.\n\n\
+                Routing order: explicit `aumid` (or a `bundle_id` containing `!`) activates the \
+                packaged app via `IApplicationActivationManager::ActivateApplication`, returning \
+                the real packaged-process pid — required on Win11 for built-in apps like \
+                Notepad, Calculator, and Paint, which now ship as Microsoft Store packages \
+                where the legacy .exe in System32 is a ~7 KB stub that exits immediately. A \
+                plain `name` first attempts a `shell:AppsFolder` lookup; on a match it goes \
+                through the packaged-app path, otherwise it falls back to ShellExecuteEx's \
+                PATH search.\n\n\
                 Returns the launched app's pid, name, active flag, AND a `windows` array — \
                 same per-window shape `list_windows` returns. When the launch settles but no \
                 window has materialized yet (transient; rare), `windows` comes back empty — \
-                call `list_windows(pid)` explicitly a moment later.\n\n\
+                call `list_windows(pid)` explicitly a moment later. `bundle_id` in the \
+                response is set to the AUMID actually used for packaged-app launches and \
+                `null` for ShellExecuteEx launches.\n\n\
                 Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via \
                 LaunchServices; Windows has no LaunchServices, so `path` is the canonical form). \
                 The macOS-specific `electron_debugging_port`, `webkit_inspector_port`, \
                 `creates_new_application_instance`, and `additional_arguments` fields are \
-                accepted; `additional_arguments` is honored, the others currently no-op on \
-                Windows.".into(),
+                accepted; `additional_arguments` is honored (forwarded as ShellExecuteEx \
+                parameters or as the AUMID activation arguments string), the others currently \
+                no-op on Windows.".into(),
             input_schema: json!({"type":"object","properties":{
-                "bundle_id":{"type":"string","description":"Alias for `name` on Windows (no bundle-id concept). Either bundle_id or name must be provided when path is absent."},
-                "name":{"type":"string","description":"App display name passed to ShellExecuteEx."},
-                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id."},
+                "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, or path must be provided."},
+                "aumid":{"type":"string","description":"Explicit AUMID for a packaged app. Cleaner alternative to overloading `bundle_id`. Takes precedence over `bundle_id` / `name` when present."},
+                "name":{"type":"string","description":"App display name. Tried against the `shell:AppsFolder` index first for packaged-app lookup; on a miss, passed to ShellExecuteEx's PATH search."},
+                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
-                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process."},
+                "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "electron_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."}
@@ -526,6 +543,7 @@ impl Tool for LaunchAppTool {
         let path_opt = args.get("path").and_then(|v| v.as_str()).map(str::to_owned);
         let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
         let bundle_id_opt = args.get("bundle_id").and_then(|v| v.as_str()).map(str::to_owned);
+        let aumid_opt = args.get("aumid").and_then(|v| v.as_str()).map(str::to_owned);
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
@@ -533,8 +551,9 @@ impl Tool for LaunchAppTool {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
-        // Resolve target — path > name > bundle_id (alias of name on Windows).
+        // Resolve target — path > aumid > name > bundle_id (alias of name on Windows).
         let target = path_opt.clone()
+            .or(aumid_opt.clone())
             .or(name_opt.clone())
             .or(bundle_id_opt.clone());
 
@@ -543,66 +562,163 @@ impl Tool for LaunchAppTool {
             return ToolResult::error("Provide either bundle_id or name to identify the app to launch.");
         }
 
-        // Single launch path: use ShellExecuteExW with SEE_MASK_NOCLOSEPROCESS
-        // so we can read the spawned process's pid back.
-        let display = target.clone().unwrap_or_else(|| urls.join(", "));
+        // ── Packaged-app (UWP / MSIX) routing decision ──────────────────────
+        //
+        // Routing precedence — most explicit signal wins:
+        //   1. `aumid` parameter (any value): packaged path, AUMID = value.
+        //   2. `bundle_id` containing `!`: packaged path, AUMID = value
+        //      (Win32 PATH lookups never produce a `!` in the executable
+        //      name, so this is a safe marker of caller intent).
+        //   3. `name` with no `path`: try `shell:AppsFolder` lookup; on a
+        //      hit, packaged path with the resolved AUMID. On miss, fall
+        //      through to ShellExecuteExW (existing Win32 path).
+        //   4. Anything else: existing ShellExecuteExW path.
+        //
+        // `path` is intentionally excluded from packaged routing — when
+        // the caller has a concrete executable in mind they want
+        // CreateProcess semantics, not Start Menu activation.
+        let aumid_for_uwp: Option<String> = if path_opt.is_some() {
+            None
+        } else if let Some(a) = aumid_opt.clone() {
+            Some(a)
+        } else if let Some(b) = bundle_id_opt.clone().filter(|s| crate::launch_uwp::is_aumid(s)) {
+            Some(b)
+        } else if let Some(n) = name_opt.clone() {
+            // Run the (cached) AppsFolder lookup on a blocking thread to
+            // avoid stalling the async runtime on the cold-enumeration
+            // path (~200 ms first call, ~µs after).
+            tokio::task::spawn_blocking(move || crate::launch_uwp::resolve_aumid_by_name(&n))
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
+
+        // Single launch path. `display` is the human-readable identifier
+        // we report in the success header; for the packaged path it's
+        // the AUMID, which is more informative than the display name.
+        let display = aumid_for_uwp
+            .clone()
+            .or_else(|| target.clone())
+            .unwrap_or_else(|| urls.join(", "));
         let extra_joined = extra_args.join(" ");
-        let urls_clone = urls.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
-            use windows::Win32::UI::Shell::{
-                ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS,
-            };
-            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
-            use windows::Win32::System::Threading::GetProcessId;
-            use windows::Win32::Foundation::CloseHandle;
-            use windows::core::PCWSTR;
 
-            fn to_wide(s: &str) -> Vec<u16> {
-                s.encode_utf16().chain(std::iter::once(0)).collect()
+        // Branch: AUMID activation if we resolved one; else legacy
+        // ShellExecuteExW. Both branches still need to handle `urls`
+        // (additional URLs always go through ShellExecuteExW since the
+        // Start Menu doesn't activate by URL).
+        let pid = if let Some(aumid) = aumid_for_uwp.clone() {
+            let aumid_clone = aumid.clone();
+            let args_clone = extra_joined.clone();
+            let activation = tokio::task::spawn_blocking(move || {
+                crate::launch_uwp::launch_uwp(&aumid_clone, &args_clone)
+            })
+            .await;
+            match activation {
+                Ok(Ok(p)) => p,
+                Ok(Err(e)) => return ToolResult::error(format!(
+                    "Failed to activate packaged app {aumid:?}: {e}"
+                )),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
-            let op_w   = to_wide("open");
-            let file_w = to_wide(if let Some(t) = target.as_deref() { t } else { urls_clone.first().map(|s| s.as_str()).unwrap_or("") });
-            let args_w = to_wide(&extra_joined);
+        } else {
+            // Legacy ShellExecuteExW path — unchanged behavior for plain
+            // Win32 apps and for callers passing an explicit `path`.
+            let urls_clone = urls.clone();
+            let target_for_shell = target.clone();
+            let extra_for_shell = extra_joined.clone();
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+                use windows::Win32::UI::Shell::{
+                    ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS,
+                };
+                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+                use windows::Win32::System::Threading::GetProcessId;
+                use windows::Win32::Foundation::CloseHandle;
+                use windows::core::PCWSTR;
 
-            let mut info = SHELLEXECUTEINFOW {
-                cbSize:       std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-                fMask:        SEE_MASK_NOCLOSEPROCESS,
-                lpVerb:       PCWSTR(op_w.as_ptr()),
-                lpFile:       PCWSTR(file_w.as_ptr()),
-                lpParameters: if extra_joined.is_empty() { PCWSTR::null() } else { PCWSTR(args_w.as_ptr()) },
-                nShow:        SW_SHOWNOACTIVATE.0,
-                ..Default::default()
-            };
-            unsafe { ShellExecuteExW(&mut info)?; }
-            let pid = if !info.hProcess.is_invalid() {
-                let p = unsafe { GetProcessId(info.hProcess) };
-                unsafe { let _ = CloseHandle(info.hProcess); }
-                p
-            } else { 0 };
+                fn to_wide(s: &str) -> Vec<u16> {
+                    s.encode_utf16().chain(std::iter::once(0)).collect()
+                }
+                let op_w   = to_wide("open");
+                let file_w = to_wide(if let Some(t) = target_for_shell.as_deref() {
+                    t
+                } else {
+                    urls_clone.first().map(|s| s.as_str()).unwrap_or("")
+                });
+                let args_w = to_wide(&extra_for_shell);
 
-            // Open any additional URLs in the default browser (no focus
-            // steal, no pid capture for these — Swift's NSWorkspace flow
-            // behaves the same way for secondary URLs).
-            for url in &urls_clone[urls_clone.len().min(1)..] {
-                let file = to_wide(url);
-                let mut url_info = SHELLEXECUTEINFOW {
-                    cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-                    lpVerb: PCWSTR(op_w.as_ptr()),
-                    lpFile: PCWSTR(file.as_ptr()),
-                    nShow:  SW_SHOWNOACTIVATE.0,
+                let mut info = SHELLEXECUTEINFOW {
+                    cbSize:       std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                    fMask:        SEE_MASK_NOCLOSEPROCESS,
+                    lpVerb:       PCWSTR(op_w.as_ptr()),
+                    lpFile:       PCWSTR(file_w.as_ptr()),
+                    lpParameters: if extra_for_shell.is_empty() {
+                        PCWSTR::null()
+                    } else {
+                        PCWSTR(args_w.as_ptr())
+                    },
+                    nShow:        SW_SHOWNOACTIVATE.0,
                     ..Default::default()
                 };
-                unsafe { let _ = ShellExecuteExW(&mut url_info); }
+                unsafe { ShellExecuteExW(&mut info)?; }
+                let pid = if !info.hProcess.is_invalid() {
+                    let p = unsafe { GetProcessId(info.hProcess) };
+                    unsafe { let _ = CloseHandle(info.hProcess); }
+                    p
+                } else { 0 };
+
+                // Open any additional URLs in the default browser (no focus
+                // steal, no pid capture for these — Swift's NSWorkspace flow
+                // behaves the same way for secondary URLs).
+                for url in &urls_clone[urls_clone.len().min(1)..] {
+                    let file = to_wide(url);
+                    let mut url_info = SHELLEXECUTEINFOW {
+                        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                        lpVerb: PCWSTR(op_w.as_ptr()),
+                        lpFile: PCWSTR(file.as_ptr()),
+                        nShow:  SW_SHOWNOACTIVATE.0,
+                        ..Default::default()
+                    };
+                    unsafe { let _ = ShellExecuteExW(&mut url_info); }
+                }
+
+                Ok(pid)
+            }).await;
+
+            match result {
+                Ok(Ok(p))  => p,
+                Ok(Err(e)) => return ToolResult::error(format!("Failed to launch: {e}")),
+                Err(e)     => return ToolResult::error(format!("Task error: {e}")),
             }
-
-            Ok(pid)
-        }).await;
-
-        let pid = match result {
-            Ok(Ok(p))  => p,
-            Ok(Err(e)) => return ToolResult::error(format!("Failed to launch: {e}")),
-            Err(e)     => return ToolResult::error(format!("Task error: {e}")),
         };
+
+        // When the packaged path was taken we still need to fan out any
+        // extra URLs to the default browser (ShellExecuteEx — no pid
+        // capture, mirroring Swift's NSWorkspace secondary-URL flow).
+        if aumid_for_uwp.is_some() && !urls.is_empty() {
+            let urls_clone = urls.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+                use windows::core::PCWSTR;
+                fn to_wide(s: &str) -> Vec<u16> {
+                    s.encode_utf16().chain(std::iter::once(0)).collect()
+                }
+                let op_w = to_wide("open");
+                for url in &urls_clone {
+                    let file = to_wide(url);
+                    let mut url_info = SHELLEXECUTEINFOW {
+                        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                        lpVerb: PCWSTR(op_w.as_ptr()),
+                        lpFile: PCWSTR(file.as_ptr()),
+                        nShow:  SW_SHOWNOACTIVATE.0,
+                        ..Default::default()
+                    };
+                    unsafe { let _ = ShellExecuteExW(&mut url_info); }
+                }
+            })
+            .await;
+        }
 
         // Resolve the pid's windows so the caller can skip a list_windows
         // round-trip — same approach as Swift's `resolveWindows`.  Retry
@@ -636,9 +752,17 @@ impl Tool for LaunchAppTool {
             }
             summary.push_str(&format!("\n→ Call get_window_state(pid: {pid}, window_id) to inspect."));
         }
+        // `bundle_id` is the AUMID when we went through the packaged-app
+        // path (so the caller can round-trip the same value to relaunch),
+        // and `null` for plain Win32 launches (which truly have no bundle
+        // identifier concept on Windows).
+        let bundle_id_response = match aumid_for_uwp.as_ref() {
+            Some(a) => serde_json::Value::String(a.clone()),
+            None => serde_json::Value::Null,
+        };
         let structured = json!({
             "pid":       pid,
-            "bundle_id": serde_json::Value::Null,
+            "bundle_id": bundle_id_response,
             "name":      display,
             "running":   true,
             "active":    false,  // SW_SHOWNOACTIVATE — Swift's background-launch invariant

@@ -399,6 +399,32 @@ Provide either `bundle_id` (preferred — unambiguous, e.g.
 against /Applications and /System/Applications). If both are
 given, bundle_id wins.
 
+<Callout type="info">
+  **Windows-only — packaged-app (UWP / MSIX) routing.** On Win11 many
+  built-in apps (Notepad, Calculator, Paint, …) ship as Microsoft Store
+  packages; the legacy `notepad.exe` / `calc.exe` / `mspaint.exe` in
+  `C:\Windows\System32\` are now ~7 KB stubs that activate the packaged
+  equivalent and exit within milliseconds. To return the **real**
+  packaged-process pid (the one whose window the user interacts with),
+  `launch_app` on Windows accepts:
+
+  - `bundle_id` containing `!` (e.g.
+    `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`) — treated as an
+    App User Model ID (AUMID) and routed through
+    `IApplicationActivationManager::ActivateApplication`.
+  - `aumid` — explicit AUMID field, takes precedence over `bundle_id`.
+  - Plain `name` — first looked up against `shell:AppsFolder` (the
+    Start Menu index, cached for the lifetime of the driver); on a hit
+    the resolved AUMID is used, on a miss it falls back to
+    `ShellExecuteEx`'s PATH search. `notepad` and `notepad.exe` both
+    resolve to the packaged Notepad on Win11.
+
+  Explicit `path` always uses `ShellExecuteEx` semantics and skips
+  packaged routing — pass it when you need CreateProcess behavior.
+  `bundle_id` in the response is the AUMID actually used (or `null`
+  for plain Win32 launches).
+</Callout>
+
 Launches in the background — the app's window appears on
 screen but does not steal focus from whatever is currently
 frontmost. The AX tree is fully populated and automation
@@ -470,7 +496,8 @@ later to resolve a target.
 **Arguments:**
 
 - `additional_arguments` (array of string, optional): Extra command-line arguments passed to the launched process. Passed directly as argv entries — no shell expansion. Example: ["--user-data-dir=/tmp/cua-session", "--no-first-run"] for an isolated Chrome session.
-- `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator.
+- `aumid` (string, optional, Windows only): Explicit App User Model ID for a packaged (UWP / MSIX) app, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Routes through `IApplicationActivationManager::ActivateApplication`. Takes precedence over `bundle_id` / `name`. No effect on macOS.
+- `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. On Windows, also accepted as an AUMID (when it contains `!`) for packaged-app launches.
 - `creates_new_application_instance` (boolean, optional): Force a brand-new process even if the app is already running. Useful for isolated browser sessions: pass creates_new_application_instance=true together with additional_arguments=["--user-data-dir=/tmp/session-a", "--no-first-run", "--no-default-browser-check"] to launch a sandboxed Chrome that cannot see the user's real profile, cookies, or extensions. Each session gets its own pid and window identity and can be controlled independently.
 - `electron_debugging_port` (integer, optional): Launch an Electron app with --remote-debugging-port=&lt;N&gt; so the `page` tool gets full renderer/DOM access. Use 9222 unless running multiple Electron apps. Ignored for non-Electron apps.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.

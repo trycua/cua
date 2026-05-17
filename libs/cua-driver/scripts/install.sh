@@ -73,7 +73,12 @@ while [[ $# -gt 0 ]]; do
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
             ;;
-        --bin-dir)           BIN_DIR="$2"; FORWARDED_ARGS+=("$1" "$2"); shift 2 ;;
+        --bin-dir)
+            if [[ -z "${2:-}" || "${2:0:1}" == "-" ]]; then
+                printf 'error: --bin-dir requires a value\n' >&2
+                exit 2
+            fi
+            BIN_DIR="$2"; FORWARDED_ARGS+=("$1" "$2"); shift 2 ;;
         --bin-dir=*)         BIN_DIR="${1#*=}"; FORWARDED_ARGS+=("$1"); shift ;;
         --no-modify-path)    NO_MODIFY_PATH=1; FORWARDED_ARGS+=("$1"); shift ;;
         --)                  PASSTHROUGH=1; shift ;;  # forward the rest verbatim

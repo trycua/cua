@@ -551,6 +551,14 @@ jobs:
           # Re-authenticate the origin remote with the app token so the
           # push uses the bypass-enabled identity, not the default
           # github-actions[bot] credentials baked in by actions/checkout.
+          #
+          # actions/checkout sets `http.https://github.com/.extraheader`
+          # with the default GITHUB_TOKEN; that header otherwise overrides
+          # the URL-embedded App token on the push (two Authorization
+          # headers sent → server takes the extraheader → push rejected
+          # by the main-branch ruleset). Drop it so only the App token's
+          # auth survives.
+          git config --unset-all "http.https://github.com/.extraheader" || true
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git fetch origin main
           git checkout -B bake-version origin/main

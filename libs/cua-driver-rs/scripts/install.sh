@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cua-driver-rs installer — download the latest cua-driver-rs release tarball
 # from GitHub Releases and drop the binary into ~/.local/bin (or a path given
-# via --bin-dir / CUA_DRIVER_RS_BIN_DIR).  Sudo-free.
+# via --bin-dir / CUA_DRIVER_RS_INSTALL_DIR).  Sudo-free.
 #
 # This is the Rust port of cua-driver — cross-platform (macOS / Linux / Windows
 # via WSL or git-bash) computer-use automation. The Swift cua-driver (macOS
@@ -13,13 +13,37 @@
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
 #
 # Flags:
-#   --bin-dir <path>     install the binary to <path> instead of ~/.local/bin
+#   --bin-dir <path>     install the visible binary/symlink to <path>
+#                        instead of ~/.local/bin
 #   --no-modify-path     skip auto-appending an `export PATH=...` line
 #
 # Env overrides:
-#   CUA_DRIVER_RS_VERSION=0.1.2     pin a specific release tag
-#   CUA_DRIVER_RS_BIN_DIR=PATH      same as --bin-dir
-#   CUA_DRIVER_RS_NO_MODIFY_PATH=1  same as --no-modify-path
+#   CUA_DRIVER_RS_VERSION=0.1.2          pin a specific release tag
+#   CUA_DRIVER_RS_INSTALL_DIR=PATH       same as --bin-dir; sets the visible
+#                                        binary location
+#   CUA_DRIVER_RS_BIN_DIR=PATH           legacy alias for INSTALL_DIR
+#   CUA_DRIVER_RS_HOME=PATH              package home for versioned installs
+#                                        (default ~/.cua-driver-rs). Holds
+#                                        packages/releases/<v>-<target>/ and
+#                                        packages/current/ on Linux/Windows.
+#   CUA_DRIVER_RS_NO_MODIFY_PATH=1       same as --no-modify-path
+#
+# On-disk layout (Linux; macOS keeps its .app-in-/Applications layout, see
+# below):
+#   $CUA_DRIVER_RS_HOME/
+#     packages/
+#       releases/
+#         0.1.3-x86_64-unknown-linux-gnu/cua-driver   (per-version binary)
+#         0.1.4-x86_64-unknown-linux-gnu/cua-driver
+#       current/cua-driver -> ../releases/<active>/cua-driver  (active version)
+#   $CUA_DRIVER_RS_INSTALL_DIR/cua-driver -> $HOME/packages/current/cua-driver
+#
+# Atomic upgrade: a new install drops the binary into a fresh per-version
+# dir, then rename(2)-swaps the `current` symlink to point at it. A
+# running daemon keeps its already-mmap'd binary open across the swap
+# (open file handles survive). Rollback: re-point `current` at any older
+# entry under `releases/`. No auto-cleanup of old releases — that's the
+# feature, not an oversight.
 #
 # ⚠️  This is a BETA release. The Rust port is feature-complete on Windows
 # and Linux; macOS parity with the Swift cua-driver is in progress. For
@@ -29,7 +53,10 @@ set -euo pipefail
 REPO="trycua/cua"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-rs-v"
-BIN_DIR="${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}"
+# CUA_DRIVER_RS_INSTALL_DIR is the documented name; CUA_DRIVER_RS_BIN_DIR is
+# the legacy alias kept for users with the old env in their shell rc.
+BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
+HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
 
 # macOS-only: name and install location of the .app bundle that wraps
@@ -62,14 +89,42 @@ err() { printf 'error: %s\n' "$*" >&2; }
 
 OS=$(uname -s)
 ARCH_RAW=$(uname -m)
+
+# Rosetta translation correction.
+#
+# `uname -m` reflects the architecture of the *running process*, not the
+# physical CPU. When an Apple Silicon Mac is driving an x86_64-translated
+# shell (Rosetta — e.g. `arch -x86_64 bash`, or a Homebrew install pinned
+# to /usr/local/), uname reports x86_64 even though the native arch is
+# arm64. We'd then download the x86_64 binary and run it under Rosetta —
+# slower, and an unnecessary translation when a native arm64 binary
+# exists on the release page.
+#
+# `sysctl.proc_translated` returns 1 when the current process is running
+# under Rosetta translation; absent/0 means native. Only meaningful on
+# macOS — the sysctl key is missing on Linux, so the redirect-to-null
+# keeps the check a silent no-op there.
+if [[ "$OS" == "Darwin" && "$ARCH_RAW" == "x86_64" ]]; then
+    if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; then
+        log "detected Rosetta-translated shell on Apple Silicon — switching to darwin-arm64"
+        ARCH_RAW="arm64"
+    fi
+fi
+
+# LABEL  = the release-asset tarball label (matches what cd-rust-cua-driver.yml
+#          publishes; user-facing).
+# TARGET = the Rust target triple, used in the on-disk per-version dir name so
+#          a multi-arch dev can keep e.g. aarch64-apple-darwin and
+#          x86_64-unknown-linux-gnu side by side under $HOME_DIR/packages/
+#          releases/ without collision.
 case "$OS-$ARCH_RAW" in
-    Darwin-arm64|Darwin-aarch64)     LABEL="darwin-arm64"   ;;
-    Darwin-x86_64)                   LABEL="darwin-x86_64"  ;;
-    Linux-x86_64|Linux-amd64)        LABEL="linux-x86_64"   ;;
+    Darwin-arm64|Darwin-aarch64)     LABEL="darwin-arm64"  ; TARGET="aarch64-apple-darwin"      ;;
+    Darwin-x86_64)                   LABEL="darwin-x86_64" ; TARGET="x86_64-apple-darwin"       ;;
+    Linux-x86_64|Linux-amd64)        LABEL="linux-x86_64"  ; TARGET="x86_64-unknown-linux-gnu"  ;;
     *)
         err "unsupported platform: $OS / $ARCH_RAW"
         err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64."
-        err "  Windows users should download cua-driver-rs-<v>-windows-x86_64.zip from GitHub Releases directly."
+        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex)."
         exit 1
         ;;
 esac
@@ -82,10 +137,30 @@ for cmd in curl tar; do
 done
 
 # --- Resolve release tag ------------------------------------------------
+#
+# Version is resolved in priority order:
+#   1. CUA_DRIVER_RS_VERSION env var (explicit pin)
+#   2. CUA_DRIVER_RS_BAKED_VERSION below (set automatically by CD after
+#      each release — no API call needed)
+#   3. GitHub Releases API (fallback for dev / un-baked checkouts;
+#      unauthenticated = 60 req/hr per IP)
+#
+# The baked value is the common-case default: `curl ... | bash` against
+# `main` resolves the version locally with zero API calls, so an API
+# outage / rate limit / network blip can't break a default install. The
+# API fallback only fires when this script is run from a branch where
+# the baked line hasn't been updated yet (dev / pre-release checkouts).
+#
+# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="0.2.0"
+# ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
     TAG="${TAG_PREFIX}${CUA_DRIVER_RS_VERSION#v}"
     log "using version from CUA_DRIVER_RS_VERSION: $TAG"
+elif [[ -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
+    TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
+    log "using baked release: $TAG"
 else
     log "resolving latest $TAG_PREFIX* release via GitHub API"
     # Pinned to the exact `cua-driver-rs-v*` prefix so this script can never
@@ -174,7 +249,20 @@ mkdir -p "$BIN_DIR"
 # should fire. Same shape as the Swift `cua-driver` install path —
 # different bundle id (com.trycua.cuadriverrs) so the two coexist.
 #
-# Linux / WSL: drop the bare binary directly into BIN_DIR (no .app).
+# The macOS path intentionally does NOT use the
+# $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
+# Linux. Reason: /Applications/CuaDriverRs.app placement is the
+# anchor for both TCC attribution (cdhash + bundle id) and
+# LaunchServices' `open -a CuaDriverRs` discovery — symlinking the
+# .app from /Applications to a versioned dir under $HOME_DIR breaks
+# both. The asymmetry is deliberate; rollback on macOS = reinstall
+# an older release tag.
+#
+# Linux: drop the binary into the per-version dir under
+# $HOME_DIR/packages/releases/<version>-<target>/ and swap the
+# `current` symlink atomically. The visible $BIN_DIR/cua-driver
+# symlinks into `current` so PATH consumers (and MCP client configs)
+# never need to change when the active version moves.
 #
 # Fail fast on Darwin if the .app is missing — falling through to the
 # bare-binary install would silently produce a CLI that can never
@@ -210,8 +298,51 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     ln -sf "$APP_BINARY" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $APP_BINARY"
 else
-    install -m 0755 "$SRC" "$BIN_LINK"
-    log "installed $BIN_LINK (version $VERSION)"
+    # Linux: versioned-dirs + atomic `current` symlink swap.
+    #
+    # Layout under $HOME_DIR/packages/:
+    #   releases/<version>-<target>/cua-driver   (this install)
+    #   releases/<older>-<target>/cua-driver     (kept for rollback)
+    #   current/cua-driver -> ../releases/<active>-<target>/cua-driver
+    #
+    # Swap mechanics: write the new symlink to `current.tmp`, then
+    # `mv -Tf current.tmp current` so the rename is a single
+    # filesystem call. A daemon that already mmap'd the previous
+    # `current/cua-driver` keeps using the open file handle — Unix
+    # only invalidates path-based lookups, not held fds.
+    PACKAGES_DIR="$HOME_DIR/packages"
+    RELEASES_DIR="$PACKAGES_DIR/releases"
+    CURRENT_LINK="$PACKAGES_DIR/current"
+    VERSIONED_DIR="$RELEASES_DIR/${VERSION}-${TARGET}"
+
+    mkdir -p "$VERSIONED_DIR"
+    install -m 0755 "$SRC" "$VERSIONED_DIR/$BINARY_NAME"
+    log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"
+
+    # `ln -sfn` would replace an existing dir-symlink in place but is
+    # not atomic on Linux (it unlinks then symlinks). Use a tmp symlink
+    # + atomic rename instead so a concurrent `cua-driver` lookup
+    # always sees either the old or new target, never an absent path.
+    TMP_LINK="$PACKAGES_DIR/.current.$$"
+    rm -rf "$TMP_LINK"
+    # Relative target so the link is portable if $HOME_DIR is moved.
+    ln -s "releases/${VERSION}-${TARGET}" "$TMP_LINK"
+    # `mv -Tf` is the atomic-rename form on GNU coreutils (Linux). On
+    # BSD mv (macOS — which doesn't take this branch in production, but
+    # we still want this script to be runnable from a macOS dev shell
+    # for testing) `-T` is unknown; fall back to a non-atomic rm+mv.
+    if ! mv -Tf "$TMP_LINK" "$CURRENT_LINK" 2>/dev/null; then
+        rm -rf "$CURRENT_LINK"
+        mv "$TMP_LINK" "$CURRENT_LINK"
+    fi
+    log "current -> releases/${VERSION}-${TARGET}"
+
+    # Visible PATH entry: replace whatever was at $BIN_LINK (could be
+    # an old plain binary from a pre-versioned-dirs install) with a
+    # symlink into `current`.
+    rm -f "$BIN_LINK"
+    ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
+    log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
 fi
 
 # --- Fire the one-shot install telemetry ping ---------------------------

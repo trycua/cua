@@ -138,10 +138,20 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 
 | Env var | Default (Linux/macOS) | Default (Windows) | What it controls |
 |---|---|---|---|
-| `CUA_DRIVER_RS_VERSION` | unset → resolve latest | unset → resolve latest | Pin a specific release (e.g. `0.2.0`). |
+| `CUA_DRIVER_RS_VERSION` | unset → use baked version | unset → use baked version | Pin a specific release (e.g. `0.2.0`). |
 | `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
 | `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver-rs` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
 | `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | n/a — Windows installer never auto-edits PATH | Skip the rc-file PATH append. |
+
+<Callout type="info">
+**How the installer picks a version.** Resolution order is:
+
+1. `$CUA_DRIVER_RS_VERSION` (Linux/macOS) or `$env:CUA_DRIVER_RS_VERSION` (Windows) — explicit pin.
+2. A **baked-in default version** carried in the install script itself, auto-updated by the release pipeline after every published `cua-driver-rs-v*` release. This is the common-case default for `curl … | bash` / `irm … | iex` against `main`: the version resolves locally with **zero network calls** to GitHub's API.
+3. GitHub Releases API — fallback only, hit when the env override is absent **and** the baked line hasn't been updated yet (e.g. installing from a dev branch before its first release).
+
+So an API outage, an unauthenticated-rate-limit (60 req/hr per IP), or a transient network blip never breaks a default install from `main`. Power users who want the very latest tip (rather than the baked default) can set `CUA_DRIVER_RS_VERSION=<x.y.z>` explicitly.
+</Callout>
 
 <Callout type="info">
 **Why macOS uses a different layout.** On macOS the install still drops `CuaDriverRs.app` into `/Applications` and symlinks `~/.local/bin/cua-driver` into the bundle. The `.app` placement is the anchor for both **TCC attribution** (cdhash + bundle id) and **LaunchServices** (`open -a CuaDriverRs`); symlinking the `.app` from `/Applications` to a versioned dir under `$CUA_DRIVER_RS_HOME` would break both. The asymmetry is intentional — rollback on macOS = reinstall an older release tag with `CUA_DRIVER_RS_VERSION=<x.y.z>`.

@@ -122,8 +122,11 @@ impl Tool for ListAppsTool {
                 - kind: `\"desktop\"` for `.exe`-backed apps (resolved from Start-Menu \
                 shortcuts) or `\"uwp\"` for packaged store apps.\n\
                 - launch_path: what `launch_app` would consume.\n\
-                    * desktop: absolute `.exe` path.\n\
-                    * uwp: `shell:appsFolder\\{PackageFamilyName}!{AppId}`.\n\
+                    * desktop: full `.exe` commandline (path + any arguments preserved from \
+                      the source `.lnk`; the exe is quoted when it contains whitespace).\n\
+                    * uwp: `shell:appsFolder\\{PackageFamilyName}!{AppId}` where `{AppId}` \
+                      falls back to `App` when the package manifest does not expose a \
+                      specific Application.Id.\n\
                 - last_used: RFC3339 mtime of the launcher (`.lnk` for desktop, \
                 package install location for UWP), when readable.\n\n\
                 Running apps are derived from visible top-level windows + the foreground \

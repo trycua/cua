@@ -501,9 +501,12 @@ values are explicitly `null` rather than omitted):
 - `kind` (string|null): `"desktop"` for `.app`/`.exe`/`.desktop`
   launchers, `"uwp"` for Windows packaged apps.
 - `launch_path` (string|null): what `launch_app` would consume to start
-  this app cold. macOS = `.app` bundle path; Windows desktop = `.exe`
-  path; Windows UWP = `shell:appsFolder\{family}!App`; Linux = the
-  command from `Exec=` with XDG field codes stripped.
+  this app cold. macOS = `.app` bundle path; Windows desktop = full
+  `.exe` commandline (path plus any arguments preserved from the source
+  `.lnk`); Windows UWP = `shell:appsFolder\{family}!{appId}` where
+  `{appId}` may fall back to `App` when the package manifest does not
+  expose a specific `Application.Id`; Linux = the command from `Exec=`
+  with XDG field codes stripped.
 - `last_used` (string|null): RFC3339 timestamp from the launcher's
   filesystem mtime, when readable; otherwise `null`.
 - `windows` (array): reserved — empty by design to keep the call cheap.
@@ -530,6 +533,13 @@ per-window state — on-screen, on-current-Space, minimized,
 window titles — call `list_windows` instead. For just opening an
 app — running or not — call `launch_app({bundle_id: ...})` directly;
 `list_apps` is not a prerequisite.
+
+Legacy `processes` alias: alongside the unified `apps` array, the
+Linux and Windows backends also return a `processes` field containing
+just the running subset (one record per live pid with `pid` and
+`name`). It exists so callers written against the pre-unification
+shape (running processes only) keep working without changes; new
+callers should read `apps` and filter on `running` instead.
 
 **Arguments:** none.
 

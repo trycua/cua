@@ -579,3 +579,58 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
     }
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::unix_secs_to_rfc3339;
+
+    #[test]
+    fn rfc3339_epoch() {
+        assert_eq!(unix_secs_to_rfc3339(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_negative_pre_epoch() {
+        // 1969-12-31T23:59:59Z = epoch - 1 second.
+        assert_eq!(unix_secs_to_rfc3339(-1), "1969-12-31T23:59:59Z");
+        // 1969-01-01T00:00:00Z = epoch - 365 days.
+        assert_eq!(unix_secs_to_rfc3339(-365 * 86_400), "1969-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_leap_day_in_leap_year() {
+        // 2020-02-29T12:00:00Z. Days from 1970-01-01:
+        //   50 years * 365 + 13 leap days (1972..=2020 inclusive of 13) - 1
+        //   (Feb 29 is the 60th day of 2020, so 59 prior days in 2020).
+        // Use the known timestamp instead of recomputing.
+        // `date -d "2020-02-29T12:00:00Z" +%s` = 1582977600.
+        assert_eq!(unix_secs_to_rfc3339(1_582_977_600), "2020-02-29T12:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_feb_28_non_leap_year() {
+        // 2019-02-28T00:00:00Z → 1551312000.
+        assert_eq!(unix_secs_to_rfc3339(1_551_312_000), "2019-02-28T00:00:00Z");
+        // The very next second is Mar 1, not Feb 29.
+        assert_eq!(unix_secs_to_rfc3339(1_551_312_000 + 86_400), "2019-03-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_end_of_year_wrap() {
+        // 2023-12-31T23:59:59Z = 1704067199; +1 second wraps to 2024-01-01.
+        assert_eq!(unix_secs_to_rfc3339(1_704_067_199), "2023-12-31T23:59:59Z");
+        assert_eq!(unix_secs_to_rfc3339(1_704_067_200), "2024-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_recent_arbitrary_timestamp() {
+        // 2024-06-15T13:45:30Z → 1718459130.
+        assert_eq!(unix_secs_to_rfc3339(1_718_459_130), "2024-06-15T13:45:30Z");
+    }
+
+    #[test]
+    fn rfc3339_known_pre_2000_timestamp() {
+        // 1990-07-04T15:30:00Z → 647105400.
+        assert_eq!(unix_secs_to_rfc3339(647_105_400), "1990-07-04T15:30:00Z");
+    }
+}

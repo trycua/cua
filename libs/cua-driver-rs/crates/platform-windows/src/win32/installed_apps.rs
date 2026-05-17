@@ -9,8 +9,10 @@
 //! 2. **UWP / packaged apps**: queries WinRT
 //!    `PackageManager::FindPackagesWithPackageTypes(Main)` for every
 //!    `Main` package installed in the current context. Builds the
-//!    `shell:appsFolder\{PackageFamilyName}!App` launch token so callers
-//!    can hand it to `launch_app`.
+//!    `shell:appsFolder\{PackageFamilyName}!{AppId}` launch token so
+//!    callers can hand it to `launch_app`; `{AppId}` falls back to `App`
+//!    when the package manifest does not surface a specific
+//!    Application.Id.
 
 use std::path::{Path, PathBuf};
 use windows::core::{Interface, PCWSTR};

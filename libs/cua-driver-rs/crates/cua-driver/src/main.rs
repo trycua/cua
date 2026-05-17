@@ -29,6 +29,7 @@ mod cli;
 mod proxy;
 mod serve;
 mod telemetry;
+mod version_check;
 
 use std::sync::Arc;
 
@@ -114,6 +115,10 @@ fn main() {
             return;
         }
         cli::Command::Serve { socket, no_permissions_gate } => {
+            // Long-running daemon — kick off the background update check
+            // before any blocking work so the banner can land on stderr
+            // early in the serve lifecycle.
+            version_check::maybe_announce_update();
             // First-launch permissions gate (Swift PermissionsGate parity).
             // Runs on every `serve` start; no-op when both grants are
             // already active.  Honors --no-permissions-gate and
@@ -177,6 +182,10 @@ fn main() {
             return;
         }
         cli::Command::Doctor => {
+            // Long-running interactive entry point — kick off the
+            // background "new version available?" check so the banner
+            // can land on stderr if the user is on an outdated install.
+            version_check::maybe_announce_update();
             cli::run_doctor_cmd();
             return;
         }
@@ -192,6 +201,10 @@ fn main() {
             return;
         }
         cli::Command::Mcp { no_daemon_relaunch, socket } => {
+            // Long-running MCP server — kick off the background update
+            // check before any TCC / daemon-proxy decisions so the
+            // banner can land on stderr in either dispatch path.
+            version_check::maybe_announce_update();
             // TCC sidestep: if we're a shell-spawned bare binary that
             // resolves into /Applications/CuaDriverRs.app, run the
             // proxy path instead of the in-process MCP server. The
@@ -328,6 +341,9 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Serve { socket, no_permissions_gate } => {
+            // Long-running daemon — kick off the background update check
+            // before any blocking work so the banner can land on stderr.
+            version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
             // CLI uniformity and ignored.
@@ -369,6 +385,9 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Doctor => {
+            // Long-running interactive entry point — kick off the
+            // background update check so the banner can land on stderr.
+            version_check::maybe_announce_update();
             cli::run_doctor_cmd();
             return Ok(());
         }
@@ -386,6 +405,9 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Mcp { no_daemon_relaunch, socket } => {
+            // Long-running MCP server — kick off the background update
+            // check before falling through to the in-process server.
+            version_check::maybe_announce_update();
             // Non-macOS: TCC doesn't exist, no daemon proxy path. The
             // flags parse cleanly so cross-platform MCP config
             // snippets work, but we ignore them and run in-process.

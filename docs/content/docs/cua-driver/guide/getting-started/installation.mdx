@@ -98,6 +98,49 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   (including unset) leaves the gate active.
 </Callout>
 
+<Callout type="info">
+  **Update-available banner (`cua-driver mcp` / `serve` / `doctor`).** The
+  long-running interactive entry points kick off a non-blocking background
+  check against the GitHub releases API at startup and print a small
+  two-line banner to stderr when a newer `cua-driver-rs-v*` release exists:
+
+  ```
+  ✨ cua-driver v0.1.4 is available (you have v0.1.3).
+     Update with: cua-driver update
+     Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
+  ```
+
+  The answer is cached at `~/.cua-driver-rs/version_check.json` for ~20
+  hours, so subsequent launches reuse the cached result without a network
+  call. Network failures are silent — the next launch retries.
+
+  **Scripted / machine-readable entry points are NOT instrumented.**
+  The banner only fires from the long-running entry points (`mcp`,
+  `serve`, `doctor`). One-shot and machine-readable subcommands —
+  `--version`, `list-tools`, `describe`, `call`, `dump-docs`,
+  `mcp-config`, `update`, `stop`, `status`, `recording`, `config`,
+  `diagnose`, and `telemetry install-event` — all skip it so piped
+  output (`cua-driver list-tools | jq …`) stays clean.
+
+  **Disable per-invocation:**
+
+  ```bash
+  CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve
+  ```
+
+  Accepted "off" values (case-insensitive): `0`, `false`, `no`, `off`.
+
+  **Disable permanently** via the persisted config:
+
+  ```bash
+  cua-driver config set update_check_enabled false
+  ```
+
+  Source / dev builds (any `CARGO_PKG_VERSION` with a pre-release suffix
+  like `-dev`) auto-skip the check — there is no matching published
+  release for them to recommend.
+</Callout>
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later

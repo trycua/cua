@@ -75,6 +75,29 @@ cua-driver check_permissions
 
 If a grant still reads `NOT granted` after granting in the dialog, open **System Settings → Privacy & Security**, find `CuaDriver.app` under Accessibility and Screen Recording, and flip the toggle.
 
+<Callout type="info">
+  **First-launch permissions gate (`cua-driver serve`).** On the Rust port,
+  `cua-driver serve` runs an interactive permissions gate at startup. If
+  Accessibility or Screen Recording is missing it prints a banner, auto-opens
+  the matching System Settings pane, and polls until you grant the missing
+  items. When both grants are already active the gate is a transparent no-op.
+
+  **CI / headless runners** should skip the gate so the daemon does not block
+  waiting for a TTY-attached human:
+
+  ```bash
+  # As a flag …
+  cua-driver serve --no-permissions-gate
+
+  # … or as an env-var.
+  CUA_DRIVER_RS_PERMISSIONS_GATE=0 cua-driver serve
+  ```
+
+  Accepted "off" values for the env-var (case-insensitive): `0`, `false`,
+  `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any other value
+  (including unset) leaves the gate active.
+</Callout>
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later

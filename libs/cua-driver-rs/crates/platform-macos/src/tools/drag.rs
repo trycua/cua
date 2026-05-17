@@ -12,7 +12,10 @@ use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
+use crate::apps;
+use crate::focus_guard;
 use crate::input::mouse::DragButton;
+use crate::window_change_detector::WindowChangeDetector;
 use super::ToolState;
 
 pub struct DragTool {
@@ -199,23 +202,42 @@ impl Tool for DragTool {
         }
         crate::cursor::overlay::animate_cursor_to(from_sx, from_sy).await;
 
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // Drags can trigger drag-and-drop side-effects that spawn helper
+        // windows (drop on Dock, drop on background app icon) and the
+        // mouseDown half-event alone can activate the target app on some
+        // Chromium builds. Wrap to catch + report both.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
+
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-            crate::input::mouse::drag_at_xy(
-                pid,
-                from_sx, from_sy,
-                to_sx,   to_sy,
-                Some((from_lx, from_ly)),
-                Some((to_lx,   to_ly)),
-                window_id,
-                duration_ms,
-                steps,
-                &m,
-                button,
-            )
-        }).await;
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "drag.CGEvent",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    crate::input::mouse::drag_at_xy(
+                        pid,
+                        from_sx, from_sy,
+                        to_sx,   to_sy,
+                        Some((from_lx, from_ly)),
+                        Some((to_lx,   to_ly)),
+                        window_id,
+                        duration_ms,
+                        steps,
+                        &m,
+                        button,
+                    )
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
 
         // Animate cursor to end position.
         crate::cursor::overlay::animate_cursor_to(to_sx, to_sy).await;
@@ -239,11 +261,12 @@ impl Tool for DragTool {
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps.",
+                 in {duration_ms}ms / {steps} steps.{}",
                 from_x as i64, from_y as i64,
                 to_x   as i64, to_y   as i64,
                 from_sx as i64, from_sy as i64,
                 to_sx   as i64, to_sy   as i64,
+                changes.result_suffix(),
             )),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),

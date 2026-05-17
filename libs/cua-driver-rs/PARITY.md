@@ -38,7 +38,7 @@ Format per entry:
 ```
 ## <surface>
 - Swift: <path:line>
-- Rust:  macos=<path:line>, windows=<path:line>, linux=<path:line>
+- Rust:  macOS=<path:line>, windows=<path:line>, linux=<path:line>
 - Status: VERIFIED | INTENTIONAL_DIVERGENCE | OPEN
 - Test:   <path>
 - Notes:  ...
@@ -49,7 +49,7 @@ Format per entry:
 ## MCP tool: `move_cursor`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/MoveCursorTool.swift:6-60`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/move_cursor.rs`
+  - macOS=`crates/platform-macos/src/tools/move_cursor.rs`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (MoveCursorTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (MoveCursorTool)
 - Status: INTENTIONAL_DIVERGENCE (semantic) + VERIFIED (overlay behavior)
@@ -102,7 +102,7 @@ Unix socket).
 ## MCP tool: `get_cursor_position`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetCursorPositionTool.swift:6-37`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/get_cursor_position.rs`
+  - macOS=`crates/platform-macos/src/tools/get_cursor_position.rs`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (GetCursorPositionTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (GetCursorPositionTool)
 - Status: VERIFIED
@@ -146,7 +146,7 @@ documented Swift behavior.
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetScreenSizeTool.swift:6-46`
         + `libs/cua-driver/Sources/CuaDriverCore/Capture/ScreenInfo.swift`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/get_screen_size.rs`
+  - macOS=`crates/platform-macos/src/tools/get_screen_size.rs`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (GetScreenSizeTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (GetScreenSizeTool)
 - Status: VERIFIED
@@ -190,11 +190,11 @@ still matches Swift exactly.
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/CheckPermissionsTool.swift:6-59`
         + `libs/cua-driver/Sources/CuaDriverCore/Permissions/Permissions.swift`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/check_permissions.rs` (FIXED, pending macOS run)
+  - macOS=`crates/platform-macos/src/tools/check_permissions.rs` (FIXED, pending macOS run)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (CheckPermissionsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (CheckPermissionsTool)
 - Status:
-  - macos: OPEN (fixed in source; macOS runner needed to verify)
+  - macOS: OPEN (fixed in source; macOS runner needed to verify)
   - windows / linux: INTENTIONAL_DIVERGENCE
 - Test: TODO macOS — needs a macOS machine or CI runner to drive the daemon
   and assert the text format + structured response.
@@ -242,15 +242,75 @@ status).
 
 ---
 
+## Startup flow: permissions gate (`serve`)
+- Swift: `libs/cua-driver/Sources/CuaDriverCore/Permissions/PermissionsGate.swift`
+        (SwiftUI panel + AppKit window + 1 Hz polling)
+- Rust:
+  - macos=`crates/platform-macos/src/permissions/gate.rs`
+    (CLI banner + auto-open System Settings + 1 Hz polling)
+  - windows / linux: N/A — TCC is a macOS concept; the `--no-permissions-gate`
+    flag is accepted and silently ignored on those platforms for CLI uniformity.
+- Status:
+  - macos: PORTED with intentional UX divergence (CLI, not SwiftUI)
+  - windows / linux: N/A
+
+### Intentional UX divergence
+
+Swift surfaces a branded SwiftUI window on first launch.  The Rust port
+ships a terminal-driven banner instead.  Rationale:
+
+1. cua-driver-rs already drives an AppKit run loop on the main thread
+   for the cursor overlay; bolting on a second window invites
+   main-thread deadlocks.
+2. The Rust binary's primary deployment shape is the daemon under
+   `cua-driver serve` from a shell (Claude Code, Cursor, Codex), which
+   already has a terminal attached.
+3. Headless / CI use cases need an opt-out; a CLI flow with
+   `--no-permissions-gate` + `CUA_DRIVER_RS_PERMISSIONS_GATE=0` is the
+   straight-line approach.  Replicating Swift's window only to suppress
+   it under headless would be more code with no UX upside.
+
+The CLI gate still preserves the substantive Swift behaviours:
+
+- Lists exactly which TCC grants are missing (Accessibility / Screen
+  Recording), with the same rationale strings the SwiftUI panel uses.
+- Opens both `x-apple.systempreferences:` URLs at once so the user can
+  grant both in a single Settings visit.  (Swift's "chain to next pane
+  when one flips green" trick is unnecessary when both panes are
+  pre-opened.)
+- Polls at 1 Hz, identical cadence to the Swift `Timer`.
+- Auto-continues startup the moment all required grants are green.
+
+### Opt-out signals
+
+| Signal                                  | Effect      |
+| --------------------------------------- | ----------- |
+| `--no-permissions-gate` flag            | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=0`      | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=false`  | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=no`     | gate skipped |
+| `CUA_DRIVER_RS_PERMISSIONS_GATE=off`    | gate skipped |
+| any other env value                     | gate active  |
+
+Default deadline is 10 minutes; on timeout the gate logs an error and
+`serve` continues to start, mirroring the Swift "user closed the
+panel" path (individual tool calls then fail with the underlying TCC
+error).
+
+A native `NSAlert` via objc2 is tracked as a follow-up if the
+terminal-only flow proves insufficient; the CLI is the MVP.
+
+---
+
 ## MCP tool: `list_apps`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListAppsTool.swift:6-71`
         + `libs/cua-driver/Sources/CuaDriverCore/Apps/AppInfo.swift`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
+  - macOS=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListAppsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListAppsTool)
 - Status:
-  - macos: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
+  - macOS: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
   - windows: VERIFIED (text format + structured shape + `active` flag)
   - linux: OPEN (subagent currently fixing pre-existing compile errors)
 - Test: `crates/platform-windows/examples/list_apps_parity.rs`
@@ -298,12 +358,12 @@ at least one entry has `active: true` (the foreground app).
 ## MCP tool: `list_windows`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ListWindowsTool.swift:6-245`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/list_windows.rs` (TBD audit)
+  - macOS=`crates/platform-macos/src/tools/list_windows.rs` (TBD audit)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListWindowsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListWindowsTool, blocked behind Linux compile fix)
 - Status:
   - windows: VERIFIED
-  - macos: OPEN (audit pending — macOS port already exists)
+  - macOS: OPEN (audit pending — macOS port already exists)
   - linux: OPEN
 - Test: `crates/platform-windows/examples/list_windows_parity.rs`
 
@@ -356,12 +416,12 @@ filter at the tool layer.
 ## MCP tool: `click`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ClickTool.swift:29-595`
 - Rust:
-  - macos=`crates/platform-macos/src/tools/click.rs` (TBD audit)
+  - macOS=`crates/platform-macos/src/tools/click.rs` (focus-suppression wrap VERIFIED; full audit pending)
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ClickTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ClickTool)
 - Status:
   - windows: VERIFIED (text format + error wording); schema divergences documented below
-  - macos: OPEN (already exists; line-by-line audit pending)
+  - macOS: VERIFIED (focus-suppression wrap — see [Per-action focus suppression](#per-action-focus-suppression)); full line-by-line audit pending
   - linux: OPEN
 - Test: `crates/platform-windows/examples/click_parity.rs`
 
@@ -417,13 +477,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/LaunchAppTool.swift:6-490`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (LaunchAppTool)
-  - macos=`crates/platform-macos/src/tools/launch_app.rs` (TBD audit)
+  - macOS=`crates/platform-macos/src/tools/launch_app.rs` (full focus-steal contract)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
 - Status:
   - windows: VERIFIED
-  - macos: OPEN
+  - macOS: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
-- Test: `crates/platform-windows/examples/launch_app_parity.rs`
+- Tests:
+  - windows=`crates/platform-windows/examples/launch_app_parity.rs`
+  - macOS=`tests/integration/test_focus_steal_parity.py` + `crates/platform-macos/src/focus_steal.rs` (Rust unit tests)
 
 ### Fixed (Windows)
 
@@ -469,15 +531,57 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - `bundle_id: null`, `running: true`, `active: false` ✓
 - Notepad killed on test exit. ✓
 
+### Fixed (macOS)
+
+1. **No more shell-out** — `apps::launch_app`, `launch_app_by_name`, and
+   `launch_with_urls_*` no longer `Command::new("open")`. All paths now
+   call `apps::nsworkspace::open_application` /
+   `open_urls_with_application` directly via objc2-app-kit's
+   `NSWorkspace.openApplication(at:configuration:completionHandler:)`
+   (no-URL) and `open(_:withApplicationAt:configuration:)` (URL-handoff)
+   variants. Matches Swift `AppLauncher.swift:106-131` byte-for-byte in
+   the launch semantics.
+2. **`activates = false` + `addsToRecentItems = false`** — set on every
+   launch via `NSWorkspaceOpenConfiguration`. Mirrors Swift
+   `AppLauncher.swift:65-66`.
+3. **`oapp` AppleEvent descriptor on the no-URL path** — hand-rolled
+   `extern_methods!` block in `apps/nsworkspace.rs` binds
+   `NSAppleEventDescriptor.init(eventClass:eventID:targetDescriptor:returnID:transactionID:)`
+   (not exposed by objc2-foundation 0.2.2). Without this, cold-launches
+   of state-restored apps (Calculator-class) are windowless. Matches
+   Swift `AppLauncher.swift:85-103`.
+4. **3-phase focus-steal wrap** — `LaunchAppTool::invoke` captures the
+   prior frontmost pid, arms a wildcard suppression entry, launches,
+   swaps to a targeted entry (with overlap, not drop-then-begin, to
+   avoid the hoang17 PR #1521 race), sleeps 500ms, drops the lease,
+   and belt-and-braces re-activates the prior frontmost if the target
+   is still on top. Matches Swift `LaunchAppTool.swift:181-281`.
+5. **Direct pid from completion handler** — the `NSRunningApplication`
+   returned by `openApplication` is used directly; no `list_running_apps`
+   scan-and-match race. Matches Swift.
+6. **Window-resolution retry** — same 5-attempt 100ms retry as before;
+   unchanged.
+
+### Verified on macOS
+
+`tests/integration/test_focus_steal_parity.py` covers:
+- Passive app launch (Calculator) — frontmost unchanged ✓
+- Self-activating app launch (Safari) — frontmost restored within 1.5s ✓
+- Launch with `urls=["about:blank"]` — frontmost preserved ✓
+- Cold launch creates a window (verifies the `oapp` AppleEvent) ✓
+- Back-to-back launches don't leak suppression state across calls ✓
+- 5s deadline reaper evicts leaked entries ✓ (Rust unit test
+  `focus_steal::tests::deadline_reaps_leaked_entry`)
+
 ---
 
 ## MCP tool: `press_key`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/PressKeyTool.swift:20-202`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (PressKeyTool)
-  - macos=`crates/platform-macos/src/tools/press_key.rs` (TBD)
+  - macOS=`crates/platform-macos/src/tools/press_key.rs` (focus-suppression wrap VERIFIED; full audit pending)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
-- Status: windows VERIFIED; macos / linux OPEN
+- Status: windows VERIFIED; macOS VERIFIED (focus-suppression wrap — see [Per-action focus suppression](#per-action-focus-suppression)); linux OPEN
 - Test: `crates/platform-windows/examples/press_key_parity.rs`
 
 ### Fixed (Windows)
@@ -519,9 +623,9 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/HotkeyTool.swift:6-142`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (HotkeyTool)
-  - macos=`crates/platform-macos/src/tools/hotkey.rs` (TBD)
+  - macOS=`crates/platform-macos/src/tools/hotkey.rs` (focus-suppression wrap VERIFIED; full audit pending)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD)
-- Status: windows VERIFIED; macos / linux OPEN
+- Status: windows VERIFIED; macOS VERIFIED (focus-suppression wrap — see [Per-action focus suppression](#per-action-focus-suppression)); linux OPEN
 - Test: `crates/platform-windows/examples/hotkey_parity.rs`
 
 ### Fixed (Windows)
@@ -552,7 +656,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/DoubleClickTool.swift:28-327`
 - Rust:
   - windows=`crates/platform-windows/src/tools/impl_.rs` (DoubleClickTool)
-  - macos / linux: OPEN
+  - macOS / linux: OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/double_click_parity.rs`
 
@@ -595,7 +699,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `right_click`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/RightClickTool.swift:27-324`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (RightClickTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (RightClickTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/right_click_parity.rs`
 
@@ -623,7 +727,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `screenshot`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScreenshotTool.swift:5-170`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScreenshotTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScreenshotTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/screenshot_parity.rs`
 
@@ -659,7 +763,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `scroll`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScrollTool.swift:23-211`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScrollTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScrollTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/scroll_parity.rs`
 
@@ -697,7 +801,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `type_text`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/TypeTextTool.swift:13-225`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (TypeTextTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (TypeTextTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/type_text_parity.rs`
 
@@ -732,7 +836,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `set_value`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetValueTool.swift:8-336`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetValueTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetValueTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/set_value_parity.rs`
 
@@ -769,7 +873,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 ## MCP tools: `get_config` + `set_config`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetConfigTool.swift:13-79`
   + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetConfigTool.swift:25-167`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetConfigTool, SetConfigTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetConfigTool, SetConfigTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/config_parity.rs`
 
@@ -807,7 +911,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## MCP tool: `get_agent_cursor_state`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetAgentCursorStateTool.swift:9-68`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetAgentCursorStateTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetAgentCursorStateTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/get_agent_cursor_state_parity.rs`
 
@@ -838,7 +942,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 ## MCP tools: `set_agent_cursor_enabled` + `set_agent_cursor_motion`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorEnabledTool.swift:8-85`
   + `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorMotionTool.swift:11-187`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs`; macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs`; macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/agent_cursor_setters_parity.rs`
 
@@ -961,7 +1065,7 @@ Swift.
 
 ## MCP tool: `get_window_state`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/GetWindowStateTool.swift:5-end`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetWindowStateTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (GetWindowStateTool); macOS/linux OPEN
 - Status: windows VERIFIED (error wording + validation); response shape already verified
 - Test: `crates/platform-windows/examples/get_window_state_parity.rs`
 
@@ -998,7 +1102,7 @@ Swift.
 
 ## MCP tool: `drag`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/DragTool.swift:21-327`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (DragTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (DragTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/drag_parity.rs`
 
@@ -1042,6 +1146,161 @@ Swift.
 `replay_trajectory_parity.exe`:
 - Empty-dir: `"Missing required string field \`dir\`."` ✓
 - Nonexistent dir: `"Trajectory directory does not exist: <path>"` ✓
+
+---
+
+## CLI subcommand: `mcp` (TCC auto-relaunch / daemon proxy)
+- Swift:
+  - `libs/cua-driver/Sources/CuaDriverCLI/CuaDriverCommand.swift` —
+    `MCPCommand`, `shouldUseDaemonProxy`, `runViaDaemonProxy`,
+    `launchDaemonViaOpen`, `waitForDaemon`.
+  - `libs/cua-driver/Sources/CuaDriverCLI/BundleHelpers.swift` —
+    `isExecutableInsideCuaDriverApp()`.
+  - `libs/cua-driver/Sources/CuaDriverServer/CuaDriverMCPServer.swift` —
+    `makeProxy` (the actor that re-implements `ListTools` /
+    `CallTool` over the daemon UDS).
+- Rust:
+  - `libs/cua-driver-rs/crates/cua-driver/src/bundle.rs` —
+    `is_executable_inside_cuadriverrs_app`,
+    `parent_is_not_launchd`, `is_env_truthy`.
+  - `libs/cua-driver-rs/crates/cua-driver/src/cli.rs` —
+    `should_use_daemon_proxy`, `launch_daemon_and_wait`,
+    `run_mcp_via_daemon_proxy`.
+  - `libs/cua-driver-rs/crates/cua-driver/src/proxy.rs` —
+    `run_proxy` (the stdio loop forwarding `tools/list` and
+    `tools/call` through the daemon socket).
+  - `libs/cua-driver-rs/scripts/CuaDriverRs.app/Contents/Info.plist` —
+    the bundle the auto-relaunch path lands in.
+  - `libs/cua-driver-rs/scripts/install.sh` — drops the bundle to
+    `/Applications/CuaDriverRs.app` and symlinks the bin into it.
+- Status: implemented on macOS (issue #1525); smoke-tested manually
+  before merge.
+
+### Why this exists
+When `cua-driver-rs mcp` is invoked from an IDE terminal (Claude
+Code, Cursor, VS Code, Warp), macOS attributes the spawned process
+to the parent terminal's TCC responsibility chain — *not* to
+`com.trycua.cuadriverrs`. AX probes against the process silently
+fail because the user granted Accessibility to the bundle, not to
+the IDE terminal. The Swift driver hit the same pathology and fixed
+it in PR #1479; the Rust port hit it on the macOS GA flip path and
+fixed it here. See issue #1525 for the full background.
+
+### Bundle id divergence (intentional)
+Swift `CuaDriver.app` → `com.trycua.driver`.
+Rust `CuaDriverRs.app` → `com.trycua.cuadriverrs`.
+The two bundles coexist on disk and in TCC; a user can grant
+Accessibility + Screen Recording to each independently. The Rust
+port has its own bundle name + identifier so:
+  - `open -n -g -a CuaDriverRs --args serve` never accidentally
+    relaunches into the Swift bundle (and vice versa).
+  - TCC grants are per-cdhash, so granting one doesn't carry into
+    the other — users explicitly opt in to each binary.
+
+### Escape hatches
+- `--no-daemon-relaunch` flag — same flag Swift exposes.
+- `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` env var — Rust-specific name
+  (Swift uses `CUA_DRIVER_MCP_NO_RELAUNCH`).
+- `--socket <path>` flag — override the daemon UDS path used by the
+  proxy.
+- `CUA_DRIVER_RS_MCP_FORCE_PROXY=1` env var (Rust-only) — force
+  proxy mode without the bundle-context check. Useful when wrapping
+  the binary in a custom .app, or for manual smoke-testing of the
+  proxy path against a daemon you've already started by hand. Skips
+  the `open -a` step entirely; caller must supply a daemon on
+  `--socket`.
+
+### Daemon protocol divergence
+The daemon's `list` method now returns full `ToolDef`
+(`input_schema` + annotation hints), not just `{name, description}`.
+The proxy uses this to build a complete `tools/list` from one
+round-trip instead of N+1 list+describe calls. Backwards compatible:
+older clients that only read name/description still work.
+
+### Manual smoke test (macOS)
+1. `cua-driver serve --socket /tmp/test.sock &`
+2. `CUA_DRIVER_RS_MCP_FORCE_PROXY=1 cua-driver mcp --socket /tmp/test.sock`
+3. From an MCP client, run the standard initialize → tools/list →
+   tools/call get_screen_size handshake. Expect identical envelope
+   shape to the in-process path. Concretely:
+
+   `tools/list` response (the daemon caches and returns it once at
+   proxy startup — same shape as the in-process server's `tools/list`):
+
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+       "tools": [
+         { "name": "browser_eval",            "description": "…", "inputSchema": {…}, "annotations": {…} },
+         { "name": "check_permissions",       "description": "…", "inputSchema": {…}, "annotations": {…} },
+         { "name": "click",                   "description": "…", "inputSchema": {…}, "annotations": {…} },
+         { "name": "double_click",            "…": "…" },
+         { "name": "drag",                    "…": "…" },
+         { "name": "get_accessibility_tree",  "…": "…" },
+         { "name": "get_config",              "…": "…" },
+         { "name": "get_cursor_position",     "…": "…" },
+         { "name": "get_recording_state",     "…": "…" },
+         { "name": "get_screen_size",         "…": "…" },
+         { "name": "get_window_state",        "…": "…" },
+         { "name": "hotkey",                  "…": "…" },
+         { "name": "launch_app",              "…": "…" },
+         { "name": "list_apps",               "…": "…" },
+         { "name": "list_windows",            "…": "…" },
+         { "name": "page",                    "…": "…" },
+         { "name": "press_key",               "…": "…" },
+         { "name": "replay_trajectory",       "…": "…" },
+         { "name": "right_click",             "…": "…" },
+         { "name": "screenshot",              "…": "…" },
+         { "name": "scroll",                  "…": "…" },
+         { "name": "set_config",              "…": "…" },
+         { "name": "set_recording",           "…": "…" },
+         { "name": "set_value",               "…": "…" },
+         { "name": "type_text",               "…": "…" },
+         { "name": "zoom",                    "…": "…" }
+         // …plus the agent_cursor.* family when overlay is enabled.
+         // For an exact snapshot run: `cua-driver list-tools`
+       ]
+     }
+   }
+   ```
+
+   `tools/call get_screen_size` request + response:
+
+   ```json
+   // → stdin
+   {"jsonrpc":"2.0","id":2,"method":"tools/call",
+    "params":{"name":"get_screen_size","arguments":{}}}
+
+   // ← stdout
+   {"jsonrpc":"2.0","id":2,"result":{
+     "content":[{"type":"text","text":"{\"width\":1920,\"height\":1080}"}],
+     "structuredContent":{"width":1920,"height":1080},
+     "isError":false
+   }}
+   ```
+
+   The `result` envelope is identical to the in-process path —
+   structuredContent + text mirror, no proxy-specific wrapping.
+
+4. Without spawning the daemon first, repeat step 2. Expect
+   non-zero exit and a "daemon not reachable" diagnostic on stderr
+   (the fail-fast contract that matches Swift `makeProxy`). Exact
+   stderr text emitted by `main.rs`'s proxy-error branch (wrapping
+   `proxy::run_proxy`'s pre-check):
+
+   ```
+   cua-driver-rs: cua-driver-rs daemon not reachable on /tmp/test.sock. Start it with `open -n -g -a CuaDriverRs --args serve` and retry.
+   ```
+
+   Process exits with status `1` before reading any MCP request on
+   stdin. With `CUA_DRIVER_RS_MCP_FORCE_PROXY=1` set, `cli.rs`'s
+   `run_mcp_via_daemon_proxy` emits the more specific:
+
+   ```
+   cua-driver-rs: CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on /tmp/test.sock. Start one with `cua-driver serve --socket /tmp/test.sock` and retry.
+   ```
 
 ---
 
@@ -1106,7 +1365,7 @@ Changes:
 
 ## MCP tool: `set_agent_cursor_style`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/SetAgentCursorStyleTool.swift:10-111`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetAgentCursorStyleTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (SetAgentCursorStyleTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/set_agent_cursor_style_parity.rs`
 
@@ -1127,7 +1386,7 @@ Changes:
 
 ## MCP tool: `zoom`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ZoomTool.swift:12-end`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ZoomTool); macos/linux OPEN
+- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ZoomTool); macOS/linux OPEN
 - Status: windows VERIFIED
 - Test: `crates/platform-windows/examples/zoom_parity.rs`
 
@@ -1233,3 +1492,286 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
 - `--type=mcp`: top-level `{version, tools}` ✓
 - `--type=cli`: stub section ✓
 - `--pretty`: multi-line JSON (991 lines) ✓
+
+---
+
+## Focus-steal prevention
+
+Cross-cutting infrastructure (not an MCP tool) used by `launch_app` and
+by the 7 action tools (`click`, `type_text`, `hotkey`, `press_key`,
+`drag`, `scroll`, `set_value`) via the
+[Per-action focus suppression](#per-action-focus-suppression) wrap.
+Catches apps that self-activate during launch (Chrome, Electron,
+Safari) or as a side-effect of an action (Safari opening a new tab in
+response to AXPress, autocomplete pulling itself forward), and
+re-activates the prior frontmost app before the user perceives the
+steal.
+
+- Swift: `libs/cua-driver/Sources/CuaDriverCore/Focus/SystemFocusStealPreventer.swift`
+- Swift hardening: open PR [#1521](https://github.com/trycua/cua/pull/1521)
+  (4-layer leak prevention: closure scope, RAII lease, 5s monotonic
+  deadline, 1s janitor)
+- Rust: `crates/platform-macos/src/focus_steal.rs`
+- Status: macOS VERIFIED. windows/linux N/A (no equivalent OS focus-steal
+  surface area).
+- Tests:
+  - Rust unit: `crates/platform-macos/src/focus_steal.rs` `#[cfg(test)] mod tests`
+    — dispatcher add/remove/match, deadline reap, janitor start/stop
+    lifecycle.
+  - Integration: `tests/integration/test_focus_steal_parity.py` — runs
+    against both Swift and Rust binaries with `expectedFailure` on the
+    Swift Safari-URL case for the known Cryptex+`oapp` LaunchServices bug.
+
+### Design
+
+- Process-wide singleton (`OnceLock<Arc<FocusStealPreventer>>`) — mirrors
+  Swift's `AppStateRegistry.systemFocusStealPreventer`.
+- One `NSWorkspaceDidActivateApplicationNotification` observer, registered
+  on a **fresh background `NSOperationQueue`** (not `mainQueue`). This is
+  load-bearing: the binary's `Call` and `--no-overlay` Serve modes don't
+  run an NSApplication main-thread run loop, so an observer on `mainQueue`
+  would silently no-op. Background queue means the block fires regardless
+  of run-loop state.
+- Dispatcher: `Mutex<HashMap<Uuid, SuppressionEntry>>` where each entry is
+  `(target_pid: Option<i32>, restore_to: i32, deadline: Instant, origin)`.
+  `target_pid = None` is the wildcard (catches any activation other than
+  `restore_to`).
+- API:
+  - Closure: `with_suppression(target_pid, restore_to, origin, async fn)`.
+  - RAII: `begin_suppression(...) -> SuppressionLease`, `Drop` calls
+    `end_suppression` synchronously.
+- Deadline reaper: each entry stamped `Instant::now() + 5s`. Pruned on
+  every observer fire and by a 1s tokio interval task gated by a
+  `watch::Sender` (start on first-add, stop on last-remove). Mirrors
+  PR #1521's deadline + janitor layers; RAII (`SuppressionLease`)
+  subsumes Swift's `withSuppression` (layer 1) + `SuppressionLease`
+  (layer 2) into one Rust idiom.
+- Restore: when a notification matches an entry, the observer block
+  resolves `NSRunningApplication::runningApplicationWithProcessIdentifier(restore_to)`
+  and calls `activate(options:[])`. `-[NSRunningApplication activate:]`
+  is documented thread-safe — no main-thread hop needed.
+
+### Intentional simplifications vs Swift
+
+- **`FocusGuard.withFocusSuppressed` ships layer 3 only** — see
+  [Per-action focus suppression](#per-action-focus-suppression). The
+  reactive suppressor is wired up across the 7 action tools; the
+  enablement (`AXManualAccessibility`/`AXEnhancedUserInterface`) and
+  synthetic-focus (`AXFocused`/`AXMain` write+restore) layers are
+  deferred because the AX assertion + attribute-write plumbing isn't
+  yet ported. Empirically the layer-3 guard combined with
+  `WindowChangeDetector`'s wildcard catches the majority of
+  side-effects on real-world workflows.
+- **`WindowChangeDetector` ported and wired** — see
+  [Per-action focus suppression](#per-action-focus-suppression).
+- **Janitor uses `tokio::sync::watch`** — Swift uses Task cancellation;
+  Rust's tokio idiom is the watch-channel select pattern. Behavior is
+  identical: idle dispatcher → janitor sleeps; new entry → janitor
+  wakes; map drains → janitor exits and waits for the next add.
+
+---
+
+## Per-action focus suppression
+
+Per-action wrap around the 7 macOS action tools (`click`, `type_text`,
+`hotkey`, `press_key`, `drag`, `scroll`, `set_value`) that catches
+side-effect side-effects of dispatching an action on a backgrounded
+app — Safari opening a new tab in response to AXPress, a "Sign In"
+button opening a sheet, an autocomplete popover floating into view,
+etc. Mirrors Swift's `WindowChangeDetector` + `FocusGuard` cross-cutting
+helpers wired into ClickTool / TypeTextTool / SetValueTool.
+
+- Swift:
+  - `libs/cua-driver/Sources/CuaDriverServer/Tools/WindowChangeDetector.swift`
+  - `libs/cua-driver/Sources/CuaDriverCore/Focus/FocusGuard.swift`
+- Rust:
+  - `crates/platform-macos/src/window_change_detector.rs`
+  - `crates/platform-macos/src/focus_guard.rs`
+- Status: macOS VERIFIED (action tools wired up; result-suffix wording
+  matches Swift verbatim). windows/linux N/A (different focus model).
+- Tests:
+  - Rust unit: `window_change_detector::tests` (8 cases — diff +
+    result_suffix branches) and `focus_guard::tests` (4 cases —
+    arm/skip lifecycle).
+  - Integration: existing `tests/integration/test_focus_steal_parity.py`
+    + `tests/integration/test_api_parity.py` — confirmed no regression
+    after the action-tool wiring (identical pass/fail to main).
+
+### Snapshot → action → detect cycle
+
+Each wrapped action follows the same shape:
+
+```rust
+let prior = apps::frontmost_pid();
+let snapshot = WindowChangeDetector::snapshot();         // arms wildcard
+let result = focus_guard::with_focus_suppressed(
+    Some(target_pid), prior, "<tool>.<origin>",
+    || async { do_action(...).await }
+).await;
+let changes = snapshot.detect_async().await;             // drops wildcard
+// append changes.result_suffix() to success text
+```
+
+Two suppression entries are armed in series:
+
+1. **Wildcard** (armed in `snapshot()`, dropped in `detect()`) —
+   `target_pid = None`, `restore_to = current frontmost`. Catches any
+   activation other than the prior frontmost during the full
+   snapshot → action → detect window. Mirrors Swift's
+   `WindowChangeDetector.snapshot()` wildcard.
+2. **Targeted** (armed by `FocusGuard::with_focus_suppressed` around
+   the action call) — `target_pid = Some(action_pid)`,
+   `restore_to = prior frontmost`. Catches a target-self-activation
+   triggered by the AX call itself. Skipped when target ==
+   frontmost (no point fighting ourselves). 50ms post-action settle
+   before the lease drops, giving any in-flight reflex activation
+   time to be observed.
+
+### Result-suffix verbatim
+
+The `Changes.result_suffix()` wording matches Swift's
+`WindowChangeDetector.Changes.resultSuffix`:
+
+- New windows: `"\n\n🪟 Action opened new window(s): App (\"Title\")."`
+  (multiple windows grouped by app, titles in quotes, joined with a
+  `,` (comma followed by a space); multiple apps joined with a `;`
+  (semicolon followed by a space); alphabetical by app name).
+- Foreground-only change (no new windows): `"\n\n🔀 Action caused a
+  different app to become frontmost."`.
+- No change: empty string.
+
+MCP callers can string-match on either lead emoji to detect a
+side-effect without per-binary special-casing.
+
+### Intentional simplifications vs Swift
+
+- **FocusGuard layers 1+2 (enablement, synthetic-focus) deferred** —
+  Swift's `AXManualAccessibility` / `AXEnhancedUserInterface`
+  assertion and `AXFocused`/`AXMain` write+restore aren't ported yet.
+  The Rust port ships only layer 3 (reactive suppressor). Empirically
+  the wildcard + targeted reactive pair catches the majority of
+  side-effects; layers 1+2 are a follow-up when the AX assertion
+  plumbing lands.
+- **Pure-function diff exposed for tests** — `Snapshot::diff` is
+  `pub(crate)` so unit tests can pin down opened/closed semantics
+  without driving the live `CGWindowList` enumerator. Swift tests
+  the same way via `currentWindowIds()` indirection.
+- **`detect_async()` runs on `spawn_blocking`** — Swift's poll loop
+  uses `Task.sleep`; Rust's blocking `std::thread::sleep` is cheap to
+  offload via `tokio::task::spawn_blocking` and keeps the runtime
+  responsive to other in-flight work.
+
+---
+
+## Telemetry (PostHog)
+
+- Swift: `libs/cua-driver/Sources/CuaDriverCore/Telemetry/TelemetryClient.swift`
+- Rust:  `crates/cua-driver/src/telemetry.rs`
+- Status: VERIFIED (events emit on entry-point dispatch + install)
+- Test:  `crates/cua-driver/src/telemetry.rs` `#[cfg(test)] mod tests`
+         (8 unit tests: env parsing, opt-out default, CI detection,
+         payload shape, payload-key collision, install-id idempotent
+         persistence, ISO-8601 format, arch mapping)
+
+### Endpoint + event names (identical to Swift)
+
+- POST `https://eu.i.posthog.com/capture/`
+- API key: `phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14` (public —
+  ingest-only, can't read events)
+- Events: `cua_driver_install`, `cua_driver_mcp`, `cua_driver_serve`,
+  `cua_driver_stop`, `cua_driver_status`, `cua_driver_list_tools`,
+  `cua_driver_describe`, `cua_driver_recording`, `cua_driver_config`,
+  `cua_driver_mcp_config`, `cua_driver_dump_docs`, `cua_driver_update`,
+  `cua_driver_doctor`, `cua_driver_diagnose`,
+  `cua_driver_api_<tool>` (per-tool `call` invocations).
+
+Keeping the endpoint + names identical means Rust + Swift events land
+in the same PostHog project; `$lib = "cua-driver-rs"` vs
+`"cua-driver-swift"` is the only signal to split them.
+
+### Payload shape
+
+Each event sends:
+
+| Key | Value | Source |
+|-----|-------|--------|
+| `cua_driver_version` | CARGO_PKG_VERSION (e.g. `"0.1.3"`) | build-time |
+| `os` | `"macos"` / `"linux"` / `"windows"` | `std::env::consts::OS` |
+| `os_version` | OS-reported version string | `sw_vers -productVersion` / `/etc/os-release` / `cmd /c ver` |
+| `arch` | `"arm64"` / `"x86_64"` (aarch64 → arm64) | `std::env::consts::ARCH` |
+| `is_ci` | bool | env-var probe (see below) |
+| `$lib` | `"cua-driver-rs"` | hard-coded |
+| `$lib_version` | CARGO_PKG_VERSION | build-time |
+
+CI-environment detection probes the same vars Swift does: `CI`,
+`CONTINUOUS_INTEGRATION`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`,
+`CIRCLECI`.
+
+### Privacy posture (what we DO NOT send)
+
+Verified by unit test `build_payload_contains_required_keys` which
+asserts none of `$user`, `username`, `home_dir`, `cwd`, `argv` ever
+appear in a serialized payload:
+
+- No usernames or `$USER` / `$HOME`
+- No file paths (cwd, executable path, tool args, screenshot paths)
+- No tool arguments — `call <tool>` reports only the tool name as
+  `cua_driver_api_<tool>`
+- No user-typed content (text, key sequences, URLs)
+- No window titles, application names, or coordinates
+
+### Opt-out
+
+Set `CUA_DRIVER_RS_TELEMETRY_ENABLED=false` (or `0`, `no`, `off`) to
+disable ALL telemetry from the binary. Unset defaults to enabled
+(matches Swift's persisted-flag default of `true`).
+
+The **only** path that ignores the opt-out is `capture_install()`,
+which fires the one-shot `cua_driver_install` ping from `install.sh`'s
+post-install hook. Rationale: an opt-out user is still a counted
+install in the adoption metric; every subsequent event from the binary
+respects the flag normally. Guarded by `~/.cua-driver-rs/.installation_recorded`
+so re-running `install.sh` doesn't re-fire it.
+
+### Independence from Swift install
+
+The Rust port is deliberately partitioned from the Swift port at the
+filesystem + env-var layer:
+
+| Layer | Swift | Rust |
+|-------|-------|------|
+| Install dir | `~/.cua-driver/` | `~/.cua-driver-rs/` |
+| Install UUID | `~/.cua-driver/.telemetry_id` | `~/.cua-driver-rs/.telemetry_id` |
+| Install marker | `~/.cua-driver/.installation_recorded` | `~/.cua-driver-rs/.installation_recorded` |
+| Opt-out env var | `CUA_DRIVER_TELEMETRY_ENABLED` | `CUA_DRIVER_RS_TELEMETRY_ENABLED` |
+
+This means:
+- A machine with both installed shows up as two distinct adoption events
+  (we can count Rust adoption separately from Swift).
+- A user who opts out of one port stays opted-in for the other unless
+  they set both env vars.
+- The Rust port can ship telemetry changes without invalidating Swift's
+  install UUID (no shared on-disk state).
+
+### HTTP client
+
+`ureq` v3 with default features (rustls + gzip + json). Single POST,
+3-second timeout, fire-and-forget. Sent from `tokio::task::spawn_blocking`
+when a runtime is live (MCP server, serve daemon), else from a
+short-lived OS thread (synchronous CLI subcommands like `list-tools`).
+
+Network errors, timeouts, and 4xx/5xx responses are logged via
+`tracing::debug!(target: "cua_driver::telemetry", …)` only — never
+surfaced to stdout/stderr unless `CUA_DRIVER_RS_TELEMETRY_DEBUG=true`.
+
+### Intentional divergences from Swift
+
+- **No persisted config flag.** Swift falls back to a YAML
+  `telemetryEnabled` setting via `ConfigStore.loadSync()`. Rust honors
+  only the env var. The Rust port has no `ConfigStore` analogue yet, and
+  YAGNI suggests waiting until someone files a request.
+- **No `GUI_LAUNCH` emission.** Swift fires `cua_driver_gui_launch` when
+  the binary is launched bare (Finder / Dock double-click). Rust has no
+  GUI surface yet, so the constant is reserved but unused.
+- **`is_ci` uses env-var probing only.** Same probe list as Swift; no
+  extra Rust-specific signals.

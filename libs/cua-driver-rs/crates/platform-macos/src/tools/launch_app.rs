@@ -26,7 +26,10 @@ fn def() -> &'static ToolDef {
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
-             `get_window_state(pid, window_id)`."
+             `get_window_state(pid, window_id)`. When the focus-steal belt-and-braces \
+             demotion check ran (target pid ≠ prior frontmost), the response also includes \
+             `self_activation_suppressed: bool` — true if focus stayed with the prior \
+             frontmost, false if the launched app held focus despite the re-demote attempt."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -119,20 +122,70 @@ impl Tool for LaunchAppTool {
             s
         };
 
-        // bundle_id wins when both are supplied.
+        // ── Layer-3 focus-steal suppression (3-phase wrap) ───────────────
+        //
+        // Captures the prior frontmost pid, arms a wildcard suppression
+        // BEFORE the launch (covers self-activations the target fires
+        // synchronously during `open()`), then upgrades to a targeted
+        // suppression keyed to the actual launched pid. Briefly holds
+        // BOTH leases so a self-activation arriving in the wildcard→
+        // targeted gap is still caught — that race is what hoang17's
+        // Swift PR #1521 explicitly fixes; we do not regress it here.
+        //
+        // After 500ms (enough for `applicationDidFinishLaunching` +
+        // any reflex `NSApp.activate(...)` to fire and get suppressed)
+        // both leases are dropped. The belt-and-braces step at the end
+        // re-activates the prior frontmost if the target is still
+        // frontmost — handles the intra-`open()` synchronous activation
+        // that fired before we could arm with the real pid.
+        let prior_frontmost = crate::apps::frontmost_pid();
+
+        let wildcard_lease = prior_frontmost.map(|prior| {
+            crate::focus_steal::FocusStealPreventer::begin_suppression(
+                None,
+                prior,
+                "LaunchAppTool.pre",
+            )
+        });
+
+        // Move the launch closure inputs into spawn_blocking. The
+        // blocking task returns (pid, app_info, windows). Suppression
+        // upgrade happens AFTER the blocking call returns (back on the
+        // async runtime), then we sleep 500ms holding the targeted
+        // lease before releasing it.
         let launch_result = tokio::task::spawn_blocking(move || {
             let pid = if let Some(ref bid) = bundle_id {
-                if urls.is_empty() && additional_arguments.is_empty() && env.is_empty() && !creates_new_instance {
+                if urls.is_empty()
+                    && additional_arguments.is_empty()
+                    && env.is_empty()
+                    && !creates_new_instance
+                {
                     crate::apps::launch_app(bid)?
                 } else {
-                    launch_with_urls_by_bundle(bid, &urls, &additional_arguments, &env, creates_new_instance)?
+                    crate::apps::launch_with_urls_by_bundle(
+                        bid,
+                        &urls,
+                        &additional_arguments,
+                        &env,
+                        creates_new_instance,
+                    )?
                 }
             } else {
                 let n = name.as_deref().unwrap();
-                if urls.is_empty() && additional_arguments.is_empty() && env.is_empty() && !creates_new_instance {
+                if urls.is_empty()
+                    && additional_arguments.is_empty()
+                    && env.is_empty()
+                    && !creates_new_instance
+                {
                     crate::apps::launch_app_by_name(n)?
                 } else {
-                    launch_with_urls_by_name(n, &urls, &additional_arguments, &env, creates_new_instance)?
+                    crate::apps::launch_with_urls_by_name(
+                        n,
+                        &urls,
+                        &additional_arguments,
+                        &env,
+                        creates_new_instance,
+                    )?
                 }
             };
 
@@ -147,6 +200,74 @@ impl Tool for LaunchAppTool {
 
             Ok::<_, anyhow::Error>((pid, app_info, windows))
         }).await;
+
+        // Upgrade to targeted suppression now that we know the real pid.
+        // Keep the wildcard lease alive until immediately AFTER we've
+        // armed the targeted one — that's the PR #1521 overlap window.
+        //
+        // `self_activation_suppressed` is the outcome of the belt-and-
+        // braces demotion check: `None` when the check didn't run
+        // (no prior frontmost / launch failed / pid == prior), `Some(true)`
+        // when the target was NOT frontmost after the suppression window
+        // (or we successfully re-demoted it), `Some(false)` when the
+        // re-demote failed and the target is still stealing focus.
+        // Surfaced in the structured response so callers can observe
+        // whether focus-steal prevention actually held.
+        let mut self_activation_suppressed: Option<bool> = None;
+        if let Ok(Ok((pid, _, _))) = &launch_result {
+            if let Some(prior) = prior_frontmost {
+                if *pid != prior {
+                    let targeted_lease =
+                        crate::focus_steal::FocusStealPreventer::begin_suppression(
+                            Some(*pid),
+                            prior,
+                            "LaunchAppTool.post",
+                        );
+                    // Now safe to drop the wildcard — targeted is armed.
+                    drop(wildcard_lease);
+                    // 500ms covers `applicationDidFinishLaunching` plus
+                    // any reflex `NSApp.activate(...)`. Matches Swift
+                    // LaunchAppTool.swift exactly.
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    drop(targeted_lease);
+
+                    // Belt-and-braces: if the target is STILL frontmost
+                    // after the suppression window, the intra-`open()`
+                    // synchronous activation slipped through. Demote
+                    // explicitly by re-activating the prior frontmost.
+                    let frontmost_now = crate::apps::frontmost_pid();
+                    if frontmost_now == Some(*pid) {
+                        let activated = crate::apps::activate_pid(prior);
+                        // Re-check; the structured response depends on
+                        // whether the demote actually took.
+                        let still_frontmost =
+                            crate::apps::frontmost_pid() == Some(*pid);
+                        if still_frontmost {
+                            tracing::warn!(
+                                target: "platform_macos::tools::launch_app",
+                                launched_pid = *pid,
+                                prior_pid = prior,
+                                activate_pid_returned = activated,
+                                "belt-and-braces demotion failed: launched app \
+                                 is still frontmost after re-activating prior"
+                            );
+                            self_activation_suppressed = Some(false);
+                        } else {
+                            self_activation_suppressed = Some(true);
+                        }
+                    } else {
+                        self_activation_suppressed = Some(true);
+                    }
+                } else {
+                    // pid == prior frontmost (re-launch of an already-
+                    // frontmost app). Just drop the wildcard.
+                    drop(wildcard_lease);
+                }
+            }
+        } else {
+            // Launch failed; just drop the lease.
+            drop(wildcard_lease);
+        }
 
         match launch_result {
             Ok(Ok((pid, app_info, windows))) => {
@@ -182,12 +303,22 @@ impl Tool for LaunchAppTool {
                     "is_on_screen": w.is_on_screen,
                 })).collect();
 
-                ToolResult::text(summary).with_structured(serde_json::json!({
+                let mut structured = serde_json::json!({
                     "pid": pid,
                     "bundle_id": bid,
                     "name": app_name,
-                    "windows": windows_json
-                }))
+                    "windows": windows_json,
+                });
+                // Only emit `self_activation_suppressed` when the
+                // belt-and-braces demotion check actually ran. `None`
+                // means the launch didn't enter the focus-steal path
+                // (no prior frontmost, or pid == prior) — surfacing
+                // a stale `false` would be misleading.
+                if let Some(suppressed) = self_activation_suppressed {
+                    structured["self_activation_suppressed"] =
+                        serde_json::Value::Bool(suppressed);
+                }
+                ToolResult::text(summary).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("Launch failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -196,64 +327,6 @@ impl Tool for LaunchAppTool {
 }
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
-
-/// Launch a bundle with optional URLs, extra args, env vars, and new-instance flag.
-fn launch_with_urls_by_bundle(
-    bundle_id: &str,
-    urls: &[String],
-    additional_args: &[String],
-    env: &std::collections::HashMap<String, String>,
-    new_instance: bool,
-) -> anyhow::Result<i32> {
-    let mut cmd = std::process::Command::new("open");
-    if new_instance { cmd.arg("-n"); }
-    cmd.args(["-g", "-b", bundle_id]);
-    for url in urls { cmd.arg(url); }
-    if !additional_args.is_empty() {
-        cmd.arg("--args");
-        for arg in additional_args { cmd.arg(arg); }
-    }
-    for (k, v) in env { cmd.env(k, v); }
-    let status = cmd.status()?;
-    if !status.success() {
-        anyhow::bail!("Failed to launch {bundle_id}");
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let apps = crate::apps::list_running_apps();
-    apps.into_iter()
-        .find(|a| a.bundle_id.as_deref() == Some(bundle_id))
-        .map(|a| a.pid)
-        .ok_or_else(|| anyhow::anyhow!("Launched {bundle_id} but could not find its pid"))
-}
-
-/// Launch by name with optional URLs, extra args, env vars, and new-instance flag.
-fn launch_with_urls_by_name(
-    name: &str,
-    urls: &[String],
-    additional_args: &[String],
-    env: &std::collections::HashMap<String, String>,
-    new_instance: bool,
-) -> anyhow::Result<i32> {
-    let mut cmd = std::process::Command::new("open");
-    if new_instance { cmd.arg("-n"); }
-    cmd.args(["-g", "-a", name]);
-    for url in urls { cmd.arg(url); }
-    if !additional_args.is_empty() {
-        cmd.arg("--args");
-        for arg in additional_args { cmd.arg(arg); }
-    }
-    for (k, v) in env { cmd.env(k, v); }
-    let status = cmd.status()?;
-    if !status.success() {
-        anyhow::bail!("Failed to launch '{name}'");
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let apps = crate::apps::list_running_apps();
-    apps.into_iter()
-        .find(|a| a.name.eq_ignore_ascii_case(name))
-        .map(|a| a.pid)
-        .ok_or_else(|| anyhow::anyhow!("Launched '{name}' but could not find its pid"))
-}
 
 /// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).

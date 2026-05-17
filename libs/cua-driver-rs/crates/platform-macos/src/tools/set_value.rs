@@ -16,10 +16,13 @@ use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
+use crate::apps;
 use crate::ax::bindings::{
     copy_children, copy_string_attr, perform_action, set_string_attr,
     kAXErrorSuccess, AXUIElementRef,
 };
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 
 use super::ToolState;
@@ -105,12 +108,33 @@ impl Tool for SetValueTool {
             )),
         };
 
-        let result = tokio::task::spawn_blocking(move || {
-            set_value_blocking(element_ptr, element_index, pid, &value)
-        }).await;
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // AXValue writes on popups / sliders can cause reflex activations
+        // in Chromium-based apps; the AXPopUpButton path also AXPresses a
+        // child option which can trigger app activation in some setups.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
+
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "set_value.AXValue",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    set_value_blocking(element_ptr, element_index, pid, &value)
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(msg))  => ToolResult::text(msg),
+            Ok(Ok(mut msg)) => {
+                msg.push_str(&changes.result_suffix());
+                ToolResult::text(msg)
+            }
             Ok(Err(e))   => ToolResult::error(format!("set_value failed: {e}")),
             Err(e)       => ToolResult::error(format!("Task error: {e}")),
         }

@@ -1,0 +1,14 @@
+# Placeholder so the empty MacOS/ directory is tracked in git.
+#
+# At build / install time the cua-driver release binary (universal
+# macOS slice — arm64 + x86_64 lipo'd together) is copied into this
+# directory as `cua-driver`. The Info.plist's CFBundleExecutable
+# points at that name.
+#
+# See:
+#   - libs/cua-driver-rs/scripts/install.sh   (downloads the binary
+#     from GitHub Releases, copies it into Contents/MacOS, installs
+#     the bundle to /Applications/CuaDriverRs.app, and creates the
+#     ~/.local/bin/cua-driver symlink pointing into the bundle)
+#   - .github/workflows/cd-rust-cua-driver.yml  (bakes the assembled
+#     .app into the darwin release tarball at CD time)

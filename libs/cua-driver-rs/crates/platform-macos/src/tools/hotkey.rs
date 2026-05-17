@@ -4,6 +4,10 @@ use serde_json::Value;
 use std::sync::Arc;
 use libc;
 
+use crate::apps;
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
+
 use super::ToolState;
 
 pub struct HotkeyTool {
@@ -112,20 +116,43 @@ impl Tool for HotkeyTool {
         let key_display = raw_keys.join("+");
         let window_id = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
 
-        let result = tokio::task::spawn_blocking(move || {
-            let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            if let Some(wid) = window_id {
-                crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
-                    crate::input::keyboard::hotkey_no_auth(pid, &key, &m)
-                })?;
-                Ok(())
-            } else {
-                crate::input::keyboard::hotkey(pid, &key, &m)
-            }
-        }).await;
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
+        // windows. The NSMenu path also briefly activates the target via
+        // SLPSSetFrontProcessWithOptions which can race the wildcard
+        // suppressor — wrapping ensures both side-effects are observed
+        // and the prior frontmost is restored if the activation lingers.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
+
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "hotkey.CGEvent",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    if let Some(wid) = window_id {
+                        crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
+                            crate::input::keyboard::hotkey_no_auth(pid, &key, &m)
+                        })?;
+                        Ok(())
+                    } else {
+                        crate::input::keyboard::hotkey(pid, &key, &m)
+                    }
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Pressed {key_display} on pid {pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Pressed {key_display} on pid {pid}.{}",
+                changes.result_suffix()
+            )),
             Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

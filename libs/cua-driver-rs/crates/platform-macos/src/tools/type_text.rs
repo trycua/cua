@@ -22,6 +22,9 @@ use crate::ax::bindings::{
     copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr,
     AXUIElementRef,
 };
+use crate::apps;
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 
 use super::ToolState;
@@ -120,13 +123,33 @@ impl Tool for TypeTextTool {
         let text_clone  = text.clone();
         let char_count  = text.chars().count();
 
-        let result = tokio::task::spawn_blocking(move || {
-            type_text_blocking(pid, &text_clone, element_ptr, delay_ms)
-        }).await;
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // Typing into a field can trigger autocomplete popovers or
+        // Chrome/Safari's "Save Password?" prompt, both of which open
+        // helper windows. Wrap so callers see them in the result suffix
+        // and the wildcard suppressor catches reflex activations.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
+
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "type_text.AXSelectedText",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    type_text_blocking(pid, &text_clone, element_ptr, delay_ms)
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
 
         match result {
             Ok(Ok(detail)) => ToolResult::text(format!(
-                "✅ Inserted {char_count} char(s){detail}."
+                "✅ Inserted {char_count} char(s){detail}.{}",
+                changes.result_suffix()
             )),
             Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),

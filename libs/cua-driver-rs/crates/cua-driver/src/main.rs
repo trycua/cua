@@ -24,8 +24,11 @@
 //!
 //! On all other platforms `#[tokio::main]` is used directly.
 
+mod bundle;
 mod cli;
+mod proxy;
 mod serve;
+mod telemetry;
 
 use std::sync::Arc;
 
@@ -40,6 +43,21 @@ fn init_logging() {
         .init();
 }
 
+/// Fire the per-entry-point telemetry event (e.g. `cua_driver_mcp`,
+/// `cua_driver_api_click`). Respects the opt-out env var — no-op when
+/// telemetry is disabled. Always returns immediately: the actual POST
+/// happens on a background thread or tokio task.
+///
+/// Mirrors Swift's `TelemetryClient.shared.record(event:)` call at the
+/// top of `CuaDriverCommand.main()`. The install ping is *not* emitted
+/// here — that's the dedicated `telemetry install-event` subcommand
+/// fired exactly once by the post-install script.
+fn emit_entry_telemetry(command: &cli::Command) {
+    if let Some(event_name) = cli::telemetry_entry_event(command) {
+        telemetry::capture(&event_name, None);
+    }
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -49,7 +67,18 @@ fn main() {
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
     // Handled before AppKit init so `list-tools` / `describe` / `call` exit
     // cleanly without starting the overlay or NSApplication.
-    match cli::parse_command() {
+    let command = cli::parse_command();
+    emit_entry_telemetry(&command);
+    match command {
+        cli::Command::TelemetryInstallEvent => {
+            // Synchronous install ping (see `telemetry::capture_install`).
+            // Blocks on the POST so the `.installation_recorded` marker
+            // is only written on HTTP success — failed POST means next
+            // launch retries. Installer script already runs us in the
+            // background via `&`, so blocking here is fine.
+            telemetry::capture_install();
+            return;
+        }
         cli::Command::ListTools => {
             let reg = Arc::new(platform_macos::register_tools());
             cli::run_list_tools(&reg);
@@ -84,7 +113,25 @@ fn main() {
             cli::run_call(reg, &tool, json_args, screenshot_out_file);
             return;
         }
-        cli::Command::Serve { socket } => {
+        cli::Command::Serve { socket, no_permissions_gate } => {
+            // First-launch permissions gate (Swift PermissionsGate parity).
+            // Runs on every `serve` start; no-op when both grants are
+            // already active.  Honors --no-permissions-gate and
+            // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
+            //
+            // Failures (e.g. deadline elapsed without grants) are logged
+            // and the daemon continues to start — individual tool calls
+            // will then fail with the underlying TCC error, mirroring
+            // Swift's "user closed the panel" fallback.
+            let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
+                no_permissions_gate,
+            );
+            if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
+                eprintln!("[cua-driver] permissions gate: {e}");
+                eprintln!("[cua-driver] continuing serve startup anyway — \
+                           expect tool calls touching AX or Screen Recording \
+                           to fail until you grant the missing TCC permissions.");
+            }
             mcp_server::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
                     platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
@@ -144,7 +191,25 @@ fn main() {
             cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
             return;
         }
-        cli::Command::Mcp => {} // fall through to MCP server startup below
+        cli::Command::Mcp { no_daemon_relaunch, socket } => {
+            // TCC sidestep: if we're a shell-spawned bare binary that
+            // resolves into /Applications/CuaDriverRs.app, run the
+            // proxy path instead of the in-process MCP server. The
+            // proxy ensures a daemon is up under the bundle's TCC
+            // attribution and forwards stdio MCP through its socket.
+            // Issue #1525 / mirror of Swift PR #1479.
+            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                    eprintln!("cua-driver-rs: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            // Fall through to the in-process MCP server below. The
+            // `socket` flag is daemon-proxy-only; it has no meaning
+            // in the in-process path, so we drop it on the floor.
+            let _ = socket;
+        }
     }
 
     let cursor_cfg = cursor_overlay::CursorConfig::from_args();
@@ -227,7 +292,18 @@ fn main() -> anyhow::Result<()> {
     // These commands create their own tokio runtimes internally, so they must
     // run on a plain OS thread — not inside a #[tokio::main] context which
     // would cause nested block_on panics.
-    match cli::parse_command() {
+    let command = cli::parse_command();
+    emit_entry_telemetry(&command);
+    match command {
+        cli::Command::TelemetryInstallEvent => {
+            // Synchronous install ping (see `telemetry::capture_install`).
+            // Blocks on the POST so the `.installation_recorded` marker
+            // is only written on HTTP success — failed POST means next
+            // launch retries. Installer script already runs us in the
+            // background via `&`, so blocking here is fine.
+            telemetry::capture_install();
+            return Ok(());
+        }
         cli::Command::ListTools => {
             let reg = Arc::new(build_registry_no_cursor());
             cli::run_list_tools(&reg);
@@ -251,7 +327,11 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Serve { socket } => {
+        cli::Command::Serve { socket, no_permissions_gate } => {
+            // The Rust permissions gate is macOS-only (TCC concept).
+            // On Windows / Linux the flag is silently accepted for
+            // CLI uniformity and ignored.
+            let _ = no_permissions_gate;
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let reg = Arc::new(build_registry(cursor_cfg));
@@ -305,7 +385,12 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Mcp => {} // fall through to MCP server startup below
+        cli::Command::Mcp { no_daemon_relaunch, socket } => {
+            // Non-macOS: TCC doesn't exist, no daemon proxy path. The
+            // flags parse cleanly so cross-platform MCP config
+            // snippets work, but we ignore them and run in-process.
+            let _ = (no_daemon_relaunch, socket);
+        }
     }
 
     // MCP server mode: this needs a full async tokio runtime.

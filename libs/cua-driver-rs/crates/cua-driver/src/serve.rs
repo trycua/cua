@@ -264,10 +264,20 @@ pub async fn run_serve(
                                 return;
                             }
                             "list" => {
+                                // Include full ToolDef (input_schema + annotation
+                                // hints) so MCP proxy callers can build a complete
+                                // `tools/list` response from one daemon round-trip.
+                                // Older clients that only read name/description
+                                // still work — the extra fields are ignored.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
                                     .map(|(name, def)| serde_json::json!({
                                         "name": name,
-                                        "description": def.description
+                                        "description": def.description,
+                                        "input_schema": def.input_schema,
+                                        "read_only": def.read_only,
+                                        "destructive": def.destructive,
+                                        "idempotent": def.idempotent,
+                                        "open_world": def.open_world,
                                     }))
                                     .collect();
                                 let resp = DaemonResponse::ok(serde_json::json!({"tools": tools}));
@@ -441,8 +451,20 @@ pub async fn run_serve(
                                 return;
                             }
                             "list" => {
+                                // Include full ToolDef so MCP proxy callers can
+                                // build a complete `tools/list` response from
+                                // one daemon round-trip. See the unix branch
+                                // above for rationale.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| serde_json::json!({"name": name, "description": def.description}))
+                                    .map(|(name, def)| serde_json::json!({
+                                        "name": name,
+                                        "description": def.description,
+                                        "input_schema": def.input_schema,
+                                        "read_only": def.read_only,
+                                        "destructive": def.destructive,
+                                        "idempotent": def.idempotent,
+                                        "open_world": def.open_world,
+                                    }))
                                     .collect();
                                 let resp = DaemonResponse::ok(serde_json::json!({"tools": tools}));
                                 let _ = writer.write_all(

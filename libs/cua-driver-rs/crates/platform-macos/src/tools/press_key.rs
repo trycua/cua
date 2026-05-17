@@ -4,6 +4,10 @@ use serde_json::Value;
 use std::sync::Arc;
 use libc;
 
+use crate::apps;
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
+
 use super::ToolState;
 
 pub struct PressKeyTool {
@@ -86,32 +90,65 @@ impl Tool for PressKeyTool {
         };
         let display_key = key_raw.clone();
 
-        // Pre-focus element if requested (element_index + window_id path).
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            if let Some(element_ptr) = self.state.element_cache.get_element_ptr(pid, wid, idx) {
-                let _ = tokio::task::spawn_blocking(move || {
-                    crate::input::ax_actions::focus_element(element_ptr)
-                }).await;
-                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-            }
-        }
+        // Resolve the pre-focus element pointer (if requested) outside
+        // the suppression closure — only the focus_element() write itself
+        // needs to run under suppression, the cache lookup does not.
+        let pre_focus_ptr: Option<usize> = if let (Some(idx), Some(wid)) = (element_index, window_id) {
+            self.state.element_cache.get_element_ptr(pid, wid, idx)
+        } else {
+            None
+        };
 
-        let result = tokio::task::spawn_blocking(move || {
-            let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            if let Some(wid) = window_id {
-                if element_index.is_none() {
-                    // NSMenu path: window_id set but no element_index.
-                    crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
-                        crate::input::keyboard::press_key_no_auth(pid, &key, &m)
-                    })?;
-                    return Ok(());
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // Single-key presses can fire autocomplete (Return on a search
+        // box opens a results popover) or trigger menu shortcuts that
+        // open windows. Wrapping mirrors the hotkey path.
+        //
+        // The AX focus_element() pre-write also runs inside the closure
+        // so any reflex activations it triggers are caught by both the
+        // wildcard snapshot suppressor and the targeted FocusGuard lease.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
+
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "press_key.CGEvent",
+            || async move {
+                // Pre-focus the element under suppression so its
+                // side-effects are captured by the snapshot + lease.
+                if let Some(element_ptr) = pre_focus_ptr {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        crate::input::ax_actions::focus_element(element_ptr)
+                    }).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
-            }
-            crate::input::keyboard::press_key(pid, &key, &m)
-        }).await;
+
+                tokio::task::spawn_blocking(move || {
+                    let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    if let Some(wid) = window_id {
+                        if element_index.is_none() {
+                            // NSMenu path: window_id set but no element_index.
+                            crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
+                                crate::input::keyboard::press_key_no_auth(pid, &key, &m)
+                            })?;
+                            return Ok(());
+                        }
+                    }
+                    crate::input::keyboard::press_key(pid, &key, &m)
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Pressed {display_key} on pid {pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Pressed {display_key} on pid {pid}.{}",
+                changes.result_suffix()
+            )),
             Ok(Err(e)) => ToolResult::error(format!("press_key failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

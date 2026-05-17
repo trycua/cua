@@ -17,12 +17,31 @@ use mcp_server::{protocol::Content, tool::ToolRegistry};
 
 /// Which CLI command was requested.
 pub enum Command {
-    Mcp,
+    Mcp {
+        /// Force in-process MCP execution — skip the TCC auto-relaunch
+        /// path that would spawn a daemon via `open -n -g -a CuaDriverRs
+        /// --args serve` and proxy stdio MCP requests through its Unix
+        /// socket. Useful when the calling context already has the right
+        /// TCC grants (CuaDriverRs.app launched us directly), or when
+        /// diagnosing in-process failures. Also toggleable via
+        /// `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1`.
+        no_daemon_relaunch: bool,
+        /// Override the daemon Unix socket path used by the proxy
+        /// fallback. Defaults to `serve::default_socket_path()`.
+        socket: Option<String>,
+    },
     ListTools,
     Describe(String),
     Call { tool: String, json_args: Option<serde_json::Value>, screenshot_out_file: Option<String> },
     McpConfig { client: Option<String> },
-    Serve { socket: Option<String> },
+    Serve {
+        socket: Option<String>,
+        /// True when `--no-permissions-gate` is on argv.  The env-var
+        /// `CUA_DRIVER_RS_PERMISSIONS_GATE=0` short-circuits the gate too
+        /// (checked inside the gate itself), so the flag is only one of
+        /// two opt-out signals.
+        no_permissions_gate: bool,
+    },
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
@@ -39,6 +58,13 @@ pub enum Command {
         value: Option<String>,
         socket: Option<String>,
     },
+    /// Hidden subcommand used by `scripts/install.sh` to emit the
+    /// one-shot `cua_driver_install` PostHog event. Bypasses the
+    /// opt-out flag (the only call site that does so) so we get a
+    /// usable adoption signal even from users who opt out immediately
+    /// after install. Subsequent runs see the `.installation_recorded`
+    /// marker file and become no-ops.
+    TelemetryInstallEvent,
 }
 
 /// Flags whose next token is a value (not a subcommand).
@@ -65,6 +91,11 @@ pub fn parse_command() -> Command {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
         println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose");
+        println!();
+        println!("mcp options (macOS):");
+        println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
+        println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
+        println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
         std::process::exit(0);
     }
 
@@ -88,12 +119,21 @@ pub fn parse_command() -> Command {
         }
     }
 
+    let no_daemon_relaunch = args.iter().any(|a| a == "--no-daemon-relaunch");
+
     let mut pos = positionals.into_iter();
     match pos.next() {
-        None | Some("mcp") => Command::Mcp,
+        None | Some("mcp") => Command::Mcp {
+            no_daemon_relaunch,
+            socket: socket.clone(),
+        },
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
-        Some("serve") => Command::Serve { socket },
+        Some("serve") => Command::Serve {
+            socket,
+            // Bare flag — present anywhere on argv counts as "skip the gate".
+            no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
+        },
         Some("stop") => Command::Stop { socket },
         Some("status") => Command::Status { socket },
         Some("recording") => {
@@ -128,6 +168,17 @@ pub fn parse_command() -> Command {
                 .and_then(|s| serde_json::from_str(s).ok())
                 .or_else(|| read_stdin_json());
             Command::Call { tool, json_args, screenshot_out_file }
+        }
+        Some("telemetry") => {
+            // Hidden — used by install.sh. Only supports `install-event`
+            // today; left extensible (e.g. future `telemetry status`).
+            match pos.next() {
+                Some("install-event") => Command::TelemetryInstallEvent,
+                _ => {
+                    eprintln!("Usage: cua-driver telemetry install-event");
+                    process::exit(64);
+                }
+            }
         }
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
@@ -201,6 +252,168 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
             println!("{pretty}");
         }
     }
+}
+
+/// Decide whether `mcp` should auto-launch a daemon and proxy MCP
+/// requests through its Unix socket instead of running in-process.
+///
+/// Mirrors Swift `MCPCommand.shouldUseDaemonProxy` in spirit:
+/// the trigger is "shell-spawned bare binary that resolves into an
+/// installed `CuaDriverRs.app` bundle, with a non-launchd parent".
+/// When any of those conditions fails — explicit opt-out, dev-mode
+/// `cargo run` invocation, already-relaunched-via-launchd — we stay
+/// in-process. The proxy path is purely additive.
+///
+/// `false` on non-macOS targets: TCC is a macOS-only concern and
+/// there's no `open -a` equivalent on Linux / Windows.
+#[cfg(target_os = "macos")]
+pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
+    use crate::bundle::{is_env_truthy, is_executable_inside_cuadriverrs_app, parent_is_not_launchd};
+    if no_daemon_relaunch {
+        return false;
+    }
+    if is_env_truthy("CUA_DRIVER_RS_MCP_NO_RELAUNCH") {
+        return false;
+    }
+    // Hidden test/escape hook: force proxy mode without requiring the
+    // executable to live inside CuaDriverRs.app. Used by the
+    // integration test (which spawns a daemon manually) and by users
+    // who've wrapped the binary in a custom bundle. Skips the
+    // launch_daemon_and_wait `open -a` step too — caller is expected
+    // to have a daemon already running on the chosen socket.
+    if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+        return true;
+    }
+    if !is_executable_inside_cuadriverrs_app() {
+        // Raw `cargo run` / dev binary — no installed bundle to land
+        // in, so relaunching would fail. Stay in-process.
+        return false;
+    }
+    if !parent_is_not_launchd() {
+        // ppid == 1 — already running as the LaunchServices-spawned
+        // daemon. TCC context is already correct.
+        return false;
+    }
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn should_use_daemon_proxy(_no_daemon_relaunch: bool) -> bool {
+    false
+}
+
+/// Spawn `/usr/bin/open -n -g -a CuaDriverRs --args serve` to launch
+/// the daemon under `LaunchServices` (so it inherits the bundle's
+/// TCC attribution), then poll the socket for up to `timeout_secs`
+/// seconds. Returns Err with a diagnostic message if `open` failed
+/// or the daemon never came up.
+///
+/// Mirror of Swift `MCPCommand.launchDaemonViaOpen` +
+/// `waitForDaemon`. Split into one Rust function because we don't
+/// need the post-launch probe separation Swift has.
+#[cfg(target_os = "macos")]
+pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::Result<()> {
+    use std::process::{Command as Cmd, Stdio};
+    use std::time::{Duration, Instant};
+
+    // Forward `--socket <path>` to the relaunched daemon when the caller
+    // passed a non-default socket via `cua-driver mcp --socket /path`.
+    // Without this the daemon would listen on `default_socket_path()`,
+    // and the proxy would block forever waiting for a daemon on the
+    // user-supplied path that never comes up. Only added when the path
+    // actually differs from the default, so the common case keeps the
+    // shorter `open` argv (and matches Swift's invocation byte-for-byte).
+    let pass_socket = socket_path != crate::serve::default_socket_path();
+    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriverRs", "--args", "serve"];
+    if pass_socket {
+        open_args.push("--socket");
+        open_args.push(socket_path);
+    }
+
+    let status = Cmd::new("/usr/bin/open")
+        // `-n` forces a new instance: CuaDriverRs.app might already be
+        // running from a previous MCP session, and without `-n`, `open
+        // -a` would re-use it and drop our `--args serve`, leaving no
+        // daemon up. `-g` keeps the new instance backgrounded —
+        // LSUIElement=true in Info.plist already does this but the
+        // flag makes it explicit and matches Swift's invocation.
+        .args(&open_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let status = status.map_err(|e| {
+        anyhow::anyhow!(
+            "failed to exec `/usr/bin/open`: {e}. Pass --no-daemon-relaunch to bypass."
+        )
+    })?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "`open -n -g -a CuaDriverRs --args serve{}` exited {:?}. \
+             Check that `/Applications/CuaDriverRs.app` is installed, or \
+             pass --no-daemon-relaunch to bypass.",
+            if pass_socket { format!(" --socket {socket_path}") } else { String::new() },
+            status.code()
+        );
+    }
+
+    // Poll the UDS until the daemon answers a probe or we time out.
+    // 100ms tick matches Swift's `usleep(100_000)`.
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    while Instant::now() < deadline {
+        if crate::serve::is_daemon_listening(socket_path) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    anyhow::bail!(
+        "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
+         is the first launch, grant Accessibility + Screen Recording to \
+         CuaDriverRs.app in System Settings and retry. Pass --no-daemon-relaunch \
+         to stay in-process."
+    );
+}
+
+/// Run the MCP proxy path: ensure a daemon is up (spawning via
+/// `open` if needed), then `crate::proxy::run_proxy` against its
+/// socket. Builds its own tokio runtime — same shape as the other
+/// `run_*` helpers in this file that own their event loop.
+#[cfg(target_os = "macos")]
+pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
+    let socket_path = socket.unwrap_or_else(crate::serve::default_socket_path);
+
+    if !crate::serve::is_daemon_listening(&socket_path) {
+        // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
+        // bundle setups) supply their own daemon — skip the `open -a`
+        // step, since they don't have an installed CuaDriverRs.app to
+        // relaunch into. Fail fast if no daemon is up at this point.
+        if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+            anyhow::bail!(
+                "CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on \
+                 {socket_path}. Start one with `cua-driver serve --socket {socket_path}` \
+                 and retry."
+            );
+        }
+        let socket_suffix = if socket_path != crate::serve::default_socket_path() {
+            format!(" --socket {socket_path}")
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "cua-driver-rs: mcp launched without CuaDriverRs.app's TCC grants; \
+             auto-launching the daemon via `open -n -g -a CuaDriverRs --args serve{socket_suffix}` \
+             and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
+        );
+        launch_daemon_and_wait(&socket_path, 10)?;
+    }
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(crate::proxy::run_proxy(socket_path))
 }
 
 /// Print the MCP server config snippet or a client-specific install command.
@@ -1256,6 +1469,130 @@ fn read_stdin_json() -> Option<serde_json::Value> {
     let mut buf = String::new();
     stdin.lock().read_to_string(&mut buf).ok()?;
     serde_json::from_str(buf.trim()).ok()
+}
+
+/// Map a parsed [`Command`] to its canonical telemetry event name.
+///
+/// Mirrors Swift's `CuaDriverCommand.telemetryEntryEvent(for:)`. Per-tool
+/// `call <tool>` invocations report as `cua_driver_api_<tool>` so per-tool
+/// usage shows up in aggregate without our ever recording the args.
+///
+/// Returns `None` for [`Command::TelemetryInstallEvent`] — that path emits
+/// the install event directly via [`crate::telemetry::capture_install`]
+/// instead of a per-entry event.
+pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
+    use crate::telemetry::event;
+    let name = match cmd {
+        Command::Mcp { .. } => event::MCP.to_owned(),
+        Command::Serve { .. } => event::SERVE.to_owned(),
+        Command::Stop { .. } => event::STOP.to_owned(),
+        Command::Status { .. } => event::STATUS.to_owned(),
+        Command::ListTools => event::LIST_TOOLS.to_owned(),
+        Command::Describe(_) => event::DESCRIBE.to_owned(),
+        // `call <tool>` → per-tool event (no args, just the tool name).
+        // The tool name flows into the PostHog event name, so we sanitize
+        // it aggressively (see `sanitize_tool_name`) before concatenation —
+        // otherwise weird / path-like / non-ASCII tool names would pollute
+        // dashboards and could even leak user-controlled strings into
+        // telemetry event names.
+        Command::Call { tool, .. } => {
+            if tool.is_empty() {
+                event::CALL.to_owned()
+            } else {
+                format!("{}{}", event::API_PREFIX, sanitize_tool_name(tool))
+            }
+        }
+        Command::McpConfig { .. } => "cua_driver_mcp_config".to_owned(),
+        Command::Recording { .. } => event::RECORDING.to_owned(),
+        Command::Config { .. } => event::CONFIG.to_owned(),
+        Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
+        Command::Update { .. } => "cua_driver_update".to_owned(),
+        Command::Doctor => "cua_driver_doctor".to_owned(),
+        Command::Diagnose => "cua_driver_diagnose".to_owned(),
+        Command::TelemetryInstallEvent => return None,
+    };
+    Some(name)
+}
+
+/// Normalise a user-provided tool name into a safe PostHog event suffix.
+///
+/// Tool names are concatenated onto `cua_driver_api_` to build per-tool
+/// telemetry event names. The raw string is user-controlled (any CLI
+/// arg or MCP request can specify it), so we:
+///
+/// 1. ASCII-lowercase
+/// 2. Keep only `[a-z0-9_]` — drop punctuation, slashes, dots, anything else
+/// 3. Truncate to 64 chars (event names are a dashboard axis, not free text)
+/// 4. Fall back to `"unknown"` when the result is empty (e.g. all non-ASCII
+///    input), so we still record *that* a call happened without inventing
+///    a per-payload event name.
+fn sanitize_tool_name(name: &str) -> String {
+    const MAX_LEN: usize = 64;
+    const FALLBACK: &str = "unknown";
+
+    let cleaned: String = name
+        .chars()
+        .filter_map(|c| {
+            let lc = c.to_ascii_lowercase();
+            if lc.is_ascii_alphanumeric() || lc == '_' {
+                Some(lc)
+            } else {
+                None
+            }
+        })
+        .take(MAX_LEN)
+        .collect();
+
+    if cleaned.is_empty() {
+        FALLBACK.to_owned()
+    } else {
+        cleaned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_tool_name_passes_through_canonical_names() {
+        assert_eq!(sanitize_tool_name("click"), "click");
+        assert_eq!(sanitize_tool_name("move_mouse"), "move_mouse");
+        assert_eq!(sanitize_tool_name("ScrollUp"), "scrollup");
+    }
+
+    #[test]
+    fn sanitize_tool_name_strips_punctuation_and_path_separators() {
+        // Path-like input would otherwise leak directory names into event
+        // names — strip everything that's not [a-z0-9_].
+        assert_eq!(sanitize_tool_name("foo.bar/baz"), "foobarbaz");
+        assert_eq!(sanitize_tool_name("../etc/passwd"), "etcpasswd");
+        assert_eq!(sanitize_tool_name("click-element!"), "clickelement");
+    }
+
+    #[test]
+    fn sanitize_tool_name_falls_back_when_non_ascii() {
+        // Non-ASCII characters are dropped entirely — without a fallback
+        // we'd emit `cua_driver_api_` (empty suffix), which collides with
+        // the bare `cua_driver_call` event.
+        assert_eq!(sanitize_tool_name("クリック"), "unknown");
+        assert_eq!(sanitize_tool_name("🚀"), "unknown");
+    }
+
+    #[test]
+    fn sanitize_tool_name_falls_back_on_empty_or_all_stripped() {
+        assert_eq!(sanitize_tool_name(""), "unknown");
+        assert_eq!(sanitize_tool_name("---"), "unknown");
+        assert_eq!(sanitize_tool_name("///"), "unknown");
+    }
+
+    #[test]
+    fn sanitize_tool_name_caps_length_at_64() {
+        let long_name = "a".repeat(200);
+        let sanitized = sanitize_tool_name(&long_name);
+        assert_eq!(sanitized.len(), 64);
+        assert!(sanitized.chars().all(|c| c == 'a'));
+    }
 }
 
 fn first_sentence(text: &str) -> String {

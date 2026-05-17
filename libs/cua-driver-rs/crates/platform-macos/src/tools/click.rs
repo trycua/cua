@@ -22,6 +22,9 @@ use crate::ax::bindings::{
     copy_action_names, copy_children, copy_string_attr, element_screen_rect,
     AXUIElementRef,
 };
+use crate::apps;
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 
 use super::ToolState;
@@ -134,19 +137,41 @@ impl Tool for ClickTool {
                 crate::cursor::overlay::animate_cursor_to(cx, cy).await;
             }
 
+            // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+            // Capture prior frontmost, arm the wildcard suppressor in the
+            // snapshot, then arm a targeted suppressor across the AX action
+            // itself via FocusGuard. After the action returns, detect any
+            // new-window / foreground side-effects and append a one-liner
+            // suffix matching Swift's wording.
+            let prior_front = apps::frontmost_pid();
+            let snapshot = WindowChangeDetector::snapshot(prior_front);
+
             // Run AX work on a blocking thread (can't block async executor).
             let action_clone = action.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                perform_ax_click(element_ptr, idx, pid, wid, &action_clone)
-            }).await;
+            let result = focus_guard::with_focus_suppressed(
+                Some(pid),
+                prior_front,
+                "click.AXPress",
+                || async move {
+                    tokio::task::spawn_blocking(move || {
+                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone)
+                    })
+                    .await
+                },
+            )
+            .await;
+
+            // Drop the wildcard lease + detect window/foreground side-effects.
+            let changes = snapshot.detect_async().await;
 
             match result {
-                Ok(Ok((msg, needs_webkit_delay))) => {
+                Ok(Ok((mut msg, needs_webkit_delay))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
                         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                     }
+                    msg.push_str(&changes.result_suffix());
                     ToolResult::text(msg)
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
@@ -264,25 +289,46 @@ impl Tool for ClickTool {
                 cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y }
             );
 
+            // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+            // A pixel click can land on a "Sign In" button that opens a sheet
+            // or a Safari link that activates a new tab — same side-effect
+            // shape as the AX path, so we wrap identically.
+            let prior_front = apps::frontmost_pid();
+            let snapshot = WindowChangeDetector::snapshot(prior_front);
+
             let mods_owned = modifiers.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                // When we know the window_id, pass the window-local coordinates so
-                // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
-                // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
-                // for better backgrounded-target delivery.
-                if let Some(wid) = window_id {
-                    return crate::input::mouse::click_at_xy_with_window_local(
-                        pid, screen_x, screen_y,
-                        win_local_x, win_local_y,
-                        wid, count, &m,
-                    );
-                }
-                crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
-            }).await;
+            let result = focus_guard::with_focus_suppressed(
+                Some(pid),
+                prior_front,
+                "click.pixel",
+                || async move {
+                    tokio::task::spawn_blocking(move || {
+                        let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                        // When we know the window_id, pass the window-local coordinates so
+                        // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
+                        // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
+                        // for better backgrounded-target delivery.
+                        if let Some(wid) = window_id {
+                            return crate::input::mouse::click_at_xy_with_window_local(
+                                pid, screen_x, screen_y,
+                                win_local_x, win_local_y,
+                                wid, count, &m,
+                            );
+                        }
+                        crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
+                    })
+                    .await
+                },
+            )
+            .await;
+
+            let changes = snapshot.detect_async().await;
 
             match result {
-                Ok(Ok(())) => ToolResult::text(format!("✅ Posted click to pid {pid}.")),
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Posted click to pid {pid}.{}",
+                    changes.result_suffix()
+                )),
                 Ok(Err(e)) => ToolResult::error(format!("Click failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             }

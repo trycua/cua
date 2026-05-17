@@ -490,7 +490,10 @@ values are explicitly `null` rather than omitted):
 - `bundle_id` (string|null): platform-stable identifier. macOS = bundle id
   (`com.apple.calculator`), Windows desktop = the resolved `.exe` path,
   Windows UWP = `{PackageFamilyName}` (e.g. `Microsoft.WindowsCalculator_8wekyb3d8bbwe`),
-  Linux = the `.desktop` file's basename without the extension.
+  Linux = the XDG "desktop file id" — the `.desktop` file's path relative
+  to its `applications/` root with the `.desktop` suffix stripped and any
+  path separators replaced with `-` (e.g. `kde4/konqbrowser.desktop` →
+  `kde4-konqbrowser`).
 - `running` (bool): true when a process matching this app is live.
 - `active` (bool): true for the single system-frontmost app (always
   implies running). Always false on Linux — X11/Wayland focus is

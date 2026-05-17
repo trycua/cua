@@ -13,9 +13,11 @@ use std::path::{Path, PathBuf};
 pub struct InstalledApp {
     /// Display name from the `Name=` key (best localized variant we can read).
     pub name: String,
-    /// Reverse-DNS application identifier — derived from the `.desktop` file
-    /// basename (e.g. `org.gnome.Calculator.desktop` → `org.gnome.Calculator`).
-    /// This is the spec's "desktop file id" minus the trailing `.desktop`.
+    /// The freedesktop "desktop file id" — the `.desktop` file's path
+    /// relative to its XDG `applications/` root, with the `.desktop`
+    /// suffix stripped and path separators replaced with `-`.
+    /// E.g. `org.gnome.Calculator.desktop` → `org.gnome.Calculator`;
+    /// `kde4/konqbrowser.desktop` → `kde4-konqbrowser`.
     pub bundle_id: String,
     /// Path the launcher would run — the unexpanded first token of `Exec=`
     /// (field codes like `%U`, `%f` stripped). Pass to `launch_app(launch_path=...)`.
@@ -40,11 +42,13 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("desktop") { continue }
-            let Some(app) = parse_desktop_file(&path) else { continue };
+            let id = desktop_file_id(&root, &path);
+            if id.is_empty() { continue }
+            let Some(app) = parse_desktop_file(&path, &id) else { continue };
             // Per the spec, user-scope files (XDG_DATA_HOME) override
-            // system-scope ones with the same basename. xdg_application_dirs
-            // already yields user-scope first, so insert-if-absent gives us
-            // the precedence right.
+            // system-scope ones with the same desktop file id.
+            // xdg_application_dirs already yields user-scope first, so
+            // insert-if-absent gives us the precedence right.
             seen.entry(app.bundle_id.clone()).or_insert(app);
         }
     }
@@ -71,9 +75,38 @@ fn xdg_application_dirs() -> Vec<PathBuf> {
     out
 }
 
+/// Compute the canonical "desktop file id" per the freedesktop Desktop Entry
+/// spec: the path of the `.desktop` file relative to its XDG `applications/`
+/// root, with the `.desktop` suffix stripped and any path separators replaced
+/// with `-`. This is what associations/launchers reference and guarantees
+/// uniqueness across nested category dirs (e.g. `category/foo.desktop` →
+/// `category-foo`, distinct from a sibling `foo.desktop` → `foo`).
+///
+/// Returns an empty string when `path` is not under `root` or has no
+/// `.desktop` suffix.
+fn desktop_file_id(root: &Path, path: &Path) -> String {
+    let rel = match path.strip_prefix(root) {
+        Ok(r) => r,
+        Err(_) => return String::new(),
+    };
+    let rel_str = match rel.to_str() {
+        Some(s) => s,
+        None => return String::new(),
+    };
+    let stem = match rel_str.strip_suffix(".desktop") {
+        Some(s) => s,
+        None => return String::new(),
+    };
+    // Use forward slash as the canonical separator (Linux only — `Path`
+    // separators are always `/` here, but normalize defensively).
+    stem.replace(std::path::MAIN_SEPARATOR, "-").replace('/', "-")
+}
+
 /// Parse a `.desktop` file. Returns `None` for entries the caller should skip
 /// (`NoDisplay=true`, `Hidden=true`, `Type!=Application`, missing `Exec` or `Name`).
-fn parse_desktop_file(path: &Path) -> Option<InstalledApp> {
+///
+/// `bundle_id` is the precomputed desktop file id (see `desktop_file_id`).
+fn parse_desktop_file(path: &Path, bundle_id: &str) -> Option<InstalledApp> {
     let text = fs::read_to_string(path).ok()?;
     let entry = extract_desktop_entry_section(&text)?;
 
@@ -92,14 +125,10 @@ fn parse_desktop_file(path: &Path) -> Option<InstalledApp> {
         return None;
     }
 
-    let bundle_id = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_owned();
     if bundle_id.is_empty() {
         return None;
     }
+    let bundle_id = bundle_id.to_owned();
 
     let last_used = fs::metadata(path)
         .ok()
@@ -241,7 +270,7 @@ NoDisplay=true
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("hidden-helper.desktop");
         std::fs::write(&path, body).unwrap();
-        assert!(parse_desktop_file(&path).is_none());
+        assert!(parse_desktop_file(&path, "hidden-helper").is_none());
         let _ = std::fs::remove_file(&path);
     }
 
@@ -257,11 +286,41 @@ Exec=/opt/demo/bin/demo %U
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("demo-app.desktop");
         std::fs::write(&path, body).unwrap();
-        let parsed = parse_desktop_file(&path).expect("parses");
+        let parsed = parse_desktop_file(&path, "demo-app").expect("parses");
         assert_eq!(parsed.name, "Demo App");
         assert_eq!(parsed.launch_path, "/opt/demo/bin/demo");
         assert_eq!(parsed.bundle_id, "demo-app");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn desktop_file_id_flat() {
+        let root = Path::new("/usr/share/applications");
+        let path = Path::new("/usr/share/applications/firefox.desktop");
+        assert_eq!(desktop_file_id(root, path), "firefox");
+    }
+
+    #[test]
+    fn desktop_file_id_nested_disambiguates() {
+        // Two distinct .desktop files that would have collided under the
+        // old `file_stem()`-only scheme now get unique ids.
+        let root = Path::new("/usr/share/applications");
+        let flat = Path::new("/usr/share/applications/foo.desktop");
+        let nested = Path::new("/usr/share/applications/category/foo.desktop");
+        assert_eq!(desktop_file_id(root, flat), "foo");
+        assert_eq!(desktop_file_id(root, nested), "category-foo");
+        assert_ne!(
+            desktop_file_id(root, flat),
+            desktop_file_id(root, nested),
+            "nested .desktop entries must not collide with flat ones"
+        );
+    }
+
+    #[test]
+    fn desktop_file_id_returns_empty_outside_root() {
+        let root = Path::new("/usr/share/applications");
+        let other = Path::new("/opt/something.desktop");
+        assert_eq!(desktop_file_id(root, other), "");
     }
 
     #[test]

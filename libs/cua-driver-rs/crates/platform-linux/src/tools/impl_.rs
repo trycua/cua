@@ -96,8 +96,10 @@ impl Tool for ListAppsTool {
                 - kind: `\"desktop\"` for XDG `.desktop` launcher entries.\n\
                 - launch_path: the launcher command from `Exec=` (field codes stripped). \
                 Pass to `launch_app(launch_path=...)`.\n\
-                - bundle_id: the `.desktop` file's basename without the `.desktop` extension, \
-                following the XDG Desktop Entry Spec's \"desktop file id\" convention.\n\
+                - bundle_id: the XDG \"desktop file id\" — the `.desktop` file's path \
+                relative to its XDG `applications/` root with the `.desktop` suffix \
+                stripped and path separators replaced with `-` \
+                (e.g. `kde4/konqbrowser.desktop` → `kde4-konqbrowser`).\n\
                 - last_used: RFC3339 mtime of the `.desktop` file, when readable.\n\n\
                 Running apps come from `/proc`. Installed apps come from XDG Desktop Entry \
                 files in $XDG_DATA_HOME/applications and each $XDG_DATA_DIRS entry's \

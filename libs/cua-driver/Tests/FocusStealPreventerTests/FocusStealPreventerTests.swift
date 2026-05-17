@@ -228,6 +228,77 @@ final class FocusStealPreventerTests: XCTestCase {
         XCTAssertEqual(__count13, 0)
     }
 
+    // MARK: - Concurrency invariants (regression tests for CR feedback)
+
+    /// Regression test for the Task-based defer that let `detectChanges`
+    /// return before the lease was actually torn down. A direct `await
+    /// lease.release()` must drain the dispatcher entry before the
+    /// caller proceeds — otherwise a stale wildcard suppressor could
+    /// bleed into the next caller's snapshot window.
+    ///
+    /// This test verifies the explicit `release()` semantics: the
+    /// post-await `activeCount` is observed by the same task that
+    /// awaited, with no scheduling gap that a `Task { await ... }`
+    /// detach would introduce.
+    func testExplicitReleaseDrainsBeforeReturning() async {
+        let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
+        let lease = await preventer.leaseSuppression(targetPid: 0, restoreTo: selfApp)
+        let beforeRelease = await preventer.activeCount
+        XCTAssertEqual(beforeRelease, 1)
+
+        await lease.release()
+
+        // Crucial: the count is observed *immediately* after `release`
+        // returns, with no `try await Task.sleep` or polling. A
+        // detached release would not satisfy this assertion
+        // deterministically.
+        let immediatelyAfter = await preventer.activeCount
+        XCTAssertEqual(
+            immediatelyAfter, 0,
+            "explicit release() must drain the entry before returning, "
+            + "not hand cleanup to a detached Task"
+        )
+    }
+
+    /// Regression test for the LaunchAppTool placeholder→pid crossfade.
+    /// Two overlapping leases must coexist in the dispatcher (overlap is
+    /// the structural fix for the gap-window bug). The dispatcher's add
+    /// and remove must be independent so the crossfade has zero
+    /// suppression-free time.
+    func testCrossfadeOfTwoLeasesHasNoSuppressionGap() async {
+        let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
+        let __c201 = await preventer.activeCount
+        XCTAssertEqual(__c201, 0)
+        // Phase 1: placeholder armed.
+        let placeholder = await preventer.leaseSuppression(targetPid: 0, restoreTo: selfApp)
+        let __c202 = await preventer.activeCount
+        XCTAssertEqual(__c202, 1)
+        // Phase 2: pid-specific armed BEFORE placeholder is released.
+        // This is the crossfade: both entries live concurrently.
+        let pidSpecific = await preventer.leaseSuppression(
+            targetPid: 1234, restoreTo: selfApp
+        )
+        let duringOverlap = await preventer.activeCount
+        XCTAssertEqual(
+            duringOverlap, 2,
+            "dispatcher must support two concurrent leases — this is "
+            + "what makes the LaunchAppTool crossfade leak-free"
+        )
+
+        // Phase 3: drop the placeholder; the pid-specific entry survives.
+        await placeholder.release()
+        let afterPlaceholderDrop = await preventer.activeCount
+        XCTAssertEqual(
+            afterPlaceholderDrop, 1,
+            "releasing the placeholder must not affect the pid-specific entry"
+        )
+
+        // Phase 4: drop the pid-specific entry. Done.
+        await pidSpecific.release()
+        let __c203 = await preventer.activeCount
+        XCTAssertEqual(__c203, 0)
+    }
+
     // MARK: - Helpers
 
     /// Poll `activeCount` until it reaches `expected` or `timeout`

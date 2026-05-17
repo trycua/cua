@@ -3,7 +3,16 @@ import CuaDriverCore
 import Foundation
 import MCP
 
+/// MCP tool that launches a macOS app in the background without stealing
+/// focus from the current frontmost application. Pairs the LaunchServices
+/// `activates = false` flag with the layer-3 `SystemFocusStealPreventer` so
+/// targets that self-activate during `applicationDidFinishLaunching` are
+/// also kept off-front. Configures `WEBKIT_INSPECTOR_SERVER` and
+/// `--remote-debugging-port` for WKWebView / Electron remote inspection
+/// when the corresponding ports are supplied.
 public enum LaunchAppTool {
+    /// MCP `ToolHandler` registration. Wires the JSON schema, argument
+    /// parser, and the body that performs the launch.
     public static let handler = ToolHandler(
         tool: Tool(
             name: "launch_app",
@@ -239,38 +248,35 @@ public enum LaunchAppTool {
                     createsNewApplicationInstance: createsNewInstance
                 )
 
-                // Hand the placeholder lease back to the dispatcher now that
-                // launch returned. We're about to swap to a pid-specific
-                // entry — the placeholder has done its job catching any
-                // intra-`launch` activation.
-                await placeholderLease?.release()
-
-                // Replace the placeholder pid with the real one so any
-                // activation notification the target emits from now on is
-                // caught. Observed activations that fired DURING the launch
-                // (synchronous `open`) will have been seen by the observer
-                // but not matched (pid=0 mismatch), so they pass through —
-                // this fix covers the PROCESS-ORDERING race (target emits
-                // activation AFTER `open` returns) which is the common
-                // case on real machines; the intra-`open` case is handled
-                // by the target's own reflex running asynchronously.
+                // Crossfade from placeholder (wildcard) to pid-specific
+                // suppression with NO suppression-free window in between.
+                //
+                // Earlier ordering was `release placeholder → arm
+                // pid-specific`, which left a brief window where a target
+                // self-activation could slip through. The dispatcher
+                // permits multiple concurrent entries — during the
+                // overlap below, any activation is matched by both the
+                // placeholder wildcard ("anything not priorFrontmost")
+                // and the pid-specific entry ("exactly info.pid"); the
+                // first match restores `priorFrontmost`, which is what
+                // we want.
+                //
+                // 500ms is enough for applicationDidFinishLaunching plus
+                // any reflex NSApp.activate to fire and get suppressed.
                 let shouldSuppress =
                     priorFrontmost != nil
                     && priorFrontmost?.processIdentifier != info.pid
                 if shouldSuppress, let priorFrontmost {
-                    // Closure-scoped suppression around the 500ms wait —
-                    // the entry releases on every exit path (return,
-                    // throw, cancellation). No manual end pairing.
-                    //
-                    // 500ms is enough for applicationDidFinishLaunching
-                    // plus any reflex NSApp.activate to fire and get
-                    // suppressed.
                     await AppStateRegistry.systemFocusStealPreventer
                         .withSuppression(
                             targetPid: info.pid,
                             restoreTo: priorFrontmost,
                             origin: "LaunchAppTool.postLaunch"
                         ) {
+                            // Pid-specific entry is now armed. NOW it's
+                            // safe to drop the placeholder — the
+                            // crossfade is complete.
+                            await placeholderLease?.release()
                             try? await Task.sleep(nanoseconds: 500_000_000)
                         }
 
@@ -287,6 +293,15 @@ public enum LaunchAppTool {
                             _ = priorFrontmost.activate(options: [])
                         }
                     }
+                } else {
+                    // No pid-specific phase needed (priorFrontmost was nil
+                    // or matches the launched pid). The placeholder has
+                    // done its job — catching any intra-launch activation
+                    // — and can be released now. ARC would also catch this
+                    // via deinit when `placeholderLease` goes out of scope,
+                    // but explicit release awaits any pending reactivation
+                    // Tasks before we leave the do-block.
+                    await placeholderLease?.release()
                 }
 
                 var summary = "✅ Launched \(info.name) (pid \(info.pid)) in background."

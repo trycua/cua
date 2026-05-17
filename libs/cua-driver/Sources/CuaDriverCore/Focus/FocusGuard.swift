@@ -29,6 +29,17 @@ public actor FocusGuard {
     private let enforcer: SyntheticAppFocusEnforcer
     private let systemPreventer: SystemFocusStealPreventer?
 
+    /// Construct a guard with the three focus-suppression layers wired in.
+    ///
+    /// - Parameters:
+    ///   - enablement: AX enablement assertion used to write synthetic
+    ///     focus on the target window/element.
+    ///   - enforcer: synthetic-focus enforcer that flips
+    ///     `kAXEnhancedUserInterface` etc. for the duration of the body.
+    ///   - systemPreventer: optional layer-3 reactive preventer. When
+    ///     supplied, the guard arms a lease around the body so any
+    ///     target self-activation triggered by the AX action is undone
+    ///     before the next compositor frame.
     public init(
         enablement: AXEnablementAssertion,
         enforcer: SyntheticAppFocusEnforcer,
@@ -133,9 +144,18 @@ public actor FocusGuard {
 
 }
 
+/// Errors thrown by ``FocusGuard/withFocusSuppressed(pid:element:body:)``.
 public enum FocusGuardError: Error, CustomStringConvertible, Sendable {
+    /// The target window is minimized in the Dock; AX actions on it
+    /// would force-deminiaturize it (especially in Chrome). Caller must
+    /// either unminimize first or use a keyboard-input alternative
+    /// (`type_text_chars`, `press_key`) that does not have this side
+    /// effect.
     case windowMinimized(pid: pid_t)
 
+    /// Human-readable description of the error including the recovery
+    /// hint. `Tool.Content.text` propagates this directly to MCP
+    /// clients.
     public var description: String {
         switch self {
         case .windowMinimized(let pid):

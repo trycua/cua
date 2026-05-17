@@ -236,7 +236,7 @@ cua-driver doctor
 # ...
 ```
 
-`doctor` runs version + install-layout + telemetry checks on every platform, plus platform-specific probes (TCC + cdhash on macOS, UI Automation + interactive desktop session on Windows, X11/Wayland + AT-SPI on Linux). Pass `--json` for a scripting-friendly shape. Exit code is `0` when every probe is `[ok]` / `[warn]`, non-zero only on `[err]` (e.g. the binary cannot resolve its own install dir).
+`doctor` runs version + install-layout + telemetry checks on every platform, plus platform-specific probes (legacy LaunchAgent / updater cleanup on macOS, UI Automation + interactive desktop session on Windows, X11/Wayland + AT-SPI on Linux). For the detailed macOS TCC + cdhash report, run `cua-driver diagnose` — `doctor` only surfaces a pointer to it. Pass `--json` for a scripting-friendly shape. Exit code is `0` when every probe is `[ok]` / `[warn]`, non-zero only on `[err]` (e.g. the binary cannot resolve its own install dir).
 
 ### Windows: interactive-session requirements
 

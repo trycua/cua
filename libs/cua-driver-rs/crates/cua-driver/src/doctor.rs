@@ -190,8 +190,16 @@ fn probe_home_dir() -> Probe {
         );
     }
     let releases = cua_home.join("packages").join("releases");
+    // Only count subdirectories — bare files inside `releases/` (stray
+    // download artifacts, lock files, .DS_Store) are not actual cached
+    // versions and shouldn't inflate the "release dir(s) cached" metric.
     let release_count = std::fs::read_dir(&releases)
-        .map(|entries| entries.filter_map(Result::ok).count())
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.metadata().map(|m| m.is_dir()).unwrap_or(false))
+                .count()
+        })
         .unwrap_or(0);
     Probe::ok(
         "home dir",
@@ -319,6 +327,51 @@ fn append_platform_probes(report: &mut Report) {
     report.push(probe);
 }
 
+/// Run `gdbus introspect` against the AT-SPI accessibility bus and report
+/// whether it returned success within `timeout`. Any of: spawn failure,
+/// timeout elapsed, non-zero exit — all collapse to `false` (the caller
+/// only cares about reachability, not the failure mode).
+///
+/// Kept separate from `append_platform_probes` so it's straightforward to
+/// unit-test the timeout path without invoking the full doctor run.
+#[cfg(target_os = "linux")]
+fn probe_at_spi_bus_via_gdbus(timeout: std::time::Duration) -> bool {
+    use std::process::{Command, Stdio};
+    use wait_timeout::ChildExt;
+
+    let mut child = match Command::new("gdbus")
+        .args([
+            "introspect",
+            "--session",
+            "--dest",
+            "org.a11y.Bus",
+            "--object-path",
+            "/org/a11y/bus",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => {
+            // Timed out — kill the stuck child so we don't leave a
+            // gdbus process hanging around after `doctor` exits.
+            let _ = child.kill();
+            let _ = child.wait();
+            false
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            false
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn append_platform_probes(report: &mut Report) {
     // Display server probe. Order matters: Wayland wins when both are set
@@ -355,12 +408,15 @@ fn append_platform_probes(report: &mut Report) {
         )),
     }
 
-    // X11 connection probe — quick handshake, doesn't enumerate windows.
+    // X11 window enumeration probe. An empty result could mean either an
+    // unreachable display or a healthy display with no top-level windows
+    // open — `list_windows` doesn't distinguish the two — so the warning
+    // hedges instead of asserting a connection failure.
     match platform_linux::x11::list_windows(None) {
         v if v.is_empty() => report.push(
             Probe::warn(
                 "X11 connection",
-                "connected but no visible top-level windows found",
+                "no top-level windows returned (possible disconnected or inaccessible X11 display)",
             ),
         ),
         v => report.push(Probe::ok(
@@ -377,18 +433,12 @@ fn append_platform_probes(report: &mut Report) {
     match at_spi_env {
         Some(addr) => report.push(Probe::ok("AT-SPI", format!("bus address present (AT_SPI_BUS={addr})"))),
         None => {
-            let bus_ok = std::process::Command::new("gdbus")
-                .args([
-                    "introspect",
-                    "--session",
-                    "--dest",
-                    "org.a11y.Bus",
-                    "--object-path",
-                    "/org/a11y/bus",
-                ])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            // Bounded wait — a hung session bus daemon would otherwise
+            // block `doctor` indefinitely. 3s is enough for a healthy
+            // gdbus introspect to complete (single round-trip on the
+            // session bus) and short enough that a stuck bus surfaces
+            // as a warning instead of looking like the binary froze.
+            let bus_ok = probe_at_spi_bus_via_gdbus(std::time::Duration::from_secs(3));
             if bus_ok {
                 report.push(Probe::ok("AT-SPI", "org.a11y.Bus reachable via session bus"));
             } else {

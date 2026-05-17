@@ -426,9 +426,12 @@ impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
-            description: "Launch a Linux app in the background. Provide name (app name, launched via \
-                xdg-open or direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open).".into(),
+            description: "Launch a Linux app in the background. Provide launch_path (preferred — \
+                round-trip the value from list_apps), name (app name, launched via xdg-open or \
+                direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open). \
+                Resolution precedence: launch_path > name > bundle_id.".into(),
             input_schema: json!({"type":"object","properties":{
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
                 "name":{"type":"string","description":"App name or command to launch."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."}
@@ -438,13 +441,14 @@ impl Tool for LaunchAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let launch_path_opt = args.get("launch_path").and_then(|v| v.as_str()).map(str::to_owned);
         let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
-        if name_opt.is_none() && urls.is_empty() {
-            return ToolResult::error("Provide at least one of: name or urls.");
+        if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
+            return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
@@ -455,17 +459,20 @@ impl Tool for LaunchAppTool {
                 }
                 return Ok(format!("Opened {} URL(s) via xdg-open.", urls.len()));
             }
-            // Launch by name — try direct exec, then xdg-open.
-            if let Some(name) = name_opt {
-                let mut parts = name.split_whitespace();
-                let prog = parts.next().unwrap_or(&name);
+            // launch_path > name. Both go through the same direct-exec path
+            // (so XDG `Exec=` commands round-trip), but launch_path is the
+            // canonical form preferred by list_apps callers.
+            let command = launch_path_opt.as_deref().or(name_opt.as_deref());
+            if let Some(cmd) = command {
+                let mut parts = cmd.split_whitespace();
+                let prog = parts.next().unwrap_or(cmd);
                 let rest: Vec<&str> = parts.collect();
                 match std::process::Command::new(prog).args(&rest).spawn() {
-                    Ok(child) => return Ok(format!("Launched '{}' with pid {}.", name, child.id())),
+                    Ok(child) => return Ok(format!("Launched '{}' with pid {}.", cmd, child.id())),
                     Err(_) => {
                         // Fall back to xdg-open for .desktop app names.
-                        std::process::Command::new("xdg-open").arg(&name).spawn()?;
-                        return Ok(format!("Opened '{}' via xdg-open.", name));
+                        std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                        return Ok(format!("Opened '{}' via xdg-open.", cmd));
                     }
                 }
             }

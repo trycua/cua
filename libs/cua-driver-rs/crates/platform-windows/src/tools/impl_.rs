@@ -592,6 +592,48 @@ impl Tool for GetWindowStateTool {
     }
 }
 
+/// Split a `launch_path` round-tripped from `list_apps` into a single
+/// ShellExecuteEx `lpFile` token plus a trailing arguments string. Handles
+/// three input shapes:
+///   - bare path (`C:\Windows\notepad.exe`): returns `(path, "")`
+///   - quoted-exe + args (`"C:\Path\chrome.exe" --foo --bar`): returns the
+///     unquoted path + the rest
+///   - AUMID / shell launch token (`shell:appsFolder\..!..`): returns the
+///     whole string as the file token with empty args (the shell resolver
+///     handles these directly)
+///
+/// Args are returned trimmed; their internal quoting is preserved as-is so
+/// `--profile-directory="Profile 2"` survives.
+fn split_launchable_target(s: &str) -> (String, String) {
+    let trimmed = s.trim();
+    if trimmed.is_empty() { return (String::new(), String::new()); }
+    // AUMID / shell launch tokens go through unchanged.
+    if trimmed.starts_with("shell:") || trimmed.contains('!') {
+        return (trimmed.to_owned(), String::new());
+    }
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        if let Some(close) = rest.find('"') {
+            let path = &rest[..close];
+            let args = rest[close + 1..].trim_start().to_owned();
+            return (path.to_owned(), args);
+        }
+        // Unterminated quote — fall through and hand the whole thing back.
+        return (trimmed.to_owned(), String::new());
+    }
+    // No quoting: be permissive. If the input contains a space and the
+    // first whitespace-separated token names a `.exe`, treat it as
+    // `<exe> <args>`. Otherwise hand the string back whole (lets bare paths
+    // with embedded spaces still work — most installs put `Program Files`
+    // shortcuts through the quoted branch above).
+    if let Some(first_space) = trimmed.find(char::is_whitespace) {
+        let (first, rest) = trimmed.split_at(first_space);
+        if first.to_ascii_lowercase().ends_with(".exe") {
+            return (first.to_owned(), rest.trim_start().to_owned());
+        }
+    }
+    (trimmed.to_owned(), String::new())
+}
+
 // ── launch_app ───────────────────────────────────────────────────────────────
 
 pub struct LaunchAppTool;
@@ -638,10 +680,11 @@ impl Tool for LaunchAppTool {
                 parameters or as the AUMID activation arguments string), the others currently \
                 no-op on Windows.".into(),
             input_schema: json!({"type":"object","properties":{
-                "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, or path must be provided."},
+                "bundle_id":{"type":"string","description":"App User Model ID (AUMID) for a packaged app — pattern `{PackageFamilyName}!{ApplicationId}`, e.g. `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App`. Falls back to a `name` alias if no `!` is present. Either bundle_id, name, aumid, path, or launch_path must be provided."},
                 "aumid":{"type":"string","description":"Explicit AUMID for a packaged app. Cleaner alternative to overloading `bundle_id`. Takes precedence over `bundle_id` / `name` when present."},
                 "name":{"type":"string","description":"App display name. Tried against the `shell:AppsFolder` index first for packaged-app lookup; on a miss, passed to ShellExecuteEx's PATH search."},
-                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid."},
+                "path":{"type":"string","description":"Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid (but not over `launch_path`)."},
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open in the default browser via ShellExecuteEx (no activation)."},
                 "additional_arguments":{"type":"array","items":{"type":"string"},"description":"Extra command-line arguments passed to the launched process (or activation arguments for packaged apps)."},
                 "electron_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
@@ -653,6 +696,7 @@ impl Tool for LaunchAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let launch_path_opt = args.get("launch_path").and_then(|v| v.as_str()).map(str::to_owned);
         let path_opt = args.get("path").and_then(|v| v.as_str()).map(str::to_owned);
         let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
         let bundle_id_opt = args.get("bundle_id").and_then(|v| v.as_str()).map(str::to_owned);
@@ -664,8 +708,12 @@ impl Tool for LaunchAppTool {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
-        // Resolve target — path > aumid > name > bundle_id (alias of name on Windows).
-        let target = path_opt.clone()
+        // Resolve target — launch_path > path > aumid > name > bundle_id
+        // (alias of name on Windows). launch_path is highest precedence for
+        // round-trip with list_apps; the value is handed to ShellExecuteEx
+        // unchanged (UWP routing below is bypassed when launch_path is set).
+        let target = launch_path_opt.clone()
+            .or(path_opt.clone())
             .or(aumid_opt.clone())
             .or(name_opt.clone())
             .or(bundle_id_opt.clone());
@@ -678,19 +726,23 @@ impl Tool for LaunchAppTool {
         // ── Packaged-app (UWP / MSIX) routing decision ──────────────────────
         //
         // Routing precedence — most explicit signal wins:
-        //   1. `aumid` parameter (any value): packaged path, AUMID = value.
-        //   2. `bundle_id` containing `!`: packaged path, AUMID = value
+        //   1. `launch_path` set: skip UWP routing entirely — round-trip
+        //      semantics demand the value be handed to ShellExecuteEx
+        //      unchanged. Callers wanting precise UWP pid capture should
+        //      pass `aumid` instead.
+        //   2. `aumid` parameter (any value): packaged path, AUMID = value.
+        //   3. `bundle_id` containing `!`: packaged path, AUMID = value
         //      (Win32 PATH lookups never produce a `!` in the executable
         //      name, so this is a safe marker of caller intent).
-        //   3. `name` with no `path`: try `shell:AppsFolder` lookup; on a
+        //   4. `name` with no `path`: try `shell:AppsFolder` lookup; on a
         //      hit, packaged path with the resolved AUMID. On miss, fall
         //      through to ShellExecuteExW (existing Win32 path).
-        //   4. Anything else: existing ShellExecuteExW path.
+        //   5. Anything else: existing ShellExecuteExW path.
         //
         // `path` is intentionally excluded from packaged routing — when
         // the caller has a concrete executable in mind they want
         // CreateProcess semantics, not Start Menu activation.
-        let aumid_for_uwp: Option<String> = if path_opt.is_some() {
+        let aumid_for_uwp: Option<String> = if launch_path_opt.is_some() || path_opt.is_some() {
             None
         } else if let Some(a) = aumid_opt.clone() {
             Some(a)
@@ -714,7 +766,35 @@ impl Tool for LaunchAppTool {
             .clone()
             .or_else(|| target.clone())
             .unwrap_or_else(|| urls.join(", "));
-        let extra_joined = extra_args.join(" ");
+
+        // When the resolved target came from `launch_path` it may carry
+        // shortcut arguments (e.g. `"C:\Path\chrome.exe" --profile-directory="Profile 2"`).
+        // Split it into a file token + arguments tail so ShellExecuteEx
+        // sees them separately — passing the whole string as lpFile would
+        // fail because the shell only resolves a single filesystem path
+        // there. No-op for AUMID tokens / plain paths without args / UWP
+        // `shell:appsFolder\..!..` tokens.
+        let (target_file_opt, extra_joined) = {
+            let base_extra = extra_args.join(" ");
+            if launch_path_opt.is_some() {
+                if let Some(t) = target.as_deref() {
+                    let (file, args_tail) = split_launchable_target(t);
+                    let combined = if args_tail.is_empty() {
+                        base_extra
+                    } else if base_extra.is_empty() {
+                        args_tail
+                    } else {
+                        format!("{args_tail} {base_extra}")
+                    };
+                    let file_opt = if file.is_empty() { None } else { Some(file) };
+                    (file_opt, combined)
+                } else {
+                    (None, base_extra)
+                }
+            } else {
+                (target.clone(), base_extra)
+            }
+        };
 
         // Branch: AUMID activation if we resolved one; else legacy
         // ShellExecuteExW. Both branches still need to handle `urls`
@@ -736,9 +816,10 @@ impl Tool for LaunchAppTool {
             }
         } else {
             // Legacy ShellExecuteExW path — unchanged behavior for plain
-            // Win32 apps and for callers passing an explicit `path`.
+            // Win32 apps and for callers passing an explicit `path` /
+            // `launch_path`.
             let urls_clone = urls.clone();
-            let target_for_shell = target.clone();
+            let target_for_shell = target_file_opt.clone();
             let extra_for_shell = extra_joined.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
                 use windows::Win32::UI::Shell::{

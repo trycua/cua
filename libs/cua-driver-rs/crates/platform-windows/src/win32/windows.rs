@@ -2,14 +2,17 @@
 //!
 //! Two enumeration sources, then union + dedupe by HWND:
 //!
-//! 1. **UI Automation** (preferred) — walks the desktop's UIA children. UIA
-//!    surfaces modern apps (WebView2 hosts, packaged-UWP frames, Electron
-//!    container HWNDs) with their real titles + bounds, where `EnumWindows`
-//!    alone either misses the visible surface or returns a wrapper HWND.
+//! 1. **`EnumWindows`** (canonical z-order) — the Win32 enumerator walks the
+//!    window manager's z-order list top-to-bottom, so iteration order IS the
+//!    actual z-order. We list these first so the merged array's index reflects
+//!    the true Win32 stacking for any HWND the Win32 path can see.
 //!
-//! 2. **`EnumWindows`** (fallback union member) — UIA can miss specific
-//!    console window types and some installer dialogs, so we still walk the
-//!    Win32 list and merge in any HWND UIA didn't already report.
+//! 2. **UI Automation** (extra coverage) — appended after `EnumWindows`,
+//!    contributing only HWNDs Win32 didn't surface. UIA exposes modern
+//!    containers (WebView2 hosts, packaged-UWP frames, Electron container
+//!    HWNDs) that `EnumWindows` may miss or return as wrapper HWNDs. UIA's
+//!    `FindAll(TreeScope::Children, ...)` makes no z-order guarantee, so we
+//!    deliberately do NOT let it reorder anything Win32 already reported.
 //!
 //! Both sources apply the same filters (visible, non-iconic, non-empty
 //! title). The `filter_pid` argument is applied to the merged list so the
@@ -45,24 +48,29 @@ struct EnumState {
 
 /// List top-level visible windows. If `filter_pid` is Some, only that process.
 ///
-/// Enumerates via UI Automation first, then unions with `EnumWindows`
-/// (deduped by HWND) to recover any windows UIA missed. The pid filter is
-/// applied to the merged list.
+/// `EnumWindows` first — its iteration order is the Win32 window manager's
+/// z-order (top-to-bottom), so the merged array's index doubles as a z_index
+/// for any HWND the Win32 path saw. Then UIA-only entries are appended (UIA
+/// makes no z-order guarantee, so it must not be allowed to reorder anything
+/// EnumWindows already reported). The pid filter is applied to the merged
+/// list.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    let uia_windows = crate::uia::enumerate_top_level_windows();
     let win32_windows = enumerate_via_enum_windows();
+    let uia_windows = crate::uia::enumerate_top_level_windows();
 
     let mut seen: HashSet<u64> = HashSet::with_capacity(uia_windows.len() + win32_windows.len());
     let mut merged: Vec<WindowInfo> = Vec::with_capacity(uia_windows.len() + win32_windows.len());
 
-    // UIA first — preserves UIA's preferred ordering for modern apps.
-    for w in uia_windows {
+    // EnumWindows first — canonical Win32 z-order.
+    for w in win32_windows {
         if seen.insert(w.hwnd) {
             merged.push(w);
         }
     }
-    // Then any EnumWindows entry whose HWND wasn't already covered.
-    for w in win32_windows {
+    // Then any UIA-only HWND that EnumWindows didn't surface (modern
+    // containers, WebView2 hosts, etc.). These get appended (no claim on
+    // z-order priority relative to the Win32 list).
+    for w in uia_windows {
         if seen.insert(w.hwnd) {
             merged.push(w);
         }

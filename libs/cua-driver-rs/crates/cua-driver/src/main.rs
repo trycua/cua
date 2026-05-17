@@ -26,6 +26,7 @@
 
 mod bundle;
 mod cli;
+mod doctor;
 mod proxy;
 mod serve;
 mod telemetry;
@@ -181,12 +182,15 @@ fn main() {
             cli::run_update_cmd(apply);
             return;
         }
-        cli::Command::Doctor => {
+        cli::Command::Doctor { json } => {
             // Long-running interactive entry point — kick off the
             // background "new version available?" check so the banner
             // can land on stderr if the user is on an outdated install.
-            version_check::maybe_announce_update();
-            cli::run_doctor_cmd();
+            // Skip the banner in --json mode so output stays parseable.
+            if !json {
+                version_check::maybe_announce_update();
+            }
+            cli::run_doctor_cmd(json);
             return;
         }
         cli::Command::Diagnose => {
@@ -384,11 +388,14 @@ fn main() -> anyhow::Result<()> {
             cli::run_update_cmd(apply);
             return Ok(());
         }
-        cli::Command::Doctor => {
+        cli::Command::Doctor { json } => {
             // Long-running interactive entry point — kick off the
             // background update check so the banner can land on stderr.
-            version_check::maybe_announce_update();
-            cli::run_doctor_cmd();
+            // Skip the banner in --json mode so output stays parseable.
+            if !json {
+                version_check::maybe_announce_update();
+            }
+            cli::run_doctor_cmd(json);
             return Ok(());
         }
         cli::Command::Diagnose => {

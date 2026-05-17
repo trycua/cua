@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -267,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "image",
@@ -394,7 +394,7 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
 name = "focus-monitor-win"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "windows",
 ]
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-server"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1117,7 +1117,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-linux"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.1.3"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",

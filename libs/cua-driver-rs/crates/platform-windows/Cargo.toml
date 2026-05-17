@@ -36,5 +36,10 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_Media",
     "Win32_System_Registry",
+    # `cua-driver doctor` interactive-session probe:
+    # - Win32_System_RemoteDesktop → ProcessIdToSessionId
+    # - Win32_System_StationsAndDesktops → OpenWindowStationW
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
 ] }
 base64 = { workspace = true }

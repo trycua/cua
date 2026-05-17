@@ -1460,6 +1460,80 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
 
 ---
 
+## CLI subcommand: `doctor`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/DoctorCommand.swift` (legacy-cleanup only — single
+  `Nothing to clean — install is up to date.` codepath, no diagnostics)
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/doctor.rs` +
+        `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_doctor_cmd`
+- Status: INTENTIONAL_DIVERGENCE (Rust adds full diagnostic surface)
+- Test: `crates/cua-driver/src/doctor.rs` `#[cfg(test)] mod tests`
+        (5 unit tests: text rendering, JSON rendering, status-tag mapping,
+        cross-platform probe smoke path)
+
+### Behavior
+
+Probe-runner that emits a structured report. Each probe is one line
+tagged `[ok]`, `[warn]`, or `[err]` so the output is grep-friendly.
+`--json` switches to a machine-readable shape for scripting (also
+suppresses the update-available banner so JSON output stays parseable).
+
+**Cross-platform probes:**
+- `binary` — version + `<arch>-<os>` target triple
+- `install dir` — `current_exe()` resolved through symlinks
+- `home dir` — `~/.cua-driver-rs` existence + cached release-dir count
+- `telemetry` — env-var opt-out state + install-id file presence
+  (presence only — UUID value never read)
+
+**Windows probes:**
+- `interactive session` — `ProcessIdToSessionId(GetCurrentProcessId())`.
+  Session 0 → `[warn]` with explicit guidance ("re-run from an
+  interactive logon — RDP, console, or a scheduled task in the user's
+  session"). Sessions ≥1 → `OpenWindowStationW(WinSta0)` +
+  `GetForegroundWindow()` confirmation probe → `[ok]` when both succeed.
+- `UI Automation` — `CoCreateInstance(CUIAutomation)` succeeds → `[ok]`,
+  else `[err]`.
+- `EnumWindows visible` — top-level visible-window count. When zero
+  *and* Session 0 was warned above, the probe appends a "consistent
+  with Session 0" detail so the two findings read as one.
+
+**Linux probes:**
+- `display server` — `DISPLAY` / `WAYLAND_DISPLAY` matrix (X11 only,
+  Wayland only with XWayland hint, both set, neither set).
+- `X11 connection` — quick handshake via `platform_linux::x11::list_windows(None)`.
+- `AT-SPI` — `AT_SPI_BUS` env var, fallback to `gdbus introspect
+  --session --dest org.a11y.Bus`.
+
+**macOS probes:**
+- `legacy LaunchAgent` — opportunistic removal of
+  `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` (preserves
+  the old DoctorCommand cleanup behavior, now as a structured probe).
+- `legacy update script` — opportunistic removal of
+  `/usr/local/bin/cua-driver-update` (root-owned path gets a `[warn]`
+  with the `sudo rm` command).
+- `TCC + cdhash report` — pointer to `cua-driver diagnose` for the
+  full bundle / signature / TCC dump.
+
+### Exit code
+
+`0` when every probe is `[ok]` or `[warn]`. Non-zero only when at
+least one `[err]` probe failed (e.g. `current_exe()` returned an error,
+or `CoCreateInstance(CUIAutomation)` failed on Windows). Warnings
+deliberately do not fail the run because misconfigured environments
+are sometimes the expected state — CI invocations of `doctor` to
+render the report still expect exit 0.
+
+### Why the divergence from Swift
+
+The Swift port's `DoctorCommand` only handles legacy install-bit
+cleanup on macOS. The Rust port runs on Windows + Linux as well, where
+the analogous misconfigurations (Session 0 on Windows, missing
+`DISPLAY` on Linux, no AT-SPI on Linux) are *the* source of "the tools
+are broken" reports. Folding diagnostics into `doctor` mirrors what
+users instinctively try first when something silently returns empty
+arrays.
+
+---
+
 ## CLI subcommand: `dump-docs`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/DumpDocsCommand.swift`
 - Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_dump_docs_with_type`

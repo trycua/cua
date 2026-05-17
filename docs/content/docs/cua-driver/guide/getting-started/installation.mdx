@@ -225,6 +225,55 @@ cua-driver --help
 # OVERVIEW: macOS Accessibility-driven computer-use agent — MCP stdio server.
 ```
 
+For a structured environment + install report on any platform, run:
+
+```bash
+cua-driver doctor
+# [ok  ] binary: cua-driver 0.2.1 (aarch64-macos)
+# [ok  ] install dir: /Users/you/.local/bin/cua-driver
+# [ok  ] home dir: /Users/you/.cua-driver-rs (3 release dirs cached)
+# [ok  ] telemetry: enabled (install-id present)
+# ...
+```
+
+`doctor` runs version + install-layout + telemetry checks on every platform, plus platform-specific probes (legacy LaunchAgent / updater cleanup on macOS, UI Automation + interactive desktop session on Windows, X11/Wayland + AT-SPI on Linux). For the detailed macOS TCC + cdhash report, run `cua-driver diagnose` — `doctor` only surfaces a pointer to it. Pass `--json` for a scripting-friendly shape. Exit code is `0` when every probe is `[ok]` / `[warn]`, non-zero only on `[err]` (e.g. the binary cannot resolve its own install dir).
+
+### Windows: interactive-session requirements
+
+Window-driving tools — `list_windows`, `click`, `type_text`, `screenshot`, `get_window_state` — all bottom out in Win32 APIs (`EnumWindows`, `GetForegroundWindow`, `PrintWindow`) that are scoped to the **calling process's WindowStation + Desktop**. A process without an attached interactive desktop sees zero windows even when the user's logged-in desktop has plenty.
+
+**Windows session model in one paragraph.** Every Windows process runs inside a numbered session. Session `0` is reserved for services and has no interactive desktop attached. Sessions `1`, `2`, ... are interactive logons — one per console / RDP user. SSH-launched processes (OpenSSH server) **default to Session 0** unless the SSH server is explicitly configured to spawn the shell inside the interactive session. The same applies to most Windows service hosts, scheduled tasks running under SYSTEM, and background invocations from CI agents.
+
+If `cua-driver` lands in Session 0, the window tools will silently return empty arrays and "no windows found" — that's the APIs working as designed against a session with no desktop, not a cua-driver bug.
+
+**Diagnose with `cua-driver doctor`.** The Windows session probe surfaces this directly:
+
+```text
+[warn] interactive session: running in Session 0 (services); window-driving
+       tools (list_windows, click, type_text, screenshot, get_window_state)
+       will return empty results — these APIs need an attached interactive
+       desktop.
+         re-run cua-driver from an interactive logon (RDP, console, or a
+         scheduled task in the user's session) for the GUI tools to function.
+```
+
+A healthy interactive logon reports the inverse:
+
+```text
+[ok  ] interactive session: session 2 has an attached interactive desktop
+       (WinSta0 + foreground window)
+```
+
+**Common fixes for "all my tools return empty arrays on Windows".**
+
+- **Run from RDP or the local console** — the simplest fix; both put your shell in your own interactive session, not Session 0.
+- **Run from a Windows Terminal / PowerShell launched by your logged-in user** — same effect.
+- **Scheduled Task in the user's session** — register a scheduled task with `Run only when user is logged on` checked and the principal set to your logged-in user. Cua Driver launched from that task inherits the user's interactive desktop.
+- **Use a session-launcher utility** — if you must invoke from a service / SSH context, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
+- **Configure your SSH server to spawn inside the interactive session** — possible with most modern Windows SSH server distributions but requires extra setup; the scheduled-task approach is usually simpler.
+
+Run `cua-driver doctor` after switching contexts to confirm the warning has cleared.
+
 ## Grant TCC permissions
 
 Cua Driver needs two permissions:

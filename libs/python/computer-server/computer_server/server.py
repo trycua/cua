@@ -45,7 +45,8 @@ class Server:
         Initialize the server.
 
         Args:
-            host: Host to bind the server to
+            host: Host to bind the server to. Defaults to localhost; pass
+                "0.0.0.0" explicitly for external access.
             port: Port to bind the server to
             log_level: Logging level (debug, info, warning, error, critical)
             ssl_keyfile: Path to SSL private key file (for HTTPS)

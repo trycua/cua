@@ -88,24 +88,190 @@ impl Tool for ListAppsTool {
     fn def(&self) -> &ToolDef {
         LIST_APPS_DEF.get_or_init(|| ToolDef {
             name: "list_apps".into(),
-            description: "List running processes via /proc filesystem.".into(),
+            description: "List Linux apps — both currently running and installed-but-not-running — \
+                with per-app state flags:\n\n\
+                - running: is a process for this app live? (pid is 0 when false)\n\
+                - active: reserved (Linux X11/Wayland focus model differs from frontmost-app); \
+                always false.\n\
+                - kind: `\"desktop\"` for XDG `.desktop` launcher entries.\n\
+                - launch_path: the launcher command from `Exec=` (field codes stripped). \
+                Pass to `launch_app(launch_path=...)`.\n\
+                - bundle_id: the XDG \"desktop file id\" — the `.desktop` file's path \
+                relative to its XDG `applications/` root with the `.desktop` suffix \
+                stripped and path separators replaced with `-` \
+                (e.g. `kde4/konqbrowser.desktop` → `kde4-konqbrowser`).\n\
+                - last_used: RFC3339 mtime of the `.desktop` file, when readable.\n\n\
+                Running apps come from `/proc`. Installed apps come from XDG Desktop Entry \
+                files in $XDG_DATA_HOME/applications and each $XDG_DATA_DIRS entry's \
+                applications/ subdir. Entries with `NoDisplay=true` or `Hidden=true` are \
+                filtered. A `.desktop` file whose launcher matches a running process \
+                (by basename) is merged into a single entry with `running: true`.\n\n\
+                Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
+                state — visibility, geometry, titles — call list_windows instead.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let procs = tokio::task::spawn_blocking(|| crate::proc_fs::list_processes()).await.unwrap_or_default();
-        let mut lines = vec![format!("Found {} processes:", procs.len())];
-        for p in &procs {
-            let cmd = if p.cmdline.is_empty() { p.name.clone() } else { p.cmdline.clone() };
-            lines.push(format!("  {} (pid {})", cmd, p.pid));
+        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
+            let procs = crate::proc_fs::list_processes();
+            let installed = crate::installed_apps::list_installed_apps();
+
+            // Match running processes to installed apps by executable
+            // basename (Exec=firefox %u → "firefox"; cmdline /usr/bin/firefox
+            // → "firefox"). Many distros register multiple .desktop entries
+            // sharing the same basename (e.g. several `firefox` profiles, a
+            // `code` and a `code-insiders` both shelling `code`), so the
+            // bucket is `Vec<usize>` — we pick a winner per running process
+            // via `disambiguate_installed_match` instead of overwriting.
+            let mut by_exe: std::collections::HashMap<String, Vec<usize>> =
+                std::collections::HashMap::new();
+            for (i, app) in installed.iter().enumerate() {
+                let basename = exec_basename(&app.launch_path);
+                if !basename.is_empty() {
+                    by_exe.entry(basename).or_default().push(i);
+                }
+            }
+
+            let mut consumed: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            let mut out = Vec::new();
+            for p in &procs {
+                let key_source = if !p.cmdline.is_empty() { &p.cmdline } else { &p.name };
+                let basename = exec_basename(key_source);
+                if basename.is_empty() { continue }
+                let candidates = by_exe.get(&basename).map(|v| v.as_slice()).unwrap_or(&[]);
+                let merged = disambiguate_installed_match(candidates, &installed, key_source);
+                if let Some(idx) = merged { consumed.insert(idx); }
+                let (name, bundle_id, launch_path, kind, last_used) = match merged {
+                    Some(idx) => {
+                        let a = &installed[idx];
+                        (
+                            a.name.clone(),
+                            Some(a.bundle_id.clone()),
+                            Some(a.launch_path.clone()),
+                            Some("desktop".to_owned()),
+                            a.last_used.clone(),
+                        )
+                    }
+                    None => (
+                        if !p.name.is_empty() { p.name.clone() } else { basename.clone() },
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                };
+                out.push(json!({
+                    "pid":         p.pid,
+                    "bundle_id":   bundle_id,
+                    "name":        name,
+                    "running":     true,
+                    "active":      false,
+                    "kind":        kind,
+                    "launch_path": launch_path,
+                    "last_used":   last_used,
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            for (i, app) in installed.iter().enumerate() {
+                if consumed.contains(&i) { continue }
+                out.push(json!({
+                    "pid":         0,
+                    "bundle_id":   app.bundle_id.clone(),
+                    "name":        app.name.clone(),
+                    "running":     false,
+                    "active":      false,
+                    "kind":        "desktop",
+                    "launch_path": app.launch_path.clone(),
+                    "last_used":   app.last_used.clone(),
+                    "windows":     Vec::<serde_json::Value>::new(),
+                }));
+            }
+            out
+        }).await.unwrap_or_default();
+
+        let running_count = apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)).count();
+        let total = apps.len();
+        let installed_only = total - running_count;
+        let mut lines = vec![format!(
+            "✅ Found {total} app(s): {running_count} running, {installed_only} installed-not-running."
+        )];
+        for app in apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false)) {
+            let name = app["name"].as_str().unwrap_or("?");
+            let pid  = app["pid"].as_u64().unwrap_or(0);
+            lines.push(format!("- {name} (pid {pid})"));
         }
-        let structured = json!({ "processes": procs.iter().map(|p| json!({
-            "pid": p.pid, "name": p.name, "cmdline": p.cmdline
-        })).collect::<Vec<_>>() });
+        // Unified `apps` array + legacy `processes` alias for older callers.
+        let structured = json!({
+            "apps": apps,
+            "processes": apps.iter().filter(|a| a["running"].as_bool().unwrap_or(false))
+                .map(|a| json!({
+                    "pid":  a["pid"], "name": a["name"]
+                })).collect::<Vec<_>>(),
+        });
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
+}
+
+/// Pick which of several `.desktop`-derived installed apps best matches a
+/// running process whose basename collided. Precedence:
+///   1. exact full-launch-path equality with the process's cmdline token
+///      (so `/usr/bin/firefox` beats `/snap/firefox/current/firefox`)
+///   2. most recently modified launcher (`last_used` desc, RFC3339 string
+///      ordering is lexicographic-safe for our format)
+///   3. first candidate (deterministic by source order)
+fn disambiguate_installed_match(
+    candidates: &[usize],
+    installed: &[crate::installed_apps::InstalledApp],
+    proc_key_source: &str,
+) -> Option<usize> {
+    if candidates.is_empty() { return None; }
+    if candidates.len() == 1 { return Some(candidates[0]); }
+
+    // Look for an exact path match against the cmdline's first token.
+    let proc_path = proc_key_source.split_whitespace().next().unwrap_or("");
+    if !proc_path.is_empty() {
+        if let Some(&idx) = candidates.iter().find(|&&i| installed[i].launch_path == proc_path) {
+            return Some(idx);
+        }
+    }
+
+    // Fall back to the candidate with the most recent `last_used`.
+    candidates
+        .iter()
+        .copied()
+        .max_by(|&a, &b| {
+            installed[a]
+                .last_used
+                .as_deref()
+                .unwrap_or("")
+                .cmp(installed[b].last_used.as_deref().unwrap_or(""))
+        })
+        .or_else(|| candidates.first().copied())
+}
+
+/// Return the lowercase basename of an executable token, stripping any
+/// leading shell-wrapper words and quoting. `env FOO=1 /usr/bin/firefox %U`
+/// → `firefox`. `firefox %u` → `firefox`.
+fn exec_basename(s: &str) -> String {
+    // Take the first whitespace-separated token that looks like a binary,
+    // skipping `env`-style prefixes and `K=V` assignments.
+    for tok in s.split_whitespace() {
+        if tok == "env" { continue }
+        if tok.contains('=') && !tok.starts_with('/') && !tok.starts_with('-') {
+            // `FOO=bar` env-var assignment — skip.
+            continue;
+        }
+        let cleaned = tok.trim_matches(|c| c == '"' || c == '\'');
+        let basename = std::path::Path::new(cleaned)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(cleaned);
+        return basename.to_ascii_lowercase();
+    }
+    String::new()
 }
 
 // ── list_windows ─────────────────────────────────────────────────────────────
@@ -260,9 +426,12 @@ impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
         LAUNCH_DEF.get_or_init(|| ToolDef {
             name: "launch_app".into(),
-            description: "Launch a Linux app in the background. Provide name (app name, launched via \
-                xdg-open or direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open).".into(),
+            description: "Launch a Linux app in the background. Provide launch_path (preferred — \
+                round-trip the value from list_apps), name (app name, launched via xdg-open or \
+                direct exec), bundle_id (ignored on Linux), or urls (list of URLs to open). \
+                Resolution precedence: launch_path > name > bundle_id.".into(),
             input_schema: json!({"type":"object","properties":{
+                "launch_path":{"type":"string","description":"Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell."},
                 "name":{"type":"string","description":"App name or command to launch."},
                 "bundle_id":{"type":"string","description":"Ignored on Linux (macOS/Windows concept)."},
                 "urls":{"type":"array","items":{"type":"string"},"description":"URLs to open via xdg-open."}
@@ -272,13 +441,14 @@ impl Tool for LaunchAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let launch_path_opt = args.get("launch_path").and_then(|v| v.as_str()).map(str::to_owned);
         let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
-        if name_opt.is_none() && urls.is_empty() {
-            return ToolResult::error("Provide at least one of: name or urls.");
+        if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
+            return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
@@ -289,17 +459,20 @@ impl Tool for LaunchAppTool {
                 }
                 return Ok(format!("Opened {} URL(s) via xdg-open.", urls.len()));
             }
-            // Launch by name — try direct exec, then xdg-open.
-            if let Some(name) = name_opt {
-                let mut parts = name.split_whitespace();
-                let prog = parts.next().unwrap_or(&name);
+            // launch_path > name. Both go through the same direct-exec path
+            // (so XDG `Exec=` commands round-trip), but launch_path is the
+            // canonical form preferred by list_apps callers.
+            let command = launch_path_opt.as_deref().or(name_opt.as_deref());
+            if let Some(cmd) = command {
+                let mut parts = cmd.split_whitespace();
+                let prog = parts.next().unwrap_or(cmd);
                 let rest: Vec<&str> = parts.collect();
                 match std::process::Command::new(prog).args(&rest).spawn() {
-                    Ok(child) => return Ok(format!("Launched '{}' with pid {}.", name, child.id())),
+                    Ok(child) => return Ok(format!("Launched '{}' with pid {}.", cmd, child.id())),
                     Err(_) => {
                         // Fall back to xdg-open for .desktop app names.
-                        std::process::Command::new("xdg-open").arg(&name).spawn()?;
-                        return Ok(format!("Opened '{}' via xdg-open.", name));
+                        std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                        return Ok(format!("Opened '{}' via xdg-open.", cmd));
                     }
                 }
             }

@@ -12,6 +12,22 @@ pub struct AppInfo {
     pub bundle_id: Option<String>,
     pub running: bool,
     pub active: bool,
+    /// Per-platform "how launch_app would consume this entry".
+    ///
+    /// On macOS: filesystem path to the `.app` bundle (e.g. `/Applications/Safari.app`)
+    /// when known. `None` for entries that came only from `NSWorkspace`'s
+    /// runtime list and whose bundle path could not be resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_path: Option<String>,
+    /// Kind discriminator. macOS reports `"desktop"` for every `.app` bundle.
+    /// Reserved for future use on platforms with packaged-app distinctions
+    /// (e.g. Windows UWP packages).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// RFC3339 timestamp of the launcher's filesystem `LastAccessTime` /
+    /// `mtime`, when available. `None` when the field could not be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<String>,
 }
 
 /// Enumerate running apps with NSApplicationActivationPolicyRegular.
@@ -73,7 +89,16 @@ fn parse_osascript_app_list(text: &str) -> Vec<AppInfo> {
         };
         let active = parts.get(3).map(|s| s.trim() == "1").unwrap_or(false);
         if name.is_empty() || pid == 0 { continue; }
-        apps.push(AppInfo { name, pid, bundle_id, running: true, active });
+        apps.push(AppInfo {
+            name,
+            pid,
+            bundle_id,
+            running: true,
+            active,
+            launch_path: None,
+            kind: Some("desktop".to_owned()),
+            last_used: None,
+        });
     }
     apps
 }
@@ -325,13 +350,39 @@ fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
 }
 
 /// Return all apps: running apps merged with installed-but-not-running apps.
+///
+/// Single flat array. Each entry carries:
+///   * `running` (true for currently-live processes, false for installed-only),
+///   * `pid` (live pid when running, `0` otherwise),
+///   * `launch_path` (filesystem `.app` path when known, else `None`),
+///   * `kind` (`"desktop"` on macOS).
 pub fn list_all_apps() -> Vec<AppInfo> {
-    let running = list_running_apps();
+    let mut running = list_running_apps();
+    let installed = scan_installed_apps();
+    // Lookup: bundle_id → (launch_path, last_used) from the installed scan.
+    let installed_by_bundle: std::collections::HashMap<String, (Option<String>, Option<String>)> =
+        installed.iter()
+            .filter_map(|a| a.bundle_id.clone().map(|b| (b, (a.launch_path.clone(), a.last_used.clone()))))
+            .collect();
+    // Backfill running entries with the launch_path the installed scan resolved.
+    for app in running.iter_mut() {
+        if let Some(bid) = &app.bundle_id {
+            if let Some((path, last_used)) = installed_by_bundle.get(bid) {
+                if app.launch_path.is_none() {
+                    app.launch_path = path.clone();
+                }
+                if app.last_used.is_none() {
+                    app.last_used = last_used.clone();
+                }
+            }
+        }
+    }
+
     let running_bundles: std::collections::HashSet<String> = running.iter()
         .filter_map(|a| a.bundle_id.clone())
         .collect();
 
-    let mut installed = scan_installed_apps();
+    let mut installed = installed;
     // Remove apps already in running list.
     installed.retain(|a| !a.bundle_id.as_ref().map_or(false, |b| running_bundles.contains(b)));
 
@@ -361,12 +412,54 @@ fn scan_installed_apps() -> Vec<AppInfo> {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("app") { continue }
             let plist_path = path.join("Contents/Info.plist");
-            if let Some(info) = read_app_plist(&plist_path) {
+            if let Some(mut info) = read_app_plist(&plist_path) {
+                info.launch_path = path.to_str().map(str::to_owned);
+                info.kind = Some("desktop".to_owned());
+                info.last_used = fs_last_used(&path);
                 result.push(info);
             }
         }
     }
     result
+}
+
+/// Read the bundle's filesystem `mtime` and serialize as RFC3339.
+/// Used as `last_used` heuristic — macOS doesn't reliably surface
+/// LaunchServices' true "last launched" timestamp without entitlements,
+/// so we approximate with whichever of `atime`/`mtime` the filesystem
+/// preserves (mtime is the more portable of the two).
+fn fs_last_used(path: &std::path::Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(unix_secs_to_rfc3339(duration.as_secs() as i64))
+}
+
+/// Format a Unix epoch seconds value as `YYYY-MM-DDTHH:MM:SSZ` (UTC).
+/// Hand-rolled to avoid pulling in a date/time crate just for this.
+pub(crate) fn unix_secs_to_rfc3339(secs: i64) -> String {
+    // Days since 1970-01-01 + civil date breakdown per Howard Hinnant's algorithm.
+    let days = secs.div_euclid(86_400);
+    let seconds_of_day = secs.rem_euclid(86_400);
+    let hour = seconds_of_day / 3600;
+    let minute = (seconds_of_day % 3600) / 60;
+    let second = seconds_of_day % 60;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hour, minute, second
+    )
 }
 
 fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
@@ -413,6 +506,9 @@ fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
         bundle_id: Some(bundle_id),
         running: false,
         active: false,
+        launch_path: None,
+        kind: None,
+        last_used: None,
     })
 }
 
@@ -482,4 +578,59 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
         lines.push(format!("- {} (pid {}){}", app.name, app.pid, bundle));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unix_secs_to_rfc3339;
+
+    #[test]
+    fn rfc3339_epoch() {
+        assert_eq!(unix_secs_to_rfc3339(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_negative_pre_epoch() {
+        // 1969-12-31T23:59:59Z = epoch - 1 second.
+        assert_eq!(unix_secs_to_rfc3339(-1), "1969-12-31T23:59:59Z");
+        // 1969-01-01T00:00:00Z = epoch - 365 days.
+        assert_eq!(unix_secs_to_rfc3339(-365 * 86_400), "1969-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_leap_day_in_leap_year() {
+        // 2020-02-29T12:00:00Z. Days from 1970-01-01:
+        //   50 years * 365 + 13 leap days (1972..=2020 inclusive of 13) - 1
+        //   (Feb 29 is the 60th day of 2020, so 59 prior days in 2020).
+        // Use the known timestamp instead of recomputing.
+        // `date -d "2020-02-29T12:00:00Z" +%s` = 1582977600.
+        assert_eq!(unix_secs_to_rfc3339(1_582_977_600), "2020-02-29T12:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_feb_28_non_leap_year() {
+        // 2019-02-28T00:00:00Z → 1551312000.
+        assert_eq!(unix_secs_to_rfc3339(1_551_312_000), "2019-02-28T00:00:00Z");
+        // The very next second is Mar 1, not Feb 29.
+        assert_eq!(unix_secs_to_rfc3339(1_551_312_000 + 86_400), "2019-03-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_end_of_year_wrap() {
+        // 2023-12-31T23:59:59Z = 1704067199; +1 second wraps to 2024-01-01.
+        assert_eq!(unix_secs_to_rfc3339(1_704_067_199), "2023-12-31T23:59:59Z");
+        assert_eq!(unix_secs_to_rfc3339(1_704_067_200), "2024-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn rfc3339_recent_arbitrary_timestamp() {
+        // 2024-06-15T13:45:30Z → 1718459130.
+        assert_eq!(unix_secs_to_rfc3339(1_718_459_130), "2024-06-15T13:45:30Z");
+    }
+
+    #[test]
+    fn rfc3339_known_pre_2000_timestamp() {
+        // 1990-07-04T15:30:00Z → 647105400.
+        assert_eq!(unix_secs_to_rfc3339(647_105_400), "1990-07-04T15:30:00Z");
+    }
 }

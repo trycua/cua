@@ -13,6 +13,7 @@ use mcp_server::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;
+pub mod diagnostics;
 
 #[cfg(target_os = "windows")]
 pub mod win32;
@@ -25,6 +26,9 @@ pub mod input;
 
 #[cfg(target_os = "windows")]
 pub mod capture;
+
+#[cfg(target_os = "windows")]
+pub mod launch_uwp;
 
 pub fn register_tools() -> ToolRegistry {
     tools::build_registry()

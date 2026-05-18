@@ -28,6 +28,193 @@ The install runs **without sudo**: `/Applications` is user-writable on personal 
 **Upgrading from v0.0.x?** The new installer puts the CLI at `~/.local/bin/cua-driver`. Any existing `/usr/local/bin/cua-driver` symlink is left in place so existing MCP client configs (Claude Code, Codex, etc.) keep working. Re-register them at your leisure to use the new path.
 </Callout>
 
+### Try the Rust backend (experimental)
+
+<Callout type="info">
+**`cua-driver-rs` is a cross-platform Rust port of Cua Driver** — same MCP tool surface, with native Windows and Linux support and macOS parity in progress. Opt in with a single flag to help us soak-test it ahead of GA:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" -- --experimental-rust
+```
+
+(Equivalent long form: `--backend=rust`.)
+
+The flag delegates to [`libs/cua-driver-rs/scripts/install.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/scripts/install.sh), which:
+
+- Installs `CuaDriverRs.app` to `/Applications/` — separate bundle id (`com.trycua.cuadriverrs`) from the Swift driver's `com.trycua.driver`. Both can coexist on the same machine with independent TCC grants and independent telemetry IDs.
+- Points `~/.local/bin/cua-driver` at the Rust binary. The Swift `CuaDriver.app` (if previously installed) is left untouched and still launchable via its bundle path (`/Applications/CuaDriver.app/Contents/MacOS/cua-driver`).
+- Same `--bin-dir` / `--no-modify-path` flags as the Swift installer — anything you put after `--experimental-rust` is forwarded to the Rust installer verbatim.
+
+**Switch back to Swift:**
+
+```bash
+rm -rf /Applications/CuaDriverRs.app
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+```
+
+The second command rewires the `~/.local/bin/cua-driver` symlink back to the Swift bundle.
+</Callout>
+
+### Install `cua-driver-rs` directly (Linux / Windows / macOS)
+
+The cross-platform Rust port ships its own one-liners. Pick the one for your shell — no `--experimental-rust` plumbing through the Swift installer needed.
+
+**Linux / macOS**
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+```
+
+The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
+
+It runs **without admin** and **without Developer Mode**.
+
+The install layout is wired with NTFS directory junctions (`IO_REPARSE_TAG_MOUNT_POINT`), which any unprivileged user can create — no elevated symlink privilege required.
+
+#### Versioned-dirs install layout
+
+Linux and Windows installs land in a three-tier layout that makes upgrades and rollbacks an atomic retarget of one link, never a file overwrite. The macOS install intentionally stays on a different layout (`/Applications/CuaDriverRs.app`) — see the [macOS asymmetry note](#why-macos-uses-a-different-layout) below.
+
+**Linux**
+
+```
+$CUA_DRIVER_RS_HOME/                          (default: ~/.cua-driver-rs)
+  packages/
+    releases/
+      0.2.0-x86_64-unknown-linux-gnu/cua-driver   (real binary, immutable)
+      0.2.1-x86_64-unknown-linux-gnu/cua-driver   (real binary, immutable)
+    current -> releases/0.2.1-x86_64-unknown-linux-gnu   (symlink — active version)
+    current/cua-driver                                    (= the binary inside the target dir)
+$CUA_DRIVER_RS_INSTALL_DIR/cua-driver -> $CUA_DRIVER_RS_HOME/packages/current/cua-driver
+                                       (default: ~/.local/bin/cua-driver)
+```
+
+**Windows**
+
+```
+%USERPROFILE%\.cua-driver-rs\               ($env:CUA_DRIVER_RS_HOME)
+  packages\
+    releases\
+      0.2.0-x86_64-pc-windows-msvc\cua-driver.exe       (real binary, immutable)
+      0.2.1-x86_64-pc-windows-msvc\cua-driver.exe       (real binary, immutable)
+    current\                                            (directory junction → releases\0.2.1-...)
+%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\       ($env:CUA_DRIVER_RS_INSTALL_DIR)
+                                                        (directory junction → packages\current)
+```
+
+Both junctions are NTFS reparse points (`IO_REPARSE_TAG_MOUNT_POINT`), so the whole PATH-resolution chain `bin\ → current\ → releases\<v>\cua-driver.exe` is two filesystem hops transparently served from whichever release the inner junction currently points at.
+
+#### Atomic upgrades and rollback
+
+Both platforms ship every release into its own per-version directory under `packages/releases/`. Older versions are kept on disk so you can roll back without re-downloading. The active version is whichever directory `packages/current` points at.
+
+**Linux — roll back to a specific version**
+
+```bash
+# The symlink target is RELATIVE to ~/.cua-driver-rs/packages/, so just
+# "releases/<v>-<target>" (no leading "../") — matches what install.sh writes.
+ln -sfn releases/0.2.0-x86_64-unknown-linux-gnu ~/.cua-driver-rs/packages/.current.tmp
+mv -Tf ~/.cua-driver-rs/packages/.current.tmp ~/.cua-driver-rs/packages/current
+cua-driver --version    # → 0.2.0
+```
+
+The `mv -Tf` is the rename(2) idiom: a concurrent `cua-driver` lookup sees either the old or new target, never an absent path.
+
+**Windows — roll back to a specific version**
+
+Re-run the install one-liner with `$env:CUA_DRIVER_RS_VERSION` pinned to the version you want active. The installer notices the per-version dir is already on disk, skips the download, and just retargets the `current` junction — so the round-trip is a single junction retarget under the hood.
+
+```powershell
+$env:CUA_DRIVER_RS_VERSION = "0.2.0"
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+cua-driver --version    # → 0.2.0
+```
+
+Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest release.
+
+#### Env-var overrides
+
+| Env var | Default (Linux/macOS) | Default (Windows) | What it controls |
+|---|---|---|---|
+| `CUA_DRIVER_RS_VERSION` | unset → use baked version | unset → use baked version | Pin a specific release (e.g. `0.2.0`). |
+| `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
+| `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver-rs` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
+| `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | n/a — Windows installer never auto-edits PATH | Skip the rc-file PATH append. |
+| `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants. |
+
+<Callout type="info">
+**How the installer picks a version.** Resolution order is:
+
+1. `$CUA_DRIVER_RS_VERSION` (Linux/macOS) or `$env:CUA_DRIVER_RS_VERSION` (Windows) — explicit pin.
+2. A **baked-in default version** carried in the install script itself, auto-updated by the release pipeline after every published `cua-driver-rs-v*` release. This is the common-case default for `curl … | bash` / `irm … | iex` against `main`: the version resolves locally with **zero network calls** to GitHub's API.
+3. GitHub Releases API — fallback only, hit when the env override is absent **and** the baked line hasn't been updated yet (e.g. installing from a dev branch before its first release).
+
+So an API outage, an unauthenticated-rate-limit (60 req/hr per IP), or a transient network blip never breaks a default install from `main`. Power users who want the very latest tip (rather than the baked default) can set `CUA_DRIVER_RS_VERSION=<x.y.z>` explicitly.
+</Callout>
+
+<Callout type="info">
+**Why macOS uses a different layout.** On macOS the install still drops `CuaDriverRs.app` into `/Applications` and symlinks `~/.local/bin/cua-driver` into the bundle. The `.app` placement is the anchor for both **TCC attribution** (cdhash + bundle id) and **LaunchServices** (`open -a CuaDriverRs`); symlinking the `.app` from `/Applications` to a versioned dir under `$CUA_DRIVER_RS_HOME` would break both. The asymmetry is intentional — rollback on macOS = reinstall an older release tag with `CUA_DRIVER_RS_VERSION=<x.y.z>`.
+</Callout>
+
+<Callout type="info">
+**Old-version cleanup (Linux / Windows).** Every install drops the binary into a fresh `packages/releases/<version>-<target>/` directory and retargets the `current` symlink/junction at it. To keep disk usage bounded, the installer prunes old per-version dirs after each install — by default it keeps the **5 most recent** per platform target, deleting the rest.
+
+```bash
+# Keep more (or fewer) versions on disk
+CUA_DRIVER_RS_KEEP_VERSIONS=10 bash install.sh   # keep 10 most recent
+CUA_DRIVER_RS_KEEP_VERSIONS=0  bash install.sh   # disable GC entirely
+```
+
+Two invariants worth knowing:
+
+- **The active install is always preserved**, even if it would otherwise fall outside the keep window (e.g. you rolled back to an older version). Worst-case on-disk count is `keep + 1`.
+- **Per-target filtering** — a multi-arch dev with both `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` directories under the same `$CUA_DRIVER_RS_HOME` (rare, but possible with shared/NFS homes) gets each target's history GC'd independently of the other.
+
+The macOS install path is unaffected — `/Applications/CuaDriverRs.app` is an in-place replacement with no per-version accumulation.
+</Callout>
+
+<Callout type="info">
+**Concurrent-install lockfile.** Running two installs at the same time — e.g. clicking the one-liner while a CI script is also installing, or two terminals racing — used to risk a partially-installed state if both hit the atomic `current` swap simultaneously. The installer now takes a process-level lock per `$CUA_DRIVER_RS_HOME` so the second install waits for the first to finish:
+
+```
+==> another cua-driver-rs install is already in progress (lock at
+    ~/.cua-driver-rs/packages/.install.lock.d); waiting...
+```
+
+If you see this, the safe action is to let it block — it polls every 1 second and proceeds the moment the holding install finishes. The lock entry stamps the holder's pid, start time, and invocation args so you can confirm what's running:
+
+```bash
+cat ~/.cua-driver-rs/packages/.install.lock.d/info
+# pid=43210
+# started=2026-05-17T09:14:22Z
+# argv=install.sh
+```
+
+```powershell
+Get-Content $env:USERPROFILE\.cua-driver-rs\install.lock
+# pid=43210
+# started=2026-05-17T09:14:22.123Z
+# invocation=install.ps1 -Release latest
+```
+
+**Stale-lock recovery.** If the holding process died without releasing (kill -9, host reboot mid-install, OOM), the lock would otherwise wedge every subsequent install. After **600 seconds** of waiting, the installer assumes the lock is stale, force-releases it with a loud `lock appears stale (>600s), forcing release` log, and proceeds. So even in the pathological case the worst recovery is a 10-minute wait, not a manual `rm -rf` on internal-looking paths.
+
+Lock locations:
+
+| Platform | Lock |
+|---|---|
+| Linux | `$CUA_DRIVER_RS_HOME/packages/.install.lock.d/` (mkdir-based mutex) |
+| Windows | `$env:CUA_DRIVER_RS_HOME\install.lock` (`FileShare::None` mutex) |
+
+Both primitives are unprivileged — no sudo, no admin elevation, no Developer Mode. The lock is released on every script exit path (success, error, Ctrl-C, `exit`).
+</Callout>
+
 ### Verify it worked
 
 ```bash
@@ -37,6 +224,55 @@ cua-driver --version
 cua-driver --help
 # OVERVIEW: macOS Accessibility-driven computer-use agent — MCP stdio server.
 ```
+
+For a structured environment + install report on any platform, run:
+
+```bash
+cua-driver doctor
+# [ok  ] binary: cua-driver 0.2.1 (aarch64-macos)
+# [ok  ] install dir: /Users/you/.local/bin/cua-driver
+# [ok  ] home dir: /Users/you/.cua-driver-rs (3 release dirs cached)
+# [ok  ] telemetry: enabled (install-id present)
+# ...
+```
+
+`doctor` runs version + install-layout + telemetry checks on every platform, plus platform-specific probes (legacy LaunchAgent / updater cleanup on macOS, UI Automation + interactive desktop session on Windows, X11/Wayland + AT-SPI on Linux). For the detailed macOS TCC + cdhash report, run `cua-driver diagnose` — `doctor` only surfaces a pointer to it. Pass `--json` for a scripting-friendly shape. Exit code is `0` when every probe is `[ok]` / `[warn]`, non-zero only on `[err]` (e.g. the binary cannot resolve its own install dir).
+
+### Windows: interactive-session requirements
+
+Window-driving tools — `list_windows`, `click`, `type_text`, `screenshot`, `get_window_state` — all bottom out in Win32 APIs (`EnumWindows`, `GetForegroundWindow`, `PrintWindow`) that are scoped to the **calling process's WindowStation + Desktop**. A process without an attached interactive desktop sees zero windows even when the user's logged-in desktop has plenty.
+
+**Windows session model in one paragraph.** Every Windows process runs inside a numbered session. Session `0` is reserved for services and has no interactive desktop attached. Sessions `1`, `2`, ... are interactive logons — one per console / RDP user. SSH-launched processes (OpenSSH server) **default to Session 0** unless the SSH server is explicitly configured to spawn the shell inside the interactive session. The same applies to most Windows service hosts, scheduled tasks running under SYSTEM, and background invocations from CI agents.
+
+If `cua-driver` lands in Session 0, the window tools will silently return empty arrays and "no windows found" — that's the APIs working as designed against a session with no desktop, not a cua-driver bug.
+
+**Diagnose with `cua-driver doctor`.** The Windows session probe surfaces this directly:
+
+```text
+[warn] interactive session: running in Session 0 (services); window-driving
+       tools (list_windows, click, type_text, screenshot, get_window_state)
+       will return empty results — these APIs need an attached interactive
+       desktop.
+         re-run cua-driver from an interactive logon (RDP, console, or a
+         scheduled task in the user's session) for the GUI tools to function.
+```
+
+A healthy interactive logon reports the inverse:
+
+```text
+[ok  ] interactive session: session 2 has an attached interactive desktop
+       (WinSta0 + foreground window)
+```
+
+**Common fixes for "all my tools return empty arrays on Windows".**
+
+- **Run from RDP or the local console** — the simplest fix; both put your shell in your own interactive session, not Session 0.
+- **Run from a Windows Terminal / PowerShell launched by your logged-in user** — same effect.
+- **Scheduled Task in the user's session** — register a scheduled task with `Run only when user is logged on` checked and the principal set to your logged-in user. Cua Driver launched from that task inherits the user's interactive desktop.
+- **Use a session-launcher utility** — if you must invoke from a service / SSH context, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
+- **Configure your SSH server to spawn inside the interactive session** — possible with most modern Windows SSH server distributions but requires extra setup; the scheduled-task approach is usually simpler.
+
+Run `cua-driver doctor` after switching contexts to confirm the warning has cleared.
 
 ## Grant TCC permissions
 
@@ -96,6 +332,49 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   Accepted "off" values for the env-var (case-insensitive): `0`, `false`,
   `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any other value
   (including unset) leaves the gate active.
+</Callout>
+
+<Callout type="info">
+  **Update-available banner (`cua-driver mcp` / `serve` / `doctor`).** The
+  long-running interactive entry points kick off a non-blocking background
+  check against the GitHub releases API at startup and print a small
+  two-line banner to stderr when a newer `cua-driver-rs-v*` release exists:
+
+  ```
+  ✨ cua-driver v0.1.4 is available (you have v0.1.3).
+     Update with: cua-driver update
+     Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
+  ```
+
+  The answer is cached at `~/.cua-driver-rs/version_check.json` for ~20
+  hours, so subsequent launches reuse the cached result without a network
+  call. Network failures are silent — the next launch retries.
+
+  **Scripted / machine-readable entry points are NOT instrumented.**
+  The banner only fires from the long-running entry points (`mcp`,
+  `serve`, `doctor`). One-shot and machine-readable subcommands —
+  `--version`, `list-tools`, `describe`, `call`, `dump-docs`,
+  `mcp-config`, `update`, `stop`, `status`, `recording`, `config`,
+  `diagnose`, and `telemetry install-event` — all skip it so piped
+  output (`cua-driver list-tools | jq …`) stays clean.
+
+  **Disable per-invocation:**
+
+  ```bash
+  CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve
+  ```
+
+  Accepted "off" values (case-insensitive): `0`, `false`, `no`, `off`.
+
+  **Disable permanently** via the persisted config:
+
+  ```bash
+  cua-driver config set update_check_enabled false
+  ```
+
+  Source / dev builds (any `CARGO_PKG_VERSION` with a pre-release suffix
+  like `-dev`) auto-skip the check — there is no matching published
+  release for them to recommend.
 </Callout>
 
 ## Requirements

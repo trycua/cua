@@ -308,50 +308,109 @@ terminal-only flow proves insufficient; the CLI is the MVP.
 - Rust:
   - macOS=`crates/platform-macos/src/tools/list_apps.rs` + `apps.rs:format_app_list`
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListAppsTool)
+           + `crates/platform-windows/src/win32/installed_apps.rs`
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListAppsTool)
+         + `crates/platform-linux/src/installed_apps.rs`
 - Status:
-  - macOS: code fixed (✅ checkmark added, description copied from Swift); pending macOS run
-  - windows: VERIFIED (text format + structured shape + `active` flag)
-  - linux: OPEN (subagent currently fixing pre-existing compile errors)
-- Test: `crates/platform-windows/examples/list_apps_parity.rs`
+  - macOS: VERIFIED — unified shape + installed-app scan + running merge
+  - windows: VERIFIED for Win32 path (cross-target check), live-run pending on a Windows host
+  - linux: code ready (cross-target check pending Linux host)
+- Test: `tests/integration/test_api_parity.py::RustParityTests::test_call_list_apps_*`
+        + `crates/platform-windows/examples/list_apps_parity.rs`
 
-### Fixed divergences
+### Unified response shape (cross-platform)
 
-1. **Windows: returned every OS process** (System, Registry, csrss, etc.)
-   instead of "apps". Now filters to processes that own at least one
-   visible top-level window — the closest analogue to Swift's
-   `NSApplicationActivationPolicyRegular` filter (excludes background
-   helpers / agents).
-2. **Structured shape**: Swift returns `Output { apps: [AppInfo] }` with
-   `AppInfo = {pid, bundle_id, name, running, active}`. Windows was
-   returning `{ processes: [{pid, name}] }`. Now returns both keys —
-   `apps` (Swift shape) for new callers, `processes` (legacy shape) as a
-   transitional alias.
-3. **Text format**: Swift starts with `"✅ Found N app(s): R running, I installed-not-running."`.
-   macOS Rust was missing the `✅` prefix; Windows had a different
-   wording entirely (`"Found N processes:"`). Both now match Swift 1:1.
-4. **`active` flag** — Windows resolves it via `GetForegroundWindow` +
-   `GetWindowThreadProcessId` (only one app is `active` at a time).
-5. **Description** — copied verbatim from Swift on macOS; adapted with
-   Windows-specific caveats on Windows (no bundle_id, no installed-apps
-   enumeration yet).
+Single flat array. Every entry carries the same fields on every
+platform; values that don't apply to a given platform are `null`.
 
-### Known limitation (Windows / Linux)
+```jsonc
+{
+  "apps": [
+    {
+      "pid": 47291,                         // 0 when running=false
+      "name": "Visual Studio Code",
+      "bundle_id": "com.microsoft.VSCode",  // macOS bundle id, Win32 .exe path, or Linux desktop file id
+      "running": true,
+      "active": false,                       // true for the system-frontmost app (only one at a time)
+      "kind": "desktop",                    // "desktop" | "uwp" | null
+      "launch_path": "/Applications/Visual Studio Code.app",
+      "last_used": "2026-05-15T12:34:56Z", // RFC3339, null if unreadable
+      "windows": []                          // reserved — kept cheap; query list_windows for per-window state
+    }
+  ]
+}
+```
 
-Neither Rust port enumerates *installed but not running* apps yet — Swift
-scans `/Applications`, `~/Applications`, `/System/Applications`, etc.
-Windows would need to scan Start Menu shortcuts and the Registry
-Uninstall keys; Linux would need to scan `.desktop` files in
-`/usr/share/applications` and `~/.local/share/applications`. Marked as
-follow-up work; the running-app view is still useful and matches Swift's
-running subset exactly.
+### Per-platform enumeration
 
-### Verified on Windows
+- **macOS**: running set from `NSWorkspace` (via the existing
+  AppleScript bridge), installed set from a filesystem scan of
+  `/Applications`, `/Applications/Utilities`, `/System/Applications`,
+  `/System/Applications/Utilities`, `~/Applications`. Bundle metadata
+  read from each `.app/Contents/Info.plist` via `plutil`. Merged by
+  bundle id; `launch_path` and `last_used` (bundle mtime) are
+  backfilled onto running entries when the bundle id matches.
+- **Windows**: running set from visible top-level windows
+  (`EnumWindows` → owner pids) + `CreateToolhelp32Snapshot` for the
+  pid→exe table. Installed set is the union of Start-Menu
+  `.lnk` shortcuts (resolved via `IShellLinkW::GetPath`) and WinRT
+  `Management::Deployment::PackageManager::FindPackagesWithPackageTypes(Main)`.
+  Merged by exe basename. UWP entries carry
+  `launch_path = "shell:appsFolder\\{PackageFamilyName}!App"`.
+- **Linux**: running set from `/proc/<pid>/status` + `cmdline`.
+  Installed set from XDG `.desktop` files in `$XDG_DATA_HOME/applications`
+  and each `$XDG_DATA_DIRS` entry's `applications/` subdir. Entries
+  with `NoDisplay=true`, `Hidden=true`, or `Type!=Application` are
+  filtered. Merged by exe basename (after stripping `env`-style
+  prefixes and `Exec=` field codes).
 
-`list_apps_parity.exe`: header line matches `"✅ Found N app(s): R
-running, 0 installed-not-running."`; `structuredContent.apps` is an
-array of `{pid, bundle_id (null on Windows), name, running, active}`;
-at least one entry has `active: true` (the foreground app).
+### Backwards compatibility
+
+The unified shape is **additive**. `pid`, `name`, `bundle_id`,
+`running`, `active` keep their pre-change positions and types.
+The new keys (`launch_path`, `kind`, `last_used`, `windows`) are
+new. The legacy `processes` key (Linux/Windows) remains as a thin
+alias over the running subset so older callers that read the old
+running-only shape keep working.
+
+### Verification recipes
+
+**macOS** (verified live):
+```bash
+cargo build --release -p cua-driver
+./target/release/cua-driver call list_apps | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+running = [a for a in d['apps'] if a['running']]
+installed = [a for a in d['apps'] if not a['running']]
+print(f'{len(d[\"apps\"])} total: {len(running)} running, {len(installed)} installed-only')
+for a in d['apps'][:1]:
+    for k in ('pid','name','bundle_id','running','active','kind','launch_path','last_used','windows'):
+        assert k in a, f'missing field {k!r}'
+print('shape OK')
+"
+```
+
+**Windows** (cross-target check on macOS host succeeds; live run on a Windows host):
+```powershell
+cargo build --release -p cua-driver
+.\target\release\cua-driver.exe call list_apps | ConvertFrom-Json | ForEach-Object {
+    $_.apps | Group-Object kind | Format-Table Name, Count
+}
+```
+Expect at least one `desktop` group (Start-Menu hits) and on Win10+
+at least one `uwp` group (WinRT packages). Every entry should have
+a `launch_path` that's either an absolute `.exe` path or
+`shell:appsFolder\...`.
+
+**Linux**:
+```bash
+cargo build --release -p cua-driver
+./target/release/cua-driver call list_apps | jq '.apps | group_by(.running) | map({running: .[0].running, n: length})'
+```
+Expect two groups: one with `running: true` (live processes that
+matched a `.desktop` launcher), one with `running: false` (the
+installed-but-not-running tail).
 
 ---
 
@@ -362,10 +421,35 @@ at least one entry has `active: true` (the foreground app).
   - windows=`crates/platform-windows/src/tools/impl_.rs` (ListWindowsTool)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (ListWindowsTool, blocked behind Linux compile fix)
 - Status:
-  - windows: VERIFIED
+  - windows: VERIFIED (EnumWindows-first enumeration; UIA contributes missing HWNDs only)
   - macOS: OPEN (audit pending — macOS port already exists)
   - linux: OPEN
 - Test: `crates/platform-windows/examples/list_windows_parity.rs`
+
+### Enumeration source (Windows)
+
+`crate::win32::list_windows` walks `EnumWindows` first — that's the Win32
+window manager's canonical top-to-bottom z-order, so it's the authoritative
+source for both window membership and ordering. It then asks UI Automation
+for any top-level windows EnumWindows missed
+(`AutomationElement::RootElement.FindAll(TreeScope::Children, TrueCondition)`,
+filtered to `IsOffscreen == false` + non-empty `GetWindowTextW`) and appends
+those at the end of the merged list, deduped by HWND. UIA elements contribute
+their `NativeWindowHandle` as the canonical HWND so downstream code keyed on
+`(pid, window_id)` keeps working unchanged.
+
+Why UIA at all: modern apps (WebView2-hosted Notepad, packaged-UWP frames,
+some Electron containers) sometimes hide their visible window inside a host
+HWND that `EnumWindows` either skips or surfaces with the wrong title/bounds.
+UIA's desktop-children walk surfaces the real interactable window — but only
+when EnumWindows didn't.
+
+Why EnumWindows-first (not UIA-first): UIA's `FindAll(TreeScope::Children)`
+gives no z-order guarantee; using it as the primary source would produce
+non-deterministic ordering. EnumWindows order IS the Win32 z-order.
+
+`filter_pid` is applied to the merged list, so a UWP app's pid that
+previously returned empty now returns its real window.
 
 ### Fixed divergences (Windows)
 
@@ -406,10 +490,10 @@ flat `x/y/width/height`) for any pre-existing callers; remove once they migrate.
 
 Windows Rust does **not** yet enumerate **off-screen / minimized windows**.
 Swift's default (`on_screen_only: false`) returns them; Windows currently
-filters them out at the `EnumWindows` callback level (`IsWindowVisible &&
-!IsIconic`).  The `on_screen_only` schema field is accepted but has no
-effect.  Follow-up to refactor `list_windows` to return everything and
-filter at the tool layer.
+filters them out at both enumeration sources (UIA's `IsOffscreen` flag and
+`EnumWindows`'s `IsWindowVisible && !IsIconic` callback). The
+`on_screen_only` schema field is accepted but has no effect. Follow-up to
+refactor `list_windows` to return everything and filter at the tool layer.
 
 ---
 
@@ -502,10 +586,27 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    listing per-window `"- <title|(no title)> [window_id: ID]"` lines
    and a `→ Call get_window_state(...)` hint, matching Swift verbatim.
 4. **`bundle_id` parameter** — accepted as an alias for `name` (Windows
-   has no bundle-identifier concept). Cross-platform callers can use
-   the same field name.
+   has no bundle-identifier concept), with one extra meaning on Win11:
+   when the value matches an AUMID (`{PackageFamilyName}!{ApplicationId}`,
+   contains `!`), `launch_app` routes through
+   `IApplicationActivationManager::ActivateApplication` and returns
+   the real packaged-app pid. Without this routing, Win11 launches of
+   built-in apps (Notepad, Calculator, Paint, …) return the pid of
+   the ~7 KB System32 stub that exits within milliseconds — useless
+   for `list_windows`, `get_window_state`, etc.
+4a. **`name` → packaged-app lookup (Win11)** — `name` is now first
+    resolved against `shell:AppsFolder` (the Start Menu's "all apps"
+    index, cached for the lifetime of the driver process). On a hit
+    the lookup yields an AUMID and goes through the packaged path
+    (see #4); on a miss it falls back to `ShellExecuteExW`'s PATH
+    search. `.exe` suffix is stripped before matching so `"notepad"`
+    and `"notepad.exe"` both resolve to the packaged Notepad.
+4b. **`aumid` parameter** — optional explicit AUMID; cleaner than
+    overloading `bundle_id` when the caller has the AUMID in hand.
+    Takes precedence over `bundle_id`/`name`.
 5. **`additional_arguments`** — honored, passed as `lpParameters` to
-   `ShellExecuteExW`.
+   `ShellExecuteExW` (Win32 path) or as the activation `arguments`
+   string to `ActivateApplication` (packaged path).
 6. **Window-resolution retry** — ports Swift's 5-attempt 100/200ms
    retry to absorb Win32 window-creation lag after `ShellExecuteEx`
    returns.
@@ -527,9 +628,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 `launch_app_parity.exe` launches Notepad:
 - Header `"✅ Launched notepad.exe (pid 30612) in background."` ✓
-- `structuredContent.pid` is the actual ShellExecuteEx pid ✓
-- `bundle_id: null`, `running: true`, `active: false` ✓
+- `structuredContent.pid` is the actual ShellExecuteEx pid (Win10)
+  or the real packaged-app pid (Win11, after AppsFolder lookup) ✓
+- `bundle_id: null` on Win10 / unpackaged Notepad; AUMID string on
+  Win11 packaged Notepad ✓
+- `running: true`, `active: false` ✓
 - Notepad killed on test exit. ✓
+- On Win11 the parity binary additionally exercises an explicit-AUMID
+  launch via `bundle_id="Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"`
+  and asserts `bundle_id` round-trips identically. ✓
 
 ### Fixed (macOS)
 
@@ -1460,6 +1567,80 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
 
 ---
 
+## CLI subcommand: `doctor`
+- Swift: `libs/cua-driver/Sources/CuaDriverCLI/DoctorCommand.swift` (legacy-cleanup only — single
+  `Nothing to clean — install is up to date.` codepath, no diagnostics)
+- Rust: `libs/cua-driver-rs/crates/cua-driver/src/doctor.rs` +
+        `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_doctor_cmd`
+- Status: INTENTIONAL_DIVERGENCE (Rust adds full diagnostic surface)
+- Test: `crates/cua-driver/src/doctor.rs` `#[cfg(test)] mod tests`
+        (5 unit tests: text rendering, JSON rendering, status-tag mapping,
+        cross-platform probe smoke path)
+
+### Behavior
+
+Probe-runner that emits a structured report. Each probe is one line
+tagged `[ok]`, `[warn]`, or `[err]` so the output is grep-friendly.
+`--json` switches to a machine-readable shape for scripting (also
+suppresses the update-available banner so JSON output stays parseable).
+
+**Cross-platform probes:**
+- `binary` — version + `<arch>-<os>` target triple
+- `install dir` — `current_exe()` resolved through symlinks
+- `home dir` — `~/.cua-driver-rs` existence + cached release-dir count
+- `telemetry` — env-var opt-out state + install-id file presence
+  (presence only — UUID value never read)
+
+**Windows probes:**
+- `interactive session` — `ProcessIdToSessionId(GetCurrentProcessId())`.
+  Session 0 → `[warn]` with explicit guidance ("re-run from an
+  interactive logon — RDP, console, or a scheduled task in the user's
+  session"). Sessions ≥1 → `OpenWindowStationW(WinSta0)` +
+  `GetForegroundWindow()` confirmation probe → `[ok]` when both succeed.
+- `UI Automation` — `CoCreateInstance(CUIAutomation)` succeeds → `[ok]`,
+  else `[err]`.
+- `EnumWindows visible` — top-level visible-window count. When zero
+  *and* Session 0 was warned above, the probe appends a "consistent
+  with Session 0" detail so the two findings read as one.
+
+**Linux probes:**
+- `display server` — `DISPLAY` / `WAYLAND_DISPLAY` matrix (X11 only,
+  Wayland only with XWayland hint, both set, neither set).
+- `X11 connection` — quick handshake via `platform_linux::x11::list_windows(None)`.
+- `AT-SPI` — `AT_SPI_BUS` env var, fallback to `gdbus introspect
+  --session --dest org.a11y.Bus`.
+
+**macOS probes:**
+- `legacy LaunchAgent` — opportunistic removal of
+  `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` (preserves
+  the old DoctorCommand cleanup behavior, now as a structured probe).
+- `legacy update script` — opportunistic removal of
+  `/usr/local/bin/cua-driver-update` (root-owned path gets a `[warn]`
+  with the `sudo rm` command).
+- `TCC + cdhash report` — pointer to `cua-driver diagnose` for the
+  full bundle / signature / TCC dump.
+
+### Exit code
+
+`0` when every probe is `[ok]` or `[warn]`. Non-zero only when at
+least one `[err]` probe failed (e.g. `current_exe()` returned an error,
+or `CoCreateInstance(CUIAutomation)` failed on Windows). Warnings
+deliberately do not fail the run because misconfigured environments
+are sometimes the expected state — CI invocations of `doctor` to
+render the report still expect exit 0.
+
+### Why the divergence from Swift
+
+The Swift port's `DoctorCommand` only handles legacy install-bit
+cleanup on macOS. The Rust port runs on Windows + Linux as well, where
+the analogous misconfigurations (Session 0 on Windows, missing
+`DISPLAY` on Linux, no AT-SPI on Linux) are *the* source of "the tools
+are broken" reports. Folding diagnostics into `doctor` mirrors what
+users instinctively try first when something silently returns empty
+arrays.
+
+---
+
 ## CLI subcommand: `dump-docs`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/DumpDocsCommand.swift`
 - Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_dump_docs_with_type`
@@ -1775,3 +1956,377 @@ surfaced to stdout/stderr unless `CUA_DRIVER_RS_TELEMETRY_DEBUG=true`.
   GUI surface yet, so the constant is reserved but unused.
 - **`is_ci` uses env-var probing only.** Same probe list as Swift; no
   extra Rust-specific signals.
+
+## Startup flow: update-available banner (`mcp` / `serve` / `doctor`)
+
+- Swift: not present (the Swift port has no analogous banner today)
+- Rust:  `crates/cua-driver/src/version_check.rs`
+- Status: INTENTIONAL_ADDITION (Rust-only)
+- Test:   `crates/cua-driver/src/version_check.rs` `#[cfg(test)] mod tests`
+          (22 unit tests: semver edge cases, cache round-trip in a
+          tempdir, dismissal persistence, 20-hour refresh threshold,
+          env-var + config opt-out, JSON release-list filtering,
+          banner format, ISO-8601 timestamp)
+
+### Behavior
+
+On the long-running interactive entry points (`mcp`, `serve`,
+`doctor`) the binary kicks off a background HTTP check against
+`https://api.github.com/repos/trycua/cua/releases?per_page=40`,
+filters to the `cua-driver-rs-v*` tag prefix, and prints a two-line
+banner to **stderr** if the highest non-draft non-prerelease release
+is strictly newer than `CARGO_PKG_VERSION` and the user hasn't
+previously dismissed it:
+
+```text
+✨ cua-driver v0.1.4 is available (you have v0.1.3).
+   Update with: cua-driver update
+   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
+```
+
+The check runs on `tokio::task::spawn_blocking` when a runtime is
+live, else a short-lived OS thread, so the daemon's start-up path
+is never delayed by network latency.
+
+### Cache
+
+The latest-version answer is cached on disk at
+`~/.cua-driver-rs/version_check.json`:
+
+```json
+{
+  "last_checked_unix": 1700000000,
+  "last_checked_at": "2023-11-14T22:13:20Z",
+  "latest_version": "0.1.4",
+  "dismissed_versions": []
+}
+```
+
+Refreshed only when the cached `last_checked_unix` is more than 20
+hours old, bounding outbound requests to roughly one per machine per
+day even on a hot reload loop. Failed HTTP fetches fall back to the
+cached value (better an old banner than none on a brief network blip).
+
+### Skipped contexts
+
+Only `mcp`, `serve`, and `doctor` call `maybe_announce_update()`.
+The following entry points are **NOT** instrumented because they're
+routinely piped from scripts and a banner would corrupt their
+parseable output:
+
+- `--version` / `-V`
+- `list-tools`
+- `describe <tool>`
+- `call <tool>`
+- `dump-docs`
+- `mcp-config`
+- `update`, `stop`, `status`, `recording`, `config`, `diagnose`,
+  `telemetry install-event`
+
+### Opt-out (three layers, any one disables the check)
+
+1. **Env var** `CUA_DRIVER_RS_UPDATE_CHECK=false` (also `0`, `no`,
+   `off`; case-insensitive) — single-invocation off.
+2. **Config flag** `update_check_enabled = false` in
+   `~/.cua-driver/config.json` — persistent off. Set via
+   `cua-driver config set update_check_enabled false`.
+3. **Pre-release build auto-skip** — any `CARGO_PKG_VERSION` that
+   carries a semver pre-release suffix (`-dev`, `-rc.1`, `-beta`)
+   short-circuits the check entirely. There is no matching published
+   release for a source / development build to recommend.
+
+### HTTP client
+
+`ureq` v3 with `Accept: application/vnd.github+json` and a
+`cua-driver-rs/<version>` user-agent. 4-second timeout. Single GET,
+fire-and-forget — the response body is read into `serde_json::Value`
+on the background task, never touching the foreground startup path.
+
+Network errors, timeouts, 4xx/5xx responses, and JSON-parse failures
+are logged via `tracing::debug!(target: "cua_driver::version_check",
+…)` only — never surfaced to stderr.
+
+### Shared with `cua-driver update`
+
+`run_update_cmd` calls into the same
+`version_check::fetch_latest_version()` and `version_check::is_newer()`
+helpers so the proactive banner and the manual subcommand agree on
+tag-filtering rules and semver compare semantics. This also removes
+the prior shell-out to `curl` from `cli::run_update_cmd`.
+
+### Dismissal API
+
+`version_check::dismiss_version(&str)` appends a version string to
+the `dismissed_versions` list on disk. No call site in the current
+binary (banner is informational only today); kept public so a future
+interactive prompt path (TUI helper, GUI extra) can persist the
+"skip until next version" choice without re-implementing the cache
+layer.
+
+## Installer: layout + lifecycle
+
+This section covers the cross-platform Rust installer's runtime
+behaviors: how it picks a version, where it lands files, and how it
+keeps the on-disk state bounded across repeated upgrades.
+
+### Version-resolution chain (`env > baked > API`)
+
+Both Rust installers (`scripts/install.sh`, `scripts/install.ps1`)
+resolve the release tag in the same priority order as the Swift
+`cua-driver` installer:
+
+1. **Explicit env pin** —
+   `CUA_DRIVER_RS_VERSION` (`$env:CUA_DRIVER_RS_VERSION` on Windows).
+2. **Baked-in default** —
+   a sentinel-block-wrapped constant carried in the install script
+   itself, updated by the CD `Bake version into install scripts` step
+   after each `cua-driver-rs-v*` tag push. Matches the Swift driver's
+   `CUA_DRIVER_BAKED_VERSION` shape.
+3. **GitHub Releases API fallback** —
+   only consulted when the env override is absent *and* the baked
+   line hasn't been updated yet (dev branches, pre-release checkouts).
+
+#### Why this exists
+
+The Swift installer adopted this pattern after we hit two failure
+modes the API-only chain couldn't dodge:
+
+- **API outages / rate limits** — unauthenticated GitHub Releases is
+  capped at 60 req/hr per source IP. A shared egress IP (CI runner,
+  corporate NAT, dev laptop on a busy office network) can exhaust
+  that and turn every `curl … | bash` install into a hard failure.
+- **Tag-prefix pagination drift** — the repo ships both
+  `cua-driver-v*` (Swift) and `cua-driver-rs-v*` (Rust) tags, plus
+  unrelated tags from other libs. As release cadence grows, the
+  first page of `/releases?per_page=N` is no longer guaranteed to
+  include any matching tag, and a single-page fetch will silently
+  resolve nothing.
+
+Baking the version turns both of those into non-issues for the
+common-case install (curl-against-main / irm-against-main). The API
+path is still exercised by dev installs from un-baked branches, so
+the pagination fix in `install.ps1` (commit `3425af0b`) stays
+valuable; `install.sh` keeps its single-page fetch for now, which
+is a follow-up candidate once the baked default is shipped (it is
+fallback-only and not hit by the default curl-from-main path).
+
+#### Sentinel-block markers (kept byte-identical across both scripts)
+
+```bash
+# ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
+CUA_DRIVER_RS_BAKED_VERSION="<version>"
+# ~~~ END_BAKED_VERSION ~~~
+```
+
+The PowerShell variant swaps the bash assignment for
+`$Script:CuaDriverRsBakedVersion = "<version>"` but reuses the same
+marker comments. The CD step's `sed` patterns key on the assignment
+line, not the markers, so the markers are a human cue only.
+
+#### CD wiring
+
+`.github/workflows/cd-rust-cua-driver.yml` runs a `Bake version into
+install scripts` step at the end of the `release` job after each
+`cua-driver-rs-v*` tag push. It runs on `ubuntu-latest` (GNU sed)
+and the equivalent Swift step runs on `macos-15` (BSD sed), so the
+two workflows use slightly different `sed -i` syntax:
+
+| Workflow | Runner | `sed -i` form |
+|---|---|---|
+| `cd-rust-cua-driver.yml` (this) | `ubuntu-latest` | `sed -i 's/.../.../`  (GNU) |
+| `cd-swift-cua-driver.yml` | `macos-15` | `sed -i '' 's/.../.../`  (BSD) |
+
+Both push the rewritten files back to `main` using a GitHub App
+token (`RELEASE_APP_ID` + `RELEASE_APP_PRIVATE_KEY`) so the push
+bypasses the "Changes must be made through a pull request" ruleset
+on `main` — the default `GITHUB_TOKEN` (github-actions[bot]) is
+rejected by that ruleset.
+
+The commit author is `trycua-release[bot]` and the message is
+`chore(cua-driver-rs): bake version <V> into install scripts [skip ci]`
+(the `[skip ci]` suppresses the recursive CD trigger from the
+bake-push hitting `main`).
+
+### Per-version release-dir GC (`CUA_DRIVER_RS_KEEP_VERSIONS`)
+
+Each install drops the binary into a fresh
+`$HOME_DIR/packages/releases/<version>-<target>/` directory and
+retargets `current` at it. Old per-version dirs are kept on disk so
+rollback is `ln -sfn` / junction-retarget away with no re-download.
+Disk usage grows ~15 MB per upgrade, so the installer runs a
+post-install GC pass to trim oldest dirs back to a configurable cap.
+
+#### Defaults + override
+
+- Default: **keep 5** most recent per-version dirs per target triple.
+- Override: `CUA_DRIVER_RS_KEEP_VERSIONS=<N>` (env). `<N>` is any
+  non-negative integer; `0` disables GC entirely (legacy behavior —
+  retains every version forever). Non-integer or negative values fall
+  back to the default with a `warning:` log.
+
+#### Invariants
+
+1. **Per-target** — only dirs whose name suffix matches the current
+   platform's `${TARGET}` triple are eligible to prune. A multi-arch
+   dev with both `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu`
+   under one `$HOME_DIR` (rare but possible — e.g. shared home over
+   NFS) has each target's history GC'd independently.
+2. **Active install is always preserved** — even if the dir that
+   `current` resolves to is older than the keep window (e.g. user
+   rolled back to an old version). Worst-case post-GC dir count is
+   `keep + 1`; common-case is exactly `keep`.
+3. **Runs after the atomic swap** — `prune_old_releases` (sh) /
+   `Invoke-OldReleasesGc` (ps1) is invoked only after `current` has
+   been retargeted at the new install, so the about-to-be-active
+   version is never a deletion candidate.
+4. **macOS path unchanged** — the macOS `/Applications/CuaDriverRs.app`
+   install is an in-place replacement (no per-version directory
+   accumulation), so the GC pass is a no-op there by construction
+   (the Darwin branch never enters the versioned-dirs install path).
+
+#### Implementation shape
+
+- `install.sh` — `prune_old_releases` uses `ls -dt "$RELEASES_DIR"/*/`
+  for mtime-sorted candidates, filters by `*-$TARGET`, skips the dir
+  that `readlink "$CURRENT_LINK"` resolves to, and `xargs -0 rm -rf`s
+  the excess past the keep window.
+- `install.ps1` — `Invoke-OldReleasesGc` uses
+  `Get-ChildItem -Directory | Where-Object Name -like "*-$target" |
+  Sort-Object LastWriteTime -Descending`, resolves
+  `Get-JunctionTarget $CurrentDir` to find and exempt the active
+  install, and `Remove-Item -Recurse -Force`s the excess.
+
+#### Verification recipes
+
+**Linux** (pin three versions, observe GC):
+
+```bash
+# Install three pinned versions in sequence. Each one drops a new
+# per-version dir under ~/.cua-driver-rs/packages/releases/ and
+# retargets `current`.
+CUA_DRIVER_RS_VERSION=0.1.4 bash install.sh
+CUA_DRIVER_RS_VERSION=0.2.0 bash install.sh
+CUA_DRIVER_RS_VERSION=0.2.1 bash install.sh
+ls ~/.cua-driver-rs/packages/releases/
+# → 0.1.4-…, 0.2.0-…, 0.2.1-…  (3 dirs, GC saw ≤ default-5, no-op)
+
+# Force keep=2 — GC trims to 2 newest, current always preserved.
+CUA_DRIVER_RS_VERSION=0.2.1 CUA_DRIVER_RS_KEEP_VERSIONS=2 bash install.sh
+ls ~/.cua-driver-rs/packages/releases/
+# → 0.2.0-…, 0.2.1-…  (0.1.4 pruned)
+
+# keep=0 — GC disabled.
+CUA_DRIVER_RS_VERSION=0.2.1 CUA_DRIVER_RS_KEEP_VERSIONS=0 bash install.sh
+# (logs "version GC disabled", retains all on-disk dirs)
+```
+
+**Windows** (equivalent in PowerShell):
+
+```powershell
+$env:CUA_DRIVER_RS_VERSION = "0.1.4"; irm <url>/install.ps1 | iex
+$env:CUA_DRIVER_RS_VERSION = "0.2.0"; irm <url>/install.ps1 | iex
+$env:CUA_DRIVER_RS_VERSION = "0.2.1"; irm <url>/install.ps1 | iex
+Get-ChildItem ~\.cua-driver-rs\packages\releases\
+# → 3 dirs
+
+$env:CUA_DRIVER_RS_KEEP_VERSIONS = "2"
+$env:CUA_DRIVER_RS_VERSION = "0.2.1"; irm <url>/install.ps1 | iex
+Get-ChildItem ~\.cua-driver-rs\packages\releases\
+# → 2 dirs (0.1.4 pruned)
+```
+
+### Per-host concurrent-install lockfile
+
+Two installs running at the same time (user clicks the one-liner while
+a CI script is also installing; two terminals; cron-driven reinstall
+racing a manual one) can race on the atomic `current` swap and leave
+the visible binary pointing at a partially-populated release dir.
+Serialize installs per `$HOME_DIR` with a process-level mutex.
+
+#### Primitive
+
+| Platform | Mutex |
+|---|---|
+| Linux (and Linux-via-WSL) | `mkdir $HOME_DIR/packages/.install.lock.d` — atomic on POSIX, no `flock` dependency. First install wins; concurrent attempts get `EEXIST` and poll. |
+| Windows | `System.IO.FileStream` opened on `$HomeDir\install.lock` with `FileShare::None`. Windows kernel rejects a second open until the first handle closes, so the open call itself is the acquisition. |
+
+Both primitives are unprivileged — no admin / sudo / Developer Mode.
+
+#### Wait + stale-detection UX
+
+- **Wait** — polls every 1s, prints `another cua-driver-rs install is
+  already in progress (lock at <path>); waiting...` exactly once.
+- **Stale threshold** — 600 seconds. Named constant in both scripts
+  (`LOCK_STALE_AFTER_SECONDS` / `$Script:LockStaleAfterSeconds`), not
+  a magic number, so future tuning is grep-able.
+- **Force-release** — after `LOCK_STALE_AFTER_SECONDS` of waiting we
+  log `lock appears stale (>600s), forcing release` and `rm -rf` /
+  `Remove-Item` the lock entry, then retry. The alternative (hang
+  forever) leaves users wedged with no obvious recovery path.
+
+#### Lock-info stamp
+
+After acquiring, the installer writes a tiny info blob into the lock
+so a user investigating a stuck install can see who holds it:
+
+```bash
+$ cat ~/.cua-driver-rs/packages/.install.lock.d/info
+pid=43210
+started=2026-05-17T09:14:22Z
+argv=install.sh
+```
+
+```powershell
+PS> Get-Content $env:USERPROFILE\.cua-driver-rs\install.lock
+pid=43210
+started=2026-05-17T09:14:22.123Z
+invocation=install.ps1 -Release latest
+```
+
+#### Release on every exit path
+
+Both scripts release the lock unconditionally:
+
+- `install.sh` — `trap cleanup_on_exit EXIT` plus per-signal traps
+  for `INT` and `TERM` that release then re-raise so the exit code
+  reflects the signal.
+- `install.ps1` — top-level `try { ... } finally { Release-InstallLock }`
+  wrapping the whole Main block. PowerShell's `finally` fires on
+  normal exit, exceptions, `exit`, and `Ctrl-C` (pipeline-stop).
+
+A half-finished install with a held lock would wedge every subsequent
+install for the full 600s stale window, so the cleanup wiring is
+non-optional.
+
+#### Verification recipes
+
+**Linux** — concurrent contention:
+
+```bash
+# Shell 1
+bash install.sh           # holds the lock, takes ~20s
+
+# Shell 2 (kick off while shell 1 is still running)
+bash install.sh
+# → "another cua-driver-rs install is already in progress (lock at
+#    ~/.cua-driver-rs/packages/.install.lock.d); waiting..."
+# (blocks until shell 1 finishes, then proceeds normally)
+```
+
+**Linux** — stale lock recovery:
+
+```bash
+# Simulate a dead holder.
+mkdir ~/.cua-driver-rs/packages/.install.lock.d
+echo "pid=99999" > ~/.cua-driver-rs/packages/.install.lock.d/info
+
+bash install.sh
+# → "another cua-driver-rs install is already in progress…; waiting..."
+# (waits 600s, then:)
+# → "lock appears stale (>600s), forcing release"
+# (proceeds normally)
+```
+
+**Windows** — equivalent in two PowerShell windows. The stale-recovery
+test in PowerShell is `New-Item -Path $env:USERPROFILE\.cua-driver-rs\install.lock`
+plus `Remove-Item` to clear after; same 600s wait.

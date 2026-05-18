@@ -33,8 +33,23 @@ windows = { version = "0.58", features = [
     "Win32_Security",
     "Win32_System_Com",
     "Win32_Storage_Xps",
+    "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
+    # IShellItem2::GetString — used by launch_uwp::resolve_aumid_by_name to
+    # read PKEY_AppUserModel_ID off entries enumerated from shell:AppsFolder.
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_System_Com_StructuredStorage",
     "Win32_Media",
     "Win32_System_Registry",
+    # `cua-driver doctor` interactive-session probe:
+    # - Win32_System_RemoteDesktop → ProcessIdToSessionId
+    # - Win32_System_StationsAndDesktops → OpenWindowStationW
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
+    # WinRT for UWP package enumeration via PackageManager.
+    "Management_Deployment",
+    "ApplicationModel",
+    "Foundation_Collections",
 ] }
 base64 = { workspace = true }

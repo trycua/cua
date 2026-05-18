@@ -47,7 +47,7 @@ pub enum Command {
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
     DumpDocs { pretty: bool, doc_type: String },
     Update { apply: bool },
-    Doctor,
+    Doctor { json: bool },
     Diagnose,
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
@@ -96,6 +96,9 @@ pub fn parse_command() -> Command {
         println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
         println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
         println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
+        println!();
+        println!("doctor options:");
+        println!("  --json                  Emit the probe report as JSON for scripting.");
         std::process::exit(0);
     }
 
@@ -150,7 +153,12 @@ pub fn parse_command() -> Command {
             let apply = args.iter().any(|a| a == "--apply");
             Command::Update { apply }
         }
-        Some("doctor") => Command::Doctor,
+        Some("doctor") => {
+            // `--json` switches to machine-readable output for scripting.
+            // Bare flag — no value, position-independent.
+            let json = args.iter().any(|a| a == "--json");
+            Command::Doctor { json }
+        }
         Some("diagnose") => Command::Diagnose,
         Some("config") => {
             let subcommand = pos.next().map(str::to_owned);
@@ -796,23 +804,29 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
 /// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
 ///
-/// Uses `curl` to query the GitHub releases API (same as Swift reference).
-/// Pass `--apply` to download and install via the canonical install.sh.
+/// Shares the GitHub releases fetch with the startup banner via
+/// [`crate::version_check::fetch_latest_version`] so both code paths
+/// agree on tag filtering and HTTP semantics. Pass `--apply` to download
+/// and install via the canonical install.sh.
 pub fn run_update_cmd(apply: bool) {
     let current = env!("CARGO_PKG_VERSION");
     println!("Current version: {current}");
     println!("Checking for updates…");
 
-    let latest = fetch_latest_version();
+    let latest = crate::version_check::fetch_latest_version();
     match latest {
-        None => {
+        Err(e) => {
+            // The shared helper returns a human-readable error string for
+            // the CLI surface — pass it through so the user can see why
+            // (timeout, parse error, etc.) instead of just "unreachable".
+            tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
             println!("Could not reach GitHub — check your connection and try again.");
             process::exit(1);
         }
-        Some(v) if !is_version_newer(&v, current) => {
+        Ok(v) if !crate::version_check::is_newer(&v, current) => {
             println!("Already up to date.");
         }
-        Some(v) => {
+        Ok(v) => {
             println!("New version available: {v}");
 
             if !apply {
@@ -843,56 +857,6 @@ pub fn run_update_cmd(apply: bool) {
             }
         }
     }
-}
-
-/// Fetch the latest `cua-driver-v*` release tag from GitHub using curl.
-/// Returns the version string (e.g. "0.1.2") or `None` on any error.
-fn fetch_latest_version() -> Option<String> {
-    let out = std::process::Command::new("curl")
-        .args(["-s", "--max-time", "4",
-               "-H", "Accept: application/vnd.github+json",
-               "https://api.github.com/repos/trycua/cua/releases?per_page=40"])
-        .output()
-        .ok()?;
-    if !out.status.success() { return None; }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let releases: serde_json::Value = serde_json::from_str(&text).ok()?;
-    // `cua-driver-rs-v*` releases are distinct from the Swift `cua-driver-v*`
-    // releases on the same repo — must filter by the Rust-port prefix or
-    // we'd recommend the Swift binary instead.
-    let prefix = "cua-driver-rs-v";
-    let mut versions: Vec<String> = releases.as_array()?.iter()
-        .filter_map(|r| {
-            let tag = r["tag_name"].as_str()?;
-            if !tag.starts_with(prefix) { return None; }
-            if r["draft"].as_bool().unwrap_or(false) { return None; }
-            if r["prerelease"].as_bool().unwrap_or(false) { return None; }
-            Some(tag[prefix.len()..].to_owned())
-        })
-        .collect();
-    // Sort descending (newest first).
-    versions.sort_by(|a, b| compare_versions(b, a));
-    versions.into_iter().next()
-}
-
-/// True when `candidate` is strictly newer than `current` (semver compare).
-fn is_version_newer(candidate: &str, current: &str) -> bool {
-    compare_versions(candidate, current) == std::cmp::Ordering::Greater
-}
-
-fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |s: &str| -> Vec<u64> {
-        s.split('.').filter_map(|p| p.parse().ok()).collect()
-    };
-    let pa = parts(a);
-    let pb = parts(b);
-    for (x, y) in pa.iter().zip(pb.iter()) {
-        match x.cmp(y) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    pa.len().cmp(&pb.len())
 }
 
 /// `cua-driver dump-docs [--pretty]` — output all MCP tool schemas as JSON.
@@ -1406,52 +1370,27 @@ pub fn run_config_cmd(
     }
 }
 
-/// `cua-driver doctor` — clean up stale install bits left from older cua-driver versions.
+/// `cua-driver doctor` — run platform-aware diagnostic probes and emit a
+/// structured report.
 ///
-/// Mirrors Swift `DoctorCommand`:
-///   - Removes the legacy LaunchAgent plist (~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist)
-///     via `launchctl unload` then `fs::remove_file`.
-///   - Removes the legacy update script (/usr/local/bin/cua-driver-update) if writable;
-///     otherwise prints the `sudo rm` command the user must run manually.
-pub fn run_doctor_cmd() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let legacy_plist = format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist");
-    let legacy_script = "/usr/local/bin/cua-driver-update";
+/// See [`crate::doctor`] for the probe catalog. Output is plain text by
+/// default; `--json` switches to a machine-readable shape for scripting.
+/// Exit code is `0` when every probe is `[ok]` or `[warn]`, non-zero when
+/// at least one `[err]` probe failed (e.g. the binary cannot resolve its
+/// own install dir).
+pub fn run_doctor_cmd(json: bool) {
+    let report = crate::doctor::run();
 
-    let mut cleaned_anything = false;
-
-    // — Legacy LaunchAgent plist —
-    if std::path::Path::new(&legacy_plist).exists() {
-        cleaned_anything = true;
-        println!("Removing legacy LaunchAgent: {legacy_plist}");
-
-        // Try to unload it first (ignore errors — may not be loaded).
-        let _ = std::process::Command::new("launchctl")
-            .args(["unload", &legacy_plist])
-            .status();
-
-        match std::fs::remove_file(&legacy_plist) {
-            Ok(()) => println!("  ✓ Removed."),
-            Err(e) => eprintln!("  ✗ Failed to remove {legacy_plist}: {e}"),
-        }
+    if json {
+        let val = report.to_json();
+        let out = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string());
+        println!("{out}");
+    } else {
+        print!("{}", report.to_text());
     }
 
-    // — Legacy update script —
-    if std::path::Path::new(legacy_script).exists() {
-        cleaned_anything = true;
-        println!("Removing legacy update script: {legacy_script}");
-        match std::fs::remove_file(legacy_script) {
-            Ok(()) => println!("  ✓ Removed."),
-            Err(_) => {
-                // Root-owned — user must sudo.
-                println!("  Could not remove (root-owned). Run manually:");
-                println!("    sudo rm -f {legacy_script}");
-            }
-        }
-    }
-
-    if !cleaned_anything {
-        println!("Nothing to clean — install is up to date.");
+    if report.has_errors() {
+        process::exit(1);
     }
 }
 
@@ -1507,7 +1446,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Config { .. } => event::CONFIG.to_owned(),
         Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
         Command::Update { .. } => "cua_driver_update".to_owned(),
-        Command::Doctor => "cua_driver_doctor".to_owned(),
+        Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
         Command::TelemetryInstallEvent => return None,
     };

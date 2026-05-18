@@ -39,5 +39,9 @@ let package = Package(
             name: "ZoomMathTests",
             dependencies: ["CuaDriverCore"]
         ),
+        .testTarget(
+            name: "FocusStealPreventerTests",
+            dependencies: ["CuaDriverCore"]
+        ),
     ]
 )

@@ -25,6 +25,15 @@ uuid = { workspace = true }
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
 ureq = { version = "3", features = ["json"] }
+# Strict semver comparison for the startup update-available banner so that
+# pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
+# and we never recommend a pre-release as an "update".
+semver = "1"
+# Bounded `Child::wait_timeout` for the Linux AT-SPI / gdbus probe in
+# `doctor`. We can't rely on `gdbus introspect` returning quickly when the
+# session D-Bus is hung — without a timeout, `doctor` would block forever
+# on a broken accessibility stack. Tiny dep, exactly this use case.
+wait-timeout = "0.2"
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic
@@ -45,6 +54,9 @@ platform-linux = { path = "../platform-linux" }
 tokio = { workspace = true, features = ["full"] }
 image = { workspace = true }
 base64 = { workspace = true }
+# Isolated HOME / cache directories for `version_check` unit tests so they
+# never touch the developer's real `~/.cua-driver-rs/version_check.json`.
+tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }

@@ -29,6 +29,17 @@ public actor FocusGuard {
     private let enforcer: SyntheticAppFocusEnforcer
     private let systemPreventer: SystemFocusStealPreventer?
 
+    /// Construct a guard with the three focus-suppression layers wired in.
+    ///
+    /// - Parameters:
+    ///   - enablement: AX enablement assertion used to write synthetic
+    ///     focus on the target window/element.
+    ///   - enforcer: synthetic-focus enforcer that flips
+    ///     `kAXEnhancedUserInterface` etc. for the duration of the body.
+    ///   - systemPreventer: optional layer-3 reactive preventer. When
+    ///     supplied, the guard arms a lease around the body so any
+    ///     target self-activation triggered by the AX action is undone
+    ///     before the next compositor frame.
     public init(
         enablement: AXEnablementAssertion,
         enforcer: SyntheticAppFocusEnforcer,
@@ -84,15 +95,23 @@ public actor FocusGuard {
         // activation notification and immediately re-activates the prior
         // frontmost app. Only armed when the target isn't already
         // frontmost (no point suppressing self → self).
-        var suppressionHandle: SuppressionHandle?
+        //
+        // Lease form: ARC fires `deinit` on every exit path including the
+        // catch branch below. The lease replaces a previous bug-prone
+        // pattern of manually pairing begin/end across do/catch — if a
+        // future edit forgets one cleanup branch, the lease still
+        // releases when the local goes out of scope.
+        var suppressionLease: SuppressionLease?
         if let preventer = systemPreventer {
             let targetApp = NSRunningApplication(processIdentifier: pid)
             let isTargetFrontmost = targetApp?.isActive ?? false
             if !isTargetFrontmost,
                let frontmost = NSWorkspace.shared.frontmostApplication
             {
-                suppressionHandle = await preventer.beginSuppression(
-                    targetPid: pid, restoreTo: frontmost
+                suppressionLease = await preventer.leaseSuppression(
+                    targetPid: pid,
+                    restoreTo: frontmost,
+                    origin: "FocusGuard.withFocusSuppressed"
                 )
             }
         }
@@ -100,27 +119,43 @@ public actor FocusGuard {
         do {
             let result = try await body()
             if let focusState { await enforcer.reenableActivation(focusState) }
-            if let handle = suppressionHandle {
-                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                await systemPreventer?.endSuppression(handle)
+            if let lease = suppressionLease {
+                // 50ms gives the target's reflex post-AXPress activation
+                // (Safari WebKit) time to fire before we tear down the
+                // observer that catches it. Explicit release awaits any
+                // pending reactivation tasks scheduled in that window.
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                await lease.release()
             }
             return result
         } catch {
             if let focusState { await enforcer.reenableActivation(focusState) }
-            if let handle = suppressionHandle {
-                await systemPreventer?.endSuppression(handle)
+            if let lease = suppressionLease {
+                await lease.release()
             }
             throw error
         }
+        // If a future edit ever drops one of the explicit `release()`
+        // calls above, ARC fires the lease's `deinit` when this scope
+        // unwinds — the entry still gets released. Belt + suspenders.
     }
 
     // MARK: - Helpers
 
 }
 
+/// Errors thrown by ``FocusGuard/withFocusSuppressed(pid:element:body:)``.
 public enum FocusGuardError: Error, CustomStringConvertible, Sendable {
+    /// The target window is minimized in the Dock; AX actions on it
+    /// would force-deminiaturize it (especially in Chrome). Caller must
+    /// either unminimize first or use a keyboard-input alternative
+    /// (`type_text_chars`, `press_key`) that does not have this side
+    /// effect.
     case windowMinimized(pid: pid_t)
 
+    /// Human-readable description of the error including the recovery
+    /// hint. `Tool.Content.text` propagates this directly to MCP
+    /// clients.
     public var description: String {
         switch self {
         case .windowMinimized(let pid):

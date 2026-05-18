@@ -1153,18 +1153,42 @@ impl Tool for ClickTool {
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let btn = button.clone();
-            // Try UIA `ElementFromPoint` + `Invoke` first — this is what
-            // makes vision-mode clicks land on modern XAML / WebView2 /
-            // packaged-UWP buttons, where the inner interactive surface
-            // is composed via DirectComposition and PostMessage to the
-            // outer HWND silently no-ops. Only run for single left/middle
-            // clicks; right-click + multi-click stay on PostMessage
-            // because UIA has no clean equivalent of `ShowContextMenu`
-            // by-coord and `Invoke()` is single-fire by definition.
+            // Vision-mode (x, y) dispatch is **layered**, mirroring the
+            // trope-cua reference impl
+            // (`src/CuaDriver.Win/Tools/ClickTool.cs::InvokePixelClickAsync`):
+            //
+            //   1. UIA hit-test in the target HWND's subtree. If the
+            //      deepest InvokePattern-bearing element at (sx, sy) is
+            //      found, fire `Invoke()`. Works occluded, no focus
+            //      steal, and is the **only** path that lands on UWP /
+            //      WebView2 / DirectComposition surfaces — those route
+            //      input through `Windows.UI.Input`, not WM_LBUTTONDOWN.
+            //
+            //   2. If UIA returns false (no Invokable element under the
+            //      pixel inside `hwnd`, or `hwnd` has no useful UIA
+            //      tree at all), fall through to
+            //      `PostMessage(WM_LBUTTONDOWN/UP)` against the deepest
+            //      child HWND at the screen point. Covers plain Win32
+            //      controls without UIA InvokePattern (most edit
+            //      fields, custom-drawn widgets, native containers) and
+            //      apps that don't expose UIA at all.
+            //
+            // The combination closes the gap macOS gets for free from
+            // `CGEventPostToPSN` (per-pid event routing): UIA covers
+            // UWP-style targets without z-order tricks, PostMessage
+            // covers plain Win32 without z-order tricks. Neither path
+            // moves the OS cursor or activates the receiver.
+            //
+            // UIA path runs only for single left/middle clicks —
+            // right-click (UIA has no by-coord `ShowContextMenu`) and
+            // multi-click (`Invoke()` is single-fire by definition)
+            // skip directly to PostMessage.
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
                 let invoked = tokio::task::spawn_blocking(move || {
-                    crate::uia::windows_enum::try_invoke_at_point(sx as i32, sy as i32)
+                    crate::uia::windows_enum::try_invoke_in_window_at_point(
+                        hwnd as isize, sx as i32, sy as i32,
+                    )
                 })
                 .await
                 .unwrap_or(false);

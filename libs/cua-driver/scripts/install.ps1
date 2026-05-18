@@ -90,7 +90,7 @@ $BinaryName = "cua-driver.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.2.4"
+$Script:CuaDriverRsBakedVersion = "0.2.5"
 # ~~~ END_BAKED_VERSION ~~~
 
 # ---------- Path resolution ------------------------------------------------

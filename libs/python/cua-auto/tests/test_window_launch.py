@@ -1,7 +1,6 @@
 from unittest.mock import Mock, patch
 
 import pytest
-
 from cua_auto.window import _build_launch_argv, launch
 
 

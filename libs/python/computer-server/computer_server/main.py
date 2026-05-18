@@ -638,9 +638,7 @@ class AuthenticationManager:
             if _allow_unauthenticated_local():
                 logger.info("Explicit unauthenticated local development mode enabled")
                 return True
-            logger.info(
-                "No CONTAINER_NAME set and CUA_ALLOW_UNAUTHENTICATED_LOCAL is not enabled"
-            )
+            logger.info("No CONTAINER_NAME set and CUA_ALLOW_UNAUTHENTICATED_LOCAL is not enabled")
             return False
 
         # Layer 1: VM Identity Verification

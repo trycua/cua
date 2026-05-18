@@ -42,11 +42,11 @@ from ApplicationServices import kAXValueCGPointType  # type: ignore
 from ApplicationServices import kAXValueCGSizeType  # type: ignore
 from ApplicationServices import kAXVisibleChildrenAttribute  # type: ignore
 from ApplicationServices import kAXWindowsAttribute  # type: ignore
+from PIL import Image, ImageGrab
 from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key
 from pynput.mouse import Button
 from pynput.mouse import Controller as MouseController
-from PIL import Image, ImageGrab
 from Quartz.CoreGraphics import *  # type: ignore
 from Quartz.CoreGraphics import CGPoint, CGSize  # type: ignore
 
@@ -57,6 +57,7 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 # Fix: pynput's MouseController.position setter uses CGEventPost with
 # kCGEventMouseMoved internally, which silently fails in macOS VMs running

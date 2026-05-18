@@ -198,7 +198,9 @@ class TestAgentResponsesEndpoint:
 
 
 class TestCommandsEndpoint:
-    def test_static_command_metadata_available_before_handler_initialization(self, clean_env, client):
+    def test_static_command_metadata_available_before_handler_initialization(
+        self, clean_env, client
+    ):
         resp = client.get("/commands")
         assert resp.status_code == 200
 
@@ -217,9 +219,7 @@ class TestCommandsEndpoint:
             {"name": "append", "required": False, "default": False},
         ]
 
-    def test_fresh_android_commands_metadata_lists_multitouch(
-        self, clean_env, client, monkeypatch
-    ):
+    def test_fresh_android_commands_metadata_lists_multitouch(self, clean_env, client, monkeypatch):
         monkeypatch.setattr(main, "OS_TYPE", "android")
         monkeypatch.setattr(main, "_command_handlers", None)
 

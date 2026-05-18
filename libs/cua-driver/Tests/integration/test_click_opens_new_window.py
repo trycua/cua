@@ -47,9 +47,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
 _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_BUNDLE = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.app")
-_FOCUS_APP_EXE = os.path.join(
-    _FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp"
-)
+_FOCUS_APP_EXE = os.path.join(_FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp")
 _LOSS_FILE = "/tmp/focus_monitor_losses.txt"
 
 _UTM_BUNDLE = "com.utmapp.UTM"
@@ -61,6 +59,7 @@ _FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _tool_text(result: dict) -> str:
     for item in result.get("content", []):
@@ -122,6 +121,7 @@ def _kill(name: str) -> None:
 # Test
 # ---------------------------------------------------------------------------
 
+
 class TestBrowseUTMGalleryUXGuard(unittest.TestCase):
     """Clicking 'Browse UTM Gallery' in a backgrounded UTM must not steal focus.
 
@@ -181,9 +181,9 @@ class TestBrowseUTMGalleryUXGuard(unittest.TestCase):
         # Verify FocusMonitorApp is frontmost before the click.
         front_before = frontmost_bundle_id(c)
         self.assertEqual(
-            front_before, _FOCUS_MONITOR_BUNDLE,
-            f"Expected FocusMonitorApp to be frontmost before the click, "
-            f"got {front_before!r}",
+            front_before,
+            _FOCUS_MONITOR_BUNDLE,
+            f"Expected FocusMonitorApp to be frontmost before the click, " f"got {front_before!r}",
         )
 
         losses_before = _read_focus_losses()
@@ -208,21 +208,27 @@ class TestBrowseUTMGalleryUXGuard(unittest.TestCase):
 
         # Click the gallery button — by element index if found, pixel otherwise.
         if gallery_idx is not None:
-            result = c.call_tool("click", {
-                "pid": utm_pid,
-                "window_id": window_id,
-                "element_index": gallery_idx,
-            })
+            result = c.call_tool(
+                "click",
+                {
+                    "pid": utm_pid,
+                    "window_id": window_id,
+                    "element_index": gallery_idx,
+                },
+            )
         else:
             # Fallback: pixel click at the approximate "Browse UTM Gallery"
             # button location in UTM's welcome screen.
             b = utm_win["bounds"]
-            result = c.call_tool("click", {
-                "pid": utm_pid,
-                "window_id": window_id,
-                "x": b["width"] / 2.0,
-                "y": b["height"] * 0.35,
-            })
+            result = c.call_tool(
+                "click",
+                {
+                    "pid": utm_pid,
+                    "window_id": window_id,
+                    "x": b["width"] / 2.0,
+                    "y": b["height"] * 0.35,
+                },
+            )
 
         result_text = _tool_text(result)
 
@@ -236,11 +242,13 @@ class TestBrowseUTMGalleryUXGuard(unittest.TestCase):
 
         # 2. Result must announce the new Safari window.
         self.assertIn(
-            "🪟", result_text,
+            "🪟",
+            result_text,
             f"Expected 🪟 new-window notice in click result.\nGot: {result_text}",
         )
         self.assertIn(
-            "Safari", result_text,
+            "Safari",
+            result_text,
             f"Expected 'Safari' mentioned in new-window notice.\nGot: {result_text}",
         )
 
@@ -248,7 +256,8 @@ class TestBrowseUTMGalleryUXGuard(unittest.TestCase):
         time.sleep(0.3)
         front_after = frontmost_bundle_id(c)
         self.assertEqual(
-            front_after, _FOCUS_MONITOR_BUNDLE,
+            front_after,
+            _FOCUS_MONITOR_BUNDLE,
             f"Expected FocusMonitorApp to remain frontmost after re-raise, "
             f"got {front_after!r}.\nClick result: {result_text}",
         )
@@ -264,7 +273,8 @@ class TestBrowseUTMGalleryUXGuard(unittest.TestCase):
         losses_after = _read_focus_losses()
         delta = losses_after - losses_before
         self.assertLessEqual(
-            delta, 1,
+            delta,
+            1,
             f"FocusMonitorApp lost focus {delta} time(s) (max 1 allowed) "
             f"during the click sequence — ux_guard violated.\n"
             f"Click result: {result_text}",

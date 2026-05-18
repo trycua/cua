@@ -98,10 +98,14 @@ class HTTPTransport(Transport):
             resp = await self._client.post("/cmd", json=body, timeout=req_timeout)
             if resp.status_code < 500 or attempt == _CMD_MAX_RETRIES - 1:
                 break
-            backoff = _CMD_RETRY_BACKOFF_S * (2 ** attempt)
+            backoff = _CMD_RETRY_BACKOFF_S * (2**attempt)
             logger.debug(
                 "[http] /cmd %s returned %d, retrying in %.1fs (attempt %d/%d)",
-                command, resp.status_code, backoff, attempt + 1, _CMD_MAX_RETRIES,
+                command,
+                resp.status_code,
+                backoff,
+                attempt + 1,
+                _CMD_MAX_RETRIES,
             )
             await asyncio.sleep(backoff)
 

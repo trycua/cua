@@ -1,7 +1,6 @@
 from unittest.mock import Mock, patch
 
 import pytest
-
 from computer_server.handlers.generic import GenericWindowHandler, build_launch_argv
 
 

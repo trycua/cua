@@ -42,6 +42,7 @@ EXPECTED_HREF_FRAGMENT = "iana.org/domains/example"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _tool_text(result: dict) -> str:
     """Extract the text string from a tool call result."""
     for item in result.get("content", []):
@@ -54,14 +55,13 @@ def _enable_chrome_apple_events() -> None:
     """Quit Chrome, write allow_javascript_apple_events to all profiles, relaunch."""
     subprocess.run(
         ["osascript", "-e", 'quit app "Google Chrome"'],
-        check=False, timeout=10,
+        check=False,
+        timeout=10,
     )
     time.sleep(1.5)
 
     for prefs_path in glob.glob(
-        os.path.expanduser(
-            "~/Library/Application Support/Google/Chrome/*/Preferences"
-        )
+        os.path.expanduser("~/Library/Application Support/Google/Chrome/*/Preferences")
     ):
         profile = prefs_path.split("/")[-2]
         if "System" in profile or "Guest" in profile:
@@ -99,14 +99,14 @@ def _main_window(client: DriverClient, pid: int) -> int:
     # Prefer a window whose title contains "Example Domain".
     for line in text.splitlines():
         if "Example Domain" in line or "example.com" in line.lower():
-            m = re.search(r'\[window_id:\s*(\d+)\]', line)
+            m = re.search(r"\[window_id:\s*(\d+)\]", line)
             if m:
                 return int(m.group(1))
     # Fall back to first titled window.
     titled = re.findall(r'"[^"]+"\s+\[window_id:\s*(\d+)\]', text)
     if titled:
         return int(titled[0])
-    m = re.search(r'\[window_id:\s*(\d+)\]', text)
+    m = re.search(r"\[window_id:\s*(\d+)\]", text)
     if m:
         return int(m.group(1))
     raise RuntimeError(f"No window found for Chrome pid {pid}")
@@ -115,6 +115,7 @@ def _main_window(client: DriverClient, pid: int) -> int:
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
+
 
 class BrowserJSTests(unittest.TestCase):
     """Browser JS primitives work end-to-end against a live Chrome window."""
@@ -131,13 +132,16 @@ class BrowserJSTests(unittest.TestCase):
         # launch_app opens the URL in a new window WITHOUT stealing focus —
         # the driver's FocusRestoreGuard catches Chrome's activate call.
         with DriverClient(cls.binary) as c:
-            result = c.call_tool("launch_app", {
-                "bundle_id": CHROME_BUNDLE,
-                "urls": [TEST_URL],
-            })
+            result = c.call_tool(
+                "launch_app",
+                {
+                    "bundle_id": CHROME_BUNDLE,
+                    "urls": [TEST_URL],
+                },
+            )
             text = _tool_text(result)
             # Extract pid from launch_app response.
-            m = re.search(r'pid[=:\s]+(\d+)', text, re.IGNORECASE)
+            m = re.search(r"pid[=:\s]+(\d+)", text, re.IGNORECASE)
             cls._chrome_pid = int(m.group(1)) if m else _find_chrome(c)
 
         # Wait for Chrome to load the page and update the window title.
@@ -167,39 +171,48 @@ class BrowserJSTests(unittest.TestCase):
     def test_01_execute_javascript_arithmetic(self) -> None:
         """execute_javascript returns the JS evaluation result."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "execute_javascript",
-                "javascript": "1 + 1",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "execute_javascript",
+                    "javascript": "1 + 1",
+                },
+            )
         self.assertFalse(result.get("isError"))
         self.assertIn("2", _tool_text(result))
 
     def test_02_execute_javascript_dom_read(self) -> None:
         """execute_javascript can read DOM content."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "execute_javascript",
-                "javascript": "document.querySelector('h1').innerText",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "execute_javascript",
+                    "javascript": "document.querySelector('h1').innerText",
+                },
+            )
         self.assertFalse(result.get("isError"))
         self.assertIn(EXPECTED_H1, _tool_text(result))
 
     def test_03_execute_javascript_iife(self) -> None:
         """execute_javascript handles IIFE with try-catch."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "execute_javascript",
-                "javascript": (
-                    "(() => { try { return document.title; } "
-                    "catch(e) { return 'error: ' + e; } })()"
-                ),
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "execute_javascript",
+                    "javascript": (
+                        "(() => { try { return document.title; } "
+                        "catch(e) { return 'error: ' + e; } })()"
+                    ),
+                },
+            )
         self.assertFalse(result.get("isError"))
 
     # -----------------------------------------------------------------------
@@ -209,25 +222,32 @@ class BrowserJSTests(unittest.TestCase):
     def test_04_get_text_returns_body_text(self) -> None:
         """get_text returns document.body.innerText containing the H1."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "get_text",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "get_text",
+                },
+            )
         self.assertFalse(result.get("isError"))
         self.assertIn(EXPECTED_H1, _tool_text(result))
 
     def test_05_get_text_includes_link_text(self) -> None:
         """get_text includes anchor text from the page."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "get_text",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "get_text",
+                },
+            )
         text = _tool_text(result)
-        self.assertIn(EXPECTED_LINK_TEXT, text,
-                      f"Expected link text in body text, got: {text[:200]!r}")
+        self.assertIn(
+            EXPECTED_LINK_TEXT, text, f"Expected link text in body text, got: {text[:200]!r}"
+        )
 
     # -----------------------------------------------------------------------
     # page action=query_dom
@@ -236,13 +256,16 @@ class BrowserJSTests(unittest.TestCase):
     def test_06_query_dom_returns_json_array(self) -> None:
         """query_dom returns a JSON array of matching elements with hrefs."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "query_dom",
-                "css_selector": "a[href]",
-                "attributes": ["href"],
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "query_dom",
+                    "css_selector": "a[href]",
+                    "attributes": ["href"],
+                },
+            )
         self.assertFalse(result.get("isError"))
         text = _tool_text(result)
         self.assertIn("```json", text)
@@ -259,12 +282,15 @@ class BrowserJSTests(unittest.TestCase):
     def test_07_query_dom_h1_no_attributes(self) -> None:
         """query_dom without attributes returns tag and text."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "query_dom",
-                "css_selector": "h1",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "query_dom",
+                    "css_selector": "h1",
+                },
+            )
         self.assertFalse(result.get("isError"))
         text = _tool_text(result)
         json_block = text.split("```json")[-1].split("```")[0].strip()
@@ -280,11 +306,14 @@ class BrowserJSTests(unittest.TestCase):
     def test_08_get_window_state_javascript_co_located(self) -> None:
         """get_window_state with javascript= returns JS result alongside AX tree."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("get_window_state", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "javascript": "document.title",
-            })
+            result = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "javascript": "document.title",
+                },
+            )
         self.assertFalse(result.get("isError"))
         text = _tool_text(result)
         self.assertIn("## JavaScript result", text)
@@ -296,11 +325,14 @@ class BrowserJSTests(unittest.TestCase):
         # Chrome returns "missing value" for JS that throws — osascript exits 0.
         # The result section appears but may contain "missing value" or an error msg.
         with DriverClient(self.binary) as c:
-            result = c.call_tool("get_window_state", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "javascript": "undefined_var_that_does_not_exist",
-            })
+            result = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "javascript": "undefined_var_that_does_not_exist",
+                },
+            )
         # isError must be False — JS failures must not kill the whole tool call.
         self.assertFalse(result.get("isError"))
         text = _tool_text(result)
@@ -314,21 +346,27 @@ class BrowserJSTests(unittest.TestCase):
     def test_10_page_execute_missing_javascript_field(self) -> None:
         """page execute_javascript returns isError when javascript field is absent."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "execute_javascript",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "execute_javascript",
+                },
+            )
         self.assertTrue(result.get("isError"))
 
     def test_11_page_query_dom_missing_selector(self) -> None:
         """page query_dom returns isError when css_selector is absent."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._chrome_pid,
-                "window_id": self._window_id,
-                "action": "query_dom",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._chrome_pid,
+                    "window_id": self._window_id,
+                    "action": "query_dom",
+                },
+            )
         self.assertTrue(result.get("isError"))
 
 

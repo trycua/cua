@@ -313,7 +313,12 @@ terminal-only flow proves insufficient; the CLI is the MVP.
          + `crates/platform-linux/src/installed_apps.rs`
 - Status:
   - macOS: VERIFIED — unified shape + installed-app scan + running merge
-  - windows: VERIFIED for Win32 path (cross-target check), live-run pending on a Windows host
+  - windows: VERIFIED live — Win11 24H2 in Session 0 returns ~150 apps
+    (Start-Menu .lnk + WinRT PackageManager UWP), cold call ~370ms
+    (80ms Start-Menu, 320ms UWP), warm call sub-100ms. All entries
+    expose the unified shape (`pid`, `name`, `bundle_id`, `kind`,
+    `launch_path`, `last_used`, `windows`, `running`, `active`).
+    Validated against `list_apps_parity` example.
   - linux: code ready (cross-target check pending Linux host)
 - Test: `tests/integration/test_api_parity.py::RustParityTests::test_call_list_apps_*`
         + `crates/platform-windows/examples/list_apps_parity.rs`
@@ -564,11 +569,18 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   - macOS=`crates/platform-macos/src/tools/launch_app.rs` (full focus-steal contract)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
 - Status:
-  - windows: VERIFIED
+  - windows: VERIFIED for Win32 path; UWP path requires interactive session
+    (returns descriptive error in Session 0 — never hangs). Win32 launches
+    use `ShellExecuteExW` + `SW_SHOWNOACTIVATE` (no focus steal, matches
+    macOS oapp). UWP launches use `IApplicationActivationManager` +
+    best-effort `GetForegroundWindow` snapshot/restore (best-effort
+    because `SetForegroundWindow` is subject to Windows' foreground-lock
+    restrictions — visual confirmation in Session 1+ recommended).
   - macOS: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
 - Tests:
-  - windows=`crates/platform-windows/examples/launch_app_parity.rs`
+  - windows=`crates/platform-windows/examples/launch_app_parity.rs` (accepts
+    Session-0 fast-fail for UWP path the same way it accepts "not installed")
   - macOS=`tests/integration/test_focus_steal_parity.py` + `crates/platform-macos/src/focus_steal.rs` (Rust unit tests)
 
 ### Fixed (Windows)

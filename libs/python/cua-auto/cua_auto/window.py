@@ -34,10 +34,18 @@ def _get_by_handle(handle: Any) -> Optional[Any]:
 def _build_launch_argv(app: str, args: Optional[List[str]] = None) -> List[str]:
     if args is not None:
         return [app, *args]
-    argv = shlex.split(app)
+    argv = shlex.split(app, posix=(os.name != "nt"))
+    if os.name == "nt":
+        argv = [_strip_wrapping_quotes(arg) for arg in argv]
     if not argv:
         raise ValueError("app must not be empty")
     return argv
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
 
 
 # ── Active window ─────────────────────────────────────────────────────────────

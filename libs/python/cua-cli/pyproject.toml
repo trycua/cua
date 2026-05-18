@@ -45,11 +45,11 @@ dependencies = [
 [project.optional-dependencies]
 # MCP server support
 mcp = [
-    "fastmcp>=3.2.0",
+    "fastmcp>=3.3.0",
 ]
 # Skills recording with LLM captioning
 skills = [
-    "litellm>=1.83.7,<1.84",
+    "litellm>=1.83.10,<1.84",
 ]
 # Full installation
 all = [

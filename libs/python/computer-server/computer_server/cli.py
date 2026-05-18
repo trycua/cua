@@ -30,7 +30,9 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Auto-detect and log the actual screen resolution at startup",
     )
     parser.add_argument(
-        "--host", default="127.0.0.1", help="Host to bind the server to (default: 127.0.0.1)"
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind the server to (default: 127.0.0.1; use 0.0.0.0 for external access)",
     )
     parser.add_argument(
         "--port", type=int, default=8000, help="Port to bind the server to (default: 8000)"

@@ -71,7 +71,7 @@ browser = [
 # Agent support
 agents = [
     "cua-agent>=0.8.0",
-    "litellm>=1.83.7,<1.84",
+    "litellm>=1.83.10,<1.84",
     "anthropic>=0.26.0",
 ]
 

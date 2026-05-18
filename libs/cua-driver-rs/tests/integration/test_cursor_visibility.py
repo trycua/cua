@@ -36,10 +36,10 @@ _FIXTURE_CURSOR = os.path.join(_THIS_DIR, "fixtures", "test_cursor.png")
 CALCULATOR_BUNDLE = "com.apple.calculator"
 
 # Colour tolerances for detection
-_MAGENTA_MIN = (200, 0, 200)   # R≥200, G≤55, B≥200
+_MAGENTA_MIN = (200, 0, 200)  # R≥200, G≤55, B≥200
 _MAGENTA_MAX = (255, 55, 255)
-_YELLOW_MIN  = (200, 200, 0)   # R≥200, G≥200, B≤55
-_YELLOW_MAX  = (255, 255, 55)
+_YELLOW_MIN = (200, 200, 0)  # R≥200, G≥200, B≤55
+_YELLOW_MAX = (255, 255, 55)
 
 # Minimum fraction of pixels in the search region that must match the cursor colours.
 _MATCH_THRESHOLD = 0.002  # 0.2% of the search window
@@ -51,7 +51,7 @@ def _decode_png_pixels(png_bytes: bytes) -> tuple[int, int, list[tuple[int, int,
     Only supports filter types 0 (None) and 1 (Sub) — which covers the screenshots
     produced by cua-driver's `screenshot` tool. Raises ValueError for unsupported formats.
     """
-    if png_bytes[:8] != b'\x89PNG\r\n\x1a\n':
+    if png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("Not a PNG file")
 
     pos = 8
@@ -62,18 +62,18 @@ def _decode_png_pixels(png_bytes: bytes) -> tuple[int, int, list[tuple[int, int,
     while pos < len(png_bytes):
         if pos + 8 > len(png_bytes):
             break
-        length = struct.unpack('>I', png_bytes[pos:pos+4])[0]
-        chunk_type = png_bytes[pos+4:pos+8]
-        data = png_bytes[pos+8:pos+8+length]
+        length = struct.unpack(">I", png_bytes[pos : pos + 4])[0]
+        chunk_type = png_bytes[pos + 4 : pos + 8]
+        data = png_bytes[pos + 8 : pos + 8 + length]
         pos += 12 + length
 
-        if chunk_type == b'IHDR':
-            width, height = struct.unpack('>II', data[:8])
+        if chunk_type == b"IHDR":
+            width, height = struct.unpack(">II", data[:8])
             bit_depth = data[8]
             color_type = data[9]
-        elif chunk_type == b'IDAT':
+        elif chunk_type == b"IDAT":
             idat_chunks.append(data)
-        elif chunk_type == b'IEND':
+        elif chunk_type == b"IEND":
             break
 
     if width == 0 or height == 0:
@@ -81,7 +81,7 @@ def _decode_png_pixels(png_bytes: bytes) -> tuple[int, int, list[tuple[int, int,
     if bit_depth != 8:
         raise ValueError(f"Unsupported bit depth: {bit_depth}")
 
-    raw = zlib.decompress(b''.join(idat_chunks))
+    raw = zlib.decompress(b"".join(idat_chunks))
 
     # Channels: 2=RGB(3), 6=RGBA(4)
     channels = {2: 3, 6: 4}.get(color_type)
@@ -96,7 +96,7 @@ def _decode_png_pixels(png_bytes: bytes) -> tuple[int, int, list[tuple[int, int,
     for _y in range(height):
         filt = raw[offset]
         offset += 1
-        row = bytearray(raw[offset:offset+stride])
+        row = bytearray(raw[offset : offset + stride])
         offset += stride
 
         if filt == 0:
@@ -118,14 +118,16 @@ def _decode_png_pixels(png_bytes: bytes) -> tuple[int, int, list[tuple[int, int,
                 b = prev_row[i]
                 c = prev_row[i - channels] if i >= channels else 0
                 p = a + b - c
-                pa = abs(p - a); pb = abs(p - b); pc = abs(p - c)
+                pa = abs(p - a)
+                pb = abs(p - b)
+                pc = abs(p - c)
                 pr = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
                 row[i] = (row[i] + pr) & 0xFF
         else:
             raise ValueError(f"Unknown PNG filter type: {filt}")
 
         for i in range(0, stride, channels):
-            pixels.append((row[i], row[i+1], row[i+2]))
+            pixels.append((row[i], row[i + 1], row[i + 2]))
         prev_row = bytes(row)
 
     return width, height, pixels
@@ -156,9 +158,11 @@ def _colour_in_region(
                 continue
             r, g, b = pixels[idx]
             total += 1
-            if (colour_min[0] <= r <= colour_max[0] and
-                    colour_min[1] <= g <= colour_max[1] and
-                    colour_min[2] <= b <= colour_max[2]):
+            if (
+                colour_min[0] <= r <= colour_max[0]
+                and colour_min[1] <= g <= colour_max[1]
+                and colour_min[2] <= b <= colour_max[2]
+            ):
                 matches += 1
 
     return matches / total if total > 0 else 0.0
@@ -212,7 +216,9 @@ class TestCursorVisibility(unittest.TestCase):
 
         # 4. Resolve the Calculator window and its screen bounds.
         win_id = resolve_window_id(client, self.calc_pid)
-        wins = client.call_tool("list_windows", {"pid": self.calc_pid})["structuredContent"]["windows"]
+        wins = client.call_tool("list_windows", {"pid": self.calc_pid})["structuredContent"][
+            "windows"
+        ]
         win = next((w for w in wins if w["window_id"] == win_id), None)
         self.assertIsNotNone(win, "Could not find Calculator window")
         bounds = win["bounds"]
@@ -220,12 +226,15 @@ class TestCursorVisibility(unittest.TestCase):
         # 5. Click the center of the Calculator window (window-local coords).
         click_x = bounds["width"] / 2.0
         click_y = bounds["height"] / 2.0
-        r = client.call_tool("click", {
-            "pid": self.calc_pid,
-            "window_id": win_id,
-            "x": click_x,
-            "y": click_y,
-        })
+        r = client.call_tool(
+            "click",
+            {
+                "pid": self.calc_pid,
+                "window_id": win_id,
+                "x": click_x,
+                "y": click_y,
+            },
+        )
         self.assertFalse(r.get("isError"), f"click failed: {r}")
 
         # 6. Compute expected screen coordinates of the click point.
@@ -242,7 +251,7 @@ class TestCursorVisibility(unittest.TestCase):
             if b64:
                 png = base64.b64decode(b64)
                 # PNG width is at bytes 16..20 in big-endian.
-                png_w = struct.unpack('>I', png[16:20])[0]
+                png_w = struct.unpack(">I", png[16:20])[0]
                 scale = png_w / bounds["width"] if bounds["width"] > 0 else 1.0
             else:
                 scale = 1.0
@@ -274,16 +283,29 @@ class TestCursorVisibility(unittest.TestCase):
         search_r = int(80 * ss_scale)
 
         magenta_frac = _colour_in_region(
-            pixels, img_w, img_h, sx, sy, search_r,
-            _MAGENTA_MIN, _MAGENTA_MAX,
+            pixels,
+            img_w,
+            img_h,
+            sx,
+            sy,
+            search_r,
+            _MAGENTA_MIN,
+            _MAGENTA_MAX,
         )
         yellow_frac = _colour_in_region(
-            pixels, img_w, img_h, sx, sy, search_r,
-            _YELLOW_MIN, _YELLOW_MAX,
+            pixels,
+            img_w,
+            img_h,
+            sx,
+            sy,
+            search_r,
+            _YELLOW_MIN,
+            _YELLOW_MAX,
         )
 
         self.assertGreater(
-            magenta_frac, _MATCH_THRESHOLD,
+            magenta_frac,
+            _MATCH_THRESHOLD,
             f"Magenta cursor colour NOT found near click point "
             f"(screen={screen_x:.0f},{screen_y:.0f} img={sx:.0f},{sy:.0f} "
             f"scale={ss_scale:.2f}). "
@@ -292,7 +314,8 @@ class TestCursorVisibility(unittest.TestCase):
             f"The overlay may be hidden or behind another window.",
         )
         self.assertGreater(
-            yellow_frac, _MATCH_THRESHOLD,
+            yellow_frac,
+            _MATCH_THRESHOLD,
             f"Yellow cross NOT found in cursor region "
             f"(magenta={magenta_frac:.5f}, yellow={yellow_frac:.5f}). "
             f"Cursor shape may not have loaded correctly.",
@@ -321,7 +344,9 @@ class TestCursorVisibility(unittest.TestCase):
 
         # 3. Resolve window and screen bounds.
         win_id = resolve_window_id(client, self.calc_pid)
-        wins = client.call_tool("list_windows", {"pid": self.calc_pid})["structuredContent"]["windows"]
+        wins = client.call_tool("list_windows", {"pid": self.calc_pid})["structuredContent"][
+            "windows"
+        ]
         win = next((w for w in wins if w["window_id"] == win_id), None)
         self.assertIsNotNone(win, "Could not find Calculator window")
         bounds = win["bounds"]
@@ -334,18 +359,21 @@ class TestCursorVisibility(unittest.TestCase):
             scr = client.call_tool("screenshot", {"pid": self.calc_pid, "window_id": win_id})
             b64 = scr.get("content", [{}])[0].get("data", "")
             png = base64.b64decode(b64) if b64 else b""
-            png_w = struct.unpack('>I', png[16:20])[0] if len(png) >= 24 else 0
+            png_w = struct.unpack(">I", png[16:20])[0] if len(png) >= 24 else 0
             scale = png_w / bounds["width"] if bounds["width"] > 0 and png_w > 0 else 1.0
         except Exception:
             scale = 1.0
 
         # 4. Click the centre of the window.
-        r = client.call_tool("click", {
-            "pid": self.calc_pid,
-            "window_id": win_id,
-            "x": click_x,
-            "y": click_y,
-        })
+        r = client.call_tool(
+            "click",
+            {
+                "pid": self.calc_pid,
+                "window_id": win_id,
+                "x": click_x,
+                "y": click_y,
+            },
+        )
         self.assertFalse(r.get("isError"), f"click failed: {r}")
 
         # 5. Wait for 750ms glide + spring settle + a safety margin.
@@ -373,16 +401,23 @@ class TestCursorVisibility(unittest.TestCase):
 
         # Default arrow: ice-blue/cyan — cursor_mid ≈ (94, 192, 232), bloom ≈ (188, 232, 252).
         # Accept any pixel that is clearly blue-cyan (G and B significantly exceed R).
-        _CYAN_MIN = (40,  150, 180)
+        _CYAN_MIN = (40, 150, 180)
         _CYAN_MAX = (180, 255, 255)
 
         cyan_frac = _colour_in_region(
-            pixels, img_w, img_h, sx, sy, search_r,
-            _CYAN_MIN, _CYAN_MAX,
+            pixels,
+            img_w,
+            img_h,
+            sx,
+            sy,
+            search_r,
+            _CYAN_MIN,
+            _CYAN_MAX,
         )
 
         self.assertGreater(
-            cyan_frac, _MATCH_THRESHOLD,
+            cyan_frac,
+            _MATCH_THRESHOLD,
             f"Default ice-blue cursor NOT found near click point "
             f"(screen={screen_x:.0f},{screen_y:.0f} img_pt={sx:.0f},{sy:.0f} "
             f"scale={ss_scale:.2f}). "
@@ -392,10 +427,13 @@ class TestCursorVisibility(unittest.TestCase):
 
     def test_set_agent_cursor_style_gradient_only(self) -> None:
         """set_agent_cursor_style with gradient_colors updates without error."""
-        r = self.client.call_tool("set_agent_cursor_style", {
-            "gradient_colors": ["#FF0000", "#FF00FF", "#0000FF"],
-            "bloom_color": "#00FFFF",
-        })
+        r = self.client.call_tool(
+            "set_agent_cursor_style",
+            {
+                "gradient_colors": ["#FF0000", "#FF00FF", "#0000FF"],
+                "bloom_color": "#00FFFF",
+            },
+        )
         self.assertFalse(r.get("isError"), f"gradient-only style update failed: {r}")
         text = r.get("content", [{}])[0].get("text", "")
         self.assertIn("✅", text)

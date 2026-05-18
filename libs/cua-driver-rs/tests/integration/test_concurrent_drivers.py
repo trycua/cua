@@ -46,9 +46,7 @@ FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run(
-            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
-        )
+        subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
@@ -79,10 +77,10 @@ def _find_calc_button(tree: str, label: str) -> int | None:
     for line in tree.split("\n"):
         if "AXButton" not in line:
             continue
-        m = re.search(r'\[(\d+)\]', line)
+        m = re.search(r"\[(\d+)\]", line)
         if not m:
             continue
-        if f'({label})' in line or f'id={label}' in line:
+        if f"({label})" in line or f"id={label}" in line:
             return int(m.group(1))
     return None
 
@@ -125,16 +123,16 @@ class ConcurrentDriversTest(unittest.TestCase):
 
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert active == FOCUS_MONITOR_BUNDLE, (
-                f"Expected FocusMonitorApp frontmost, got {active}"
-            )
+            assert (
+                active == FOCUS_MONITOR_BUNDLE
+            ), f"Expected FocusMonitorApp frontmost, got {active}"
 
         losses = _read_focus_losses()
         assert losses == 0, f"Expected 0 focus losses at start, got {losses}"
 
     @classmethod
     def tearDownClass(cls) -> None:
-        if hasattr(cls, '_focus_proc'):
+        if hasattr(cls, "_focus_proc"):
             cls._focus_proc.terminate()
             try:
                 cls._focus_proc.wait(timeout=3)
@@ -153,15 +151,24 @@ class ConcurrentDriversTest(unittest.TestCase):
         # Clear Calculator before each test so previous display state doesn't interfere.
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
-            snap = c.call_tool("get_window_state", {
-                "pid": self._calc_pid, "window_id": window_id,
-            })
+            snap = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                },
+            )
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn_ac = _find_calc_button(tree, "All Clear") or _find_calc_button(tree, "Clear")
             if btn_ac is not None:
-                c.call_tool("click", {
-                    "pid": self._calc_pid, "window_id": window_id, "element_index": btn_ac,
-                })
+                c.call_tool(
+                    "click",
+                    {
+                        "pid": self._calc_pid,
+                        "window_id": window_id,
+                        "element_index": btn_ac,
+                    },
+                )
                 time.sleep(0.2)
 
         subprocess.run(
@@ -186,9 +193,13 @@ class ConcurrentDriversTest(unittest.TestCase):
                 with DriverClient(self.binary) as ca:
                     # Driver A: AX-click 2 + 2 = on Calculator.
                     window_id = resolve_window_id(ca, self._calc_pid)
-                    snap = ca.call_tool("get_window_state", {
-                        "pid": self._calc_pid, "window_id": window_id,
-                    })
+                    snap = ca.call_tool(
+                        "get_window_state",
+                        {
+                            "pid": self._calc_pid,
+                            "window_id": window_id,
+                        },
+                    )
                     tree = snap.get("structuredContent", snap).get("tree_markdown", "")
                     btn_2 = _find_calc_button(tree, "2")
                     btn_add = _find_calc_button(tree, "Add")
@@ -197,16 +208,23 @@ class ConcurrentDriversTest(unittest.TestCase):
                         driver_a_error.append("Missing calculator buttons")
                         return
                     for idx in [btn_2, btn_add, btn_2, btn_eq]:
-                        ca.call_tool("click", {
+                        ca.call_tool(
+                            "click",
+                            {
+                                "pid": self._calc_pid,
+                                "window_id": window_id,
+                                "element_index": idx,
+                            },
+                        )
+                        time.sleep(0.15)
+                    snap2 = ca.call_tool(
+                        "get_window_state",
+                        {
                             "pid": self._calc_pid,
                             "window_id": window_id,
-                            "element_index": idx,
-                        })
-                        time.sleep(0.15)
-                    snap2 = ca.call_tool("get_window_state", {
-                        "pid": self._calc_pid, "window_id": window_id,
-                        "query": "AXStaticText",
-                    })
+                            "query": "AXStaticText",
+                        },
+                    )
                     tree2 = snap2.get("structuredContent", snap2).get("tree_markdown", "")
                     driver_a_result["tree"] = tree2
             except Exception as e:
@@ -266,7 +284,8 @@ class ConcurrentDriversTest(unittest.TestCase):
             active = frontmost_bundle_id(c)
         print(f"  losses: {self._losses_before}->{losses}, frontmost: {active}")
         self.assertEqual(
-            active, FOCUS_MONITOR_BUNDLE,
+            active,
+            FOCUS_MONITOR_BUNDLE,
             f"Focus stolen during concurrent operation — frontmost is {active}",
         )
 
@@ -276,15 +295,24 @@ class ConcurrentDriversTest(unittest.TestCase):
         # First session — clear Calculator.
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
-            snap = c.call_tool("get_window_state", {
-                "pid": self._calc_pid, "window_id": window_id,
-            })
+            snap = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                },
+            )
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn_ac = _find_calc_button(tree, "All Clear") or _find_calc_button(tree, "Clear")
             if btn_ac is not None:
-                c.call_tool("click", {
-                    "pid": self._calc_pid, "window_id": window_id, "element_index": btn_ac,
-                })
+                c.call_tool(
+                    "click",
+                    {
+                        "pid": self._calc_pid,
+                        "window_id": window_id,
+                        "element_index": btn_ac,
+                    },
+                )
                 time.sleep(0.2)
 
         time.sleep(0.2)
@@ -292,19 +320,33 @@ class ConcurrentDriversTest(unittest.TestCase):
         # Second session — press 5.
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
-            snap = c.call_tool("get_window_state", {
-                "pid": self._calc_pid, "window_id": window_id,
-            })
+            snap = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                },
+            )
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn_5 = _find_calc_button(tree, "5")
             self.assertIsNotNone(btn_5, "Could not find '5' button in fresh session")
-            c.call_tool("click", {
-                "pid": self._calc_pid, "window_id": window_id, "element_index": btn_5,
-            })
+            c.call_tool(
+                "click",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "element_index": btn_5,
+                },
+            )
             time.sleep(0.3)
-            snap2 = c.call_tool("get_window_state", {
-                "pid": self._calc_pid, "window_id": window_id, "query": "AXStaticText",
-            })
+            snap2 = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "query": "AXStaticText",
+                },
+            )
             tree2 = snap2.get("structuredContent", snap2).get("tree_markdown", "")
             print(f"\n  After pressing 5: {tree2[:200]}")
 
@@ -315,7 +357,8 @@ class ConcurrentDriversTest(unittest.TestCase):
         with DriverClient(self.binary) as c:
             active = frontmost_bundle_id(c)
         self.assertEqual(
-            active, FOCUS_MONITOR_BUNDLE,
+            active,
+            FOCUS_MONITOR_BUNDLE,
             f"Focus stolen — frontmost is {active}",
         )
 

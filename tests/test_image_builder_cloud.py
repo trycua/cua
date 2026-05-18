@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 
 import pytest
-
 from cua import Image, Sandbox
 
 pytestmark = pytest.mark.asyncio

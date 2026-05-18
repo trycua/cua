@@ -548,7 +548,7 @@ One canonical uninstall URL per platform mirrors the install side. Flag handling
 | Backend | Symlink / bin | App bundle / package home | Autostart entry | Skill links | Claude MCP registrations |
 |---|---|---|---|---|---|
 | Swift (macOS) | `~/.local/bin/cua-driver`, `/usr/local/bin/cua-driver` (legacy) | `/Applications/CuaDriver.app`, `~/.cua-driver`, `~/Library/Application Support/Cua Driver`, `~/Library/Caches/cua-driver` | `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` (legacy ≤ 0.0.5) | `cua-driver` symlinks under `~/.claude/skills`, `~/.agents/skills`, `~/.openclaw/skills`, `~/.config/opencode/skills` | Scrubbed from `~/.claude.json` |
-| Rust — macOS | `~/.local/bin/cua-driver` *(only when it resolves into `CuaDriverRs.app`)* | `/Applications/CuaDriverRs.app`, `~/.cua-driver-rs/` (entire tree) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` | `cua-driver-rs` symlinks under the same agent dirs | Scrubbed from `~/.claude.json` |
+| Rust — macOS | `~/.local/bin/cua-driver` *(only when it resolves into `CuaDriver.app` and `~/.cua-driver-rs/` exists)* | `/Applications/CuaDriver.app` (current), `/Applications/CuaDriverRs.app` (legacy, pre-rename), `~/.cua-driver-rs/` (entire tree) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` | `cua-driver-rs` symlinks under the same agent dirs | Scrubbed from `~/.claude.json` |
 | Rust — Linux | `~/.local/bin/cua-driver` *(when it resolves into `~/.cua-driver-rs/`)* | `~/.cua-driver-rs/` (entire tree) | `~/.config/systemd/user/cua-driver-rs.service` (stop + disable + remove) | Same as above | Scrubbed from `~/.claude.json` |
 | Rust — Windows | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` *(directory junction)* | `%USERPROFILE%\.cua-driver-rs\` (entire tree, including `packages\current` junction) | Scheduled Task `cua-driver-serve` (`schtasks /Delete`) | Junctions under `%USERPROFILE%\.claude\skills`, `.agents\skills`, `.openclaw\skills`, `%APPDATA%\opencode\skills` | Not auto-edited — closing message prints `claude mcp remove cua-driver-rs` |
 
@@ -560,13 +560,17 @@ One canonical uninstall URL per platform mirrors the install side. Flag handling
 **TCC grants persist on macOS** (Accessibility + Screen Recording). The uninstaller leaves them in **System Settings → Privacy & Security** so a re-install doesn't have to re-prompt. To reset them explicitly:
 
 ```bash
-# Swift driver
+# Both Swift and Rust drivers share bundle id `com.trycua.driver`
+# (the Rust port took over Swift's identity in cua-driver-rs ≥ 0.2.4).
 tccutil reset Accessibility com.trycua.driver
 tccutil reset ScreenCapture com.trycua.driver
+```
 
-# Rust port
-tccutil reset Accessibility com.trycua.cuadriverrs
-tccutil reset ScreenCapture com.trycua.cuadriverrs
+Pre-rename Rust installs (`cua-driver-rs ≤ 0.2.3`) used a separate bundle id `com.trycua.cuadriverrs` — clean those up if you had one of those installs:
+
+```bash
+tccutil reset Accessibility com.trycua.cuadriverrs 2>/dev/null
+tccutil reset ScreenCapture com.trycua.cuadriverrs 2>/dev/null
 ```
 </Callout>
 

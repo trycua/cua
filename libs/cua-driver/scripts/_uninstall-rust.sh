@@ -20,9 +20,9 @@
 #     ~/.config/opencode/skills/cua-driver-rs
 #
 # macOS:
-#   - /Applications/CuaDriverRs.app bundle
+#   - /Applications/CuaDriver.app bundle (and legacy CuaDriverRs.app if present)
 #   - ~/.local/bin/cua-driver symlink (only when it resolves into
-#     CuaDriverRs.app — Swift-driver symlinks are left in place)
+#     /Applications/CuaDriver.app — see note on the bundle-id share below)
 #   - ~/.cua-driver-rs/ (entire package home)
 #   - ~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist (if
 #     --autostart was used via install-local.sh — unload + remove)
@@ -37,7 +37,13 @@
 set -euo pipefail
 
 USER_BIN_LINK="$HOME/.local/bin/cua-driver"
-APP_BUNDLE="/Applications/CuaDriverRs.app"
+# Canonical bundle path (post-rename — shares bundle id `com.trycua.driver`
+# with the Swift driver). The Rust install replaces Swift here; both
+# the Rust and Swift uninstallers target this path.
+APP_BUNDLE="/Applications/CuaDriver.app"
+# Legacy bundle path from earlier Rust releases that coexisted with
+# Swift under a separate name. Cleaned up if found.
+LEGACY_APP_BUNDLE="/Applications/CuaDriverRs.app"
 HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
 LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
 SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver-rs.service"
@@ -73,15 +79,18 @@ resolve_link() {
 
 # --- CLI symlink ---------------------------------------------------------
 #
-# Only remove ~/.local/bin/cua-driver when it resolves to a cua-driver-rs
-# install — don't clobber a Swift-driver symlink the user might still
-# want. The Swift install would resolve to /Applications/CuaDriver.app/
-# Contents/MacOS/cua-driver; the Rust install resolves to either
-# /Applications/CuaDriverRs.app/... (macOS) or $HOME_DIR/packages/... (Linux).
+# Only remove ~/.local/bin/cua-driver when it resolves into a cua-driver-rs
+# install. Post-rename, the Rust install lives at /Applications/CuaDriver.app
+# — the SAME path the Swift driver uses, with the same bundle id
+# `com.trycua.driver`. Path-based detection alone can't distinguish
+# them. We rely on the presence of `$HOME_DIR` (~/.cua-driver-rs/) — the
+# Rust-specific state dir — as the marker that this is a Rust install.
+# Pre-rename installs at /Applications/CuaDriverRs.app are still cleaned
+# up unambiguously by path.
 if [[ -L "$USER_BIN_LINK" ]]; then
     RESOLVED="$(resolve_link "$USER_BIN_LINK")"
     case "$RESOLVED" in
-        *"CuaDriverRs.app"*|*"$HOME_DIR"*|*".cua-driver-rs"*)
+        *"CuaDriverRs.app"*|*"/Applications/CuaDriver.app"*|*"$HOME_DIR"*|*".cua-driver-rs"*)
             rm -f "$USER_BIN_LINK"
             log "removed $USER_BIN_LINK -> $RESOLVED"
             ;;
@@ -130,17 +139,28 @@ elif [[ "$OS" == "Darwin" ]]; then
 fi
 
 # --- .app bundle (macOS only) -------------------------------------------
+#
+# Removes /Applications/CuaDriver.app (current canonical Rust path,
+# shared with the Swift driver via bundle id `com.trycua.driver`) AND
+# /Applications/CuaDriverRs.app (legacy, pre-rename releases).
+# Removing the shared `.app` path is correct here: a user who runs
+# `uninstall.sh --experimental-rust` wants the binary on disk gone;
+# if they previously had the Swift binary at the same path, they've
+# already overwritten it with Rust on install. Re-installing the
+# Swift driver afterward is a re-run of the canonical `install.sh`.
 if [[ "$OS" == "Darwin" ]]; then
-    if [[ -d "$APP_BUNDLE" ]]; then
-        SUDO=""
-        if [[ ! -w "$(dirname "$APP_BUNDLE")" ]]; then
-            SUDO="sudo"
+    for bundle_path in "$APP_BUNDLE" "$LEGACY_APP_BUNDLE"; do
+        if [[ -d "$bundle_path" ]]; then
+            SUDO=""
+            if [[ ! -w "$(dirname "$bundle_path")" ]]; then
+                SUDO="sudo"
+            fi
+            $SUDO rm -rf "$bundle_path"
+            log "removed $bundle_path"
+        else
+            log "no app bundle at $bundle_path (skipping)"
         fi
-        $SUDO rm -rf "$APP_BUNDLE"
-        log "removed $APP_BUNDLE"
-    else
-        log "no app bundle at $APP_BUNDLE (skipping)"
-    fi
+    done
 fi
 
 # --- Package home -------------------------------------------------------
@@ -228,6 +248,7 @@ def invokes_cua_driver_rs(server):
     if home_dir and home_dir in joined:
         return True
     return ("CuaDriverRs.app" in joined
+            or "/Applications/CuaDriver.app" in joined
             or ".cua-driver-rs" in joined
             or "cua-driver-rs" in joined)
 
@@ -316,8 +337,13 @@ TCC grants (Accessibility + Screen Recording) remain in System
 Settings > Privacy & Security. Reset them explicitly if you want a
 clean re-install flow:
 
-  tccutil reset Accessibility com.trycua.cuadriverrs
-  tccutil reset ScreenCapture com.trycua.cuadriverrs
+  tccutil reset Accessibility com.trycua.driver
+  tccutil reset ScreenCapture com.trycua.driver
+
+  (Note: `com.trycua.driver` is shared with the Swift cua-driver.
+  Resetting it clears grants for both backends. If you still use the
+  Swift driver, skip this step and let macOS keep the grants — the
+  next Swift launch will re-use them.)
 FINALUNMSG
 else
     cat << 'FINALUNMSG'

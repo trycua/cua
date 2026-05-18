@@ -264,15 +264,12 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
                 continue;
             }
 
-            // Filter out frameworks (Visual C++ runtime, .NET shared
-            // assemblies, language packs, etc.) — they're libraries, not
-            // launchable apps. WinRT's `Package.IsFramework()` is the
-            // authoritative flag; a `false` from `IsFramework` errors is
-            // the conservative default (keep the entry, let the
-            // downstream display-name filter decide).
-            if let Ok(true) = pkg.IsFramework() {
-                continue;
-            }
+            // (Frameworks: Visual C++ runtime, .NET shared assemblies,
+            // language packs etc.) — we'd ideally filter via
+            // `pkg.IsFramework()`, but that WinRT call has been observed
+            // to hang in Session 0 on some Win11 SKUs. Skipping for now;
+            // the opaque-family-name filter below catches most of the
+            // noise these would have contributed.
 
             let raw_display = pkg.DisplayName().ok().map(|h| h.to_string());
             let display = normalize_uwp_display_name(raw_display, &pkg, &family_name);

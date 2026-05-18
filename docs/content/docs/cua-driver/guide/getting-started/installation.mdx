@@ -541,7 +541,7 @@ One canonical uninstall URL per platform mirrors the install side. Flag handling
 | Linux | Rust port (auto-detected — Swift binary is macOS-only) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
 | Windows | Rust port | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 \| iex` |
 
-`uninstall.sh` parses the same `--experimental-rust` / `--backend=rust` / `--backend=swift` flag set as `install.sh` and delegates to a colocated private helper, [`_uninstall-rust.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/_uninstall-rust.sh), when the Rust backend is selected. On Linux (and any non-macOS `bash` host) it auto-detects and runs the Rust uninstall without any flag.
+`uninstall.sh` parses the same `--experimental-rust` / `--backend=rust` / `--backend=swift` flag set as `install.sh` and delegates to a colocated private helper, `_uninstall-rust.sh` (under `libs/cua-driver/scripts/`), when the Rust backend is selected. On Linux (and any non-macOS `bash` host) it auto-detects and runs the Rust uninstall without any flag.
 
 **What each uninstall removes**
 
@@ -553,7 +553,7 @@ One canonical uninstall URL per platform mirrors the install side. Flag handling
 | Rust — Windows | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` *(directory junction)* | `%USERPROFILE%\.cua-driver-rs\` (entire tree, including `packages\current` junction) | Scheduled Task `cua-driver-serve` (`schtasks /Delete`) | Junctions under `%USERPROFILE%\.claude\skills`, `.agents\skills`, `.openclaw\skills`, `%APPDATA%\opencode\skills` | Not auto-edited — closing message prints `claude mcp remove cua-driver-rs` |
 
 <Callout type="info">
-**Safety invariants** — both uninstallers refuse to clobber a real directory at a path where the matching install script could have only created a symlink/junction (Linux/macOS use `[[ -L ]]`, Windows checks `IO_REPARSE_TAG_MOUNT_POINT`). A user who hand-managed any of these dirs keeps theirs untouched. Re-running an uninstall on an already-clean system prints `nothing to remove` per item — never errors.
+**Safety invariants** — every uninstall script (`uninstall.sh`, `_uninstall-rust.sh`, `uninstall.ps1`) refuses to clobber a real directory at a path where the matching installer could have only created a symlink / junction (Linux/macOS use `[[ -L ]]`; Windows checks `IO_REPARSE_TAG_MOUNT_POINT`). A user who hand-managed any of these dirs keeps theirs untouched. Re-running an uninstall on an already-clean system prints `nothing to remove` per item — never errors.
 </Callout>
 
 <Callout type="info">
@@ -577,7 +577,7 @@ tccutil reset ScreenCapture com.trycua.cuadriverrs
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1))) -Force
 ```
 
-It also doesn't auto-edit `%USERPROFILE%\.claude.json` — the closing message prints the exact `claude mcp remove cua-driver-rs` command instead. Mirrors the macOS uninstaller's conservative stance for hosts without `python3`.
+It also doesn't auto-edit `%USERPROFILE%\.claude.json` — the closing message prints the exact `claude mcp remove cua-driver-rs` command instead. The macOS / Linux uninstaller does auto-edit `~/.claude.json` when `python3` is on `PATH`; the Windows uninstaller skips the auto-edit unconditionally to keep the script dependency-free.
 </Callout>
 
 ## Troubleshooting

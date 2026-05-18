@@ -67,47 +67,44 @@ if ($env:CUA_DRIVER_RS_HOME) {
 $CurrentDir  = Join-Path $PackageHome "packages\current"
 $ReleasesDir = Join-Path $PackageHome "packages\releases"
 
-# ---------- Helpers (lifted from install.ps1) -----------------------------
+# ---------- Helpers (mirror install.ps1) ----------------------------------
+#
+# install.ps1 keeps these inline in its own scope (it's a one-shot script
+# that runs end-to-end). Mirror them here so install-local.ps1 can stand
+# alone too. If install.ps1 ever extracts these into a shared file, this
+# duplication is the time to delete it.
 
-. "$ScriptDir\install.ps1.helpers.ps1" -ErrorAction SilentlyContinue 2>$null
-# install.ps1 doesn't currently extract its helpers into a separate
-# .helpers.ps1 — fall back to defining the absolute minimum here. If a
-# helpers file appears later, the dot-source above wins and these are
-# never compiled.
-if (-not (Get-Command -Name 'Test-IsJunction' -ErrorAction SilentlyContinue)) {
+function Test-IsJunction([string]$path) {
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    $item = Get-Item -LiteralPath $path -Force
+    return [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+}
 
-    function Test-IsJunction([string]$path) {
-        if (-not (Test-Path -LiteralPath $path)) { return $false }
-        $item = Get-Item -LiteralPath $path -Force
-        return [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
-    }
-
-    function Ensure-Junction([string]$linkPath, [string]$targetPath) {
-        New-Item -ItemType Directory -Path (Split-Path -Parent $linkPath) -Force | Out-Null
-        if (Test-Path -LiteralPath $linkPath) {
-            if (Test-IsJunction $linkPath) {
-                # Always retarget — that's the point of this helper.
-                cmd /c rmdir (Resolve-Path -LiteralPath $linkPath).Path | Out-Null
-            } else {
-                throw "Refusing to replace non-junction at $linkPath. Move or delete it first."
-            }
+function Ensure-Junction([string]$linkPath, [string]$targetPath) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $linkPath) -Force | Out-Null
+    if (Test-Path -LiteralPath $linkPath) {
+        if (Test-IsJunction $linkPath) {
+            # Always retarget — that's the point of this helper.
+            cmd /c rmdir (Resolve-Path -LiteralPath $linkPath).Path | Out-Null
+        } else {
+            throw "Refusing to replace non-junction at $linkPath. Move or delete it first."
         }
-        cmd /c mklink /J $linkPath $targetPath | Out-Null
     }
+    cmd /c mklink /J $linkPath $targetPath | Out-Null
+}
 
-    function Register-CuaDriverAutostart {
-        param([Parameter(Mandatory = $true)][string]$InstalledBinary)
-        if (-not (Test-Path -LiteralPath $InstalledBinary)) {
-            throw "binary not found at $InstalledBinary"
-        }
-        $user = "$env:COMPUTERNAME\$env:USERNAME"
-        $action = New-ScheduledTaskAction -Execute $InstalledBinary -Argument 'serve' -WorkingDirectory $env:USERPROFILE
-        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-        $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-        Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
-        Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
+function Register-CuaDriverAutostart {
+    param([Parameter(Mandatory = $true)][string]$InstalledBinary)
+    if (-not (Test-Path -LiteralPath $InstalledBinary)) {
+        throw "binary not found at $InstalledBinary"
     }
+    $user = "$env:COMPUTERNAME\$env:USERNAME"
+    $action = New-ScheduledTaskAction -Execute $InstalledBinary -Argument 'serve' -WorkingDirectory $env:USERPROFILE
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+    Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
+    Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
 }
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }

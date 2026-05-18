@@ -12,14 +12,23 @@
 1. **`doctor` crashed with `0xC0000005 ACCESS_VIOLATION`** — COM lifecycle bug in `ui_automation_available`: `IUIAutomation` dropped AFTER `CoUninitialize`, so `IUnknown::Release` ran against a torn-down apartment. Fix: flatten probe result before tearing down COM. ✅
 2. **`launch_app` hung indefinitely in Session 0** — two paths: `resolve_aumid_by_name` walked `shell:AppsFolder` via the interactive shell broker (doesn't exist in Session 0 → hang). `launch_uwp` itself called `IApplicationActivationManager::ActivateApplication` which also needs interactive AppX runtime (same hang). Both now short-circuit on Session 0 with `current_session_id() == Some(0)` — `resolve_aumid_by_name` returns None (falls through to ShellExecuteEx PATH lookup, which works), `launch_uwp` fails fast with a descriptive error. ✅
 
-**Plus**: best-effort foreground-restore after UWP activation, three parity-example fixes (Session-0 awareness + #1545 contract), and `overlay_dump` example build fix.
+**Plus**: foreground-restore after UWP activation (now with `keybd_event` workaround for Windows' foreground-lock restriction), three parity-example fixes (Session-0 awareness + #1545 contract), opaque-system-family UWP filter for list_apps, serve startup Session-0 banner, and `overlay_dump` example build fix.
 
 ## Bugs fixed (commits on `stab/windows-session0-fixes`)
 
 | Commit | Subject |
 |---|---|
-| `9ccdcc34`→ rebase → `a9d9c027` | fix(windows): doctor COM lifecycle + Session 0 hardening for launch paths |
+| `a9d9c027` | fix(windows): doctor COM lifecycle + Session 0 hardening for launch paths |
 | `9e91f683` | test(windows): parity examples Session-0 aware + #1545 contract |
+| `7251e73b` | feat(serve): Session-0 warning banner on Windows daemon startup |
+| `2eb3c4d3` | docs(parity): update list_apps + launch_app Windows status with live evidence |
+| `ac70b94d` | feat(installed_apps): filter opaque-system-family UWP packages from list_apps |
+| `6f580201` | fix(installed_apps): drop Package.IsFramework() probe — hangs in Session 0 |
+| `d5b5821c` | fix(launch_uwp): claim 'last input' before SetForegroundWindow restore |
+
+### Surprise bug found during this work (now fixed in `6f580201`)
+
+`Package.IsFramework()` WinRT call **hangs in Session 0** (0 CPU, no progress, no error). I had added it as a "filter out framework packages from list_apps" optimization in `ac70b94d`, which silently broke list_apps for ~3 hours of debug-loop. Worth documenting: avoid WinRT property getters that may touch the AppX activation runtime when running in services context. The opaque-family-name filter still catches most framework noise.
 
 ## Validated on the VM (Session 0, SSH from Mac)
 
@@ -45,12 +54,17 @@
 Pre-fix: 6 PASS / 5 FAIL — Session-0 expected-failures + stale post-#1545 assertions.
 Post-fix: see `b8jvtpz9m.output` (in flight as of this writing).
 
-## Bug still pending — visual confirmation needs RDP
+## Visual confirmation needs RDP
 
-**Background-launch focus invariant for UWP apps** is implemented as best-effort. Specifically:
+**Background-launch focus invariant for UWP apps** is now stronger than the initial best-effort:
 
 - Win32 path (ShellExecuteEx + SW_SHOWNOACTIVATE): ✅ proven by code — the API contract says SW_SHOWNOACTIVATE never activates.
-- UWP path (`IApplicationActivationManager::ActivateApplication(AO_NONE)`): the AppX runtime brings the app to foreground (= Start-Menu-click semantics). I added a snapshot-and-restore pass that captures `GetForegroundWindow` BEFORE activation and re-asserts it AFTER (3 × 50ms retry, best-effort). **This only works when SetForegroundWindow's restriction is met** — typically when the calling process was foreground at the time of the call. In Session 0 this is moot (no foreground anyway).
+- UWP path (`IApplicationActivationManager::ActivateApplication(AO_NONE)`): the AppX runtime brings the app to foreground (= Start-Menu-click semantics). Now does:
+  1. Snapshot prior foreground via `GetForegroundWindow` before the call
+  2. Inject a VK_NONAME (0xFC) `keybd_event` press+release immediately after to claim "owner of last input" — that lifts Windows' foreground-lock restriction
+  3. Call `SetForegroundWindow(prior)` in a 3 × 50ms retry loop, logging each attempt at debug
+  
+  VK_NONAME (0xFC) doesn't map to any UI action, so no application sees a keystroke. The Session-0 short-circuit higher up bypasses this entire path so it only executes on interactive logons where focus actually matters.
 
 To visually validate when you wake:
 

@@ -46,6 +46,7 @@ from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key
 from pynput.mouse import Button
 from pynput.mouse import Controller as MouseController
+from PIL import Image, ImageGrab
 from Quartz.CoreGraphics import *  # type: ignore
 from Quartz.CoreGraphics import CGPoint, CGSize  # type: ignore
 
@@ -56,34 +57,6 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Trigger accessibility permissions prompt on macOS
-try:
-    # Source - https://stackoverflow.com/a/17134
-    # Posted by Andreas
-    # Retrieved 2025-12-03, License - CC BY-SA 4.0
-    # Attempt to create and post a mouse event to trigger the permissions prompt
-    # This will cause macOS to show "Python would like to control this computer using accessibility features"
-    current_pos = CGEventGetLocation(CGEventCreate(None))
-    p = CGPoint()
-    p.x = current_pos.x
-    p.y = current_pos.y
-
-    me = CGEventCreateMouseEvent(None, kCGEventMouseMoved, p, 0)
-    if me:
-        CGEventPost(kCGHIDEventTap, me)
-        CFRelease(me)
-except Exception as e:
-    logger.debug(f"Failed to trigger accessibility permissions prompt: {e}")
-
-# Trigger screen recording prompt on macOS
-try:
-    from PIL import Image, ImageGrab
-
-    ImageGrab.grab()
-except Exception as e:
-    logger.debug(f"Failed to trigger screenshot permissions prompt: {e}")
-
 
 # Fix: pynput's MouseController.position setter uses CGEventPost with
 # kCGEventMouseMoved internally, which silently fails in macOS VMs running

@@ -10,6 +10,7 @@ Includes:
 import base64
 import os
 import platform
+import shlex
 import subprocess
 import webbrowser
 from pathlib import Path
@@ -22,6 +23,15 @@ try:
     import pywinctl as pwc
 except Exception:  # pragma: no cover
     pwc = None  # type: ignore
+
+
+def build_launch_argv(app: str, args: Optional[list[str]] = None) -> list[str]:
+    if args is not None:
+        return [app, *args]
+    argv = shlex.split(app)
+    if not argv:
+        raise ValueError("app must not be empty")
+    return argv
 
 
 def resolve_path(path: str) -> Path:
@@ -108,11 +118,7 @@ class GenericWindowHandler(BaseWindowHandler):
 
     async def launch(self, app: str, args: Optional[list[str]] = None) -> Dict[str, Any]:
         try:
-            if args:
-                proc = subprocess.Popen([app, *args])
-            else:
-                # allow shell command like "libreoffice --writer"
-                proc = subprocess.Popen(app, shell=True)
+            proc = subprocess.Popen(build_launch_argv(app, args))
             return {"success": True, "pid": proc.pid}
         except Exception as e:
             return {"success": False, "error": str(e)}

@@ -1,7 +1,7 @@
 [project]
 authors = [{ name = "TryCua", email = "gh@trycua.com" }]
 dependencies = [
-    "openai<1.100.0",
+    "openai>=2.24.0,<3",
     "anthropic>=0.67.0",
 ]
 description = "Cua (Computer Use Agent) mono-repo"
@@ -38,12 +38,12 @@ docs = [
     "mkdocs>=1.5.0",
 ]
 docs-scripts = [
-    "crawl4ai>=0.4.0",
+    "crawl4ai>=0.8.0",
     "playwright>=1.40.0",
     "lancedb>=0.4.0",
     "sentence-transformers>=2.2.0",
     "pyarrow>=14.0.1",
-    "fastmcp>=2.14.0",
+    "fastmcp>=3.2.0",
     "pydantic>=2.0.0",
     "pandas>=2.0.0",
     "markdown-it-py>=3.0.0",

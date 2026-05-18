@@ -878,6 +878,11 @@ Write-Host ""
 Write-Host "Try it:"
 Write-Host "  $installedBinary --version"
 Write-Host ""
+Write-Host "Agent skill pack (optional):"
+Write-Host "  $installedBinary skills install     # fetch + link the cua-driver-rs skill pack"
+Write-Host "                                       # into Claude Code / Codex / OpenClaw / OpenCode."
+Write-Host "                                       # The install never touches your agent dirs."
+Write-Host ""
 
 if (-not $onPath) {
     Write-Host "$VisibleBinDir is not on your user PATH yet." -ForegroundColor Yellow

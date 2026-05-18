@@ -142,6 +142,18 @@ mkdir -p "$VERSIONED_DIR"
 cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver"
 chmod +x "$VERSIONED_DIR/cua-driver"
 
+# Skill pack — stage from the repo so the `current` symlink below
+# transparently exposes it to agents. Mirrors what install.sh does
+# from a release tarball.
+SOURCE_SKILLS="$SCRIPT_DIR/../Skills/cua-driver-rs"
+if [ -d "$SOURCE_SKILLS" ]; then
+    STAGED_SKILLS="$VERSIONED_DIR/Skills/cua-driver-rs"
+    rm -rf "$STAGED_SKILLS"
+    mkdir -p "$(dirname "$STAGED_SKILLS")"
+    cp -R "$SOURCE_SKILLS" "$STAGED_SKILLS"
+    echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
+fi
+
 # Atomic-ish swap of the `current` symlink.
 mkdir -p "$HOME_DIR/packages"
 TMP_LINK="$CURRENT_LINK.new"
@@ -159,6 +171,11 @@ echo "${GREEN}$BIN_DIR/cua-driver -> $CURRENT_LINK/cua-driver${NORMAL}"
 echo ""
 
 INSTALLED_BIN="$BIN_DIR/cua-driver"
+
+# Agent skill pack symlinks: NOT auto-created. Run
+# `cua-driver skills install --local` to symlink agent dirs to the
+# staged copy at $VERSIONED_DIR/Skills/cua-driver-rs above.
+echo ""
 
 # --- Autostart (optional) ----------------------------------------------
 

@@ -418,6 +418,22 @@ jobs:
           # current version's baked default — not the previous version's.
           cp libs/cua-driver-rs/scripts/install.sh  release-upload/install.sh
           cp libs/cua-driver-rs/scripts/install.ps1 release-upload/install.ps1
+
+          # Skill pack — single platform-agnostic tarball fetched by
+          # `cua-driver skills install`. The .md files are identical across
+          # OS so we publish one asset per release tag. Naming matches the
+          # versioned binary tarballs.
+          VERSION="${{ steps.version.outputs.version }}"
+          SKILLS_STAGE="cua-driver-rs-v${VERSION}-skills"
+          mkdir -p "${SKILLS_STAGE}/cua-driver-rs"
+          if [ -d libs/cua-driver-rs/Skills/cua-driver-rs ]; then
+            cp -R libs/cua-driver-rs/Skills/cua-driver-rs/* "${SKILLS_STAGE}/cua-driver-rs/"
+            tar -czf "release-upload/${SKILLS_STAGE}.tar.gz" "${SKILLS_STAGE}"
+            echo "Packaged skill pack: release-upload/${SKILLS_STAGE}.tar.gz"
+          else
+            echo "Note: libs/cua-driver-rs/Skills/cua-driver-rs not present; skipping skill-pack asset."
+          fi
+
           echo "Release files:"
           ls -lh release-upload/
 

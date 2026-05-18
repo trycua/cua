@@ -30,6 +30,7 @@ mod cli;
 mod doctor;
 mod proxy;
 mod serve;
+mod skills;
 mod telemetry;
 mod version_check;
 
@@ -201,6 +202,10 @@ fn main() {
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
+            return;
+        }
+        cli::Command::Skills { subcommand, flags } => {
+            skills::run(&subcommand, &flags);
             return;
         }
         cli::Command::Config { subcommand, key, value, socket } => {
@@ -410,6 +415,10 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
+            return Ok(());
+        }
+        cli::Command::Skills { subcommand, flags } => {
+            skills::run(&subcommand, &flags);
             return Ok(());
         }
         cli::Command::Config { subcommand, key, value, socket } => {

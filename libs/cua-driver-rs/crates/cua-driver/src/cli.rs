@@ -72,6 +72,17 @@ pub enum Command {
     /// stub returns a helpful "use install-local.sh --autostart"
     /// message. See `crates/cua-driver/src/autostart.rs`.
     Autostart { subcommand: String },
+    /// `cua-driver skills {install|update|uninstall|status|path}` —
+    /// agent skill-pack management. The verb is the ONLY way a user
+    /// installs or updates the cua-driver-rs skill pack into their
+    /// agent dirs (Claude Code / Codex / OpenClaw / OpenCode); the
+    /// install scripts never touch ~/.claude/skills/ etc. directly.
+    /// `install` fetches the matching versioned release asset
+    /// (`cua-driver-rs-v<v>-skills.tar.gz`) from GitHub, places it
+    /// under `<HomeDir>/skills/cua-driver-rs/`, and symlinks into each
+    /// detected agent's `skills/` dir. See
+    /// `crates/cua-driver/src/skills.rs`.
+    Skills { subcommand: String, flags: Vec<String> },
 }
 
 /// Flags whose next token is a value (not a subcommand).
@@ -97,13 +108,23 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose, autostart");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose, autostart, skills");
         println!();
         println!("autostart options (Windows-only today):");
         println!("  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.");
         println!("  cua-driver autostart disable    Remove the autostart entry. No-op if not registered.");
         println!("  cua-driver autostart status     Print whether the entry is registered + whether the daemon is running.");
         println!("  cua-driver autostart kick       Start the entry now without re-logging.");
+        println!();
+        println!("skills options (agent skill-pack management, opt-in):");
+        println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
+        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,");
+        println!("                                  OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
+        println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
+        println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
+        println!("  cua-driver skills path          Print where the local skill pack lives.");
+        println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
         println!("mcp options (macOS):");
         println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
@@ -211,6 +232,22 @@ pub fn parse_command() -> Command {
                 process::exit(64);
             }
             Command::Autostart { subcommand }
+        }
+        Some("skills") => {
+            // Skills subcommand. Default is `status` so plain `cua-driver
+            // skills` is a read-only probe — won't ever modify user state.
+            let subcommand = pos.next().unwrap_or("status").to_string();
+            // Pass through any other flags / args after the subcommand for
+            // the verb's own parsing (e.g. `--force`, `--from main`,
+            // `--agent claude-code`, `--local`, `--all`). Collect from `pos`
+            // and dotted long-form flags from the raw args too.
+            let mut flags: Vec<String> = pos.map(str::to_owned).collect();
+            for a in &args {
+                if a.starts_with("--") && !flags.contains(a) {
+                    flags.push(a.clone());
+                }
+            }
+            Command::Skills { subcommand, flags }
         }
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
@@ -1478,6 +1515,9 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         // (lowercase ASCII / underscore-only / max 64 chars / fallback).
         Command::Autostart { subcommand } => {
             format!("cua_driver_autostart_{}", sanitize_tool_name(subcommand))
+        }
+        Command::Skills { subcommand, .. } => {
+            format!("cua_driver_skills_{}", sanitize_tool_name(subcommand))
         }
         Command::TelemetryInstallEvent => return None,
     };

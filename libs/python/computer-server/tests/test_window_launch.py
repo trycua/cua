@@ -1,7 +1,6 @@
 from unittest.mock import Mock, patch
 
 import pytest
-from computer_server.handlers import generic
 from computer_server.handlers.generic import GenericWindowHandler, build_launch_argv
 
 
@@ -26,7 +25,7 @@ def test_build_launch_argv_uses_explicit_args_literally():
 
 
 def test_build_launch_argv_preserves_windows_paths(monkeypatch):
-    monkeypatch.setattr(generic.os, "name", "nt")
+    monkeypatch.setattr(build_launch_argv.__globals__["os"], "name", "nt")
 
     assert build_launch_argv('"C:\\Program Files\\App\\app.exe" --flag') == [
         "C:\\Program Files\\App\\app.exe",

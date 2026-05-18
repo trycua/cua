@@ -220,7 +220,7 @@ fn main() {
             // banner can land on stderr in either dispatch path.
             version_check::maybe_announce_update();
             // TCC sidestep: if we're a shell-spawned bare binary that
-            // resolves into /Applications/CuaDriverRs.app, run the
+            // resolves into /Applications/CuaDriver.app, run the
             // proxy path instead of the in-process MCP server. The
             // proxy ensures a daemon is up under the bundle's TCC
             // attribution and forwards stdio MCP through its socket.

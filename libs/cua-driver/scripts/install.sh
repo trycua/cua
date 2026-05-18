@@ -16,7 +16,7 @@
 #                        backend instead of the Swift binary. Delegates to
 #                        libs/cua-driver/scripts/_install-rust.sh — see that
 #                        script for backend-specific env vars. Installs to a
-#                        separate bundle (CuaDriverRs.app) so the Swift
+#                        separate bundle (CuaDriver.app) so the Swift
 #                        binary is left untouched. Also accepted as
 #                        --backend=rust.
 #
@@ -113,7 +113,7 @@ fi
 # rest of argv to _install-rust.sh and exit. The Swift
 # install path below is never touched in this case, so the Swift binary
 # (if present) is left exactly as-is — users can roll back by deleting
-# /Applications/CuaDriverRs.app and re-running this script without the flag.
+# /Applications/CuaDriver.app and re-running this script without the flag.
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     if [[ "$AUTO_RUST" == "0" ]]; then
         # Explicit opt-in on macOS — flag the "experimental" framing.

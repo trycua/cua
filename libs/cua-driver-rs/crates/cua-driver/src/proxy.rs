@@ -5,7 +5,7 @@
 //! mirror of Swift PR #1479). When `cua-driver-rs mcp` is invoked from
 //! an IDE terminal — Claude Code, Cursor, VS Code, Warp — macOS TCC
 //! attributes the process to the calling terminal, not to
-//! `CuaDriverRs.app`. The MCP client side sees a normal stdio server,
+//! `CuaDriver.app`. The MCP client side sees a normal stdio server,
 //! but every AX probe silently fails because the binary is running
 //! against the wrong bundle id.
 //!
@@ -48,7 +48,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     if !is_daemon_listening(&socket_path) {
         anyhow::bail!(
             "cua-driver-rs daemon not reachable on {socket_path}. Start it \
-             with `open -n -g -a CuaDriverRs --args serve` and retry."
+             with `open -n -g -a CuaDriver --args serve` and retry."
         );
     }
 

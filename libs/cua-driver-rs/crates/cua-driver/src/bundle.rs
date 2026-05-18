@@ -5,14 +5,14 @@
 //! whether `cua-driver-rs mcp` was spawned from an IDE terminal as a
 //! bare CLI symlinked into our .app bundle. When true and the parent
 //! isn't launchd, we re-launch the daemon via `open -n -g -a
-//! CuaDriverRs --args serve` so it picks up the bundle's TCC grants,
+//! CuaDriver --args serve` so it picks up the bundle's TCC grants,
 //! then proxy stdio MCP traffic through the daemon's Unix socket.
 //!
 //! Non-macOS targets compile to no-ops so the cross-platform call
 //! sites stay tidy.
 
 /// Returns `true` when the currently-running binary resolves into an
-/// installed `CuaDriverRs.app` bundle (Rust port). The check is the
+/// installed `CuaDriver.app` bundle (Rust port). The check is the
 /// same shape as the Swift driver's `isExecutableInsideCuaDriverApp`
 /// (`/CuaDriver.app/Contents/MacOS/`) but keyed on the Rust port's
 /// distinct bundle name so the two installs don't collide.
@@ -25,12 +25,12 @@
 ///   1. Resolve `std::env::current_exe()` (preferred; absolute path
 ///      to the running image).
 ///   2. Walk symlinks via `std::fs::canonicalize` — the install layout
-///      is `~/.local/bin/cua-driver` → `/Applications/CuaDriverRs.app/
+///      is `~/.local/bin/cua-driver` → `/Applications/CuaDriver.app/
 ///      Contents/MacOS/cua-driver`, so without the canonicalize step
 ///      we'd see the bare symlink path and miss the bundle.
 ///   3. Substring-match the canonical path for the bundle marker.
 #[cfg(target_os = "macos")]
-pub fn is_executable_inside_cuadriverrs_app() -> bool {
+pub fn is_executable_inside_cuadriver_app() -> bool {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(_) => return false,
@@ -43,16 +43,16 @@ pub fn is_executable_inside_cuadriverrs_app() -> bool {
         Some(s) => s,
         None => return false,
     };
-    s.contains("/CuaDriverRs.app/Contents/MacOS/")
+    s.contains("/CuaDriver.app/Contents/MacOS/")
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn is_executable_inside_cuadriverrs_app() -> bool {
+pub fn is_executable_inside_cuadriver_app() -> bool {
     false
 }
 
 /// Returns `true` when the parent process is *not* `launchd` (pid 1).
-/// Combined with [`is_executable_inside_cuadriverrs_app`], a `true`
+/// Combined with [`is_executable_inside_cuadriver_app`], a `true`
 /// here means the binary was spawned from a shell / IDE terminal that
 /// inherits the wrong TCC responsibility — i.e. the case we want to
 /// auto-relaunch from.
@@ -107,7 +107,7 @@ mod tests {
         // deps/`, never inside a .app bundle. Should always return
         // false in CI / local dev, which is exactly the behavior we
         // want so `cargo run` callers stay in-process.
-        assert!(!is_executable_inside_cuadriverrs_app());
+        assert!(!is_executable_inside_cuadriver_app());
     }
 
     #[test]

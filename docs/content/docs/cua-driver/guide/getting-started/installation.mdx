@@ -41,18 +41,15 @@ The install runs **without sudo**: `/Applications` is user-writable on personal 
 
 The flag delegates to [`libs/cua-driver/scripts/_install-rust.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/_install-rust.sh) (a private helper colocated with the canonical `install.sh`), which:
 
-- Installs `CuaDriverRs.app` to `/Applications/` — separate bundle id (`com.trycua.cuadriverrs`) from the Swift driver's `com.trycua.driver`. Both can coexist on the same machine with independent TCC grants and independent telemetry IDs.
-- Points `~/.local/bin/cua-driver` at the Rust binary. The Swift `CuaDriver.app` (if previously installed) is left untouched and still launchable via its bundle path (`/Applications/CuaDriver.app/Contents/MacOS/cua-driver`).
+- Installs `CuaDriver.app` to `/Applications/` with bundle id `com.trycua.driver` — the same bundle id the Swift driver uses. If `/Applications/CuaDriver.app` already holds the Swift bundle, the installer replaces it in place. macOS TCC keys grants on bundle id, so the user's prior Accessibility / Screen Recording grants survive the upgrade and apply to the new binary; a one-time re-grant prompt may fire on first action because the cdhash differs.
+- Points `~/.local/bin/cua-driver` at the Rust binary.
 - Same `--bin-dir` / `--no-modify-path` flags as the Swift installer — anything you put after `--experimental-rust` is forwarded to the Rust installer verbatim.
 
-**Switch back to Swift:**
+**Switch back to Swift:** the Swift driver still ships under its own release-tag prefix (`cua-driver-v*`). Re-run the canonical install script without `--experimental-rust` and it'll fetch the latest Swift release and replace the `.app` at `/Applications/CuaDriver.app` the same way (TCC grants survive, since bundle id is shared).
 
 ```bash
-rm -rf /Applications/CuaDriverRs.app
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
-
-The second command rewires the `~/.local/bin/cua-driver` symlink back to the Swift bundle.
 </Callout>
 
 ### Install `cua-driver-rs` directly (Linux / Windows / macOS)
@@ -81,7 +78,7 @@ The install layout is wired with NTFS directory junctions (`IO_REPARSE_TAG_MOUNT
 
 #### Versioned-dirs install layout
 
-Linux and Windows installs land in a three-tier layout that makes upgrades and rollbacks an atomic retarget of one link, never a file overwrite. The macOS install intentionally stays on a different layout (`/Applications/CuaDriverRs.app`) — see the [macOS asymmetry note](#why-macos-uses-a-different-layout) below.
+Linux and Windows installs land in a three-tier layout that makes upgrades and rollbacks an atomic retarget of one link, never a file overwrite. The macOS install intentionally stays on a different layout (`/Applications/CuaDriver.app`) — see the [macOS asymmetry note](#why-macos-uses-a-different-layout) below.
 
 **Linux**
 
@@ -161,7 +158,7 @@ So an API outage, an unauthenticated-rate-limit (60 req/hr per IP), or a transie
 </Callout>
 
 <Callout type="info">
-**Why macOS uses a different layout.** On macOS the install still drops `CuaDriverRs.app` into `/Applications` and symlinks `~/.local/bin/cua-driver` into the bundle. The `.app` placement is the anchor for both **TCC attribution** (cdhash + bundle id) and **LaunchServices** (`open -a CuaDriverRs`); symlinking the `.app` from `/Applications` to a versioned dir under `$CUA_DRIVER_RS_HOME` would break both. The asymmetry is intentional — rollback on macOS = reinstall an older release tag with `CUA_DRIVER_RS_VERSION=<x.y.z>`.
+**Why macOS uses a different layout.** On macOS the install still drops `CuaDriver.app` into `/Applications` and symlinks `~/.local/bin/cua-driver` into the bundle. The `.app` placement is the anchor for both **TCC attribution** (cdhash + bundle id) and **LaunchServices** (`open -a CuaDriver`); symlinking the `.app` from `/Applications` to a versioned dir under `$CUA_DRIVER_RS_HOME` would break both. The asymmetry is intentional — rollback on macOS = reinstall an older release tag with `CUA_DRIVER_RS_VERSION=<x.y.z>`.
 </Callout>
 
 <Callout type="info">
@@ -178,7 +175,7 @@ Two invariants worth knowing:
 - **The active install is always preserved**, even if it would otherwise fall outside the keep window (e.g. you rolled back to an older version). Worst-case on-disk count is `keep + 1`.
 - **Per-target filtering** — a multi-arch dev with both `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` directories under the same `$CUA_DRIVER_RS_HOME` (rare, but possible with shared/NFS homes) gets each target's history GC'd independently of the other.
 
-The macOS install path is unaffected — `/Applications/CuaDriverRs.app` is an in-place replacement with no per-version accumulation.
+The macOS install path is unaffected — `/Applications/CuaDriver.app` is an in-place replacement with no per-version accumulation.
 </Callout>
 
 <Callout type="info">

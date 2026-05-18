@@ -156,12 +156,22 @@ fn main() {
                 || err_text.contains("0x80070057")
                 || err_text.contains("E_INVALIDARG")
                 || err_lower.contains("the parameter is incorrect");
+            // Session-0 short-circuit: UWP activation in non-interactive
+            // sessions (services / SSH) fails fast with a descriptive
+            // error rather than hanging. This is correct behavior, not a
+            // regression — accept it the same way we accept "not installed".
+            let looks_like_session_0 = err_lower.contains("interactive session")
+                || err_lower.contains("session 0");
             assert!(
-                looks_like_not_installed,
+                looks_like_not_installed || looks_like_session_0,
                 "AUMID launch of {aumid:?} failed with an unexpected error \
-                 (not a 'not installed' signal): {err_text:?}"
+                 (not 'not installed' or 'Session 0' signal): {err_text:?}"
             );
-            println!("AUMID path: packaged Notepad not installed on this host; skipped ({err_text:?})");
+            if looks_like_session_0 {
+                println!("AUMID path: skipped — running in Session 0 (UWP needs interactive desktop) ({err_text:?})");
+            } else {
+                println!("AUMID path: packaged Notepad not installed on this host; skipped ({err_text:?})");
+            }
         }
     }
 

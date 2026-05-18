@@ -42,7 +42,21 @@ fn main() {
 
     let wins = v.pointer("/result/structuredContent/windows").and_then(|w| w.as_array())
         .expect("structuredContent.windows is not an array");
-    assert!(!wins.is_empty(), "expected at least one visible window");
+
+    // Window enumeration requires an attached interactive desktop. In
+    // Session 0 (services / SSH-launched processes) `EnumWindows` is
+    // scoped to the caller's window station which has no on-screen
+    // windows, so an empty array here is correct behavior — not a
+    // regression. Skip the "non-empty" assertion in that case.
+    let in_session_0 = matches!(
+        platform_windows::diagnostics::current_session_id(),
+        Some(0),
+    );
+    if in_session_0 {
+        println!("(Session 0: skipping non-empty-windows assertion — no interactive desktop attached)");
+    } else {
+        assert!(!wins.is_empty(), "expected at least one visible window");
+    }
 
     for w in wins {
         for key in &["window_id","pid","app_name","title","bounds","layer","z_index","is_on_screen"] {

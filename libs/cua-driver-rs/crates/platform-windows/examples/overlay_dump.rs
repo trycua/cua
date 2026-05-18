@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 fn main() {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
     use windows::Win32::UI::WindowsAndMessaging::*;
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;

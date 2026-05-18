@@ -901,14 +901,14 @@ if ($AutoStart) {
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
         Write-Host "  cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
-        Write-Host "  Run now without re-logging:  $installedBinary autostart kick"
-        Write-Host "  Inspect:                    $installedBinary autostart status"
-        Write-Host "  Remove:                     $installedBinary autostart disable"
+        Write-Host "  Run now without re-logging:  & `"$installedBinary`" autostart kick"
+        Write-Host "  Inspect:                     & `"$installedBinary`" autostart status"
+        Write-Host "  Remove:                      & `"$installedBinary`" autostart disable"
         Write-Host ""
     }
     catch {
         Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or invoke '$installedBinary autostart enable' manually."
+        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or invoke '& `"$installedBinary`" autostart enable' manually."
         Write-Host ""
     }
 }
@@ -918,10 +918,10 @@ else {
 Auto-start at logon (Windows equivalent of macOS LaunchAgent):
   Run cua-driver serve automatically every time you sign in (RDP, console, etc.)
 
-  Enable:   $installedBinary autostart enable
-  Run now:  $installedBinary autostart kick
-  Status:   $installedBinary autostart status
-  Remove:   $installedBinary autostart disable
+  Enable:   & "$installedBinary" autostart enable
+  Run now:  & "$installedBinary" autostart kick
+  Status:   & "$installedBinary" autostart status
+  Remove:   & "$installedBinary" autostart disable
 
   Or re-run this installer with -AutoStart for the same result.
 "@

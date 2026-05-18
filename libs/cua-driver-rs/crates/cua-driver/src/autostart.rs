@@ -114,9 +114,24 @@ mod platform {
     /// exactly. Kept as a single one-liner so a quick `gh-blame` diff against
     /// install.ps1 surfaces any divergence; the moment install.ps1 changes
     /// shape, this script needs the same edit.
+    ///
+    /// **Account-name format**: on domain-joined machines USERDOMAIN holds the
+    /// AD domain name (e.g. CORP) and the principal must be `CORP\username`.
+    /// On workgroup machines USERDOMAIN holds either the literal string
+    /// "WORKGROUP" or the COMPUTERNAME, and the principal must be
+    /// `COMPUTERNAME\username` — `WORKGROUP\username` errors with
+    /// "No mapping between account names and security IDs was done". The
+    /// $domain selector below picks USERDOMAIN when it's a real
+    /// (non-WORKGROUP, non-COMPUTERNAME) domain and falls back to
+    /// COMPUTERNAME otherwise, covering both shapes.
     const REGISTER_PS: &str = r#"
 $ErrorActionPreference = 'Stop'
-$user = "$env:COMPUTERNAME\$env:USERNAME"
+if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -ne $env:COMPUTERNAME) {
+    $domain = $env:USERDOMAIN
+} else {
+    $domain = $env:COMPUTERNAME
+}
+$user = "$domain\$env:USERNAME"
 $action = New-ScheduledTaskAction -Execute $env:CUA_DRIVER_AS_EXE -Argument 'serve' -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited

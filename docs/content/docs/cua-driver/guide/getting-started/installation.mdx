@@ -39,7 +39,7 @@ The install runs **without sudo**: `/Applications` is user-writable on personal 
 
 (Equivalent long form: `--backend=rust`.)
 
-The flag delegates to [`libs/cua-driver-rs/scripts/install.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/scripts/install.sh), which:
+The flag delegates to [`libs/cua-driver/scripts/_install-rust.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/_install-rust.sh) (a private helper colocated with the canonical `install.sh`), which:
 
 - Installs `CuaDriverRs.app` to `/Applications/` — separate bundle id (`com.trycua.cuadriverrs`) from the Swift driver's `com.trycua.driver`. Both can coexist on the same machine with independent TCC grants and independent telemetry IDs.
 - Points `~/.local/bin/cua-driver` at the Rust binary. The Swift `CuaDriver.app` (if previously installed) is left untouched and still launchable via its bundle path (`/Applications/CuaDriver.app/Contents/MacOS/cua-driver`).
@@ -57,19 +57,21 @@ The second command rewires the `~/.local/bin/cua-driver` symlink back to the Swi
 
 ### Install `cua-driver-rs` directly (Linux / Windows / macOS)
 
-The cross-platform Rust port ships its own one-liners. Pick the one for your shell — no `--experimental-rust` plumbing through the Swift installer needed.
+Both canonical installers live under `libs/cua-driver/scripts/`. On macOS the `.sh` installer defaults to the Swift driver; pass `--experimental-rust` to get the Rust port. On Linux it auto-detects the non-macOS host and installs the Rust port directly.
 
-**Linux / macOS**
+**Linux**
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
 ```
+
+The legacy `libs/cua-driver-rs/scripts/install.{sh,ps1}` URLs continue to work via backward-compat shims that redirect to the canonical installers — Hermes and any other integration that hardcodes the old URLs keep working unchanged.
 
 The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
 

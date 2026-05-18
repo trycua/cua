@@ -248,11 +248,16 @@ jobs:
       - name: Assemble CuaDriver.app bundle
         working-directory: libs/cua-driver-rs
         run: |
-          # Copy the bundle skeleton (Info.plist) from scripts/ and drop
-          # the universal binary into Contents/MacOS/cua-driver. The
-          # assembled bundle goes into every directory tarball so
-          # install.sh can `ditto` it to /Applications/CuaDriver.app
-          # for the TCC auto-relaunch path.
+          # Copy the bundle skeleton (Info.plist) from
+          # scripts/CuaDriverBundle/ and drop the universal binary into
+          # Contents/MacOS/cua-driver. The skeleton lives under a non-
+          # `.app` directory so macOS LaunchServices on developer
+          # machines doesn't index it as a second installed app with
+          # the `com.trycua.driver` bundle id (which used to surface as
+          # a "ghost CuaDriver" entry in System Settings → Privacy &
+          # Security). The assembled bundle goes into every directory
+          # tarball so install.sh can `ditto` it to
+          # /Applications/CuaDriver.app for the TCC auto-relaunch path.
           #
           # No codesigning at this layer — the bundle ships ad-hoc
           # signed (the bare binary inherits whatever signature was
@@ -264,7 +269,7 @@ jobs:
           # Swift driver does.
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p release/CuaDriver.app
-          cp -R scripts/CuaDriver.app/Contents release/CuaDriver.app/Contents
+          cp -R scripts/CuaDriverBundle/Contents release/CuaDriver.app/Contents
           cp release/universal/cua-driver \
              release/CuaDriver.app/Contents/MacOS/cua-driver
           chmod +x release/CuaDriver.app/Contents/MacOS/cua-driver

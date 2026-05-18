@@ -91,7 +91,7 @@ KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
 # a stable bundle id (com.trycua.driver) to attribute the daemon to.
-# See libs/cua-driver-rs/scripts/CuaDriver.app/Contents/Info.plist and
+# See libs/cua-driver-rs/scripts/CuaDriverBundle/Contents/Info.plist and
 # the matching docs on `cua-driver mcp`'s auto-relaunch behavior.
 # Identical to the Swift driver's CuaDriver.app + com.trycua.driver
 # pair — the Rust port replaces the Swift install at this path,

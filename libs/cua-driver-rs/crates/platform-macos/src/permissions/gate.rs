@@ -218,32 +218,26 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
 
     let missing = missing_from_status(initial);
 
-    // Phase 1: try to present a native NSPanel before falling back to
-    // the terminal banner. The presentation result tells us how to
-    // sequence the rest of the flow:
+    // Raise the TCC system prompts BEFORE showing our panel. The
+    // `AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess`
+    // calls have a side effect critical to the user flow: they
+    // register the calling process with the TCC daemon, which is what
+    // makes the app appear in
+    //   System Settings → Privacy & Security → {Accessibility,Screen Recording}
+    // with its toggle ready to flip. Without that registration, our
+    // "Open System Settings" button takes the user to a pane where
+    // CuaDriver simply isn't listed — they see nothing to grant.
     //
-    //   * `NotShown` — historical CLI path: print the banner, then auto-
-    //     open Settings (when `open_settings` is true).
-    //   * `ShownOpenSettings` — the user clicked the primary button; we
-    //     auto-open Settings on their behalf and skip the banner.
-    //   * `ShownDismissed` — the user clicked "Continue anyway" or the
-    //     red dot; we skip both the banner AND the auto-open since the
-    //     user explicitly declined the guided flow. They can still
-    //     grant in their own time and the polling loop will pick it up.
-    let presentation = present_panel_if_available(&missing);
-    let should_auto_open_settings = match presentation {
-        PanelPresentation::NotShown => {
-            print_banner(&missing, opts.open_settings);
-            opts.open_settings
-        }
-        PanelPresentation::ShownOpenSettings => opts.open_settings,
-        PanelPresentation::ShownDismissed => false,
-    };
-
+    // The Swift gate did the same registration via the matching
+    // `Permissions.requestAccessibility()` / `requestScreenRecording()`
+    // calls before its panel appeared. Moving them earlier here closes
+    // a UX regression the original Phase 1 wiring introduced: prompts
+    // used to happen after the panel, racing with the user clicking
+    // "Open Settings".
+    //
+    // These calls are no-ops when the grant is already active so the
+    // happy-path (both green) sees no UI from this block.
     if opts.also_raise_prompts {
-        // These are no-ops when the grant is already active and are the
-        // documented way to fire the first-launch system dialogs.  Match
-        // the behaviour of the `check_permissions` MCP tool's default path.
         if missing.contains(&MissingPermission::Accessibility) {
             let _ = request_accessibility();
         }
@@ -252,10 +246,44 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         }
     }
 
+    // Try to present a native NSPanel before falling back to the
+    // terminal banner. The panel's 1 Hz poll can also auto-resolve
+    // before the user touches a button — the trailing
+    // `wait_for_grants` loop becomes optional in that case. Outcomes:
+    //
+    //   * `NotShown` — historical CLI path: print the banner, auto-
+    //     open Settings (when `open_settings` is true), wait.
+    //   * `ShownOpenSettings` — user clicked the primary button; open
+    //     Settings on their behalf, then wait.
+    //   * `ShownDismissed` — user clicked "Continue anyway" or the red
+    //     dot; skip the auto-open since the user declined the guided
+    //     flow, but still wait so a later manual grant unblocks.
+    //   * `ShownAllGranted` — the panel's poll loop saw both grants
+    //     flip green; skip the wait loop entirely.
+    let presentation = present_panel_if_available(initial);
+    let should_auto_open_settings;
+    let skip_wait_loop;
+    match presentation {
+        PanelPresentation::NotShown => {
+            print_banner(&missing, opts.open_settings);
+            should_auto_open_settings = opts.open_settings;
+            skip_wait_loop = false;
+        }
+        PanelPresentation::ShownOpenSettings => {
+            should_auto_open_settings = opts.open_settings;
+            skip_wait_loop = false;
+        }
+        PanelPresentation::ShownDismissed => {
+            should_auto_open_settings = false;
+            skip_wait_loop = false;
+        }
+        PanelPresentation::ShownAllGranted => {
+            should_auto_open_settings = false;
+            skip_wait_loop = true;
+        }
+    }
+
     if should_auto_open_settings {
-        // Open *both* missing panes up front.  System Settings collapses
-        // duplicate-open requests to a single navigation, so this isn't
-        // disruptive even when only one grant is needed.
         for m in &missing {
             if let Err(e) = open_system_settings_for(*m) {
                 eprintln!("  (could not auto-open Settings for {}: {e})", m.label());
@@ -263,6 +291,9 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         }
     }
 
+    if skip_wait_loop {
+        return Ok(());
+    }
     wait_for_grants(&opts)
 }
 
@@ -277,9 +308,12 @@ enum PanelPresentation {
     ShownOpenSettings,
     /// Panel shown; user clicked "Continue anyway" or closed the window.
     ShownDismissed,
+    /// Panel shown; its 1 Hz poll loop saw both grants flip green and
+    /// dismissed automatically. Caller can skip the trailing wait loop.
+    ShownAllGranted,
 }
 
-fn present_panel_if_available(missing: &[MissingPermission]) -> PanelPresentation {
+fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
     #[cfg(target_os = "macos")]
     {
         use crate::permissions::panel;
@@ -287,15 +321,16 @@ fn present_panel_if_available(missing: &[MissingPermission]) -> PanelPresentatio
             return PanelPresentation::NotShown;
         }
         match panel::show_modal(panel::PanelOpts {
-            missing: missing.to_vec(),
+            initial_status: initial,
         }) {
             panel::PanelOutcome::OpenSettings => PanelPresentation::ShownOpenSettings,
             panel::PanelOutcome::Dismissed => PanelPresentation::ShownDismissed,
+            panel::PanelOutcome::AllGranted => PanelPresentation::ShownAllGranted,
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = missing;
+        let _ = initial;
         PanelPresentation::NotShown
     }
 }

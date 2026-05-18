@@ -1288,8 +1288,12 @@ Swift.
   - `libs/cua-driver-rs/crates/cua-driver/src/proxy.rs` —
     `run_proxy` (the stdio loop forwarding `tools/list` and
     `tools/call` through the daemon socket).
-  - `libs/cua-driver-rs/scripts/CuaDriver.app/Contents/Info.plist` —
-    the bundle the auto-relaunch path lands in.
+  - `libs/cua-driver-rs/scripts/CuaDriverBundle/Contents/Info.plist` —
+    skeleton (Info.plist + empty MacOS/) that CD assembles into the
+    release-tarball `CuaDriver.app` that the auto-relaunch path lands
+    in. Stored under a non-`.app` directory so LaunchServices on
+    developer machines doesn't surface a ghost entry alongside the
+    real install.
   - `libs/cua-driver-rs/scripts/install.sh` — drops the bundle to
     `/Applications/CuaDriver.app` and symlinks the bin into it.
 - Status: implemented on macOS (issue #1525); smoke-tested manually

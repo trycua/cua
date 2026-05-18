@@ -46,10 +46,17 @@
     <string>cua-driver</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <!-- Version values are placeholders. The CD workflow's
+         `plutil -replace CFBundleShortVersionString` /
+         `plutil -replace CFBundleVersion` step rewrites both on
+         every tag push so the published .app reflects the release
+         tag. The in-tree values stay at a sentinel that's obviously
+         not a real release, so dev builds running against a fresh
+         checkout don't accidentally masquerade as a tagged version. -->
     <key>CFBundleShortVersionString</key>
-    <string>0.1.3</string>
+    <string>0.0.0-dev</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>0</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

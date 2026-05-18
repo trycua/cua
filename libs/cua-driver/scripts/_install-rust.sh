@@ -483,8 +483,12 @@ mkdir -p "$BIN_DIR"
 # `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. The
 # `realpath` walk in `is_executable_inside_cuadriver_app()` keys on
 # that resolved path to know whether the auto-relaunch heuristic
-# should fire. Same shape as the Swift `cua-driver` install path —
-# different bundle id (com.trycua.driver) so the two coexist.
+# should fire. Same path and same bundle id as the Swift `cua-driver`
+# install (`/Applications/CuaDriver.app`, `com.trycua.driver`), so an
+# install over an existing Swift bundle is an in-place takeover —
+# TCC grants attributed to the shared bundle id survive the swap and
+# the new binary inherits them (macOS may re-prompt once on first
+# action because the cdhash differs; after that the grants persist).
 #
 # The macOS path intentionally does NOT use the
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on

@@ -532,25 +532,57 @@ cat /Applications/CuaDriver.app/Contents/Resources/Skills/cua-driver/SKILL.md | 
 
 ## Uninstall
 
+One canonical uninstall URL per platform mirrors the install side. Flag handling and auto-detection match `install.sh` exactly:
+
+| Platform | Backend | Command |
+|---|---|---|
+| macOS | Swift (default) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
+| macOS | Rust port (`cua-driver-rs`) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)" -- --experimental-rust` |
+| Linux | Rust port (auto-detected — Swift binary is macOS-only) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
+| Windows | Rust port | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 \| iex` |
+
+`uninstall.sh` parses the same `--experimental-rust` / `--backend=rust` / `--backend=swift` flag set as `install.sh` and delegates to a colocated private helper, `_uninstall-rust.sh` (under `libs/cua-driver/scripts/`), when the Rust backend is selected. On Linux (and any non-macOS `bash` host) it auto-detects and runs the Rust uninstall without any flag.
+
+**What each uninstall removes**
+
+| Backend | Symlink / bin | App bundle / package home | Autostart entry | Skill links | Claude MCP registrations |
+|---|---|---|---|---|---|
+| Swift (macOS) | `~/.local/bin/cua-driver`, `/usr/local/bin/cua-driver` (legacy) | `/Applications/CuaDriver.app`, `~/.cua-driver`, `~/Library/Application Support/Cua Driver`, `~/Library/Caches/cua-driver` | `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` (legacy ≤ 0.0.5) | `cua-driver` symlinks under `~/.claude/skills`, `~/.agents/skills`, `~/.openclaw/skills`, `~/.config/opencode/skills` | Scrubbed from `~/.claude.json` |
+| Rust — macOS | `~/.local/bin/cua-driver` *(only when it resolves into `CuaDriver.app` and `~/.cua-driver-rs/` exists)* | `/Applications/CuaDriver.app` (current), `/Applications/CuaDriverRs.app` (legacy, pre-rename), `~/.cua-driver-rs/` (entire tree) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` | `cua-driver-rs` symlinks under the same agent dirs | Scrubbed from `~/.claude.json` |
+| Rust — Linux | `~/.local/bin/cua-driver` *(when it resolves into `~/.cua-driver-rs/`)* | `~/.cua-driver-rs/` (entire tree) | `~/.config/systemd/user/cua-driver-rs.service` (stop + disable + remove) | Same as above | Scrubbed from `~/.claude.json` |
+| Rust — Windows | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` *(directory junction)* | `%USERPROFILE%\.cua-driver-rs\` (entire tree, including `packages\current` junction) | Scheduled Task `cua-driver-serve` (`schtasks /Delete`) | Junctions under `%USERPROFILE%\.claude\skills`, `.agents\skills`, `.openclaw\skills`, `%APPDATA%\opencode\skills` | Not auto-edited — closing message prints `claude mcp remove cua-driver-rs` |
+
+<Callout type="info">
+**Safety invariants** — every uninstall script (`uninstall.sh`, `_uninstall-rust.sh`, `uninstall.ps1`) refuses to clobber a real directory at a path where the matching installer could have only created a symlink / junction (Linux/macOS use `[[ -L ]]`; Windows checks `IO_REPARSE_TAG_MOUNT_POINT`). A user who hand-managed any of these dirs keeps theirs untouched. Re-running an uninstall on an already-clean system prints `nothing to remove` per item — never errors.
+</Callout>
+
+<Callout type="info">
+**TCC grants persist on macOS** (Accessibility + Screen Recording). The uninstaller leaves them in **System Settings → Privacy & Security** so a re-install doesn't have to re-prompt. To reset them explicitly:
+
 ```bash
-# Stop the daemon if running.
-cua-driver stop 2>/dev/null
-
-# Remove the app and the CLI symlink.
-rm -rf /Applications/CuaDriver.app
-rm -f ~/.local/bin/cua-driver
-# legacy install path (only present on installs from before v0.1.0)
-sudo rm -f /usr/local/bin/cua-driver 2>/dev/null || true
-
-# Optional: remove config + telemetry state.
-rm -rf ~/.cua-driver
-rm -rf ~/Library/Application\ Support/Cua\ Driver
-rm -rf ~/Library/Caches/cua-driver
-
-# Optional: remove legacy LaunchAgent from older installs (≤ v0.0.5).
-launchctl unload ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist 2>/dev/null
-rm -f ~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist
+# Both Swift and Rust drivers share bundle id `com.trycua.driver`
+# (the Rust port took over Swift's identity in cua-driver-rs ≥ 0.2.4).
+tccutil reset Accessibility com.trycua.driver
+tccutil reset ScreenCapture com.trycua.driver
 ```
+
+Pre-rename Rust installs (`cua-driver-rs ≤ 0.2.3`) used a separate bundle id `com.trycua.cuadriverrs` — clean those up if you had one of those installs:
+
+```bash
+tccutil reset Accessibility com.trycua.cuadriverrs 2>/dev/null
+tccutil reset ScreenCapture com.trycua.cuadriverrs 2>/dev/null
+```
+</Callout>
+
+<Callout type="warn">
+**Windows is interactive by default.** `uninstall.ps1` prompts before each major delete so a stray paste doesn't wipe a working install. For non-interactive / scripted teardowns, pipe through a `-Force` arg:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1))) -Force
+```
+
+It also doesn't auto-edit `%USERPROFILE%\.claude.json` — the closing message prints the exact `claude mcp remove cua-driver-rs` command instead. The macOS / Linux uninstaller does auto-edit `~/.claude.json` when `python3` is on `PATH`; the Windows uninstaller skips the auto-edit unconditionally to keep the script dependency-free.
+</Callout>
 
 ## Troubleshooting
 

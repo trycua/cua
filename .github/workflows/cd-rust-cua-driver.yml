@@ -429,9 +429,18 @@ jobs:
           # Windows build). The Rust install logic itself lives at
           # _install-rust.sh — published as a release asset alongside
           # the installers so curl|bash flows can fetch it.
-          cp libs/cua-driver/scripts/install.sh        release-upload/install.sh
-          cp libs/cua-driver/scripts/install.ps1       release-upload/install.ps1
-          cp libs/cua-driver/scripts/_install-rust.sh  release-upload/_install-rust.sh
+          cp libs/cua-driver/scripts/install.sh         release-upload/install.sh
+          cp libs/cua-driver/scripts/install.ps1        release-upload/install.ps1
+          cp libs/cua-driver/scripts/_install-rust.sh   release-upload/_install-rust.sh
+
+          # Uninstaller scripts — mirror the install side. The canonical
+          # uninstall.sh dispatches to the Swift uninstall path by default
+          # and to _uninstall-rust.sh on --experimental-rust / non-macOS
+          # auto-detect. uninstall.ps1 is the canonical Windows
+          # uninstaller (cua-driver-rs only — no Swift Windows build).
+          cp libs/cua-driver/scripts/uninstall.sh       release-upload/uninstall.sh
+          cp libs/cua-driver/scripts/uninstall.ps1      release-upload/uninstall.ps1
+          cp libs/cua-driver/scripts/_uninstall-rust.sh release-upload/_uninstall-rust.sh
 
           # Skill pack — single platform-agnostic tarball fetched by
           # `cua-driver skills install`. The .md files are identical across
@@ -564,6 +573,8 @@ jobs:
             **Installer scripts**
             - `install.sh` — Linux / macOS one-liner installer
             - `install.ps1` — Windows one-liner installer
+            - `uninstall.sh` — Linux / macOS one-liner uninstaller (mirrors the install flag set: Swift by default; `--experimental-rust` for the Rust port; non-macOS auto-detects)
+            - `uninstall.ps1` — Windows one-liner uninstaller
           generate_release_notes: false
           make_latest: false
 

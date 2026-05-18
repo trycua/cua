@@ -44,9 +44,17 @@
 #                                    multi-arch dirs are pruned
 #                                    independently of each other.
 #
-# Param:
-#   -Release   release tag to install ("latest" or a bare version like "0.2.0").
-#              Overridden by $env:CUA_DRIVER_RS_VERSION when set.
+# Params:
+#   -Release    release tag to install ("latest" or a bare version like "0.2.0").
+#               Overridden by $env:CUA_DRIVER_RS_VERSION when set.
+#   -AutoStart  register a Scheduled Task that runs `cua-driver serve` at
+#               every logon (Windows-native equivalent of macOS LaunchAgent).
+#               The task runs with LogonType=Interactive so it lands in
+#               Session 1+ with an attached desktop — required for the
+#               GUI tools (click, type_text, screenshot, get_window_state)
+#               to function. Default off; the post-install message prints
+#               the registration command so you can opt in later. Safe to
+#               re-run: existing task is replaced.
 #
 # WARNING — BETA: cua-driver-rs is the cross-platform Rust port of the
 # Swift cua-driver. Windows and Linux support is feature-complete;
@@ -54,7 +62,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$Release = "latest"
+    [string]$Release = "latest",
+    [switch]$AutoStart
 )
 
 Set-StrictMode -Version Latest
@@ -452,6 +461,57 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     }
     Set-JunctionTarget $linkPath $targetPath
     Write-Step "junction $linkPath -> $targetPath"
+}
+
+# ---------- Auto-start Scheduled Task (Windows LaunchAgent equivalent) ---
+
+# Idempotent registration of the cua-driver-serve Scheduled Task.
+#
+# - Trigger: at logon for the current local user.
+# - Principal: LogonType=Interactive so the task lands in the user's
+#   Session 1+ (NOT Session 0); window-driving tools require it.
+# - Settings: AllowStartIfOnBatteries, RestartCount=3 on failure with
+#   1-minute backoff, ExecutionTimeLimit=0 (no time cap; serve is
+#   meant to live for the session).
+# - On workgroup machines USERDOMAIN may be 'WORKGROUP' which won't
+#   resolve as a SAM account; the principal therefore uses
+#   "$COMPUTERNAME\$USERNAME" which is always valid for a local user.
+# - The task is unregistered before re-creation so the helper is
+#   safe to run repeatedly (e.g. on install upgrade).
+function Register-CuaDriverAutostart {
+    param([Parameter(Mandatory = $true)][string]$InstalledBinary)
+
+    if (-not (Test-Path -LiteralPath $InstalledBinary)) {
+        throw "binary not found at $InstalledBinary"
+    }
+
+    $user = "$env:COMPUTERNAME\$env:USERNAME"
+    $action = New-ScheduledTaskAction `
+        -Execute $InstalledBinary `
+        -Argument 'serve' `
+        -WorkingDirectory $env:USERPROFILE
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId $user `
+        -LogonType Interactive `
+        -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -RestartCount 3 `
+        -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+
+    $taskName = 'cua-driver-serve'
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Register-ScheduledTask `
+        -TaskName $taskName `
+        -Action $action `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
 }
 
 # ---------- Concurrent-install lockfile -----------------------------------
@@ -868,11 +928,28 @@ else {
     Write-Host ""
 }
 
-$autostartHint = @"
+if ($AutoStart) {
+    Write-Host ""
+    Write-Host "Registering auto-start Scheduled Task 'cua-driver-serve'..." -ForegroundColor Cyan
+    try {
+        Register-CuaDriverAutostart -InstalledBinary $installedBinary
+        Write-Host "  Registered. cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
+        Write-Host "  Run now without re-logging: schtasks /Run /TN cua-driver-serve"
+        Write-Host "  Remove with:               schtasks /Delete /TN cua-driver-serve /F"
+        Write-Host ""
+    }
+    catch {
+        Write-Host "  Failed to register Scheduled Task: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or use the manual recipe below."
+        Write-Host ""
+    }
+}
+else {
+    $autostartHint = @"
 
 Auto-start at logon (Windows equivalent of macOS LaunchAgent):
   Run cua-driver serve automatically every time you sign in (RDP, console, etc.)
-  Register the Scheduled Task once (copy-paste in PowerShell):
+  Re-run this installer with -AutoStart to register the task, OR paste:
 
     `$exe = '$installedBinary'
     `$user = "`$env:COMPUTERNAME\`$env:USERNAME"
@@ -888,7 +965,8 @@ Auto-start at logon (Windows equivalent of macOS LaunchAgent):
   Removal:
     schtasks /Delete /TN cua-driver-serve /F
 "@
-Write-Host $autostartHint -ForegroundColor Cyan
+    Write-Host $autostartHint -ForegroundColor Cyan
+}
 
 
 Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"

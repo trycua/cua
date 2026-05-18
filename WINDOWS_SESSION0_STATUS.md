@@ -1,9 +1,37 @@
 # Windows Session-0 Stabilization — Status Report
 
+## Good morning — TL;DR
+
+While you slept I stabilized Windows cua-driver-rs end-to-end on the VM
+you provisioned. **All 11 parity examples PASS** (was 6/11 before).
+**Two real bugs fixed** (`doctor` segfault, `launch_app` hang), **one
+focus-steal hardening** (UWP foreground-restore), **one quality filter**
+(opaque system packages out of `list_apps`), **one startup banner**
+(serve in Session 0 warns about GUI-tool limitations).
+
+Branch `stab/windows-session0-fixes` is 7 commits ahead of
+`origin/main`, all local — no PR opened per your ask. To turn into a
+PR when ready:
+
+```bash
+git -C /Users/francesco/cua push -u origin stab/windows-session0-fixes
+gh pr create --base main --head stab/windows-session0-fixes \
+  --title "fix(windows): Session-0 hardening + UWP focus-restore" \
+  --body-file WINDOWS_SESSION0_STATUS.md
+```
+
+**Still wants your eyes:** the UWP focus-restore needs visual
+confirmation in Session 1+ (RDP in, run the snippet under "Visual
+confirmation" below). I made it stronger than my first pass (now uses
+the `keybd_event` workaround to lift Windows' SetForegroundWindow
+restriction) but I can't visually verify from Mac side.
+
+---
+
 **Branch:** `stab/windows-session0-fixes` (local-only, no PR yet per your ask)
 **Base:** `origin/main` @ 69a9dbd5 (post-#1547)
 **VM:** `fbonacci-windows-vm` (20.115.29.195) — Rust toolchain + VS Build Tools 2022 installed
-**Dev loop:** edit on Mac → `scp` changed files to `~/cua/...` on VM → `cargo build --release -p cua-driver` (~20s incremental, ~5min cold) → run
+**Dev loop:** edit on Mac → `scp` changed files to `~/cua/...` on VM → `cargo build --release -p cua-driver` (~20s incremental, ~5min cold) → run. Full reference: `libs/cua-driver-rs/DEV_LOOP_WINDOWS_VM.md`.
 
 ## TL;DR
 

@@ -217,7 +217,28 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     }
 
     let missing = missing_from_status(initial);
-    print_banner(&missing, opts.open_settings);
+
+    // Phase 1: try to present a native NSPanel before falling back to
+    // the terminal banner. The presentation result tells us how to
+    // sequence the rest of the flow:
+    //
+    //   * `NotShown` — historical CLI path: print the banner, then auto-
+    //     open Settings (when `open_settings` is true).
+    //   * `ShownOpenSettings` — the user clicked the primary button; we
+    //     auto-open Settings on their behalf and skip the banner.
+    //   * `ShownDismissed` — the user clicked "Continue anyway" or the
+    //     red dot; we skip both the banner AND the auto-open since the
+    //     user explicitly declined the guided flow. They can still
+    //     grant in their own time and the polling loop will pick it up.
+    let presentation = present_panel_if_available(&missing);
+    let should_auto_open_settings = match presentation {
+        PanelPresentation::NotShown => {
+            print_banner(&missing, opts.open_settings);
+            opts.open_settings
+        }
+        PanelPresentation::ShownOpenSettings => opts.open_settings,
+        PanelPresentation::ShownDismissed => false,
+    };
 
     if opts.also_raise_prompts {
         // These are no-ops when the grant is already active and are the
@@ -231,7 +252,7 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         }
     }
 
-    if opts.open_settings {
+    if should_auto_open_settings {
         // Open *both* missing panes up front.  System Settings collapses
         // duplicate-open requests to a single navigation, so this isn't
         // disruptive even when only one grant is needed.
@@ -243,6 +264,40 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
     }
 
     wait_for_grants(&opts)
+}
+
+/// Outcome of a panel-present attempt. Drives the subsequent flow in
+/// [`run_if_needed`] — see comments at the call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelPresentation {
+    /// Panel could not be shown (opt-out env var, bare-binary launch,
+    /// headless, etc.). Caller should fall back to the terminal banner.
+    NotShown,
+    /// Panel shown; user clicked "Open System Settings".
+    ShownOpenSettings,
+    /// Panel shown; user clicked "Continue anyway" or closed the window.
+    ShownDismissed,
+}
+
+fn present_panel_if_available(missing: &[MissingPermission]) -> PanelPresentation {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::permissions::panel;
+        if !panel::panel_enabled() {
+            return PanelPresentation::NotShown;
+        }
+        match panel::show_modal(panel::PanelOpts {
+            missing: missing.to_vec(),
+        }) {
+            panel::PanelOutcome::OpenSettings => PanelPresentation::ShownOpenSettings,
+            panel::PanelOutcome::Dismissed => PanelPresentation::ShownDismissed,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = missing;
+        PanelPresentation::NotShown
+    }
 }
 
 /// Block until all required permissions are granted or the deadline

@@ -427,6 +427,33 @@ public actor SystemFocusStealPreventer {
         for task in pending { _ = await task.value }
     }
 
+    /// Test-only: run the dispatcher's match-and-pick logic against a
+    /// hypothetical activation pid and return the entry that would win
+    /// (or `nil` if no entry matches). Production code never calls
+    /// this — `handleActivation` is wired to the real
+    /// `NSWorkspace.didActivateApplicationNotification` observer.
+    /// Exposed so unit tests can verify the LIFO tiebreak contract
+    /// directly: register entries with distinguishable `restoreTo`
+    /// apps, then assert the winner's identity.
+    ///
+    /// Mirrors `Dispatcher.handleActivation`'s selection logic exactly:
+    ///
+    /// 1. Match entries where `targetPid == activatedPid` (specific
+    ///    target) OR `targetPid == 0` AND `activatedPid !=
+    ///    restoreTo.processIdentifier` (wildcard, but never restore to
+    ///    the activated app itself — that would be a no-op).
+    /// 2. Among matches, pick the one with the highest `sequence` (the
+    ///    most-recently-registered intent — LIFO tiebreak).
+    ///
+    /// Returns the winning entry's `restoreTo`, or `nil` if no entry
+    /// matched. Lock-free from the caller's POV — the dispatcher
+    /// guards its internal state.
+    internal func _winnerForActivationTesting(
+        activatedPid: pid_t
+    ) -> NSRunningApplication? {
+        return dispatcher.winnerForActivation(activatedPid: activatedPid)
+    }
+
     private func shouldStopJanitor() -> Bool {
         dispatcher.activeCount == 0
     }
@@ -674,6 +701,44 @@ private final class Dispatcher: @unchecked Sendable {
         }
     }
 
+    /// Pure selection logic: given a hypothetical activation pid,
+    /// return the `restoreTo` of the entry that would win, or `nil`.
+    /// Factored out of ``handleActivation`` so unit tests can reach it
+    /// without firing a real `NSWorkspace` notification.
+    ///
+    /// **Matching rules:**
+    /// - `targetPid == activatedPid` — specific target suppression. The
+    ///   target was caught self-activating; restore the registered
+    ///   `restoreTo`.
+    /// - `targetPid == 0` AND `activatedPid != restoreTo.pid` — wildcard
+    ///   suppression catches any activation that isn't `restoreTo` itself
+    ///   (the second clause prevents restore→restore no-op loops). Used
+    ///   by the side-effect guard in `WindowChangeDetector` so that a
+    ///   background click opening a new app (e.g. UTM Gallery → Safari)
+    ///   is suppressed even when we didn't know Safari's pid ahead of
+    ///   time.
+    ///
+    /// **LIFO tiebreak**: when multiple entries match — two overlapping
+    /// wildcards from different callers, or a wildcard plus a pid-specific
+    /// entry during the LaunchAppTool crossfade — the highest-`sequence`
+    /// (most-recently-registered) entry wins. This expresses the "stack of
+    /// suppression intentions" model: caller B's newer intent overrides
+    /// caller A's older intent for the duration of their overlap. Without
+    /// this, `entries.values` iteration order would be dictionary-order
+    /// (undefined for `[UUID: T]`) and the chosen `restoreTo` would be
+    /// effectively random — the bug class this method closes.
+    func winnerForActivation(activatedPid: pid_t) -> NSRunningApplication? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.values
+            .filter {
+                $0.targetPid == activatedPid ||
+                ($0.targetPid == 0 && activatedPid != $0.restoreTo.processIdentifier)
+            }
+            .max(by: { $0.sequence < $1.sequence })?
+            .restoreTo
+    }
+
     private func handleActivation(note: Notification) {
         guard
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
@@ -688,38 +753,12 @@ private final class Dispatcher: @unchecked Sendable {
         // restore task.
         reapExpired()
 
-        lock.lock()
-        // Match entries where:
-        //   - targetPid == activatedPid  (specific target suppression), OR
-        //   - targetPid == 0             (wildcard: suppress any activation that
-        //                                 isn't restoreTo — used by the side-effect
-        //                                 guard in WindowChangeDetector so that a
-        //                                 background click opening a new app, e.g.
-        //                                 UTM Gallery → Safari, is suppressed even
-        //                                 though we didn't know Safari's pid ahead
-        //                                 of time.)
-        //
-        // **Tie-break by sequence (LIFO)**: when multiple entries match
-        // the same activation — e.g. two overlapping wildcards from
-        // different callers, or a wildcard plus a pid-specific entry
-        // during the LaunchAppTool crossfade — the highest-sequence
-        // (most-recently-registered) entry wins. This expresses the
-        // "stack of suppression intentions" model: caller B's newer
-        // intent overrides caller A's older intent for the duration of
-        // their overlap. Without this, `entries.values` iteration order
-        // is dictionary-order (undefined for `[UUID: T]`) and the
-        // chosen `restoreTo` would be effectively random — the original
-        // bug class this PR closes.
-        let restoreTo: NSRunningApplication? = entries.values
-            .filter {
-                $0.targetPid == activatedPid ||
-                ($0.targetPid == 0 && activatedPid != $0.restoreTo.processIdentifier)
-            }
-            .max(by: { $0.sequence < $1.sequence })?
-            .restoreTo
-        lock.unlock()
-
-        guard let restoreTo else { return }
+        // Selection logic factored into `winnerForActivation` so unit
+        // tests can verify it directly. Both call sites must stay in
+        // sync — see `winnerForActivation` for the matching rules and
+        // tiebreak contract.
+        guard let restoreTo = winnerForActivation(activatedPid: activatedPid)
+        else { return }
 
         // Schedule the reactivation after a short delay — see the
         // `suppressionDelayNs` comment on SystemFocusStealPreventer for

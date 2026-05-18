@@ -301,53 +301,132 @@ final class FocusStealPreventerTests: XCTestCase {
 
     // MARK: - Wildcard tie-break (LIFO contract)
 
-    /// When multiple wildcard entries match the same activation, the
-    /// most-recently-registered (highest-sequence) entry's `restoreTo`
-    /// must win. Without LIFO ordering, `entries.values` iteration order
-    /// is undefined for `[UUID: Entry]` and the chosen `restoreTo` is
-    /// effectively random — a real ambiguity bug latent in the original
-    /// code.
+    /// **The actual LIFO winner contract.** When multiple wildcard
+    /// entries match the same activation, the most-recently-registered
+    /// (highest-sequence) entry's `restoreTo` must win — not just
+    /// "they coexist" but specifically "the second one's restoreTo is
+    /// what `handleActivation` would pick".
     ///
-    /// We can't easily test the actual `restoreTo` choice without firing
-    /// a synthetic `NSWorkspace` notification (out of reach from a unit
-    /// test on CI runners). Instead we verify the *structural* contract:
-    /// the dispatcher records a strictly increasing sequence per add and
-    /// preserves it independent of insertion-order quirks. The
-    /// `handleActivation` path uses this sequence as the tiebreaker, so
-    /// proving the sequence is recorded correctly proves the dispatch
-    /// behaviour.
-    func testWildcardLifoTiebreakBySequence() async {
+    /// Uses ``SystemFocusStealPreventer/_winnerForActivationTesting(activatedPid:)``
+    /// — an internal test seam that runs the same selection logic
+    /// `handleActivation` uses, without requiring a real
+    /// `NSWorkspace.didActivateApplicationNotification`. This is the
+    /// only way to verify the actual winner identity from a unit test
+    /// (CI runners don't have a real frontmost-app graph).
+    ///
+    /// Two distinguishable `NSRunningApplication` references are
+    /// required: we use Finder (PID stable for the user's session) and
+    /// the test's own process. Either one is non-nil on every macOS
+    /// host the test ever runs on.
+    func testWildcardLifoTiebreakWinnerIsLatestRegistered() async throws {
         let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
 
-        // Register two wildcards in known order. Both target 0
-        // (wildcard); both restore to selfApp. We don't care about
-        // restoreTo here — we care that the dispatcher accepts two
-        // concurrent wildcards without collapsing them, which is the
-        // prerequisite for LIFO to even matter.
+        // Two distinguishable restoreTo apps. Finder is a reliable
+        // second target — PID is stable per user session and `bundleId`
+        // matches `com.apple.finder` deterministically.
+        let finderRunning = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.finder"
+        ).first
+        guard let finder = finderRunning else {
+            throw XCTSkip(
+                "Finder must be running to compare two distinguishable "
+                + "restoreTo apps; not detected on this host"
+            )
+        }
+        XCTAssertNotEqual(
+            finder.processIdentifier, selfApp.processIdentifier,
+            "Finder and the test process must have distinct pids — "
+            + "otherwise the wildcard filter would collapse them"
+        )
+
+        // Register first wildcard with selfApp as restoreTo, second
+        // with Finder as restoreTo. Both target 0 (wildcard). LIFO
+        // contract: a hypothetical activation by ANY pid !=
+        // {selfApp.pid, finder.pid} should return the second-registered
+        // entry's restoreTo (Finder), because it has the higher sequence.
         let first = await preventer.leaseSuppression(
-            targetPid: 0, restoreTo: selfApp, origin: "test.first"
+            targetPid: 0, restoreTo: selfApp, origin: "test.lifo.first"
         )
         let second = await preventer.leaseSuppression(
-            targetPid: 0, restoreTo: selfApp, origin: "test.second"
+            targetPid: 0, restoreTo: finder, origin: "test.lifo.second"
         )
 
-        let bothLive = await preventer.activeCount
+        // Pick a fake activation pid that's neither selfApp nor Finder
+        // so both wildcards match (the activated-pid != restoreTo.pid
+        // clause excludes self-restore, not third-party activations).
+        // Use 1 (kernel-task / launchd, never matches restoreTo here).
+        let fakeActivatedPid: pid_t = 1
+        let winner = await preventer._winnerForActivationTesting(
+            activatedPid: fakeActivatedPid
+        )
+
+        XCTAssertNotNil(winner, "both wildcards should match pid=1")
         XCTAssertEqual(
-            bothLive, 2,
-            "two concurrent wildcards must coexist — necessary precondition "
-            + "for LIFO tiebreak to apply"
+            winner?.processIdentifier,
+            finder.processIdentifier,
+            "LIFO contract: second-registered entry's restoreTo (Finder) "
+            + "must win the tiebreak; the first-registered (selfApp) loses. "
+            + "If this fails, the wildcard-vs-wildcard ambiguity is back."
         )
 
-        // Drop in reverse order to verify removes are independent (the
-        // dispatcher's `remove(handle:)` doesn't have a sequence-based
-        // dependency that would tangle on out-of-order release).
+        // Now drop the second; the first should win on its own.
         await second.release()
-        let afterSecond = await preventer.activeCount
-        XCTAssertEqual(afterSecond, 1)
+        let winnerAfterDrop = await preventer._winnerForActivationTesting(
+            activatedPid: fakeActivatedPid
+        )
+        XCTAssertEqual(
+            winnerAfterDrop?.processIdentifier,
+            selfApp.processIdentifier,
+            "after dropping the second-registered entry, the first must "
+            + "become the sole match and therefore the winner"
+        )
 
+        // Cleanup.
         await first.release()
-        let afterFirst = await preventer.activeCount
-        XCTAssertEqual(afterFirst, 0)
+        let cleanedUp = await preventer.activeCount
+        XCTAssertEqual(cleanedUp, 0)
+    }
+
+    /// LIFO tiebreak also applies between a wildcard (older) and a
+    /// pid-specific entry (newer) — the LaunchAppTool crossfade case.
+    /// The pid-specific entry's `restoreTo` must win because it has the
+    /// higher sequence, regardless of whether the wildcard would also
+    /// have matched.
+    func testLifoWinsAcrossWildcardAndPidSpecific() async throws {
+        let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
+
+        let finder = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.finder"
+        ).first
+        guard let finder else {
+            throw XCTSkip("Finder must be running for this test")
+        }
+
+        let targetPid: pid_t = 9999  // hypothetical app pid — not in the running set
+
+        // Older wildcard that would match anything-not-selfApp.
+        let wildcardLease = await preventer.leaseSuppression(
+            targetPid: 0, restoreTo: selfApp, origin: "test.crossfade.wildcard"
+        )
+        // Newer pid-specific entry that targets the same hypothetical app.
+        let pidSpecificLease = await preventer.leaseSuppression(
+            targetPid: targetPid, restoreTo: finder,
+            origin: "test.crossfade.pidSpecific"
+        )
+
+        let winner = await preventer._winnerForActivationTesting(
+            activatedPid: targetPid
+        )
+        XCTAssertEqual(
+            winner?.processIdentifier,
+            finder.processIdentifier,
+            "during the LaunchAppTool crossfade, the newer pid-specific "
+            + "entry's restoreTo (Finder) must win over the older wildcard's "
+            + "(selfApp) — this is what makes the gap-window-free swap safe"
+        )
+
+        await pidSpecificLease.release()
+        await wildcardLease.release()
     }
 
     // MARK: - Per-entry maxLifetime override (#7)
@@ -569,8 +648,47 @@ final class FocusStealPreventerTests: XCTestCase {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
 
-        // Layer 4 contract: the warning must be visible in the unified
-        // log under the expected subsystem.
+        // Cleanup leases before any throw/skip so the dispatcher
+        // teardown is observable in subsequent tests if the runner
+        // doesn't reset state between tests.
+        for lease in leases { await lease.release() }
+
+        // Distinguish "log show couldn't run" (skip — environment
+        // problem, not a code bug) from "log show ran but found
+        // nothing" (fail — Layer 4 contract is broken). The status
+        // codes that trigger skip are the ones a privilege-restricted
+        // CI sandbox produces:
+        //   - non-zero exit
+        //   - stderr containing TCC / privilege-denial markers
+        //   - empty output (the unified log archive is unavailable)
+        //
+        // The XCTSkipUnless guard above already gates on
+        // `LayerFourLogVerify=1`, so this second-stage skip only fires
+        // when an opt-in caller's environment turns out to be more
+        // restricted than they thought — not on the default CI path.
+        if process.terminationStatus != 0 {
+            throw XCTSkip(
+                "`log show` exited with status \(process.terminationStatus); "
+                + "unified-log capture unavailable on this host. Output: \(output)"
+            )
+        }
+        let lowerOut = output.lowercased()
+        let privilegeDeniedMarkers = [
+            "operation not permitted",
+            "not authorized",
+            "missing entitlement",
+            "no logs found",  // empty archive (sandboxed runners)
+            "log archive does not contain",
+        ]
+        if privilegeDeniedMarkers.contains(where: lowerOut.contains) {
+            throw XCTSkip(
+                "`log show` reports privilege/availability issue; skipping. "
+                + "Output: \(output)"
+            )
+        }
+
+        // Genuine assertion path — `log show` ran cleanly and produced
+        // output. The Layer-4 contract is now under test for real.
         XCTAssertTrue(
             output.contains("FocusStealPreventer leak suspect"),
             "Layer 4 logger output not found in unified log. This means "
@@ -582,9 +700,6 @@ final class FocusStealPreventerTests: XCTestCase {
             "Layer 4 logger origin field not propagated. Future operators "
             + "won't be able to trace leak warnings to their call site."
         )
-
-        // Cleanup.
-        for lease in leases { await lease.release() }
     }
 
     // MARK: - Helpers

@@ -24,7 +24,7 @@ dependencies = [
     "websockets>=12.0",
     "pywinctl>=0.4.1",
     "playwright>=1.40.0",
-    "fastmcp>=2.0,<3",
+    "fastmcp>=3.3.0,<4",
     # PTY support (wraps cua-auto terminal engine)
     "cua-auto>=0.1.0",
     # OS-specific runtime deps

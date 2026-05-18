@@ -71,6 +71,7 @@ browser = [
 # Agent support
 agents = [
     "cua-agent>=0.8.0",
+    "litellm>=1.83.10,<1.84",
     "anthropic>=0.26.0",
 ]
 
@@ -129,6 +130,9 @@ Issues = "https://github.com/trycua/cua/issues"
 [project.scripts]
 cb = "cua_bench.cli.main:main"
 cua-bench = "cua_bench.cli.main:main"
+
+[tool.uv.sources]
+cua-agent = { path = "../python/agent", editable = true }
 
 [build-system]
 requires = ["hatchling"]

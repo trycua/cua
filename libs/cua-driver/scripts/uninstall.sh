@@ -1,17 +1,135 @@
 #!/usr/bin/env bash
-# cua-driver uninstaller. Removes everything install.sh laid down:
+# cua-driver uninstaller. Removes everything install.sh laid down — Swift
+# driver by default, cua-driver-rs (Rust port) when --experimental-rust /
+# --backend=rust is passed (mirrors install.sh's flag set), or auto-detects
+# the Rust port on non-macOS hosts (same as install.sh).
 #
+# Swift uninstall removes:
 #   - ~/.local/bin/cua-driver symlink
 #   - /Applications/CuaDriver.app bundle
 #   - ~/.cua-driver/ (telemetry id + install marker)
 #   - ~/Library/Application Support/Cua Driver/ (config.json)
 #   - ~/Library/Caches/cua-driver/ (daemon/cache state)
 #
-# Does NOT revoke TCC grants (Accessibility + Screen Recording).
+# Rust uninstall (--experimental-rust / --backend=rust / non-macOS) delegates
+# to a colocated private helper, _uninstall-rust.sh — see that script for
+# the full list of paths it removes.
+#
+# Does NOT revoke TCC grants (Accessibility + Screen Recording) on macOS.
+#
+# Flags:
+#   --experimental-rust  uninstall the cua-driver-rs (Rust port) backend
+#                        instead of the Swift binary. Delegates to
+#                        libs/cua-driver/scripts/_uninstall-rust.sh. The
+#                        Swift binary (if present) is left untouched.
+#                        Also accepted as --backend=rust.
+#   --backend=swift      explicit no-op default (Swift uninstall).
 #
 # Usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
+#
+#   # cua-driver-rs (Rust port) — explicit opt-in on macOS:
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)" -- --experimental-rust
+#
+#   # Linux auto-detects and removes the Rust port without any flag.
 set -euo pipefail
+
+# Rust-backend delegation target. The Rust uninstall logic is a private
+# helper script colocated with this one — _uninstall-rust.sh — so that
+# this directory holds the single user-facing uninstall.sh per platform.
+# `--experimental-rust` below either execs the on-disk helper (dev /
+# checked-out-tree case) or curls this URL and pipes it to bash
+# (`curl ... | bash` uninstall case). Mirrors install.sh's pattern.
+RUST_UNINSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_uninstall-rust.sh"
+
+# Lightweight flag parsing — same two-pass shape as install.sh so the
+# argv shapes stay bit-compatible across install/uninstall and a future
+# Rust-only flag added to _uninstall-rust.sh flows through here without
+# edits to this file.
+USE_RUST_BACKEND=0
+FORWARDED_ARGS=()
+PASSTHROUGH=0
+while [[ $# -gt 0 ]]; do
+    if [[ "$PASSTHROUGH" == "1" ]]; then
+        FORWARDED_ARGS+=("$1"); shift; continue
+    fi
+    case "$1" in
+        --experimental-rust) USE_RUST_BACKEND=1; shift ;;
+        --backend=rust)      USE_RUST_BACKEND=1; shift ;;
+        --backend=swift)     shift ;;                 # explicit default — no-op
+        --backend=*)
+            printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
+            exit 2
+            ;;
+        --)                  PASSTHROUGH=1; shift ;;  # forward the rest verbatim
+        *)                   FORWARDED_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# --- Auto-delegate to Rust on non-macOS ---------------------------------
+#
+# The Swift binary is macOS-only — there's nothing for the Swift uninstall
+# path to remove on Linux. Auto-set USE_RUST_BACKEND=1 so a single
+# canonical URL works on every platform: `curl … cua-driver/scripts/
+# uninstall.sh | bash` removes the Swift driver on macOS (today's default)
+# and the Rust port on Linux. macOS users who want to remove the Rust
+# port still pass `--experimental-rust` / `--backend=rust` explicitly.
+AUTO_RUST=0
+if [[ "$USE_RUST_BACKEND" == "0" && "$(uname -s 2>/dev/null)" != "Darwin" ]]; then
+    USE_RUST_BACKEND=1
+    AUTO_RUST=1
+    printf 'note: detected non-macOS host (%s); auto-selecting the cua-driver-rs Rust uninstall.\n' \
+        "$(uname -s 2>/dev/null || echo unknown)" >&2
+    printf '      Pass --backend=swift to force the Swift uninstall path (will be a no-op on non-Darwin).\n' >&2
+fi
+
+# --- Optional delegation to the experimental Rust backend ---------------
+#
+# If the user opted in with --experimental-rust / --backend=rust, hand the
+# rest of argv to _uninstall-rust.sh and exit. The Swift uninstall path
+# below is never touched in this case, so the Swift binary (if present)
+# is left exactly as-is.
+if [[ "$USE_RUST_BACKEND" == "1" ]]; then
+    if [[ "$AUTO_RUST" == "0" ]]; then
+        # Explicit opt-in on macOS.
+        printf 'note: uninstalling cua-driver-rs (Rust port). The Swift binary won'"'"'t be touched.\n' >&2
+    else
+        # Auto-selected on Linux/other — drop the "experimental" qualifier
+        # (Rust is the canonical install path on every non-macOS platform).
+        printf 'note: uninstalling cua-driver-rs (the Rust port — canonical on non-macOS).\n' >&2
+    fi
+
+    # Prefer the on-disk copy when this script is running from a checked-out
+    # tree (dev / CI). Falls back to curling the canonical URL for the
+    # `curl ... | bash` uninstall path, where $BASH_SOURCE is unset / -.
+    LOCAL_RUST_UNINSTALLER=""
+    if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
+        SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+        CANDIDATE="$SCRIPT_DIR/_uninstall-rust.sh"
+        if [[ -f "$CANDIDATE" ]]; then
+            LOCAL_RUST_UNINSTALLER="$CANDIDATE"
+        fi
+    fi
+
+    # macOS ships bash 3.2, which trips `set -u` when expanding an empty
+    # array via "${arr[@]}" — guard with the +alt-value pattern so the
+    # zero-arg case becomes a literal no-expansion.
+    if [[ -n "$LOCAL_RUST_UNINSTALLER" ]]; then
+        exec /bin/bash "$LOCAL_RUST_UNINSTALLER" ${FORWARDED_ARGS[@]+"${FORWARDED_ARGS[@]}"}
+    else
+        if ! command -v curl >/dev/null 2>&1; then
+            printf 'error: curl not found on PATH; cannot fetch %s\n' "$RUST_UNINSTALLER_URL" >&2
+            exit 1
+        fi
+        # `exec` so the Rust uninstaller replaces this process — we don't
+        # want to fall through to the Swift uninstall path on any error here.
+        RUST_UNINSTALLER_SCRIPT="$(curl -fsSL "$RUST_UNINSTALLER_URL")" || {
+            printf 'error: failed to download Rust uninstaller from %s\n' "$RUST_UNINSTALLER_URL" >&2
+            exit 1
+        }
+        exec /bin/bash -c "$RUST_UNINSTALLER_SCRIPT" cua-driver-rs-uninstall ${FORWARDED_ARGS[@]+"${FORWARDED_ARGS[@]}"}
+    fi
+fi
 
 USER_BIN_LINK="$HOME/.local/bin/cua-driver"
 SYSTEM_BIN_LINK="/usr/local/bin/cua-driver"

@@ -154,6 +154,21 @@ New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination (Join-Path $VersionedDir $BinaryName) -Force
 $installedBinary = Join-Path $VersionedDir $BinaryName
 
+# Stage the skill pack alongside the binary. install-local mirrors what
+# install.ps1 does from a release zip — copies Skills/cua-driver-rs/ from
+# the repo into the versioned dir so the `current` junction below
+# transparently exposes it to agents.
+$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver-rs"
+if (Test-Path -LiteralPath $SourceSkills) {
+    $StagedSkills = Join-Path $VersionedDir "Skills\cua-driver-rs"
+    if (Test-Path -LiteralPath $StagedSkills) {
+        Remove-Item -LiteralPath $StagedSkills -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $StagedSkills) -Force | Out-Null
+    Copy-Item -Path $SourceSkills -Destination $StagedSkills -Recurse -Force
+    Write-Step "staged skill pack at $StagedSkills"
+}
+
 # ---------- Repoint junctions ---------------------------------------------
 
 Write-Step "retargeting $CurrentDir -> $VersionedDir"
@@ -168,6 +183,10 @@ if (Test-Path -LiteralPath $VisibleBinDir) {
     }
 }
 Ensure-Junction -linkPath $VisibleBinDir -targetPath $CurrentDir
+
+# Agent skill pack symlinks: NOT auto-created. Run
+# `cua-driver skills install --local` to symlink agent dirs to the
+# staged copy at $StagedSkills above.
 
 # ---------- Done -----------------------------------------------------------
 

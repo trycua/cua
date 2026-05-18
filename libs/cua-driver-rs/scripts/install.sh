@@ -419,8 +419,8 @@ VERSION="${TAG#${TAG_PREFIX}}"
 #   bare-binary tarball, so users on both Apple Silicon and Intel
 #   get a working install from one download.
 #
-# Linux / Windows-via-WSL — keep using the bare-binary tarball.
-#   No bundle on these platforms, no TCC, no need to unpack a directory.
+# Linux / Windows-via-WSL — use the bare-binary tarball. No bundle on
+#   these platforms, no TCC, no need to unpack a directory.
 case "$LABEL" in
     darwin-*) TARBALL="cua-driver-rs-${VERSION}-darwin-universal.tar.gz" ;;
     *)        TARBALL="cua-driver-rs-${VERSION}-${LABEL}-binary.tar.gz" ;;
@@ -576,6 +576,12 @@ else
     prune_old_releases "$RELEASES_DIR" "$CURRENT_LINK" "$TARGET" "$KEEP_VERSIONS"
 fi
 
+# Agent skill pack: NOT auto-linked. The install script never touches
+# ~/.claude/skills/, ~/.agents/skills/, etc. Run `cua-driver skills
+# install` after install to fetch + symlink the skill pack from the
+# matching GitHub release. The post-install hint below points at the
+# verb.
+
 # --- Fire the one-shot install telemetry ping ---------------------------
 #
 # Anonymous adoption signal — sends `cua_driver_install` to PostHog
@@ -617,6 +623,11 @@ echo ""
 echo "Try it:"
 echo "  $BIN_LINK list-tools"
 echo "  $BIN_LINK list_apps"
+echo ""
+echo "Agent skill pack (optional):"
+echo "  $BIN_LINK skills install    # fetch + link the cua-driver-rs skill pack"
+echo "                              # into Claude Code / Codex / OpenClaw / OpenCode."
+echo "                              # The install never touches your agent dirs."
 echo ""
 echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
 echo ""

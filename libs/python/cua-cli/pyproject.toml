@@ -45,7 +45,7 @@ dependencies = [
 [project.optional-dependencies]
 # MCP server support
 mcp = [
-    "fastmcp>=3.3.0",
+    "fastmcp>=3.3.0,<4",
 ]
 # Skills recording with LLM captioning
 skills = [

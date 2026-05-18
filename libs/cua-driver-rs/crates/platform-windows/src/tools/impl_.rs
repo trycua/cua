@@ -1066,23 +1066,62 @@ impl Tool for ClickTool {
             };
             // Step 2: animate cursor to screen coords (awaits glide_duration_ms).
             overlay_glide_to(cx as f64, cy as f64).await;
-            // Step 3: click pulse + post click.
+            // Step 3: click pulse + actual click.
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
                 x: cx as f64, y: cy as f64,
             });
             let btn = button.clone();
-            let action_name = match btn.as_str() {
-                "right"  => "ShowMenu",  // closest UIA analogue of Swift "show_menu"
-                "middle" => "Invoke",
-                _        => "Invoke",    // left-click = UIA Invoke pattern (matches Swift "AXPress")
-            };
+            // Try UIA Invoke first (it works for UWP / modern XAML / web
+            // content where PostMessage(WM_LBUTTONDOWN) hits the outer
+            // HWND but never reaches the inner XAML/composition element).
+            // Fall through to PostMessage when:
+            //   - element doesn't support InvokePattern (most text inputs,
+            //     non-interactive elements)
+            //   - right-click (UIA's ExpandCollapse / ShowContextMenu are
+            //     different patterns; keep PostMessage for now)
+            //   - count > 1 (double-click semantics aren't an Invoke
+            //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
+            let state_clone = self.state.clone();
+            let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-                // cx/cy are screen coords from CurrentBoundingRectangle; use
-                // post_click_screen so deepest-child resolution happens once.
+                if use_uia_invoke {
+                    if let Some(ptr) = state_clone.element_cache.get_element_ptr(pid, hwnd, idx) {
+                        use windows::Win32::UI::Accessibility::{
+                            IUIAutomationElement, IUIAutomationInvokePattern, UIA_InvokePatternId,
+                        };
+                        use windows::core::Interface;
+                        // Reconstruct without consuming the cache's AddRef;
+                        // forget after we extract the pattern so Drop doesn't
+                        // double-Release the cached pointer.
+                        let elem: IUIAutomationElement =
+                            unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+                        let invoke_result = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) };
+                        std::mem::forget(elem);
+                        if let Ok(pattern) = invoke_result {
+                            if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
+                                match unsafe { inv.Invoke() } {
+                                    Ok(()) => {
+                                        return Ok(format!(
+                                            "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            target: "click",
+                                            "UIA Invoke failed for [{idx}]: {e}; falling back to PostMessage"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // PostMessage fallback (legacy Win32 + non-Invokable elements).
                 crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
-                // Match Swift text format: "✅ Performed AXPress on [N] role \"title\"."
-                // (UIA has no readily-available role/name on the cached element here;
-                // emit element_index + screen coords for traceability instead).
+                let action_name = match btn.as_str() {
+                    "right"  => "ShowMenu",
+                    _        => "PostMessage click",
+                };
                 Ok(format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."))
             }).await;
             match result {
@@ -1114,6 +1153,27 @@ impl Tool for ClickTool {
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let btn = button.clone();
+            // Try UIA `ElementFromPoint` + `Invoke` first — this is what
+            // makes vision-mode clicks land on modern XAML / WebView2 /
+            // packaged-UWP buttons, where the inner interactive surface
+            // is composed via DirectComposition and PostMessage to the
+            // outer HWND silently no-ops. Only run for single left/middle
+            // clicks; right-click + multi-click stay on PostMessage
+            // because UIA has no clean equivalent of `ShowContextMenu`
+            // by-coord and `Invoke()` is single-fire by definition.
+            let use_uia = (btn == "left" || btn == "middle") && count == 1;
+            if use_uia {
+                let invoked = tokio::task::spawn_blocking(move || {
+                    crate::uia::windows_enum::try_invoke_at_point(sx as i32, sy as i32)
+                })
+                .await
+                .unwrap_or(false);
+                if invoked {
+                    return ToolResult::text(format!(
+                        "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
+                    ));
+                }
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
             }).await;

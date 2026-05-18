@@ -14,17 +14,19 @@
 
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+    TreeScope_Children, UIA_InvokePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
+use windows::core::Interface;
 
 use crate::win32::windows::WindowInfo;
 
@@ -128,6 +130,51 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
             }
         }
         out
+    }
+}
+
+/// Try to fire UIA `Invoke` on whatever element occupies screen point
+/// `(sx, sy)`. Returns `true` when both `ElementFromPoint` resolved an
+/// element AND that element supported `InvokePattern` AND `Invoke()`
+/// succeeded.
+///
+/// Used by the click tool's `(x, y)` path as the preferred mechanism for
+/// modern XAML / WebView2 / packaged-UWP targets where the inner
+/// interactive surface is composed via DirectComposition (not a child
+/// HWND) and `PostMessage(WM_LBUTTONDOWN)` to the outer HWND silently
+/// no-ops. Falls back to the caller's PostMessage path when this returns
+/// `false`.
+pub fn try_invoke_at_point(sx: i32, sy: i32) -> bool {
+    let uia = match get_uia() {
+        Some(u) => u,
+        None => return false,
+    };
+    unsafe {
+        let elem: IUIAutomationElement = match uia.ElementFromPoint(POINT { x: sx, y: sy }) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!(target: "click", "ElementFromPoint({sx},{sy}) failed: {e}");
+                return false;
+            }
+        };
+        let pattern = match elem.GetCurrentPattern(UIA_InvokePatternId) {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::debug!(target: "click", "element at ({sx},{sy}) does not support InvokePattern");
+                return false;
+            }
+        };
+        let inv: IUIAutomationInvokePattern = match pattern.cast() {
+            Ok(i) => i,
+            Err(_) => return false,
+        };
+        match inv.Invoke() {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!(target: "click", "UIA Invoke at ({sx},{sy}) failed: {e}");
+                false
+            }
+        }
     }
 }
 

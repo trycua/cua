@@ -45,6 +45,21 @@ def _parse_bool_env(name: str) -> bool:
     return os.environ.get(name, "").lower().strip() in ("1", "true", "yes", "y", "on")
 
 
+def _allow_unauthenticated_local() -> bool:
+    return _parse_bool_env("CUA_ALLOW_UNAUTHENTICATED_LOCAL")
+
+
+def _run_command_enabled() -> bool:
+    return _parse_bool_env("CUA_ENABLE_RUN_COMMAND")
+
+
+def _auth_required_error() -> str:
+    return (
+        "Authentication required: set CONTAINER_NAME for API-key auth or "
+        "CUA_ALLOW_UNAUTHENTICATED_LOCAL=1 for explicit local development mode"
+    )
+
+
 def _unavailable_status_code() -> Optional[int]:
     """Return the HTTP status code to use when CONTAINER_NAME is required but unset.
 
@@ -178,6 +193,82 @@ class UnavailableWithoutContainerMiddleware:
 
 app.add_middleware(UnavailableWithoutContainerMiddleware)
 
+
+class ControlSurfaceAuthMiddleware:
+    """Protect mounted control surfaces that do not use FastAPI dependencies."""
+
+    _PROTECTED_PREFIXES = ("/mcp",)
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        scope_type = scope.get("type")
+        path = scope.get("path", "")
+        if scope_type in ("http", "websocket") and path.startswith(self._PROTECTED_PREFIXES):
+            ok, detail = await self._authenticate_scope(scope)
+            if not ok:
+                if scope_type == "http":
+                    await self._reject_http(send, 401, detail)
+                else:
+                    await self._reject_websocket(receive, send, 1008, detail)
+                return
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _authenticate_scope(scope) -> tuple[bool, str]:
+        if _allow_unauthenticated_local():
+            return True, ""
+        server_container_name = os.environ.get("CONTAINER_NAME")
+        if not server_container_name:
+            return False, _auth_required_error()
+
+        headers = {
+            key.decode("latin1").lower(): value.decode("latin1")
+            for key, value in scope.get("headers", [])
+        }
+        container_name = headers.get("x-container-name")
+        api_key = headers.get("x-api-key")
+        if not container_name:
+            return False, "Container name required"
+        if not api_key:
+            return False, "API key required"
+        if not await auth_manager.auth(container_name, api_key):
+            return False, "Authentication failed"
+        return True, ""
+
+    @staticmethod
+    async def _reject_http(send, status_code, detail):
+        body = json.dumps({"detail": detail}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    @staticmethod
+    async def _reject_websocket(receive, send, code, detail):
+        event = await receive()
+        if event.get("type") != "websocket.connect":
+            return
+        await send({"type": "websocket.accept"})
+        await send(
+            {
+                "type": "websocket.send",
+                "text": json.dumps({"success": False, "error": detail, "status_code": 401}),
+            }
+        )
+        await send({"type": "websocket.close", "code": code})
+
+
+app.add_middleware(ControlSurfaceAuthMiddleware)
+
 # CORS configuration
 origins = ["*"]
 app.add_middleware(
@@ -206,14 +297,15 @@ except Exception:
     except Exception:
         package_version = "unknown"
 
-(
-    accessibility_handler,
-    automation_handler,
-    diorama_handler,
-    file_handler,
-    desktop_handler,
-    window_handler,
-) = HandlerFactory.create_handlers()
+_handler_tuple = None
+_command_handlers: Optional[Dict[str, Any]] = None
+
+
+def _get_handler_tuple():
+    global _handler_tuple
+    if _handler_tuple is None:
+        _handler_tuple = HandlerFactory.create_handlers()
+    return _handler_tuple
 
 
 # Helper function for direction-based scrolling
@@ -226,6 +318,7 @@ async def _scroll_direction_handler(direction: str, clicks: int = 1) -> Dict[str
         clicks: Number of scroll clicks (default: 1)
     """
     direction = direction.lower()
+    _, automation_handler, _, _, _, _ = _get_handler_tuple()
     if direction == "down":
         return await automation_handler.scroll_down(clicks)
     elif direction == "up":
@@ -254,77 +347,271 @@ COMMAND_ALIASES = {
     "rmdir": "delete_dir",
 }
 
-handlers = {
-    "version": lambda: {"protocol": protocol_version, "package": package_version},
-    # App-Use commands
-    "diorama_cmd": diorama_handler.diorama_cmd,
-    # Accessibility commands
-    "get_accessibility_tree": accessibility_handler.get_accessibility_tree,
-    "find_element": accessibility_handler.find_element,
-    # Shell commands
-    "run_command": automation_handler.run_command,
-    # File system commands
-    "file_exists": file_handler.file_exists,
-    "directory_exists": file_handler.directory_exists,
-    "list_dir": file_handler.list_dir,
-    "read_text": file_handler.read_text,
-    "write_text": file_handler.write_text,
-    "read_bytes": file_handler.read_bytes,
-    "write_bytes": file_handler.write_bytes,
-    "get_file_size": file_handler.get_file_size,
-    "delete_file": file_handler.delete_file,
-    "create_dir": file_handler.create_dir,
-    "delete_dir": file_handler.delete_dir,
-    # Desktop commands
-    "get_desktop_environment": desktop_handler.get_desktop_environment,
-    "set_wallpaper": desktop_handler.set_wallpaper,
-    # Window management
-    "open": window_handler.open,
-    "launch": window_handler.launch,
-    "get_current_window_id": window_handler.get_current_window_id,
-    "get_application_windows": window_handler.get_application_windows,
-    "get_window_name": window_handler.get_window_name,
-    "get_window_size": window_handler.get_window_size,
-    "get_window_position": window_handler.get_window_position,
-    "set_window_size": window_handler.set_window_size,
-    "set_window_position": window_handler.set_window_position,
-    "maximize_window": window_handler.maximize_window,
-    "minimize_window": window_handler.minimize_window,
-    "activate_window": window_handler.activate_window,
-    "close_window": window_handler.close_window,
-    # Mouse commands
-    "mouse_down": automation_handler.mouse_down,
-    "mouse_up": automation_handler.mouse_up,
-    "left_click": automation_handler.left_click,
-    "right_click": automation_handler.right_click,
-    "double_click": automation_handler.double_click,
-    "move_cursor": automation_handler.move_cursor,
-    "drag_to": automation_handler.drag_to,
-    "drag": automation_handler.drag,
-    # Keyboard commands
-    "key_down": automation_handler.key_down,
-    "key_up": automation_handler.key_up,
-    "type_text": automation_handler.type_text,
-    "press_key": automation_handler.press_key,
-    "hotkey": automation_handler.hotkey,
-    # Scrolling actions
-    "scroll": automation_handler.scroll,
-    "scroll_down": automation_handler.scroll_down,
-    "scroll_up": automation_handler.scroll_up,
-    "scroll_direction": _scroll_direction_handler,
-    # Screen actions
-    "screenshot": automation_handler.screenshot,
-    "get_cursor_position": automation_handler.get_cursor_position,
-    "get_screen_size": automation_handler.get_screen_size,
-    # Clipboard actions
-    "copy_to_clipboard": automation_handler.copy_to_clipboard,
-    "set_clipboard": automation_handler.set_clipboard,
-}
+_STATIC_COMMAND_NAMES = [
+    "version",
+    "diorama_cmd",
+    "get_accessibility_tree",
+    "find_element",
+    "run_command",
+    "file_exists",
+    "directory_exists",
+    "list_dir",
+    "read_text",
+    "write_text",
+    "read_bytes",
+    "write_bytes",
+    "get_file_size",
+    "delete_file",
+    "create_dir",
+    "delete_dir",
+    "get_desktop_environment",
+    "set_wallpaper",
+    "open",
+    "launch",
+    "get_current_window_id",
+    "get_application_windows",
+    "get_window_name",
+    "get_window_size",
+    "get_window_position",
+    "set_window_size",
+    "set_window_position",
+    "maximize_window",
+    "minimize_window",
+    "activate_window",
+    "close_window",
+    "mouse_down",
+    "mouse_up",
+    "left_click",
+    "right_click",
+    "double_click",
+    "move_cursor",
+    "drag_to",
+    "drag",
+    "key_down",
+    "key_up",
+    "type_text",
+    "press_key",
+    "hotkey",
+    "scroll",
+    "scroll_down",
+    "scroll_up",
+    "scroll_direction",
+    "screenshot",
+    "get_cursor_position",
+    "get_screen_size",
+    "copy_to_clipboard",
+    "set_clipboard",
+]
+_DYNAMIC_COMMAND_NAMES = ["multitouch_gesture"]
 
-# Android-only commands — registered only when the Android handler is active
-# so non-Android server instances don't fail at startup with AttributeError.
-if hasattr(automation_handler, "multitouch_gesture"):
-    handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
+def _version_handler() -> Dict[str, Any]:
+    return {"protocol": protocol_version, "package": package_version}
+
+
+async def _multitouch_gesture_signature(
+    fingers: List[Dict[str, Any]],
+    screen_w: int,
+    screen_h: int,
+    duration_ms: int = 400,
+    steps: int = 0,
+) -> Dict[str, Any]:
+    return {"success": False, "error": "signature only"}
+
+
+def _get_command_handlers() -> Dict[str, Any]:
+    global _command_handlers
+    if _command_handlers is not None:
+        return _command_handlers
+
+    (
+        accessibility_handler,
+        automation_handler,
+        diorama_handler,
+        file_handler,
+        desktop_handler,
+        window_handler,
+    ) = _get_handler_tuple()
+
+    handlers = {
+        "version": _version_handler,
+        # App-Use commands
+        "diorama_cmd": diorama_handler.diorama_cmd,
+        # Accessibility commands
+        "get_accessibility_tree": accessibility_handler.get_accessibility_tree,
+        "find_element": accessibility_handler.find_element,
+        # Shell commands
+        "run_command": automation_handler.run_command,
+        # File system commands
+        "file_exists": file_handler.file_exists,
+        "directory_exists": file_handler.directory_exists,
+        "list_dir": file_handler.list_dir,
+        "read_text": file_handler.read_text,
+        "write_text": file_handler.write_text,
+        "read_bytes": file_handler.read_bytes,
+        "write_bytes": file_handler.write_bytes,
+        "get_file_size": file_handler.get_file_size,
+        "delete_file": file_handler.delete_file,
+        "create_dir": file_handler.create_dir,
+        "delete_dir": file_handler.delete_dir,
+        # Desktop commands
+        "get_desktop_environment": desktop_handler.get_desktop_environment,
+        "set_wallpaper": desktop_handler.set_wallpaper,
+        # Window management
+        "open": window_handler.open,
+        "launch": window_handler.launch,
+        "get_current_window_id": window_handler.get_current_window_id,
+        "get_application_windows": window_handler.get_application_windows,
+        "get_window_name": window_handler.get_window_name,
+        "get_window_size": window_handler.get_window_size,
+        "get_window_position": window_handler.get_window_position,
+        "set_window_size": window_handler.set_window_size,
+        "set_window_position": window_handler.set_window_position,
+        "maximize_window": window_handler.maximize_window,
+        "minimize_window": window_handler.minimize_window,
+        "activate_window": window_handler.activate_window,
+        "close_window": window_handler.close_window,
+        # Mouse commands
+        "mouse_down": automation_handler.mouse_down,
+        "mouse_up": automation_handler.mouse_up,
+        "left_click": automation_handler.left_click,
+        "right_click": automation_handler.right_click,
+        "double_click": automation_handler.double_click,
+        "move_cursor": automation_handler.move_cursor,
+        "drag_to": automation_handler.drag_to,
+        "drag": automation_handler.drag,
+        # Keyboard commands
+        "key_down": automation_handler.key_down,
+        "key_up": automation_handler.key_up,
+        "type_text": automation_handler.type_text,
+        "press_key": automation_handler.press_key,
+        "hotkey": automation_handler.hotkey,
+        # Scrolling actions
+        "scroll": automation_handler.scroll,
+        "scroll_down": automation_handler.scroll_down,
+        "scroll_up": automation_handler.scroll_up,
+        "scroll_direction": _scroll_direction_handler,
+        # Screen actions
+        "screenshot": automation_handler.screenshot,
+        "get_cursor_position": automation_handler.get_cursor_position,
+        "get_screen_size": automation_handler.get_screen_size,
+        # Clipboard actions
+        "copy_to_clipboard": automation_handler.copy_to_clipboard,
+        "set_clipboard": automation_handler.set_clipboard,
+    }
+
+    # Android-only command — registered only when the Android handler is active.
+    if hasattr(automation_handler, "multitouch_gesture"):
+        handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
+    _command_handlers = handlers
+    return handlers
+
+
+def _has_command(command: str) -> bool:
+    if command in _STATIC_COMMAND_NAMES:
+        return True
+    if command in _DYNAMIC_COMMAND_NAMES:
+        if OS_TYPE != "android":
+            return False
+        return command in _get_command_handlers()
+    return False
+
+
+def _get_handler_func(command: str):
+    if command == "version":
+        return _version_handler
+    return _get_command_handlers()[command]
+
+
+def _signature_params(handler_func) -> List[Dict[str, Any]]:
+    sig = inspect.signature(handler_func)
+    params = []
+    for param in sig.parameters.values():
+        if param.name == "self":
+            continue
+        params.append(
+            {
+                "name": param.name,
+                "required": param.default == inspect.Parameter.empty,
+                "default": None if param.default == inspect.Parameter.empty else param.default,
+            }
+        )
+    return params
+
+
+def _static_command_signature_sources() -> Dict[str, Any]:
+    from .diorama.base import BaseDioramaHandler
+    from .handlers.base import (
+        BaseAccessibilityHandler,
+        BaseAutomationHandler,
+        BaseDesktopHandler,
+    )
+    from .handlers.generic import GenericFileHandler, GenericWindowHandler
+
+    return {
+        "version": _version_handler,
+        "diorama_cmd": BaseDioramaHandler.diorama_cmd,
+        "get_accessibility_tree": BaseAccessibilityHandler.get_accessibility_tree,
+        "find_element": BaseAccessibilityHandler.find_element,
+        "run_command": BaseAutomationHandler.run_command,
+        "file_exists": GenericFileHandler.file_exists,
+        "directory_exists": GenericFileHandler.directory_exists,
+        "list_dir": GenericFileHandler.list_dir,
+        "read_text": GenericFileHandler.read_text,
+        "write_text": GenericFileHandler.write_text,
+        "read_bytes": GenericFileHandler.read_bytes,
+        "write_bytes": GenericFileHandler.write_bytes,
+        "get_file_size": GenericFileHandler.get_file_size,
+        "delete_file": GenericFileHandler.delete_file,
+        "create_dir": GenericFileHandler.create_dir,
+        "delete_dir": GenericFileHandler.delete_dir,
+        "get_desktop_environment": BaseDesktopHandler.get_desktop_environment,
+        "set_wallpaper": BaseDesktopHandler.set_wallpaper,
+        "open": GenericWindowHandler.open,
+        "launch": GenericWindowHandler.launch,
+        "get_current_window_id": GenericWindowHandler.get_current_window_id,
+        "get_application_windows": GenericWindowHandler.get_application_windows,
+        "get_window_name": GenericWindowHandler.get_window_name,
+        "get_window_size": GenericWindowHandler.get_window_size,
+        "get_window_position": GenericWindowHandler.get_window_position,
+        "set_window_size": GenericWindowHandler.set_window_size,
+        "set_window_position": GenericWindowHandler.set_window_position,
+        "maximize_window": GenericWindowHandler.maximize_window,
+        "minimize_window": GenericWindowHandler.minimize_window,
+        "activate_window": GenericWindowHandler.activate_window,
+        "close_window": GenericWindowHandler.close_window,
+        "mouse_down": BaseAutomationHandler.mouse_down,
+        "mouse_up": BaseAutomationHandler.mouse_up,
+        "left_click": BaseAutomationHandler.left_click,
+        "right_click": BaseAutomationHandler.right_click,
+        "double_click": BaseAutomationHandler.double_click,
+        "move_cursor": BaseAutomationHandler.move_cursor,
+        "drag_to": BaseAutomationHandler.drag_to,
+        "drag": BaseAutomationHandler.drag,
+        "key_down": BaseAutomationHandler.key_down,
+        "key_up": BaseAutomationHandler.key_up,
+        "type_text": BaseAutomationHandler.type_text,
+        "press_key": BaseAutomationHandler.press_key,
+        "hotkey": BaseAutomationHandler.hotkey,
+        "scroll": BaseAutomationHandler.scroll,
+        "scroll_down": BaseAutomationHandler.scroll_down,
+        "scroll_up": BaseAutomationHandler.scroll_up,
+        "scroll_direction": _scroll_direction_handler,
+        "screenshot": BaseAutomationHandler.screenshot,
+        "get_cursor_position": BaseAutomationHandler.get_cursor_position,
+        "get_screen_size": BaseAutomationHandler.get_screen_size,
+        "copy_to_clipboard": BaseAutomationHandler.copy_to_clipboard,
+        "set_clipboard": BaseAutomationHandler.set_clipboard,
+    }
+
+
+def _dynamic_command_signature_sources() -> Dict[str, Any]:
+    if OS_TYPE != "android":
+        return {}
+    return {
+        "multitouch_gesture": _multitouch_gesture_signature,
+    }
 
 
 class AuthenticationManager:
@@ -344,17 +631,20 @@ class AuthenticationManager:
         DNS hiccup would flip the VM into a perpetually-401 state until
         the TTL expired.
         """
-        # If no CONTAINER_NAME is set, always allow access (local development)
-        if not self.container_name:
-            logger.info(
-                "No CONTAINER_NAME set in environment. Allowing access (local development mode)"
-            )
-            return True
+        expected_container_name = os.environ.get("CONTAINER_NAME")
+
+        # If no CONTAINER_NAME is set, only allow explicit local development mode.
+        if not expected_container_name:
+            if _allow_unauthenticated_local():
+                logger.info("Explicit unauthenticated local development mode enabled")
+                return True
+            logger.info("No CONTAINER_NAME set and CUA_ALLOW_UNAUTHENTICATED_LOCAL is not enabled")
+            return False
 
         # Layer 1: VM Identity Verification
-        if container_name != self.container_name:
+        if container_name != expected_container_name:
             logger.warning(
-                f"VM name mismatch. Expected: {self.container_name}, Got: {container_name}"
+                f"VM name mismatch. Expected: {expected_container_name}, Got: {container_name}"
             )
             return False
 
@@ -417,7 +707,11 @@ def _resolve_command(command: str) -> str:
 
 def _suggest_similar_commands(command: str) -> List[str]:
     """Suggest similar commands for typos."""
-    all_commands = list(handlers.keys()) + list(COMMAND_ALIASES.keys())
+    all_commands = list(_STATIC_COMMAND_NAMES)
+    all_commands.extend(_DYNAMIC_COMMAND_NAMES)
+    if _command_handlers is not None:
+        all_commands.extend(cmd for cmd in _command_handlers if cmd not in all_commands)
+    all_commands.extend(COMMAND_ALIASES.keys())
     suggestions = []
     command_lower = command.lower()
     for cmd in all_commands:
@@ -442,17 +736,24 @@ async def status():
 async def list_commands():
     """List all available commands and their aliases."""
     commands_info = {}
-    for cmd_name, handler_func in handlers.items():
+    command_handlers = _command_handlers or _static_command_signature_sources()
+    if _command_handlers is None:
+        command_handlers = {
+            **command_handlers,
+            **_dynamic_command_signature_sources(),
+        }
+    command_names = list(_STATIC_COMMAND_NAMES)
+    if OS_TYPE == "android":
+        command_names.extend(cmd for cmd in _DYNAMIC_COMMAND_NAMES if cmd not in command_names)
+    if _command_handlers is not None:
+        command_names.extend(cmd for cmd in _command_handlers if cmd not in command_names)
+    for cmd_name in command_names:
         try:
-            sig = inspect.signature(handler_func)
-            params = [
-                {
-                    "name": p.name,
-                    "required": p.default == inspect.Parameter.empty,
-                    "default": None if p.default == inspect.Parameter.empty else p.default,
-                }
-                for p in sig.parameters.values()
-            ]
+            handler_func = command_handlers.get(cmd_name)
+            if handler_func is None:
+                params = []
+            else:
+                params = _signature_params(handler_func)
         except (ValueError, TypeError):
             params = []
         commands_info[cmd_name] = {"params": params}
@@ -476,13 +777,19 @@ async def list_commands():
 
 @app.websocket("/ws", name="websocket_endpoint")
 async def websocket_endpoint(websocket: WebSocket):
-    global handlers
-
     # WebSocket message size is configured at the app or endpoint level, not on the instance
     await manager.connect(websocket)
 
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
+
+    if not server_container_name and not _allow_unauthenticated_local():
+        await websocket.send_json(
+            {"success": False, "error": _auth_required_error(), "status_code": 401}
+        )
+        await websocket.close()
+        manager.disconnect(websocket)
+        return
 
     # If cloud provider, perform authentication handshake
     if server_container_name:
@@ -559,7 +866,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Resolve command aliases
                 command = _resolve_command(command)
 
-                if command not in handlers:
+                if not _has_command(command):
                     suggestions = _suggest_similar_commands(command)
                     error_msg = f"Unknown command: {command}"
                     if suggestions:
@@ -567,9 +874,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"success": False, "error": error_msg})
                     continue
 
+                if command == "run_command" and not _run_command_enabled():
+                    await websocket.send_json(
+                        {
+                            "success": False,
+                            "error": "run_command is disabled; set CUA_ENABLE_RUN_COMMAND=1 to enable it",
+                        }
+                    )
+                    continue
+
                 try:
                     # Filter params to only include those accepted by the handler function
-                    handler_func = handlers[command]
+                    handler_func = _get_handler_func(command)
                     sig = inspect.signature(handler_func)
                     filtered_params = {k: v for k, v in params.items() if k in sig.parameters}
 
@@ -630,7 +946,7 @@ async def cmd_endpoint(
         "params": {...}
     }
     """
-    global handlers
+    await _require_auth(container_name, api_key)
 
     # Parse request body
     try:
@@ -646,29 +962,10 @@ async def cmd_endpoint(
     # Resolve command aliases
     command = _resolve_command(command)
 
-    # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
-
-    # If cloud provider, perform authentication
     if server_container_name:
-        logger.info(
-            f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Performing authentication..."
-        )
-
-        # Validate required headers
-        if not container_name:
-            raise HTTPException(status_code=401, detail="Container name required")
-
-        if not api_key:
-            raise HTTPException(status_code=401, detail="API key required")
-
-        # Validate with AuthenticationManager
-        is_authenticated = await auth_manager.auth(container_name, api_key)
-        if not is_authenticated:
-            raise HTTPException(status_code=401, detail="Authentication failed")
-
         # Emit vm_session_started event for funnel tracking
-        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        api_key_hash = hashlib.sha256((api_key or "").encode()).hexdigest()
         record_event(
             "vm_session_started",
             {
@@ -678,18 +975,24 @@ async def cmd_endpoint(
             },
         )
 
-    if command not in handlers:
+    if not _has_command(command):
         suggestions = _suggest_similar_commands(command)
         error_msg = f"Unknown command: {command}"
         if suggestions:
             error_msg += f". Did you mean: {', '.join(suggestions)}?"
         raise HTTPException(status_code=400, detail=error_msg)
 
+    if command == "run_command" and not _run_command_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="run_command is disabled; set CUA_ENABLE_RUN_COMMAND=1 to enable it",
+        )
+
     async def generate_response():
         """Generate streaming response for the command execution"""
         try:
             # Filter params to only include those accepted by the handler function
-            handler_func = handlers[command]
+            handler_func = _get_handler_func(command)
             sig = inspect.signature(handler_func)
             filtered_params = {k: v for k, v in params.items() if k in sig.parameters}
 
@@ -726,10 +1029,12 @@ async def _require_auth(
     container_name: Optional[str],
     api_key: Optional[str],
 ) -> None:
-    """Raise HTTPException(401) when cloud auth is configured and credentials are invalid."""
+    """Raise HTTPException(401) when auth is required and credentials are invalid."""
     server_container_name = os.environ.get("CONTAINER_NAME")
     if not server_container_name:
-        return  # local development — no auth required
+        if _allow_unauthenticated_local():
+            return
+        raise HTTPException(status_code=401, detail=_auth_required_error())
     if not container_name:
         raise HTTPException(status_code=401, detail="Container name required")
     if not api_key:
@@ -757,6 +1062,11 @@ async def pty_create(
     Returns: ``{"pid": int, "cols": int, "rows": int}``
     """
     await _require_auth(container_name, api_key)
+    if not _run_command_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="PTY command creation is disabled; set CUA_ENABLE_RUN_COMMAND=1 to enable it",
+        )
     try:
         body = await request.json()
     except Exception:
@@ -988,22 +1298,19 @@ async def agent_response_endpoint(
     if not HAS_AGENT:
         raise HTTPException(status_code=501, detail="ComputerAgent not available")
 
-    # Authenticate via AuthenticationManager if running in cloud (CONTAINER_NAME set)
+    # Authenticate unless this proxy is explicitly public or local unauthenticated
+    # mode has been intentionally enabled.
     container_name = os.environ.get("CONTAINER_NAME")
-    if container_name:
-        is_public = os.environ.get("CUA_ENABLE_PUBLIC_PROXY", "").lower().strip() in [
-            "1",
-            "true",
-            "yes",
-            "y",
-            "on",
-        ]
-        if not is_public:
+    is_public = _parse_bool_env("CUA_ENABLE_PUBLIC_PROXY")
+    if not is_public:
+        if container_name:
             if not api_key:
                 raise HTTPException(status_code=401, detail="Missing AGENT PROXY auth headers")
             ok = await auth_manager.auth(container_name, api_key)
             if not ok:
                 raise HTTPException(status_code=401, detail="Unauthorized")
+        elif not _allow_unauthenticated_local():
+            raise HTTPException(status_code=401, detail=_auth_required_error())
 
     # Parse request body
     try:
@@ -1049,6 +1356,8 @@ async def agent_response_endpoint(
     # Define a direct computer tool that implements the AsyncComputerHandler protocol
     # and delegates to our existing automation/file/accessibility handlers.
     from cua_agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
+
+    accessibility_handler, automation_handler, _, file_handler, _, _ = _get_handler_tuple()
 
     class DirectComputerInterface:
         """Interface wrapper providing BrowserTool compatibility.
@@ -1294,6 +1603,8 @@ async def playwright_exec_endpoint(
         "params": {...}
     }
     """
+    await _require_auth(container_name, api_key)
+
     # Parse request body
     try:
         body = await request.json()
@@ -1304,27 +1615,6 @@ async def playwright_exec_endpoint(
 
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
-
-    # Check if CONTAINER_NAME is set (indicating cloud provider)
-    server_container_name = os.environ.get("CONTAINER_NAME")
-
-    # If cloud provider, perform authentication
-    if server_container_name:
-        logger.info(
-            f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Performing authentication..."
-        )
-
-        # Validate required headers
-        if not container_name:
-            raise HTTPException(status_code=401, detail="Container name required")
-
-        if not api_key:
-            raise HTTPException(status_code=401, detail="API key required")
-
-        # Validate with AuthenticationManager
-        is_authenticated = await auth_manager.auth(container_name, api_key)
-        if not is_authenticated:
-            raise HTTPException(status_code=401, detail="Authentication failed")
 
     # Get browser manager and execute command
     try:

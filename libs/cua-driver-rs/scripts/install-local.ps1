@@ -98,13 +98,10 @@ function Register-CuaDriverAutostart {
     if (-not (Test-Path -LiteralPath $InstalledBinary)) {
         throw "binary not found at $InstalledBinary"
     }
-    $user = "$env:COMPUTERNAME\$env:USERNAME"
-    $action = New-ScheduledTaskAction -Execute $InstalledBinary -Argument 'serve' -WorkingDirectory $env:USERPROFILE
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-    Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
-    Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
+    & $InstalledBinary autostart enable
+    if ($LASTEXITCODE -ne 0) {
+        throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+    }
 }
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }

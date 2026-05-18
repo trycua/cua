@@ -24,14 +24,15 @@ impl PermissionsStatus {
 }
 
 /// Read the live TCC status for both required grants.  Cheap to call
-/// repeatedly — `AXIsProcessTrusted` is a quick C function and the
-/// screen recording probe falls back to the window-enumeration heuristic
-/// when `CGPreflightScreenCaptureAccess` reports false.
+/// repeatedly — both probes are quick C-level calls into the system
+/// TCC daemon.
 ///
 /// Mirrors Swift `Permissions.currentStatus()`.  Difference: Swift uses
 /// `SCShareableContent.excludingDesktopWindows` (ScreenCaptureKit) for
 /// the screen recording probe, which is unavailable from Rust without
-/// large bindings — same caveat documented in `check_permissions.rs`.
+/// large bindings.  `CGPreflightScreenCaptureAccess` is Apple's
+/// documented preflight API for the same grant and is accurate on
+/// macOS 11+.
 pub fn current_status() -> PermissionsStatus {
     PermissionsStatus {
         accessibility: accessibility_granted(),
@@ -44,18 +45,25 @@ pub fn accessibility_granted() -> bool {
     unsafe { crate::ax::bindings::AXIsProcessTrusted() }
 }
 
-/// Best-effort screen recording probe.  Uses `CGPreflightScreenCaptureAccess`
-/// then falls back to the window-enumeration heuristic for parity with
-/// the existing `check_permissions` tool — see that file for rationale.
+/// Live Screen Recording grant state — `CGPreflightScreenCaptureAccess()`.
+///
+/// This is the only probe.  Earlier versions fell back to
+/// `!all_windows().is_empty()` when preflight returned false, on the
+/// theory that `CGWindowListCopyWindowInfo` returning real windows
+/// implied the grant was active.  That theory is wrong:
+/// `CGWindowListCopyWindowInfo` returns window IDs and bounds for **any**
+/// process without requiring the Screen Recording grant — only window
+/// titles are gated.  The fallback therefore returned `true` on any
+/// populated desktop regardless of grant state, which (a) made
+/// `check_permissions` report a false positive after `tccutil reset
+/// ScreenCapture com.trycua.driver`, and (b) short-circuited the
+/// startup permissions gate's prompt for users who had never granted SR.
 pub fn screen_recording_granted() -> bool {
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGPreflightScreenCaptureAccess() -> bool;
     }
-    if unsafe { CGPreflightScreenCaptureAccess() } {
-        return true;
-    }
-    !crate::windows::all_windows().is_empty()
+    unsafe { CGPreflightScreenCaptureAccess() }
 }
 
 /// Raise the Accessibility TCC prompt if not yet granted.  No-op when

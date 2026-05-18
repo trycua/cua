@@ -390,15 +390,16 @@ jobs:
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
             libs/cua-driver-rs/scripts/install.sh
 
+          # install.ps1 now lives at the canonical Swift install dir;
           # PowerShell line starts with `$Script:` — escape the `$` for
           # sed's BRE so it matches the literal dollar sign.
           sed -i \
             "s/^\\\$Script:CuaDriverRsBakedVersion = .*/\\\$Script:CuaDriverRsBakedVersion = \"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.ps1
+            libs/cua-driver/scripts/install.ps1
 
           echo "Baked version ${VERSION} into working-tree install scripts:"
           grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver-rs/scripts/install.sh
-          grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver-rs/scripts/install.ps1
+          grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver/scripts/install.ps1
 
       - name: Stage release files
         run: |
@@ -416,8 +417,14 @@ jobs:
           # The freshly-baked scripts (rewritten in the prior step) are
           # what gets copied here, so the per-tag release assets carry the
           # current version's baked default — not the previous version's.
+          # Note: install.ps1 now lives at libs/cua-driver/scripts/install.ps1
+          # (canonical location for both Swift + Rust user-facing installers).
+          # install.sh stays under libs/cua-driver-rs/scripts/ for now —
+          # libs/cua-driver/scripts/install.sh is the Swift driver's installer
+          # that auto-delegates to this one when uname != Darwin or
+          # --experimental-rust is passed.
           cp libs/cua-driver-rs/scripts/install.sh  release-upload/install.sh
-          cp libs/cua-driver-rs/scripts/install.ps1 release-upload/install.ps1
+          cp libs/cua-driver/scripts/install.ps1    release-upload/install.ps1
 
           # Skill pack — single platform-agnostic tarball fetched by
           # `cua-driver skills install`. The .md files are identical across
@@ -512,8 +519,13 @@ jobs:
             ### Install (Windows)
 
             ```powershell
-            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
             ```
+
+            > Note: the canonical Windows installer moved from
+            > `libs/cua-driver-rs/scripts/install.ps1` to
+            > `libs/cua-driver/scripts/install.ps1`. The old URL still works via a
+            > deprecation shim that fetches the canonical script.
 
             The installer auto-detects host architecture (x86_64 / arm64) and uses
             directory junctions for the install layout, so it runs without admin
@@ -593,14 +605,16 @@ jobs:
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
             libs/cua-driver-rs/scripts/install.sh
 
-          # The PowerShell line starts with `$Script:` — escape the `$`
-          # for sed's BRE so it matches the literal dollar sign.
+          # install.ps1 now lives at libs/cua-driver/scripts/install.ps1
+          # (canonical Windows entry point). The PowerShell line starts
+          # with `$Script:` — escape the `$` for sed's BRE so it matches
+          # the literal dollar sign.
           sed -i \
             "s/^\\\$Script:CuaDriverRsBakedVersion = .*/\\\$Script:CuaDriverRsBakedVersion = \"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.ps1
+            libs/cua-driver/scripts/install.ps1
 
           git config user.name  "trycua-release[bot]"
           git config user.email "trycua-release[bot]@users.noreply.github.com"
-          git add libs/cua-driver-rs/scripts/install.sh libs/cua-driver-rs/scripts/install.ps1
+          git add libs/cua-driver-rs/scripts/install.sh libs/cua-driver/scripts/install.ps1
           git commit -m "chore(cua-driver-rs): bake version ${VERSION} into install scripts [skip ci]"
           git push origin bake-version:main

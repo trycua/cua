@@ -144,14 +144,35 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
 /// foreground a few milliseconds AFTER `ActivateApplication` returns —
 /// a single immediate SetForegroundWindow call would race the AppX
 /// runtime and lose. Three attempts spaced 50ms apart covers the window.
+///
+/// **Foreground-lock workaround:** Windows restricts SetForegroundWindow
+/// to processes that meet specific conditions (foreground process,
+/// owner of last input, etc.). The daemon usually meets none of these
+/// when launch_app is called from MCP. We inject a single VK_NONAME
+/// synthetic keypress via `keybd_event` to claim "owner of last input"
+/// status long enough for SetForegroundWindow to succeed. VK_NONAME
+/// (0xFC) is the reserved no-name virtual-key code — it does not map
+/// to any UI action and is safe to inject without side effects.
 fn restore_foreground_best_effort(prior: HWND) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IsWindow, SetForegroundWindow,
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, SetForegroundWindow};
+
     if prior.0.is_null() {
         tracing::debug!(target: "launch_uwp", "no prior foreground to restore");
         return;
     }
+
+    // Claim "owner of last input" so the next SetForegroundWindow call
+    // isn't silently dropped by the foreground lock. VK_NONAME (0xFC)
+    // doesn't trigger any application's key handler.
+    const VK_NONAME: u8 = 0xFC;
+    unsafe {
+        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+    }
+
     for attempt in 0..3 {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -161,7 +182,16 @@ fn restore_foreground_best_effort(prior: HWND) {
                 tracing::debug!(target: "launch_uwp", "prior foreground HWND no longer valid");
                 return;
             }
-            let _ = SetForegroundWindow(prior);
+            let ok = SetForegroundWindow(prior).as_bool();
+            tracing::debug!(
+                target: "launch_uwp",
+                "SetForegroundWindow attempt {} -> {}",
+                attempt + 1,
+                ok,
+            );
+            if ok {
+                return;
+            }
         }
     }
 }

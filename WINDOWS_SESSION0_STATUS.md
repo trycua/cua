@@ -14,7 +14,7 @@ Branch `stab/windows-session0-fixes` is 7 commits ahead of
 PR when ready:
 
 ```bash
-git -C /Users/francesco/cua push -u origin stab/windows-session0-fixes
+git -C <repo-root> push -u origin stab/windows-session0-fixes
 gh pr create --base main --head stab/windows-session0-fixes \
   --title "fix(windows): Session-0 hardening + UWP focus-restore" \
   --body-file WINDOWS_SESSION0_STATUS.md
@@ -30,7 +30,7 @@ restriction) but I can't visually verify from Mac side.
 
 **Branch:** `stab/windows-session0-fixes` (local-only, no PR yet per your ask)
 **Base:** `origin/main` @ 69a9dbd5 (post-#1547)
-**VM:** `fbonacci-windows-vm` (20.115.29.195) — Rust toolchain + VS Build Tools 2022 installed
+**VM:** `<vm-name>` (<vm-host>) — Rust toolchain + VS Build Tools 2022 installed
 **Dev loop:** edit on Mac → `scp` changed files to `~/cua/...` on VM → `cargo build --release -p cua-driver` (~20s incremental, ~5min cold) → run. Full reference: `libs/cua-driver-rs/DEV_LOOP_WINDOWS_VM.md`.
 
 ## TL;DR
@@ -97,8 +97,8 @@ Post-fix: see `b8jvtpz9m.output` (in flight as of this writing).
 To visually validate when you wake:
 
 ```powershell
-# RDP into 20.115.29.195 as fbonacci, then in a PowerShell on the desktop:
-$exe = "C:\Users\fbonacci\AppData\Local\Programs\trycua\cua-driver-rs\bin\cua-driver.exe"
+# RDP into <vm-host> as <user>, then in a PowerShell on the desktop:
+$exe = "C:\Users\<user>\AppData\Local\Programs\trycua\cua-driver-rs\bin\cua-driver.exe"
 # Or use the dev build:
 # $exe = "$env:USERPROFILE\cua\libs\cua-driver-rs\target\release\cua-driver.exe"
 
@@ -131,11 +131,11 @@ $exe = "C:\Users\fbonacci\AppData\Local\Programs\trycua\cua-driver-rs\bin\cua-dr
 
 ```bash
 # View the local-only commits
-git -C /Users/francesco/cua log --oneline origin/main..stab/windows-session0-fixes
+git -C <repo-root> log --oneline origin/main..stab/windows-session0-fixes
 
 # Bring them up onto a fresh branch for a PR
-git -C /Users/francesco/cua checkout -b fix/windows-session0
-git -C /Users/francesco/cua merge --ff-only stab/windows-session0-fixes
+git -C <repo-root> checkout -b fix/windows-session0
+git -C <repo-root> merge --ff-only stab/windows-session0-fixes
 
 # Then `gh pr create` as usual
 ```

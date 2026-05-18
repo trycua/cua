@@ -1,7 +1,7 @@
 # Dev loop — cua-driver-rs on the Windows VM
 
 Quick reference for iterating on Windows-specific cua-driver-rs code
-directly on `fbonacci-windows-vm` without round-tripping through GitHub
+directly on `<vm-name>` without round-tripping through GitHub
 CD. Set up Sun 2026-05-18 by the autonomous session for the doctor
 segfault / Session-0 hang investigations.
 
@@ -9,13 +9,13 @@ segfault / Session-0 hang investigations.
 
 - **SSH** (Session 0 — services context, no desktop):
   ```bash
-  ssh -i ~/.ssh/cua_winvm fbonacci@20.115.29.195
+  ssh -i ~/.ssh/<ssh-key> <user>@<vm-host>
   ```
 - **RDP** (Session 1+ with attached desktop, needed for visual / GUI tool validation):
   ```bash
-  open /Users/francesco/Desktop/fbonacci-windows-vm.rdp
+  open <rdp-file-dir>/<vm-name>.rdp
   ```
-  Credentials: `fbonacci` + password from password manager.
+  Credentials: `<user>` + password from your password manager.
 
 ## Toolchain on the VM (already installed)
 
@@ -23,7 +23,7 @@ segfault / Session-0 hang investigations.
 - Rustup 1.29 + `stable-x86_64-pc-windows-msvc` (rustc 1.95.0)
 - Cargo 1.95.0
 - Visual Studio Build Tools 2022 (VCTools + Windows 11 SDK)
-- Clone: `C:\Users\fbonacci\cua` (HEAD pinned to origin/main at clone time;
+- Clone: `C:\Users\<user>\cua` (HEAD pinned to origin/main at clone time;
   `git pull` to refresh)
 
 ## Iteration loop
@@ -31,13 +31,13 @@ segfault / Session-0 hang investigations.
 1. **Edit locally on the Mac** (use Claude Code, your IDE, etc.).
 2. **Push changed files to the VM** via `scp`:
    ```bash
-   scp -i ~/.ssh/cua_winvm \
-     /Users/francesco/cua/libs/cua-driver-rs/crates/platform-windows/src/<file>.rs \
-     fbonacci@20.115.29.195:cua/libs/cua-driver-rs/crates/platform-windows/src/<file>.rs
+   scp -i ~/.ssh/<ssh-key> \
+     <repo-root>/libs/cua-driver-rs/crates/platform-windows/src/<file>.rs \
+     <user>@<vm-host>:cua/libs/cua-driver-rs/crates/platform-windows/src/<file>.rs
    ```
 3. **Build on the VM** (~20 s incremental, ~5 min cold):
    ```bash
-   ssh -i ~/.ssh/cua_winvm fbonacci@20.115.29.195 \
+   ssh -i ~/.ssh/<ssh-key> <user>@<vm-host> \
      "powershell -Command 'cd cua\\libs\\cua-driver-rs; cargo build --release -p cua-driver'"
    ```
 4. **Test on the VM** — use PowerShell `Start-Job` for clean timeouts;
@@ -113,20 +113,20 @@ In Session 0 the autonomous session got 11/11 PASS as of 2026-05-18.
 
 ```bash
 # Quick file push
-scp -i ~/.ssh/cua_winvm <local> fbonacci@20.115.29.195:cua/libs/cua-driver-rs/...
+scp -i ~/.ssh/<ssh-key> <local> <user>@<vm-host>:cua/libs/cua-driver-rs/...
 
 # Quick build + test with timeout (Mac side)
-ssh -o ServerAliveInterval=20 -i ~/.ssh/cua_winvm fbonacci@20.115.29.195 \
+ssh -o ServerAliveInterval=20 -i ~/.ssh/<ssh-key> <user>@<vm-host> \
   'powershell -ExecutionPolicy Bypass -File some-script.ps1'
 
 # Quick PSCMD via stdin pipe
-echo '{"name":"notepad"}' | ssh -i ~/.ssh/cua_winvm fbonacci@20.115.29.195 \
-  '"C:\\Users\\fbonacci\\cua\\libs\\cua-driver-rs\\target\\release\\cua-driver.exe" call launch_app'
+echo '{"name":"notepad"}' | ssh -i ~/.ssh/<ssh-key> <user>@<vm-host> \
+  '"C:\\Users\\<user>\\cua\\libs\\cua-driver-rs\\target\\release\\cua-driver.exe" call launch_app'
 
 # Kill all stale cua-driver procs
-ssh -i ~/.ssh/cua_winvm fbonacci@20.115.29.195 \
+ssh -i ~/.ssh/<ssh-key> <user>@<vm-host> \
   "powershell -Command 'Get-Process cua-driver -EA SilentlyContinue | Stop-Process -Force'"
 
 # Check which sessions exist
-ssh -i ~/.ssh/cua_winvm fbonacci@20.115.29.195 "powershell -Command qwinsta"
+ssh -i ~/.ssh/<ssh-key> <user>@<vm-host> "powershell -Command qwinsta"
 ```

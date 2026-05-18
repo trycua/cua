@@ -161,25 +161,36 @@ impl Tool for ListAppsTool {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
+            // Per-step timings logged via `tracing::debug!` (silent at default
+            // log level — enable with `RUST_LOG=cua_driver=debug` when debugging
+            // a slow list_apps invocation).
+            let t0 = std::time::Instant::now();
             let wins = crate::win32::list_windows(None);
+            tracing::debug!(target: "list_apps", "step 1 list_windows: {} wins ({}ms)", wins.len(), t0.elapsed().as_millis());
             let mut seen_pids = std::collections::HashSet::new();
             let mut running_pids: Vec<u32> = Vec::new();
             for w in &wins {
                 if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
             }
 
+            let t1 = std::time::Instant::now();
             let foreground_pid = unsafe {
                 let fg = GetForegroundWindow();
                 let mut pid = 0u32;
                 let _ = GetWindowThreadProcessId(fg, Some(&mut pid));
                 pid
             };
+            tracing::debug!(target: "list_apps", "step 2 fg-window: pid={} ({}ms)", foreground_pid, t1.elapsed().as_millis());
 
+            let t2 = std::time::Instant::now();
             let procs = crate::win32::list_processes();
+            tracing::debug!(target: "list_apps", "step 3 list_processes: {} procs ({}ms)", procs.len(), t2.elapsed().as_millis());
             let pid_to_name: std::collections::HashMap<u32, String> =
                 procs.iter().map(|p| (p.pid, p.name.clone())).collect();
 
+            let t3 = std::time::Instant::now();
             let installed = crate::win32::list_installed_apps();
+            tracing::debug!(target: "list_apps", "step 4 list_installed_apps: {} installed ({}ms)", installed.len(), t3.elapsed().as_millis());
             // Lowercase-exe-basename → installed-app indices. We match running
             // processes by basename rather than full path because the process
             // table's executable name is `notepad.exe` while the Start-Menu

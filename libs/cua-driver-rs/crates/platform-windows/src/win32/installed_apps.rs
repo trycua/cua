@@ -55,8 +55,14 @@ pub struct InstalledApp {
 /// enumeration, not a guaranteed-complete catalog.
 pub fn list_installed_apps() -> Vec<InstalledApp> {
     let mut out = Vec::new();
-    out.extend(scan_start_menu());
-    out.extend(scan_uwp_packages());
+    let t0 = std::time::Instant::now();
+    let sm = scan_start_menu();
+    tracing::debug!(target: "installed_apps", "scan_start_menu: {} entries ({}ms)", sm.len(), t0.elapsed().as_millis());
+    out.extend(sm);
+    let t1 = std::time::Instant::now();
+    let uwp = scan_uwp_packages();
+    tracing::debug!(target: "installed_apps", "scan_uwp_packages: {} entries ({}ms)", uwp.len(), t1.elapsed().as_millis());
+    out.extend(uwp);
 
     // Dedupe by (kind, bundle_id) — Start Menu may list both a per-user and a
     // machine-wide shortcut for the same .exe target.

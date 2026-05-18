@@ -36,6 +36,7 @@
 use std::sync::{OnceLock, RwLock};
 
 use windows::core::{Interface, GUID, HSTRING, PCWSTR, PWSTR};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, IBindCtx, CLSCTX_LOCAL_SERVER,
     COINIT_APARTMENTTHREADED,
@@ -45,6 +46,7 @@ use windows::Win32::UI::Shell::{
     ApplicationActivationManager, IApplicationActivationManager, IEnumShellItems, IShellItem,
     IShellItem2, SHCreateItemFromParsingName, AO_NONE, BHID_EnumItems, SIGDN_NORMALDISPLAY,
 };
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// `PKEY_AppUserModel_ID` (System.AppUserModel.ID) — the property key whose
 /// string value on each `shell:AppsFolder` entry is the AUMID we need to
@@ -71,6 +73,14 @@ const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
 /// behavior identical to a user-driven Start Menu click — splash screen
 /// shown, error UI shown on failure, default activation kind.
 ///
+/// **Background-launch invariant** — the AppX runtime's default activation
+/// brings the newly-activated app to the foreground (same as a Start Menu
+/// click). cua-driver's contract is the opposite: launched apps must not
+/// steal focus from whatever the human is doing. We snapshot the pre-call
+/// foreground window with `GetForegroundWindow` and restore it after
+/// activation returns. This matches macOS's `NSWorkspace.openApplication`
+/// + `activates=false` + `oapp` AppleEvent invariant.
+///
 /// Errors propagate the `HRESULT` from `ActivateApplication`. The most
 /// common failures:
 /// - `E_INVALIDARG` — AUMID not installed for the current user
@@ -79,6 +89,18 @@ const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
 /// - Any COM-init failure on a thread that has previously been
 ///   initialized with a conflicting apartment model
 pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
+    // Session-0 short-circuit: `IApplicationActivationManager::ActivateApplication`
+    // relies on the per-user AppX runtime that doesn't exist in services /
+    // SSH-launched contexts. Calling it in Session 0 hangs indefinitely
+    // (no CPU, no progress, no error). Fail fast with a clear message so
+    // tools / tests don't time out silently.
+    if matches!(crate::diagnostics::current_session_id(), Some(0)) {
+        return Err(windows::core::Error::new(
+            windows::core::HRESULT(0x80004005u32 as i32), // E_FAIL
+            format!("UWP activation of {aumid:?} requires an interactive session — current process is in Session 0 (services). Re-run from an interactive logon (RDP, console, or scheduled task in the user's session)."),
+        ));
+    }
+
     // Apartment model: AAM is a local-server COM object that historically
     // requires STA on the calling thread. `CoInitializeEx` is idempotent
     // per-thread; its HRESULT is intentionally discarded — if the thread
@@ -93,6 +115,10 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
     let aumid_h = HSTRING::from(aumid);
     let args_h = HSTRING::from(args);
 
+    // Snapshot prior foreground BEFORE activation — that's our restore
+    // target. Captured even if null; the restore step is a no-op then.
+    let prior_foreground = unsafe { GetForegroundWindow() };
+
     let pid = unsafe {
         manager.ActivateApplication(
             PCWSTR(aumid_h.as_ptr()),
@@ -101,7 +127,43 @@ pub fn launch_uwp(aumid: &str, args: &str) -> windows::core::Result<u32> {
         )?
     };
 
+    // Restore the prior foreground window. AppX activation has already
+    // run by this point and may have stolen focus; flip it back so the
+    // human's typing context is preserved. The restore is best-effort —
+    // failures (null prior, target window destroyed, target hung) are
+    // logged at debug level and otherwise swallowed because the launch
+    // itself succeeded and we don't want to fail the tool call on a
+    // focus-restore corner case.
+    restore_foreground_best_effort(prior_foreground);
+
     Ok(pid)
+}
+
+/// Best-effort restore of the foreground window. Run in a tight retry
+/// loop because UWP activations sometimes push their own window to
+/// foreground a few milliseconds AFTER `ActivateApplication` returns —
+/// a single immediate SetForegroundWindow call would race the AppX
+/// runtime and lose. Three attempts spaced 50ms apart covers the window.
+fn restore_foreground_best_effort(prior: HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsWindow, SetForegroundWindow,
+    };
+    if prior.0.is_null() {
+        tracing::debug!(target: "launch_uwp", "no prior foreground to restore");
+        return;
+    }
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        unsafe {
+            if !IsWindow(prior).as_bool() {
+                tracing::debug!(target: "launch_uwp", "prior foreground HWND no longer valid");
+                return;
+            }
+            let _ = SetForegroundWindow(prior);
+        }
+    }
 }
 
 /// Heuristic for "this string looks like an AUMID".
@@ -169,6 +231,21 @@ fn cache() -> &'static RwLock<Option<Vec<AppsFolderEntry>>> {
 /// Returns `None` if no packaged app matches. The caller should fall
 /// back to `ShellExecuteExW` for plain Win32 apps in that case.
 pub fn resolve_aumid_by_name(display_name: &str) -> Option<String> {
+    // Session 0 short-circuit: `shell:AppsFolder` enumeration goes through
+    // the interactive shell broker, which doesn't exist in services /
+    // SSH-launched contexts and causes the underlying COM call to hang
+    // indefinitely (~no CPU, no progress). Returning None here makes the
+    // caller fall through to ShellExecuteExW's PATH-based lookup, which
+    // works fine in Session 0 for any app reachable via PATH (notepad,
+    // calc, regedit, etc.). Packaged-only apps (Windows 11 Notepad) won't
+    // resolve here in Session 0 — explicit `aumid` is the workaround.
+    if matches!(crate::diagnostics::current_session_id(), Some(0)) {
+        tracing::debug!(
+            target: "launch_uwp",
+            "skipping shell:AppsFolder lookup in Session 0 (no interactive shell broker); falling back to ShellExecuteEx PATH lookup"
+        );
+        return None;
+    }
     let entries = load_or_get_cache()?;
     let query = display_name.trim().to_lowercase();
     if query.is_empty() {

@@ -580,6 +580,31 @@ pub fn run_serve_cmd(
         std::process::exit(1);
     }
 
+    // Session-0 warning banner (Windows). The daemon runs fine in services
+    // / SSH contexts for tools that don't touch the desktop, but every
+    // window-driving tool (click, type_text, screenshot, get_window_state,
+    // list_windows, launch_app for UWP) will fail or return empty when
+    // invoked from this daemon. Surfacing this at startup saves users
+    // hours of debugging tools that are working as designed.
+    #[cfg(target_os = "windows")]
+    {
+        if matches!(
+            platform_windows::diagnostics::current_session_id(),
+            Some(0),
+        ) {
+            eprintln!(
+                "WARNING: cua-driver serve is starting in Session 0 (services). \
+                 Window-driving tools — click, type_text, screenshot, \
+                 get_window_state, list_windows, and UWP launches — need an \
+                 attached interactive desktop and will fail or return empty \
+                 here. Re-run from an interactive logon (RDP, console, or a \
+                 scheduled task in the user's session) for the GUI tools to \
+                 function. Non-GUI tools (list_apps for Win32, get_config, \
+                 doctor, etc.) work normally."
+            );
+        }
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

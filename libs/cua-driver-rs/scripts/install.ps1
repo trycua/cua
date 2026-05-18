@@ -465,53 +465,20 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
 
 # ---------- Auto-start Scheduled Task (Windows LaunchAgent equivalent) ---
 
-# Idempotent registration of the cua-driver-serve Scheduled Task.
-#
-# - Trigger: at logon for the current local user.
-# - Principal: LogonType=Interactive so the task lands in the user's
-#   Session 1+ (NOT Session 0); window-driving tools require it.
-# - Settings: AllowStartIfOnBatteries, RestartCount=3 on failure with
-#   1-minute backoff, ExecutionTimeLimit=0 (no time cap; serve is
-#   meant to live for the session).
-# - On workgroup machines USERDOMAIN may be 'WORKGROUP' which won't
-#   resolve as a SAM account; the principal therefore uses
-#   "$COMPUTERNAME\$USERNAME" which is always valid for a local user.
-# - The task is unregistered before re-creation so the helper is
-#   safe to run repeatedly (e.g. on install upgrade).
+# Thin wrapper that delegates to `cua-driver autostart enable`. The binary
+# itself owns the platform-specific registration logic so the install
+# scripts and the runtime stay in lock-step — when the verb's behavior
+# changes, this script picks it up automatically with no edit needed.
 function Register-CuaDriverAutostart {
     param([Parameter(Mandatory = $true)][string]$InstalledBinary)
 
     if (-not (Test-Path -LiteralPath $InstalledBinary)) {
         throw "binary not found at $InstalledBinary"
     }
-
-    $user = "$env:COMPUTERNAME\$env:USERNAME"
-    $action = New-ScheduledTaskAction `
-        -Execute $InstalledBinary `
-        -Argument 'serve' `
-        -WorkingDirectory $env:USERPROFILE
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-    $principal = New-ScheduledTaskPrincipal `
-        -UserId $user `
-        -LogonType Interactive `
-        -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries `
-        -StartWhenAvailable `
-        -RestartCount 3 `
-        -RestartInterval (New-TimeSpan -Minutes 1) `
-        -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-
-    $taskName = 'cua-driver-serve'
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    Register-ScheduledTask `
-        -TaskName $taskName `
-        -Action $action `
-        -Trigger $trigger `
-        -Principal $principal `
-        -Settings $settings `
-        -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
+    & $InstalledBinary autostart enable
+    if ($LASTEXITCODE -ne 0) {
+        throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+    }
 }
 
 # ---------- Concurrent-install lockfile -----------------------------------
@@ -930,17 +897,18 @@ else {
 
 if ($AutoStart) {
     Write-Host ""
-    Write-Host "Registering auto-start Scheduled Task 'cua-driver-serve'..." -ForegroundColor Cyan
+    Write-Host "Registering auto-start (cua-driver autostart enable)..." -ForegroundColor Cyan
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
-        Write-Host "  Registered. cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
-        Write-Host "  Run now without re-logging: schtasks /Run /TN cua-driver-serve"
-        Write-Host "  Remove with:               schtasks /Delete /TN cua-driver-serve /F"
+        Write-Host "  cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
+        Write-Host "  Run now without re-logging:  & `"$installedBinary`" autostart kick"
+        Write-Host "  Inspect:                     & `"$installedBinary`" autostart status"
+        Write-Host "  Remove:                      & `"$installedBinary`" autostart disable"
         Write-Host ""
     }
     catch {
-        Write-Host "  Failed to register Scheduled Task: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or use the manual recipe below."
+        Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or invoke '& `"$installedBinary`" autostart enable' manually."
         Write-Host ""
     }
 }
@@ -949,21 +917,13 @@ else {
 
 Auto-start at logon (Windows equivalent of macOS LaunchAgent):
   Run cua-driver serve automatically every time you sign in (RDP, console, etc.)
-  Re-run this installer with -AutoStart to register the task, OR paste:
 
-    `$exe = '$installedBinary'
-    `$user = "`$env:COMPUTERNAME\`$env:USERNAME"
-    `$action = New-ScheduledTaskAction -Execute `$exe -Argument 'serve' -WorkingDirectory `$env:USERPROFILE
-    `$trigger = New-ScheduledTaskTrigger -AtLogOn -User `$user
-    `$principal = New-ScheduledTaskPrincipal -UserId `$user -LogonType Interactive -RunLevel Limited
-    `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-    Register-ScheduledTask -TaskName 'cua-driver-serve' -Action `$action -Trigger `$trigger -Principal `$principal -Settings `$settings
+  Enable:   & "$installedBinary" autostart enable
+  Run now:  & "$installedBinary" autostart kick
+  Status:   & "$installedBinary" autostart status
+  Remove:   & "$installedBinary" autostart disable
 
-  Then run it now without re-logging:
-    schtasks /Run /TN cua-driver-serve
-
-  Removal:
-    schtasks /Delete /TN cua-driver-serve /F
+  Or re-run this installer with -AutoStart for the same result.
 "@
     Write-Host $autostartHint -ForegroundColor Cyan
 }

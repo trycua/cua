@@ -24,6 +24,7 @@
 //!
 //! On all other platforms `#[tokio::main]` is used directly.
 
+mod autostart;
 mod bundle;
 mod cli;
 mod doctor;
@@ -196,6 +197,10 @@ fn main() {
         cli::Command::Diagnose => {
             let reg = Arc::new(platform_macos::register_tools());
             cli::run_diagnose_cmd(reg);
+            return;
+        }
+        cli::Command::Autostart { subcommand } => {
+            autostart::run_autostart_cmd(&subcommand);
             return;
         }
         cli::Command::Config { subcommand, key, value, socket } => {
@@ -401,6 +406,10 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Diagnose => {
             let reg = Arc::new(build_registry_no_cursor());
             cli::run_diagnose_cmd(reg);
+            return Ok(());
+        }
+        cli::Command::Autostart { subcommand } => {
+            autostart::run_autostart_cmd(&subcommand);
             return Ok(());
         }
         cli::Command::Config { subcommand, key, value, socket } => {

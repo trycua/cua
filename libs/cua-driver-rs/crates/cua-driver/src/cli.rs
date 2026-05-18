@@ -65,6 +65,13 @@ pub enum Command {
     /// after install. Subsequent runs see the `.installation_recorded`
     /// marker file and become no-ops.
     TelemetryInstallEvent,
+    /// `cua-driver autostart {enable|disable|status|kick}` —
+    /// platform-native auto-start so `cua-driver serve` comes up on
+    /// every logon. Windows: Scheduled Task with LogonType=Interactive
+    /// (lands in Session 1+). macOS / Linux: not yet implemented; the
+    /// stub returns a helpful "use install-local.sh --autostart"
+    /// message. See `crates/cua-driver/src/autostart.rs`.
+    Autostart { subcommand: String },
 }
 
 /// Flags whose next token is a value (not a subcommand).
@@ -90,7 +97,13 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose, autostart");
+        println!();
+        println!("autostart options (Windows-only today):");
+        println!("  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.");
+        println!("  cua-driver autostart disable    Remove the autostart entry. No-op if not registered.");
+        println!("  cua-driver autostart status     Print whether the entry is registered + whether the daemon is running.");
+        println!("  cua-driver autostart kick       Start the entry now without re-logging.");
         println!();
         println!("mcp options (macOS):");
         println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
@@ -187,6 +200,17 @@ pub fn parse_command() -> Command {
                     process::exit(64);
                 }
             }
+        }
+        Some("autostart") => {
+            // No `cua-driver autostart` (no subcommand) shortcut today —
+            // every operation is destructive enough that we want the
+            // user to be explicit about which one.
+            let subcommand = pos.next().unwrap_or("").to_string();
+            if subcommand.is_empty() {
+                eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick}}");
+                process::exit(64);
+            }
+            Command::Autostart { subcommand }
         }
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
@@ -1448,6 +1472,13 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Update { .. } => "cua_driver_update".to_owned(),
         Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
+        // Per-subcommand event so dashboards can split enable / disable /
+        // status / kick separately — they have very different meanings
+        // for adoption. `sanitize_tool_name` already does what we want
+        // (lowercase ASCII / underscore-only / max 64 chars / fallback).
+        Command::Autostart { subcommand } => {
+            format!("cua_driver_autostart_{}", sanitize_tool_name(subcommand))
+        }
         Command::TelemetryInstallEvent => return None,
     };
     Some(name)

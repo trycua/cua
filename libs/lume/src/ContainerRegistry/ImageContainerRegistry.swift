@@ -1924,7 +1924,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             Logger.info("Found \(rawDiskPartCount) raw OCI disk parts in cache to reassemble.")
         }
         if let expectedRawDiskParts {
-            let rawPartNumbers = Set(
+            let rawPartNumbers = Swift.Set(
                 diskPartSources.filter { $0.compression == .raw }.map(\.partNumber))
             for partNumber in 1...expectedRawDiskParts where !rawPartNumbers.contains(partNumber) {
                 Logger.error("Missing raw OCI disk part \(partNumber) of \(expectedRawDiskParts).")

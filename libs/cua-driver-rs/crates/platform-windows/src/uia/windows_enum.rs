@@ -14,19 +14,19 @@
 
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-    TreeScope_Children, UIA_InvokePatternId,
+    TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
 };
+use windows::core::Interface;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
-use windows::core::Interface;
 
 use crate::win32::windows::WindowInfo;
 
@@ -133,36 +133,115 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
     }
 }
 
-/// Try to fire UIA `Invoke` on whatever element occupies screen point
-/// `(sx, sy)`. Returns `true` when both `ElementFromPoint` resolved an
-/// element AND that element supported `InvokePattern` AND `Invoke()`
-/// succeeded.
+/// Hit-test screen point `(sx, sy)` against the UIA subtree rooted at
+/// `hwnd` and fire `Invoke` on the deepest descendant whose bounding
+/// rect contains the point AND which supports `InvokePattern`. Returns
+/// `true` iff such an element was found and `Invoke()` succeeded.
 ///
-/// Used by the click tool's `(x, y)` path as the preferred mechanism for
-/// modern XAML / WebView2 / packaged-UWP targets where the inner
-/// interactive surface is composed via DirectComposition (not a child
-/// HWND) and `PostMessage(WM_LBUTTONDOWN)` to the outer HWND silently
-/// no-ops. Falls back to the caller's PostMessage path when this returns
-/// `false`.
-pub fn try_invoke_at_point(sx: i32, sy: i32) -> bool {
+/// Why a windowed walk and not desktop-wide `ElementFromPoint`:
+///
+/// 1. Z-order — if the desktop's topmost element at `(sx, sy)` is some
+///    other window (a terminal, a chrome window covering the target),
+///    `ElementFromPoint` returns *that* element, not anything inside
+///    `hwnd`. The (x, y) caller already knows the intended HWND; we
+///    should trust it.
+///
+/// 2. UWP / packaged-app hosting — `ApplicationFrameHost.exe` is the
+///    outer host process; the actual UWP content lives in a separate
+///    process (e.g. `CalculatorApp.exe`). `ElementFromPoint` has been
+///    observed returning the frame's outer Pane (no `InvokePattern`)
+///    instead of descending into the cross-process child. Rooting the
+///    search at the frame's UIA element and walking with
+///    `TreeScope_Subtree` does cross that boundary.
+///
+/// 3. Vision-mode contract — the agent screenshotted a specific window
+///    and is addressing pixels of that window. We respect that
+///    intent: the click goes to that window's tree, period.
+///
+/// Used by the click tool's `(x, y)` path as the **no-focus-steal**
+/// route for UWP / WebView2 / packaged-app targets, where
+/// `PostMessage(WM_LBUTTONDOWN)` silently no-ops because UWP routes
+/// input through `Windows.UI.Input` rather than the HWND message
+/// queue. Callers fall back to PostMessage when this returns `false`
+/// (e.g. plain Win32 native controls with no UIA InvokePattern at
+/// the hit point, or apps with no useful UIA tree at all).
+///
+/// Implementation: `ElementFromHandle(hwnd)` resolves the root,
+/// `FindAll(TreeScope_Subtree, TrueCondition)` enumerates the
+/// subtree (including the root, so single-element windows are still
+/// hit-testable), and we pick the smallest-area element whose
+/// `CurrentBoundingRectangle` contains the point AND which exposes
+/// `InvokePattern`. Smallest-area approximates "deepest" without
+/// having to track tree depth explicitly.
+pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
     let uia = match get_uia() {
         Some(u) => u,
         None => return false,
     };
     unsafe {
-        let elem: IUIAutomationElement = match uia.ElementFromPoint(POINT { x: sx, y: sy }) {
-            Ok(e) => e,
+        let root = match uia.ElementFromHandle(HWND(hwnd as *mut _)) {
+            Ok(r) => r,
             Err(e) => {
-                tracing::debug!(target: "click", "ElementFromPoint({sx},{sy}) failed: {e}");
+                tracing::debug!(target: "click", "ElementFromHandle(0x{hwnd:x}) failed: {e}");
                 return false;
             }
         };
-        let pattern = match elem.GetCurrentPattern(UIA_InvokePatternId) {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::debug!(target: "click", "element at ({sx},{sy}) does not support InvokePattern");
+        let cond = match uia.CreateTrueCondition() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(target: "click", "CreateTrueCondition failed: {e}");
                 return false;
             }
+        };
+        let arr = match root.FindAll(TreeScope_Subtree, &cond) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::debug!(target: "click", "FindAll(Subtree) on 0x{hwnd:x} failed: {e}");
+                return false;
+            }
+        };
+        let n = arr.Length().unwrap_or(0);
+        let mut best: Option<(IUIAutomationElement, i64)> = None;
+        for i in 0..n {
+            let elem = match arr.GetElement(i) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let rect = match elem.CurrentBoundingRectangle() {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            if sx < rect.left || sx > rect.right || sy < rect.top || sy > rect.bottom {
+                continue;
+            }
+            if elem.GetCurrentPattern(UIA_InvokePatternId).is_err() {
+                continue;
+            }
+            let w = (rect.right - rect.left).max(0) as i64;
+            let h = (rect.bottom - rect.top).max(0) as i64;
+            let area = w.saturating_mul(h);
+            match &best {
+                None => best = Some((elem, area)),
+                Some((_, prev)) if area < *prev => best = Some((elem, area)),
+                _ => {}
+            }
+        }
+        let (winner, _) = match best {
+            Some(b) => b,
+            None => {
+                tracing::debug!(
+                    target: "click",
+                    "no InvokePattern descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
+                );
+                return false;
+            }
+        };
+        let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
+            Ok(p) => p,
+            Err(_) => return false,
         };
         let inv: IUIAutomationInvokePattern = match pattern.cast() {
             Ok(i) => i,
@@ -171,7 +250,7 @@ pub fn try_invoke_at_point(sx: i32, sy: i32) -> bool {
         match inv.Invoke() {
             Ok(()) => true,
             Err(e) => {
-                tracing::debug!(target: "click", "UIA Invoke at ({sx},{sy}) failed: {e}");
+                tracing::debug!(target: "click", "UIA Invoke (windowed) at ({sx},{sy}) failed: {e}");
                 false
             }
         }

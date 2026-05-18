@@ -268,11 +268,44 @@ A healthy interactive logon reports the inverse:
 
 - **Run from RDP or the local console** — the simplest fix; both put your shell in your own interactive session, not Session 0.
 - **Run from a Windows Terminal / PowerShell launched by your logged-in user** — same effect.
-- **Scheduled Task in the user's session** — register a scheduled task with `Run only when user is logged on` checked and the principal set to your logged-in user. Cua Driver launched from that task inherits the user's interactive desktop.
+- **Register a logon Scheduled Task** (recommended, equivalent to macOS LaunchAgent) — see [Auto-start at logon](#auto-start-at-logon-windows) below.
 - **Use a session-launcher utility** — if you must invoke from a service / SSH context, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
 - **Configure your SSH server to spawn inside the interactive session** — possible with most modern Windows SSH server distributions but requires extra setup; the scheduled-task approach is usually simpler.
 
 Run `cua-driver doctor` after switching contexts to confirm the warning has cleared.
+
+#### Auto-start at logon (Windows)
+
+The Windows-native equivalent of macOS's LaunchAgent is a **Scheduled Task triggered at logon, running as your user, with `Run only when user is logged on`** (i.e. `LogonType: Interactive`). Once registered, `cua-driver serve` starts automatically every time you sign in via RDP or the console — no more pasting a startup one-liner.
+
+`install.ps1` prints the exact one-shot registration block on a successful install. To register it manually (substitute your install path if you built from source):
+
+```powershell
+$exe       = "$env:LOCALAPPDATA\Programs\trycua\cua-driver-rs\bin\cua-driver.exe"
+$user      = "$env:COMPUTERNAME\$env:USERNAME"
+$action    = New-ScheduledTaskAction -Execute $exe -Argument 'serve' -WorkingDirectory $env:USERPROFILE
+$trigger   = New-ScheduledTaskTrigger -AtLogOn -User $user
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+                -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger `
+    -Principal $principal -Settings $settings
+```
+
+Useful follow-ups:
+
+```powershell
+schtasks /Run    /TN cua-driver-serve         # start it now without re-logging
+schtasks /Query  /TN cua-driver-serve /V /FO LIST
+schtasks /Delete /TN cua-driver-serve /F      # remove
+```
+
+Notes:
+
+- `LogonType: Interactive` is load-bearing — it pins the task to a Session 1+ logon. The alternative (`S4U` or `Password`) would land you in Session 0 again, undoing the point.
+- `-ExecutionTimeLimit (New-TimeSpan -Hours 0)` means "no time limit"; without it Windows kills the task after 72h by default.
+- Set `CUA_DRIVER_RS_TELEMETRY_ENABLED=0` in your User environment if you want to disable telemetry persistently: `[Environment]::SetEnvironmentVariable('CUA_DRIVER_RS_TELEMETRY_ENABLED', '0', 'User')`.
 
 ## Grant TCC permissions
 

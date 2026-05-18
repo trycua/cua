@@ -868,6 +868,29 @@ else {
     Write-Host ""
 }
 
+$autostartHint = @"
+
+Auto-start at logon (Windows equivalent of macOS LaunchAgent):
+  Run cua-driver serve automatically every time you sign in (RDP, console, etc.)
+  Register the Scheduled Task once (copy-paste in PowerShell):
+
+    `$exe = '$installedBinary'
+    `$user = "`$env:COMPUTERNAME\`$env:USERNAME"
+    `$action = New-ScheduledTaskAction -Execute `$exe -Argument 'serve' -WorkingDirectory `$env:USERPROFILE
+    `$trigger = New-ScheduledTaskTrigger -AtLogOn -User `$user
+    `$principal = New-ScheduledTaskPrincipal -UserId `$user -LogonType Interactive -RunLevel Limited
+    `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+    Register-ScheduledTask -TaskName 'cua-driver-serve' -Action `$action -Trigger `$trigger -Principal `$principal -Settings `$settings
+
+  Then run it now without re-logging:
+    schtasks /Run /TN cua-driver-serve
+
+  Removal:
+    schtasks /Delete /TN cua-driver-serve /F
+"@
+Write-Host $autostartHint -ForegroundColor Cyan
+
+
 Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
 Write-Host ""
 Write-Host "WARNING — BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow

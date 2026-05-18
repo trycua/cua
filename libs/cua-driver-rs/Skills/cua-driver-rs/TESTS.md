@@ -1,5 +1,12 @@
 # Natural-language tests for `cua-driver`
 
+> **Platform: macOS-focused.** The prompts and success criteria below
+> reference AppKit, `NSWorkspace.frontmostApplication`, macOS keyboard
+> modifiers (`cmd`), and macOS-only apps (Finder, Numbers, TextEdit,
+> Calculator.app). Run these on macOS only. Windows / Linux test
+> matrices live in their respective platform docs (see `WINDOWS.md`'s
+> "Common failure modes" section and `LINUX.md`'s "Quick triage").
+
 Prompts you can copy-paste into Claude Code to exercise the skill
 end-to-end. Each one has an explicit success criterion you can verify.
 

@@ -1,5 +1,12 @@
 # Recording & replaying trajectories
 
+> **Platform: macOS-only today.** Trajectory recording / replay is
+> currently implemented on the macOS backend only. On Windows, `cua-driver
+> recording {start,stop,status}` is registered but returns "Recording is
+> currently macOS-only". On Linux (BETA): not supported. See `WINDOWS.md`
+> / `LINUX.md` for capture-state alternatives via `screenshot` and
+> `get_window_state`.
+
 Session-scoped capture of action sequences + pre/post state, suitable
 for demos, regression diffs, and training data. Invoked only when the
 user explicitly asks to record — the skill does not auto-enable this.

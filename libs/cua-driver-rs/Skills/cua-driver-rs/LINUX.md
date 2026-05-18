@@ -15,10 +15,13 @@ behaviors that the macOS / Windows skills consider table-stakes are
   per-pid event routing equivalent of macOS `CGEventPostToPSN` or
   Windows `PostMessage(WM_LBUTTONDOWN)`. `XTestFakeKeyEvent` /
   `XTestFakeButtonEvent` synthesize input but route to the focused
-  window — same focus-steal characteristics as Windows `SendInput`.
-  AT-SPI `accDoDefaultAction` works for accessible elements but
-  requires the user's accessibility bus to be running, which is not
-  the default on every distro.
+  window — similar focus-stealing behavior to Windows `SendInput`,
+  which the Windows backend avoids by using `PostMessage` instead.
+  Linux has no equivalent per-window-message channel that bypasses
+  focus, which is why XTest's focus-stealing is the binding
+  limitation here. AT-SPI `accDoDefaultAction` works for accessible
+  elements but requires the user's accessibility bus to be running,
+  which is not the default on every distro.
 - **Wayland support**: depends on compositor. Under GNOME-Mutter and
   KDE-KWin with `org.freedesktop.portal.RemoteDesktop` enabled, some
   click and key paths work. Under most other compositors, input

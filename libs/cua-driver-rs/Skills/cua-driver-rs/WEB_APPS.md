@@ -1,5 +1,11 @@
 # Driving web-rendered apps
 
+> **Platform: macOS-only.** This doc covers AX-tree quirks, AppleScript
+> JavaScript bridges, and Chromium / WebKit / Electron / Tauri patterns
+> on macOS. For Windows web-app automation (Edge, Chrome with
+> PostMessage / WebView2), see `WINDOWS.md` → "Web apps on Windows". For
+> Linux: `LINUX.md` (BETA — limited browser automation today).
+
 Covers apps whose UI is rendered in a web runtime inside a native
 macOS shell:
 

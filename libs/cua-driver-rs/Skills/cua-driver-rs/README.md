@@ -23,20 +23,29 @@ platform: no focus steal, no cursor warp.
 
 - The snapshot-before-AND-after invariant that keeps the agent honest
   about whether an action actually landed.
-- The backgrounded-click recipe (yabai focus-without-raise + stamped
-  SLEventPostToPid) that lets synthetic clicks land on Chrome web
-  content without raising the window or pulling the user across Spaces.
-- Web-app quirks (`WEB_APPS.md`) — Chromium/WebKit/Electron/Tauri,
-  including the minimized-Chrome keyboard-commit caveat and the
-  `set_value` workaround.
+- The backgrounded-click recipe that lets synthetic clicks land on
+  web content without raising the window or pulling the user across
+  virtual desktops. Per-platform mechanisms:
+  - **macOS**: yabai focus-without-raise + stamped `SLEventPostToPid`.
+  - **Windows**: layered UIA `Invoke` + `PostMessage` fallback, both
+    z-order-independent and focus-steal-free.
+  - **Linux** (BETA): AT-SPI `accDoDefaultAction` when available;
+    XTest as a focus-stealing last resort.
+- Web-app quirks — macOS specifics in `WEB_APPS.md` (Chromium / WebKit
+  / Electron / Tauri, minimized-Chrome keyboard-commit caveat,
+  `set_value` workaround). Windows web-apps coverage lives in
+  `WINDOWS.md`'s "Web apps on Windows" section.
 - Trajectory recording (`RECORDING.md`) — optional per-session
-  recording + replay for demos and regressions.
+  recording + replay for demos and regressions. macOS-only today.
 - Canvas/viewport apps (Blender, Unity, GHOST, Qt, wxWidgets) —
-  HID-tap fallback when AX is empty.
+  fallback paths when the AX/UIA/AT-SPI tree is empty.
 
-See `SKILL.md` for the main body.
+See `SKILL.md` for the main body and platform-specific carve-outs for
+forbidden-list / launch / click details.
 
 ## Prerequisites
+
+### macOS
 
 1. **macOS 14 or newer** — the driver depends on SkyLight private SPIs
    that were stabilized in Sonoma.
@@ -62,39 +71,71 @@ See `SKILL.md` for the main body.
    relevant panes of System Settings after first use; toggle it on
    there.
 
+### Windows
+
+1. **Windows 10/11** (any edition with PowerShell 5.1+).
+2. **`cua-driver` CLI (Rust port `cua-driver-rs`)** — one-liner:
+   ```powershell
+   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+   ```
+   No TCC equivalent; no UAC elevation required for the default
+   per-user install. See `WINDOWS.md` for Session 0 vs Session 1+
+   caveats — the daemon MUST run in an interactive session, not via
+   SSH-into-Windows.
+3. **Verify** with `cua-driver doctor`.
+
+### Linux
+
+**Status: BETA.** Limited feature parity — see `LINUX.md` for what
+works today. Install:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+```
+
 ## Install
 
-The skill is two drop-in directories.
+The skill is a drop-in directory. Same shape on every platform.
 
 **Personal scope** (all Claude Code sessions on your machine):
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -R Skills/cua-driver ~/.claude/skills/
+cp -R libs/cua-driver-rs/Skills/cua-driver-rs ~/.claude/skills/
 ```
 
 Or symlink if you want edits-in-place:
 
 ```bash
-ln -s "$PWD/Skills/cua-driver" ~/.claude/skills/cua-driver
+ln -s "$PWD/libs/cua-driver-rs/Skills/cua-driver-rs" ~/.claude/skills/cua-driver-rs
 ```
 
 **Project scope** (committed alongside a specific repo):
 
 ```bash
 mkdir -p .claude/skills
-cp -R /path/to/cua/libs/cua-driver/Skills/cua-driver .claude/skills/
+cp -R /path/to/cua/libs/cua-driver-rs/Skills/cua-driver-rs .claude/skills/
 ```
+
+Or run the verb that does this automatically + fetches the matching
+release version from GitHub:
+
+```bash
+cua-driver skills install
+```
+
+See `cua-driver skills --help` for the full subcommand list
+(`install` / `update` / `uninstall` / `status` / `path`).
 
 ## Invoking the skill
 
-Claude Code auto-invokes the skill when you ask for macOS GUI
-automation — e.g. "open the Downloads folder in Finder", "click the
-Save button in Numbers", "navigate to trycua.com in Chrome". You can
-also invoke it explicitly:
+Claude Code auto-invokes the skill when you ask for GUI automation —
+e.g. "open the Downloads folder in Finder", "click the Save button in
+Numbers", "open Calculator and compute 17×23", "navigate to
+trycua.com in Edge". You can also invoke it explicitly:
 
 ```
-/cua-driver
+/cua-driver-rs
 ```
 
 ## Claude Code MCP compatibility mode
@@ -149,9 +190,13 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
 The skill evolves alongside the driver. To update:
 
 ```bash
+# Easiest — fetch from the matching release tag on GitHub:
+cua-driver skills update
+
+# Or, from a clone of trycua/cua:
 cd /path/to/cua && git pull
 # if you copied: re-copy
-cp -R libs/cua-driver/Skills/cua-driver ~/.claude/skills/
+cp -R libs/cua-driver-rs/Skills/cua-driver-rs ~/.claude/skills/
 # if you symlinked: nothing needed
 ```
 

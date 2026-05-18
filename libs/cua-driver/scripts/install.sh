@@ -14,7 +14,7 @@
 #                        shell rc when ~/.local/bin is missing from PATH
 #   --experimental-rust  opt into the experimental cua-driver-rs (Rust port)
 #                        backend instead of the Swift binary. Delegates to
-#                        libs/cua-driver-rs/scripts/install.sh — see that
+#                        libs/cua-driver/scripts/_install-rust.sh — see that
 #                        script for backend-specific env vars. Installs to a
 #                        separate bundle (CuaDriverRs.app) so the Swift
 #                        binary is left untouched. Also accepted as
@@ -37,11 +37,13 @@ APP_DEST="/Applications/$APP_NAME"
 BIN_DIR="${CUA_DRIVER_BIN_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CUA_DRIVER_NO_MODIFY_PATH:-0}"
 
-# Rust-backend delegation target. Kept in sync with the canonical path on
-# main; --experimental-rust below either execs the on-disk copy (when this
-# script runs from a checked-out tree) or curls this URL and pipes it to
-# bash (the `curl ... | bash` install path).
-RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh"
+# Rust-backend delegation target. The Rust install logic is a private
+# helper script colocated with this one — _install-rust.sh — so that
+# this directory holds the single user-facing install.sh per platform.
+# `--experimental-rust` below either execs the on-disk helper (dev /
+# checked-out-tree case) or curls this URL and pipes it to bash
+# (`curl ... | bash` install case).
+RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-rust.sh"
 
 # Lightweight flag parsing (avoid getopt; macOS getopt is GNU-incompatible).
 #
@@ -108,7 +110,7 @@ fi
 # --- Optional delegation to the experimental Rust backend ---------------
 #
 # If the user opted in with --experimental-rust / --backend=rust, hand the
-# rest of argv to cua-driver-rs/scripts/install.sh and exit. The Swift
+# rest of argv to _install-rust.sh and exit. The Swift
 # install path below is never touched in this case, so the Swift binary
 # (if present) is left exactly as-is — users can roll back by deleting
 # /Applications/CuaDriverRs.app and re-running this script without the flag.
@@ -128,9 +130,19 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     LOCAL_RUST_INSTALLER=""
     if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
         SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-        CANDIDATE="$SCRIPT_DIR/../../cua-driver-rs/scripts/install.sh"
+        # New canonical location — colocated helper under cua-driver/scripts/.
+        CANDIDATE="$SCRIPT_DIR/_install-rust.sh"
         if [[ -f "$CANDIDATE" ]]; then
             LOCAL_RUST_INSTALLER="$CANDIDATE"
+        else
+            # Backward-compat: if someone is running this script from a
+            # tree where the helper hasn't been moved yet (e.g. a
+            # historical checkout being used with a freshly-pulled
+            # install.sh), fall through to the cua-driver-rs location.
+            CANDIDATE="$SCRIPT_DIR/../../cua-driver-rs/scripts/install.sh"
+            if [[ -f "$CANDIDATE" ]]; then
+                LOCAL_RUST_INSTALLER="$CANDIDATE"
+            fi
         fi
     fi
 

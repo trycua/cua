@@ -90,8 +90,11 @@ forbidden-list / launch / click details.
 works today. Install:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
+
+(On Linux the canonical installer auto-detects the non-macOS host and
+installs the Rust port — no flag needed.)
 
 ## Install
 

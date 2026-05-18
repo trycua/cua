@@ -386,11 +386,15 @@ jobs:
         run: |
           # GNU sed (ubuntu-latest). The Swift CD workflow runs on
           # macos-15 and uses the BSD form (`sed -i ''`).
+          # The Rust install logic now lives at
+          # libs/cua-driver/scripts/_install-rust.sh (a private helper
+          # invoked by libs/cua-driver/scripts/install.sh on
+          # --backend=rust / non-macOS auto-detect).
           sed -i \
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.sh
+            libs/cua-driver/scripts/_install-rust.sh
 
-          # install.ps1 now lives at the canonical Swift install dir;
+          # install.ps1 lives at the canonical Swift install dir;
           # PowerShell line starts with `$Script:` — escape the `$` for
           # sed's BRE so it matches the literal dollar sign.
           sed -i \
@@ -398,7 +402,7 @@ jobs:
             libs/cua-driver/scripts/install.ps1
 
           echo "Baked version ${VERSION} into working-tree install scripts:"
-          grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver-rs/scripts/install.sh
+          grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver/scripts/_install-rust.sh
           grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver/scripts/install.ps1
 
       - name: Stage release files
@@ -417,14 +421,17 @@ jobs:
           # The freshly-baked scripts (rewritten in the prior step) are
           # what gets copied here, so the per-tag release assets carry the
           # current version's baked default — not the previous version's.
-          # Note: install.ps1 now lives at libs/cua-driver/scripts/install.ps1
-          # (canonical location for both Swift + Rust user-facing installers).
-          # install.sh stays under libs/cua-driver-rs/scripts/ for now —
-          # libs/cua-driver/scripts/install.sh is the Swift driver's installer
-          # that auto-delegates to this one when uname != Darwin or
-          # --experimental-rust is passed.
-          cp libs/cua-driver-rs/scripts/install.sh  release-upload/install.sh
-          cp libs/cua-driver/scripts/install.ps1    release-upload/install.ps1
+          # Both user-facing installers live under libs/cua-driver/scripts/:
+          # install.sh is the Swift driver's installer that
+          # auto-delegates to the Rust _install-rust.sh helper on
+          # --experimental-rust / non-macOS hosts. install.ps1 is the
+          # canonical Windows installer (Rust port; Swift has no
+          # Windows build). The Rust install logic itself lives at
+          # _install-rust.sh — published as a release asset alongside
+          # the installers so curl|bash flows can fetch it.
+          cp libs/cua-driver/scripts/install.sh        release-upload/install.sh
+          cp libs/cua-driver/scripts/install.ps1       release-upload/install.ps1
+          cp libs/cua-driver/scripts/_install-rust.sh  release-upload/_install-rust.sh
 
           # Skill pack — single platform-agnostic tarball fetched by
           # `cua-driver skills install`. The .md files are identical across
@@ -513,8 +520,13 @@ jobs:
             ### Install (Linux / macOS)
 
             ```bash
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
             ```
+
+            On macOS the installer defaults to the Swift driver; pass
+            `--experimental-rust` to get the cua-driver-rs Rust port.
+            On Linux it auto-detects the non-macOS host and installs
+            the Rust port directly.
 
             ### Install (Windows)
 
@@ -522,9 +534,9 @@ jobs:
             irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
             ```
 
-            > Note: the canonical Windows installer moved from
-            > `libs/cua-driver-rs/scripts/install.ps1` to
-            > `libs/cua-driver/scripts/install.ps1`. The old URL still works via a
+            > Note: both canonical installer URLs now live under
+            > `libs/cua-driver/scripts/`. Old URLs at
+            > `libs/cua-driver-rs/scripts/install.{sh,ps1}` still work via a
             > deprecation shim that fetches the canonical script.
 
             The installer auto-detects host architecture (x86_64 / arm64) and uses
@@ -601,11 +613,14 @@ jobs:
           # syntax (`sed -i` with no empty-string arg) — the Swift CD
           # workflow's bake step runs on macos-15 and uses the BSD form
           # (`sed -i ''`).
+          # Rust install logic lives at libs/cua-driver/scripts/_install-rust.sh
+          # (private helper invoked by the canonical libs/cua-driver/scripts/install.sh
+          # on --backend=rust / non-macOS auto-detect).
           sed -i \
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.sh
+            libs/cua-driver/scripts/_install-rust.sh
 
-          # install.ps1 now lives at libs/cua-driver/scripts/install.ps1
+          # install.ps1 lives at libs/cua-driver/scripts/install.ps1
           # (canonical Windows entry point). The PowerShell line starts
           # with `$Script:` — escape the `$` for sed's BRE so it matches
           # the literal dollar sign.
@@ -615,6 +630,6 @@ jobs:
 
           git config user.name  "trycua-release[bot]"
           git config user.email "trycua-release[bot]@users.noreply.github.com"
-          git add libs/cua-driver-rs/scripts/install.sh libs/cua-driver/scripts/install.ps1
+          git add libs/cua-driver/scripts/_install-rust.sh libs/cua-driver/scripts/install.ps1
           git commit -m "chore(cua-driver-rs): bake version ${VERSION} into install scripts [skip ci]"
           git push origin bake-version:main

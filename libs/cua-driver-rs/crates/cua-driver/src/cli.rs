@@ -896,14 +896,14 @@ pub fn run_update_cmd(apply: bool) {
                 println!("  cua-driver update --apply");
                 println!();
                 println!("Or reinstall directly:");
-                println!("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh | bash");
+                println!("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash");
                 return;
             }
 
             println!("Downloading and installing cua-driver {v}…");
             let status = std::process::Command::new("bash")
                 .arg("-c")
-                .arg("curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh | bash")
+                .arg("curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash")
                 .status();
             match status {
                 Ok(s) if s.success() => {}

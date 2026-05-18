@@ -557,6 +557,10 @@ One canonical uninstall URL per platform mirrors the install side. Flag handling
 </Callout>
 
 <Callout type="info">
+**The uninstall scripts stop running `cua-driver` processes before removing the binary.** Unix (and Windows) keep `mmap`'d binary pages alive in open processes, so `rm -rf /Applications/CuaDriver.app` while the daemon is running leaves a zombie executing from a now-deleted path — its next AX request will cite the deleted path in macOS authorization dialogs. The scripts run `cua-driver stop` first (clean shutdown via the daemon's Unix socket), then `pkill -f "cua-driver mcp"` / `pkill -f "cua-driver serve"` (macOS / Linux) or `Stop-Process` (Windows) as a belt-and-suspenders cleanup.
+</Callout>
+
+<Callout type="info">
 **TCC grants persist on macOS** (Accessibility + Screen Recording). The uninstaller leaves them in **System Settings → Privacy & Security** so a re-install doesn't have to re-prompt. To reset them explicitly:
 
 ```bash

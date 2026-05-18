@@ -86,6 +86,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --- Auto-delegate to Rust on non-macOS ---------------------------------
+#
+# The Swift binary is macOS-only. On Linux (and anywhere else this script
+# happens to run that has `bash` + `curl`), there is no Swift install
+# path to fall through to — the canonical install becomes cua-driver-rs.
+# Auto-set USE_RUST_BACKEND=1 so a single canonical URL works on every
+# platform: `curl … cua-driver/scripts/install.sh | bash` gives macOS
+# users the Swift driver (today's default) and Linux users the Rust
+# port. macOS users who want the Rust port still pass `--experimental-rust`
+# / `--backend=rust` explicitly.
+AUTO_RUST=0
+if [[ "$USE_RUST_BACKEND" == "0" && "$(uname -s 2>/dev/null)" != "Darwin" ]]; then
+    USE_RUST_BACKEND=1
+    AUTO_RUST=1
+    printf 'note: detected non-macOS host (%s); auto-selecting the cua-driver-rs Rust backend.\n' \
+        "$(uname -s 2>/dev/null || echo unknown)" >&2
+    printf '      Pass --backend=swift to force the Swift install path (will fail on non-Darwin).\n' >&2
+fi
+
 # --- Optional delegation to the experimental Rust backend ---------------
 #
 # If the user opted in with --experimental-rust / --backend=rust, hand the
@@ -94,7 +113,14 @@ done
 # (if present) is left exactly as-is — users can roll back by deleting
 # /Applications/CuaDriverRs.app and re-running this script without the flag.
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
-    printf 'note: installing experimental Rust backend (cua-driver-rs). The Swift binary won'"'"'t be touched.\n' >&2
+    if [[ "$AUTO_RUST" == "0" ]]; then
+        # Explicit opt-in on macOS — flag the "experimental" framing.
+        printf 'note: installing experimental Rust backend (cua-driver-rs). The Swift binary won'"'"'t be touched.\n' >&2
+    else
+        # Auto-selected on Linux/other — drop the "experimental" qualifier
+        # (Rust is the canonical install path on every non-macOS platform).
+        printf 'note: installing cua-driver-rs (the Rust port — canonical on non-macOS).\n' >&2
+    fi
 
     # Prefer the on-disk copy when this script is running from a checked-out
     # tree (dev / CI). Falls back to curling the canonical URL for the

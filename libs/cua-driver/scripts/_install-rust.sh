@@ -89,12 +89,13 @@ KEEP_VERSIONS_DEFAULT=5
 KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 
 # macOS-only: name and install location of the .app bundle that wraps
-# the bare binary so the TCC auto-relaunch path in `cua-driver-rs mcp`
-# has a stable bundle id (com.trycua.cuadriver) to attribute the
-# daemon to. See libs/cua-driver-rs/scripts/CuaDriver.app/Contents/
-# Info.plist and the matching docs on `cua-driver-rs mcp`'s auto-
-# relaunch behavior. Distinct from the Swift driver's CuaDriver.app
-# (com.trycua.driver) so the two installs coexist on the same machine.
+# the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
+# a stable bundle id (com.trycua.driver) to attribute the daemon to.
+# See libs/cua-driver-rs/scripts/CuaDriver.app/Contents/Info.plist and
+# the matching docs on `cua-driver mcp`'s auto-relaunch behavior.
+# Identical to the Swift driver's CuaDriver.app + com.trycua.driver
+# pair — the Rust port replaces the Swift install at this path,
+# preserving TCC grants (they're keyed on bundle id, which we share).
 APP_NAME="CuaDriver.app"
 APP_DEST="/Applications/$APP_NAME"
 
@@ -425,7 +426,7 @@ VERSION="${TAG#${TAG_PREFIX}}"
 #   The directory layout includes `CuaDriver.app/` alongside the bare
 #   binary, which we need to install into /Applications so the TCC
 #   auto-relaunch path in `cua-driver-rs mcp` can resolve
-#   `com.trycua.cuadriver` via `open -n -g -a CuaDriver`. The
+#   `com.trycua.driver` via `open -n -g -a CuaDriver`. The
 #   directory variant carries the same universal binary as the
 #   bare-binary tarball, so users on both Apple Silicon and Intel
 #   get a working install from one download.
@@ -480,10 +481,10 @@ mkdir -p "$BIN_DIR"
 # macOS: install the .app to /Applications first, then symlink the
 # bin into the bundle so `~/.local/bin/cua-driver` resolves into
 # `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. The
-# `realpath` walk in `is_executable_inside_cuadriverrs_app()` keys on
+# `realpath` walk in `is_executable_inside_cuadriver_app()` keys on
 # that resolved path to know whether the auto-relaunch heuristic
 # should fire. Same shape as the Swift `cua-driver` install path —
-# different bundle id (com.trycua.cuadriver) so the two coexist.
+# different bundle id (com.trycua.driver) so the two coexist.
 #
 # The macOS path intentionally does NOT use the
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
@@ -517,19 +518,21 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         err "  Without the .app bundle, \`cua-driver-rs mcp\` from an IDE terminal will not auto-relaunch into a TCC-correct daemon."
         exit 1
     fi
-    # Both the Rust port and the legacy Swift driver live at
-    # /Applications/CuaDriver.app today (Rust replaces Swift at this
-    # path, instead of coexisting under CuaDriverRs.app like older
-    # releases did). If a Swift bundle is already there, replacing it
-    # orphans the user's TCC grants attributed to the Swift bundle id
-    # (com.trycua.driver). Detect this and print the cleanup
-    # instructions so the user can clear stale grants in System
-    # Settings.
+    # The Rust port and the legacy Swift driver both live at
+    # /Applications/CuaDriver.app with bundle id `com.trycua.driver` —
+    # bundle-id-identical so TCC grants survive the upgrade. When we
+    # detect a prior Swift bundle at the install path we log it for
+    # transparency, but no `tccutil reset` is needed; grants transfer
+    # automatically because they're keyed on bundle id. macOS may
+    # surface a one-time re-prompt on first action because the cdhash
+    # of the new binary doesn't match the old one — that's a TCC
+    # cdhash-pairing detail, not a grant loss.
     REPLACED_SWIFT=0
     if [[ -e "$APP_DEST" ]]; then
         PREV_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
-        if [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]; then
-            log "replacing existing Swift cua-driver at $APP_DEST (bundle id $PREV_BUNDLE_ID)"
+        PREV_BUNDLE_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
+        if [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]] && [[ -n "$PREV_BUNDLE_VERSION" ]]; then
+            log "replacing existing cua-driver at $APP_DEST (${PREV_BUNDLE_ID}, version ${PREV_BUNDLE_VERSION})"
             REPLACED_SWIFT=1
         elif [[ -n "$PREV_BUNDLE_ID" ]]; then
             log "replacing existing $APP_DEST (bundle id $PREV_BUNDLE_ID)"
@@ -650,15 +653,12 @@ echo "cua-driver-rs $VERSION installed."
 echo ""
 
 if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
-    echo "Replaced the Swift cua-driver bundle that was previously at this path."
-    echo "Your prior TCC grants for the Swift bundle (com.trycua.driver) are now"
-    echo "orphaned and unused. Clear them with:"
-    echo "  tccutil reset Accessibility com.trycua.driver"
-    echo "  tccutil reset ScreenCapture com.trycua.driver"
-    echo ""
-    echo "Re-grant Accessibility + Screen Recording to the new bundle"
-    echo "(com.trycua.cuadriver) on first use — macOS will surface the dialog"
-    echo "automatically the first time you run an action that needs them."
+    echo "Upgraded the cua-driver bundle that was previously at $APP_DEST."
+    echo "TCC grants (Accessibility, Screen Recording) are keyed on the bundle id"
+    echo "(com.trycua.driver) — which is preserved — so they transfer to the new"
+    echo "binary automatically. macOS may surface a one-time re-grant prompt on"
+    echo "first action because the new binary's cdhash doesn't match the old"
+    echo "one's; approve once and the grants persist."
     echo ""
 fi
 

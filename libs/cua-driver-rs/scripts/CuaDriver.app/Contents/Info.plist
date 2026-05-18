@@ -4,25 +4,32 @@
     Minimal .app bundle for cua-driver (Rust port).
 
     The Rust port is the canonical cua-driver going forward; this
-    bundle ships at /Applications/CuaDriver.app and is what every new
-    install lands at. Earlier releases of the Rust port shipped under
+    bundle ships at /Applications/CuaDriver.app with bundle id
+    `com.trycua.driver` — the SAME bundle id the Swift cua-driver used.
+    The bundle-id and install-path identity means installing the Rust
+    port over an existing Swift install is a seamless upgrade: TCC
+    grants (Accessibility, Screen Recording) keyed on
+    `com.trycua.driver` transfer to the new binary; LaunchServices
+    discovery via `open -n -g -a CuaDriver` keeps working.
+
+    Earlier releases of the Rust port shipped under
     `/Applications/CuaDriverRs.app` with bundle id
-    `com.trycua.cuadriverrs`; both have been renamed to match the Swift
-    driver's brand because the Rust port is replacing the Swift driver
-    rather than coexisting with it long-term.
+    `com.trycua.cuadriverrs` so the two could coexist on the same
+    machine. That coexistence path has been retired — the Rust port
+    replaces the Swift driver, not parallels it.
 
     Exists so the Rust port can use the same TCC-attribution trick as
     the Swift cua-driver: `open -n -g -a CuaDriver --args serve`
-    relaunches into a process attributed to `com.trycua.cuadriver` (a
+    relaunches into a process attributed to `com.trycua.driver` (a
     stable bundle identifier TCC keys grants against), instead of
     inheriting the calling shell/IDE-terminal's TCC responsibility.
 
-    Bundle id intentionally distinct from the Swift driver's legacy
-    `com.trycua.driver` — installing the Rust port replaces the Swift
-    `.app` at this path, and TCC grants attributed to the Swift bundle
-    id become orphaned (the installer prints the `tccutil reset` line
-    so users can clean them up). Re-grant Accessibility + Screen
-    Recording to the Rust bundle on first use.
+    Note on macOS code-signing: TCC pairs the bundle id with the
+    binary's cdhash. The Rust binary has a different cdhash from the
+    Swift binary, so on first run after the upgrade macOS may surface
+    a one-time re-grant prompt for Accessibility / Screen Recording
+    even though the bundle id is preserved. After that, the grants
+    persist.
 
     LSUIElement=true keeps the bundle headless (no Dock icon, no menu
     bar) so the daemon-spawn path doesn't flash any UI.
@@ -30,7 +37,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.trycua.cuadriver</string>
+    <string>com.trycua.driver</string>
     <key>CFBundleName</key>
     <string>Cua Driver</string>
     <key>CFBundleDisplayName</key>

@@ -1280,7 +1280,7 @@ Swift.
     `CallTool` over the daemon UDS).
 - Rust:
   - `libs/cua-driver-rs/crates/cua-driver/src/bundle.rs` —
-    `is_executable_inside_cuadriverrs_app`,
+    `is_executable_inside_cuadriver_app`,
     `parent_is_not_launchd`, `is_env_truthy`.
   - `libs/cua-driver-rs/crates/cua-driver/src/cli.rs` —
     `should_use_daemon_proxy`, `launch_daemon_and_wait`,
@@ -1288,10 +1288,10 @@ Swift.
   - `libs/cua-driver-rs/crates/cua-driver/src/proxy.rs` —
     `run_proxy` (the stdio loop forwarding `tools/list` and
     `tools/call` through the daemon socket).
-  - `libs/cua-driver-rs/scripts/CuaDriverRs.app/Contents/Info.plist` —
+  - `libs/cua-driver-rs/scripts/CuaDriver.app/Contents/Info.plist` —
     the bundle the auto-relaunch path lands in.
   - `libs/cua-driver-rs/scripts/install.sh` — drops the bundle to
-    `/Applications/CuaDriverRs.app` and symlinks the bin into it.
+    `/Applications/CuaDriver.app` and symlinks the bin into it.
 - Status: implemented on macOS (issue #1525); smoke-tested manually
   before merge.
 
@@ -1299,7 +1299,7 @@ Swift.
 When `cua-driver-rs mcp` is invoked from an IDE terminal (Claude
 Code, Cursor, VS Code, Warp), macOS attributes the spawned process
 to the parent terminal's TCC responsibility chain — *not* to
-`com.trycua.cuadriverrs`. AX probes against the process silently
+`com.trycua.driver`. AX probes against the process silently
 fail because the user granted Accessibility to the bundle, not to
 the IDE terminal. The Swift driver hit the same pathology and fixed
 it in PR #1479; the Rust port hit it on the macOS GA flip path and
@@ -1307,7 +1307,7 @@ fixed it here. See issue #1525 for the full background.
 
 ### Bundle id divergence (intentional)
 Swift `CuaDriver.app` → `com.trycua.driver`.
-Rust `CuaDriverRs.app` → `com.trycua.cuadriverrs`.
+Rust `CuaDriver.app` → `com.trycua.driver`.
 The two bundles coexist on disk and in TCC; a user can grant
 Accessibility + Screen Recording to each independently. The Rust
 port has its own bundle name + identifier so:
@@ -2191,7 +2191,7 @@ post-install GC pass to trim oldest dirs back to a configurable cap.
    `Invoke-OldReleasesGc` (ps1) is invoked only after `current` has
    been retargeted at the new install, so the about-to-be-active
    version is never a deletion candidate.
-4. **macOS path unchanged** — the macOS `/Applications/CuaDriverRs.app`
+4. **macOS path unchanged** — the macOS `/Applications/CuaDriver.app`
    install is an in-place replacement (no per-version directory
    accumulation), so the GC pass is a no-op there by construction
    (the Darwin branch never enters the versioned-dirs install path).

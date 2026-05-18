@@ -41,7 +41,7 @@ The install runs **without sudo**: `/Applications` is user-writable on personal 
 
 The flag delegates to [`libs/cua-driver/scripts/_install-rust.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/_install-rust.sh) (a private helper colocated with the canonical `install.sh`), which:
 
-- Installs `CuaDriver.app` to `/Applications/` — separate bundle id (`com.trycua.cuadriver`) from the Swift driver's `com.trycua.driver`. Both can coexist on the same machine with independent TCC grants and independent telemetry IDs.
+- Installs `CuaDriver.app` to `/Applications/` — separate bundle id (`com.trycua.driver`) from the Swift driver's `com.trycua.driver`. Both can coexist on the same machine with independent TCC grants and independent telemetry IDs.
 - Points `~/.local/bin/cua-driver` at the Rust binary. The Swift `CuaDriver.app` (if previously installed) is left untouched and still launchable via its bundle path (`/Applications/CuaDriver.app/Contents/MacOS/cua-driver`).
 - Same `--bin-dir` / `--no-modify-path` flags as the Swift installer — anything you put after `--experimental-rust` is forwarded to the Rust installer verbatim.
 

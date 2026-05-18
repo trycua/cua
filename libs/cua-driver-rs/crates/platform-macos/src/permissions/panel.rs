@@ -140,6 +140,57 @@ pub fn show_modal(opts: PanelOpts) -> PanelOutcome {
     unsafe { show_modal_unsafe(&opts) }
 }
 
+/// Block the current (main) thread for `seconds` while letting the
+/// AppKit run loop process events.
+///
+/// The terminal-flow gate (`gate::wait_for_grants`) used to use
+/// `std::thread::sleep` between TCC probes. That works on every other
+/// platform but on macOS it starves the AppKit run loop, which is
+/// where `AXIsProcessTrusted()`'s per-process trust cache gets
+/// invalidated when tccd posts notifications about grant changes.
+/// Net effect: a daemon that called `AXIsProcessTrusted()` once at
+/// startup and got `false` would keep getting `false` forever even
+/// after the user granted accessibility in System Settings — the
+/// poll loop never saw the grant flip.
+///
+/// Pumping the run loop here (instead of `nanosleep`) gives AppKit a
+/// chance to handle the TCC change-notification XPC message, which
+/// invalidates the trust cache. The next iteration's
+/// `AXIsProcessTrusted()` call then sees the fresh truth.
+///
+/// Falls back to `thread::sleep` if anything in the AppKit setup
+/// looks off (not main thread, NSRunLoop class unavailable) so this
+/// function is safe to call from any context — it just degrades to
+/// the old behaviour in those cases.
+pub fn pump_run_loop_briefly(seconds: f64) {
+    if MainThreadMarker::new().is_none() {
+        // Not the main thread — pumping someone else's run loop is
+        // wrong. Just sleep.
+        std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
+        return;
+    }
+    unsafe {
+        let run_loop: *mut AnyObject =
+            msg_send![class!(NSRunLoop), currentRunLoop];
+        if run_loop.is_null() {
+            std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
+            return;
+        }
+        // `[NSDate dateWithTimeIntervalSinceNow:seconds]` builds the
+        // deadline. `[NSRunLoop runMode:beforeDate:]` blocks up to
+        // that deadline while dispatching pending input sources +
+        // timers — including TCC notification taps.
+        let date: *mut AnyObject =
+            msg_send![class!(NSDate), dateWithTimeIntervalSinceNow: seconds];
+        if date.is_null() {
+            std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
+            return;
+        }
+        let default_mode = ns_string("NSDefaultRunLoopMode");
+        let _: bool = msg_send![run_loop, runMode: default_mode beforeDate: date];
+    }
+}
+
 // ── Implementation ──────────────────────────────────────────────────────
 
 fn env_on(key: &str) -> bool {

@@ -341,10 +341,28 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
 ///
 /// Exposed separately from [`run_if_needed`] for callers that want to
 /// drive the wait phase manually (e.g. tests that pre-skip the banner).
+///
+/// macOS quirk: `AXIsProcessTrusted()` and `CGPreflightScreenCaptureAccess()`
+/// cache their results per-process. The cache survives both
+/// `tccutil reset` and live `System Settings` toggle flips — once a
+/// process has seen `false`, polling will keep returning `false`
+/// forever for that process even after the user grants the permission.
+///
+/// Pumping the AppKit run loop (which we tried first) does not flush
+/// the cache. The only reliable fix is to **re-execute the binary**
+/// (`execvp` the current image with the same argv): the new process
+/// image gets a fresh TCC client and re-queries tccd cleanly.
+///
+/// Strategy: after every `EXEC_AFTER_POLLS` polls without progress,
+/// we exec ourselves. Light enough (process start is fast) that this
+/// is invisible to the user — they just see a "rechecking" status
+/// line. If the grant has been given the new process picks it up
+/// instantly; otherwise it falls back into the same wait loop.
 pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
     let start = Instant::now();
     let mut last_status_print = start;
     let mut last_missing: Vec<MissingPermission> = check_required_permissions();
+    let mut polls_without_change: u32 = 0;
 
     loop {
         if last_missing.is_empty() {
@@ -363,6 +381,28 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             }
         }
 
+        // On macOS, when polling has gone several iterations without
+        // any change, re-exec the binary to invalidate the per-process
+        // TCC cache. See the function-level doc for the rationale.
+        // Threshold of 5 polls (~5s) is tuned to feel snappy without
+        // exec-spinning when the user is mid-grant.
+        #[cfg(target_os = "macos")]
+        {
+            const EXEC_AFTER_POLLS: u32 = 5;
+            if polls_without_change >= EXEC_AFTER_POLLS {
+                println!(
+                    "[cua-driver] rechecking permissions (still missing: {})",
+                    fmt_missing(&last_missing)
+                );
+                let _ = std::io::stdout().flush();
+                reexec_self();
+                // `reexec_self` only returns on failure; if it does,
+                // continue the loop with a reset counter so we don't
+                // spin-exec.
+                polls_without_change = 0;
+            }
+        }
+
         std::thread::sleep(opts.poll_interval);
 
         let new_missing = check_required_permissions();
@@ -378,8 +418,10 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             }
             last_status_print = Instant::now();
             last_missing = new_missing;
+            polls_without_change = 0;
             continue;
         }
+        polls_without_change = polls_without_change.saturating_add(1);
 
         if last_status_print.elapsed() >= opts.status_interval {
             println!(
@@ -391,6 +433,61 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             last_status_print = Instant::now();
         }
     }
+}
+
+/// Replace the current process image with a fresh copy of the same
+/// binary + argv via `execvp(2)`. Used by [`wait_for_grants`] on
+/// macOS to invalidate the per-process TCC trust cache after the
+/// user has granted permissions in System Settings — `AXIsProcessTrusted`
+/// won't see the grant inside the original process otherwise.
+///
+/// `execvp` only returns on failure; on success, control transfers to
+/// the new process image at the C `main` entry and the rest of this
+/// function is never executed. Caller continues if the call fails so
+/// the gate keeps polling rather than aborting hard.
+#[cfg(target_os = "macos")]
+fn reexec_self() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStringExt;
+
+    // Resolve the path to ourselves. `current_exe` returns the actual
+    // binary path (e.g. /Applications/CuaDriver.app/Contents/MacOS/
+    // cua-driver) which is what we want — execvp searches PATH for
+    // bare names, and we don't want a stale `~/.local/bin/cua-driver`
+    // symlink to win.
+    let Ok(exe) = std::env::current_exe() else {
+        eprintln!("[cua-driver] re-exec failed: cannot resolve current_exe");
+        return;
+    };
+    let argv: Vec<CString> = std::env::args_os()
+        .filter_map(|a| CString::new(a.into_vec()).ok())
+        .collect();
+    if argv.is_empty() {
+        eprintln!("[cua-driver] re-exec failed: empty argv");
+        return;
+    }
+
+    // execvp takes a NULL-terminated argv. Build pointers + sentinel.
+    let mut argv_ptrs: Vec<*const libc::c_char> =
+        argv.iter().map(|s| s.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+
+    let exe_c = match CString::new(exe.into_os_string().into_vec()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[cua-driver] re-exec failed: exe path contains NUL ({e})");
+            return;
+        }
+    };
+
+    // execvp returns -1 on failure; on success it does not return.
+    // SAFETY: argv_ptrs is NULL-terminated; exe_c outlives the call.
+    unsafe {
+        libc::execvp(exe_c.as_ptr(), argv_ptrs.as_ptr());
+    }
+    // If we get here the exec failed.
+    let err = std::io::Error::last_os_error();
+    eprintln!("[cua-driver] re-exec failed: {err}");
 }
 
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {

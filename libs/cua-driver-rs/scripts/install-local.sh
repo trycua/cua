@@ -25,8 +25,8 @@
 #       -> ../current/cua-driver
 #
 # macOS layout produced:
-#   /Applications/CuaDriverRs.app/Contents/MacOS/cua-driver  (bundle replaced wholesale)
-#   $HOME/.local/bin/cua-driver -> .../CuaDriverRs.app/Contents/MacOS/cua-driver
+#   /Applications/CuaDriver.app/Contents/MacOS/cua-driver  (bundle replaced wholesale)
+#   $HOME/.local/bin/cua-driver -> .../CuaDriver.app/Contents/MacOS/cua-driver
 #
 # The version string carries `-local-debug` / `-local-release` so it
 # never collides with a real release dir and is trivial to GC.

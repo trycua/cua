@@ -8,7 +8,7 @@
 # See:
 #   - libs/cua-driver-rs/scripts/install.sh   (downloads the binary
 #     from GitHub Releases, copies it into Contents/MacOS, installs
-#     the bundle to /Applications/CuaDriverRs.app, and creates the
+#     the bundle to /Applications/CuaDriver.app, and creates the
 #     ~/.local/bin/cua-driver symlink pointing into the bundle)
 #   - .github/workflows/cd-rust-cua-driver.yml  (bakes the assembled
 #     .app into the darwin release tarball at CD time)

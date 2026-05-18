@@ -90,12 +90,12 @@ KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver-rs mcp`
-# has a stable bundle id (com.trycua.cuadriverrs) to attribute the
-# daemon to. See libs/cua-driver-rs/scripts/CuaDriverRs.app/Contents/
+# has a stable bundle id (com.trycua.cuadriver) to attribute the
+# daemon to. See libs/cua-driver-rs/scripts/CuaDriver.app/Contents/
 # Info.plist and the matching docs on `cua-driver-rs mcp`'s auto-
 # relaunch behavior. Distinct from the Swift driver's CuaDriver.app
 # (com.trycua.driver) so the two installs coexist on the same machine.
-APP_NAME="CuaDriverRs.app"
+APP_NAME="CuaDriver.app"
 APP_DEST="/Applications/$APP_NAME"
 
 while [[ $# -gt 0 ]]; do
@@ -422,10 +422,10 @@ VERSION="${TAG#${TAG_PREFIX}}"
 # Tarball selection:
 #
 # macOS — fetch the directory tarball (cua-driver-rs-vN-darwin-universal.tar.gz).
-#   The directory layout includes `CuaDriverRs.app/` alongside the bare
+#   The directory layout includes `CuaDriver.app/` alongside the bare
 #   binary, which we need to install into /Applications so the TCC
 #   auto-relaunch path in `cua-driver-rs mcp` can resolve
-#   `com.trycua.cuadriverrs` via `open -n -g -a CuaDriverRs`. The
+#   `com.trycua.cuadriver` via `open -n -g -a CuaDriver`. The
 #   directory variant carries the same universal binary as the
 #   bare-binary tarball, so users on both Apple Silicon and Intel
 #   get a working install from one download.
@@ -451,7 +451,7 @@ tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
 #   macOS dir tarball expands to:
 #     cua-driver-rs-${VERSION}-darwin-universal/
 #       ├── cua-driver           (bare universal binary)
-#       ├── CuaDriverRs.app/     (minimal bundle; copy of the same binary
+#       ├── CuaDriver.app/     (minimal bundle; copy of the same binary
 #       │                         lives at Contents/MacOS/cua-driver)
 #       └── LICENSE
 #   Linux bare-binary tarball expands to:
@@ -479,17 +479,17 @@ mkdir -p "$BIN_DIR"
 
 # macOS: install the .app to /Applications first, then symlink the
 # bin into the bundle so `~/.local/bin/cua-driver` resolves into
-# `/Applications/CuaDriverRs.app/Contents/MacOS/cua-driver`. The
+# `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. The
 # `realpath` walk in `is_executable_inside_cuadriverrs_app()` keys on
 # that resolved path to know whether the auto-relaunch heuristic
 # should fire. Same shape as the Swift `cua-driver` install path —
-# different bundle id (com.trycua.cuadriverrs) so the two coexist.
+# different bundle id (com.trycua.cuadriver) so the two coexist.
 #
 # The macOS path intentionally does NOT use the
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
-# Linux. Reason: /Applications/CuaDriverRs.app placement is the
+# Linux. Reason: /Applications/CuaDriver.app placement is the
 # anchor for both TCC attribution (cdhash + bundle id) and
-# LaunchServices' `open -a CuaDriverRs` discovery — symlinking the
+# LaunchServices' `open -a CuaDriver` discovery — symlinking the
 # .app from /Applications to a versioned dir under $HOME_DIR breaks
 # both. The asymmetry is deliberate; rollback on macOS = reinstall
 # an older release tag.
@@ -506,7 +506,7 @@ mkdir -p "$BIN_DIR"
 if [[ "$OS" == "Darwin" ]]; then
     if [[ -z "${SRC_APP:-}" || ! -d "$SRC_APP" ]]; then
         err "macOS install requires the .app bundle (SRC_APP not found at ${SRC_APP:-<unset>})"
-        err "  This usually means the downloaded tarball is missing CuaDriverRs.app — re-run the installer or"
+        err "  This usually means the downloaded tarball is missing CuaDriver.app — re-run the installer or"
         err "  pin a known-good release via CUA_DRIVER_RS_VERSION=<version>."
         exit 1
     fi
@@ -517,8 +517,25 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         err "  Without the .app bundle, \`cua-driver-rs mcp\` from an IDE terminal will not auto-relaunch into a TCC-correct daemon."
         exit 1
     fi
+    # Both the Rust port and the legacy Swift driver live at
+    # /Applications/CuaDriver.app today (Rust replaces Swift at this
+    # path, instead of coexisting under CuaDriverRs.app like older
+    # releases did). If a Swift bundle is already there, replacing it
+    # orphans the user's TCC grants attributed to the Swift bundle id
+    # (com.trycua.driver). Detect this and print the cleanup
+    # instructions so the user can clear stale grants in System
+    # Settings.
+    REPLACED_SWIFT=0
     if [[ -e "$APP_DEST" ]]; then
-        log "removing existing $APP_DEST"
+        PREV_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_DEST/Contents/Info.plist" 2>/dev/null || true)
+        if [[ "$PREV_BUNDLE_ID" == "com.trycua.driver" ]]; then
+            log "replacing existing Swift cua-driver at $APP_DEST (bundle id $PREV_BUNDLE_ID)"
+            REPLACED_SWIFT=1
+        elif [[ -n "$PREV_BUNDLE_ID" ]]; then
+            log "replacing existing $APP_DEST (bundle id $PREV_BUNDLE_ID)"
+        else
+            log "removing existing $APP_DEST"
+        fi
         rm -rf "$APP_DEST"
     fi
     log "installing $APP_DEST"
@@ -631,6 +648,20 @@ fi
 echo ""
 echo "cua-driver-rs $VERSION installed."
 echo ""
+
+if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
+    echo "Replaced the Swift cua-driver bundle that was previously at this path."
+    echo "Your prior TCC grants for the Swift bundle (com.trycua.driver) are now"
+    echo "orphaned and unused. Clear them with:"
+    echo "  tccutil reset Accessibility com.trycua.driver"
+    echo "  tccutil reset ScreenCapture com.trycua.driver"
+    echo ""
+    echo "Re-grant Accessibility + Screen Recording to the new bundle"
+    echo "(com.trycua.cuadriver) on first use — macOS will surface the dialog"
+    echo "automatically the first time you run an action that needs them."
+    echo ""
+fi
+
 echo "Try it:"
 echo "  $BIN_LINK list-tools"
 echo "  $BIN_LINK list_apps"

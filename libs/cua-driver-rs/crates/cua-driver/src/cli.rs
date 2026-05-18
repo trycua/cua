@@ -19,10 +19,10 @@ use mcp_server::{protocol::Content, tool::ToolRegistry};
 pub enum Command {
     Mcp {
         /// Force in-process MCP execution — skip the TCC auto-relaunch
-        /// path that would spawn a daemon via `open -n -g -a CuaDriverRs
+        /// path that would spawn a daemon via `open -n -g -a CuaDriver
         /// --args serve` and proxy stdio MCP requests through its Unix
         /// socket. Useful when the calling context already has the right
-        /// TCC grants (CuaDriverRs.app launched us directly), or when
+        /// TCC grants (CuaDriver.app launched us directly), or when
         /// diagnosing in-process failures. Also toggleable via
         /// `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1`.
         no_daemon_relaunch: bool,
@@ -127,7 +127,7 @@ pub fn parse_command() -> Command {
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
         println!("mcp options (macOS):");
-        println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
+        println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriver daemon.");
         println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
         println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
         println!();
@@ -328,7 +328,7 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
 ///
 /// Mirrors Swift `MCPCommand.shouldUseDaemonProxy` in spirit:
 /// the trigger is "shell-spawned bare binary that resolves into an
-/// installed `CuaDriverRs.app` bundle, with a non-launchd parent".
+/// installed `CuaDriver.app` bundle, with a non-launchd parent".
 /// When any of those conditions fails — explicit opt-out, dev-mode
 /// `cargo run` invocation, already-relaunched-via-launchd — we stay
 /// in-process. The proxy path is purely additive.
@@ -337,7 +337,7 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
 /// there's no `open -a` equivalent on Linux / Windows.
 #[cfg(target_os = "macos")]
 pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
-    use crate::bundle::{is_env_truthy, is_executable_inside_cuadriverrs_app, parent_is_not_launchd};
+    use crate::bundle::{is_env_truthy, is_executable_inside_cuadriver_app, parent_is_not_launchd};
     if no_daemon_relaunch {
         return false;
     }
@@ -345,7 +345,7 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
         return false;
     }
     // Hidden test/escape hook: force proxy mode without requiring the
-    // executable to live inside CuaDriverRs.app. Used by the
+    // executable to live inside CuaDriver.app. Used by the
     // integration test (which spawns a daemon manually) and by users
     // who've wrapped the binary in a custom bundle. Skips the
     // launch_daemon_and_wait `open -a` step too — caller is expected
@@ -353,7 +353,7 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
     if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
         return true;
     }
-    if !is_executable_inside_cuadriverrs_app() {
+    if !is_executable_inside_cuadriver_app() {
         // Raw `cargo run` / dev binary — no installed bundle to land
         // in, so relaunching would fail. Stay in-process.
         return false;
@@ -371,7 +371,7 @@ pub fn should_use_daemon_proxy(_no_daemon_relaunch: bool) -> bool {
     false
 }
 
-/// Spawn `/usr/bin/open -n -g -a CuaDriverRs --args serve` to launch
+/// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve` to launch
 /// the daemon under `LaunchServices` (so it inherits the bundle's
 /// TCC attribution), then poll the socket for up to `timeout_secs`
 /// seconds. Returns Err with a diagnostic message if `open` failed
@@ -393,14 +393,14 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
     // actually differs from the default, so the common case keeps the
     // shorter `open` argv (and matches Swift's invocation byte-for-byte).
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriverRs", "--args", "serve"];
+    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriver", "--args", "serve"];
     if pass_socket {
         open_args.push("--socket");
         open_args.push(socket_path);
     }
 
     let status = Cmd::new("/usr/bin/open")
-        // `-n` forces a new instance: CuaDriverRs.app might already be
+        // `-n` forces a new instance: CuaDriver.app might already be
         // running from a previous MCP session, and without `-n`, `open
         // -a` would re-use it and drop our `--args serve`, leaving no
         // daemon up. `-g` keeps the new instance backgrounded —
@@ -419,8 +419,8 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
 
     if !status.success() {
         anyhow::bail!(
-            "`open -n -g -a CuaDriverRs --args serve{}` exited {:?}. \
-             Check that `/Applications/CuaDriverRs.app` is installed, or \
+            "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
+             Check that `/Applications/CuaDriver.app` is installed, or \
              pass --no-daemon-relaunch to bypass.",
             if pass_socket { format!(" --socket {socket_path}") } else { String::new() },
             status.code()
@@ -440,7 +440,7 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
     anyhow::bail!(
         "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
-         CuaDriverRs.app in System Settings and retry. Pass --no-daemon-relaunch \
+         CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch \
          to stay in-process."
     );
 }
@@ -456,7 +456,7 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
     if !crate::serve::is_daemon_listening(&socket_path) {
         // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
         // bundle setups) supply their own daemon — skip the `open -a`
-        // step, since they don't have an installed CuaDriverRs.app to
+        // step, since they don't have an installed CuaDriver.app to
         // relaunch into. Fail fast if no daemon is up at this point.
         if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
             anyhow::bail!(
@@ -471,8 +471,8 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
             String::new()
         };
         eprintln!(
-            "cua-driver-rs: mcp launched without CuaDriverRs.app's TCC grants; \
-             auto-launching the daemon via `open -n -g -a CuaDriverRs --args serve{socket_suffix}` \
+            "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
+             auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
              and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
         );
         launch_daemon_and_wait(&socket_path, 10)?;

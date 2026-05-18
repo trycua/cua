@@ -1,4 +1,4 @@
-name: "CD: Cua Driver RS (cross-platform)"
+name: "CD: Cua Driver (cross-platform)"
 
 # Matches the artifact convention from cd-swift-cua-driver.yml:
 #   - macOS: ONE universal binary tarball + bare universal binary
@@ -245,13 +245,13 @@ jobs:
           codesign --force --timestamp --options runtime \
             --sign "$IDENTITY" release/universal/cua-driver
           codesign --verify --strict --verbose=2 release/universal/cua-driver
-      - name: Assemble CuaDriverRs.app bundle
+      - name: Assemble CuaDriver.app bundle
         working-directory: libs/cua-driver-rs
         run: |
           # Copy the bundle skeleton (Info.plist) from scripts/ and drop
           # the universal binary into Contents/MacOS/cua-driver. The
           # assembled bundle goes into every directory tarball so
-          # install.sh can `ditto` it to /Applications/CuaDriverRs.app
+          # install.sh can `ditto` it to /Applications/CuaDriver.app
           # for the TCC auto-relaunch path.
           #
           # No codesigning at this layer — the bundle ships ad-hoc
@@ -263,26 +263,26 @@ jobs:
           # change that wires up the notarization script the way the
           # Swift driver does.
           VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p release/CuaDriverRs.app
-          cp -R scripts/CuaDriverRs.app/Contents release/CuaDriverRs.app/Contents
+          mkdir -p release/CuaDriver.app
+          cp -R scripts/CuaDriver.app/Contents release/CuaDriver.app/Contents
           cp release/universal/cua-driver \
-             release/CuaDriverRs.app/Contents/MacOS/cua-driver
-          chmod +x release/CuaDriverRs.app/Contents/MacOS/cua-driver
+             release/CuaDriver.app/Contents/MacOS/cua-driver
+          chmod +x release/CuaDriver.app/Contents/MacOS/cua-driver
           # Stamp the release version into Info.plist so the bundle
           # version tracks the tag instead of whatever was last
           # checked in. Without this the in-tree Info.plist's
           # CFBundleShortVersionString drifts from the release tag on
           # every cut. CodeRabbit #4.
           plutil -replace CFBundleShortVersionString -string "$VERSION" \
-            release/CuaDriverRs.app/Contents/Info.plist
+            release/CuaDriver.app/Contents/Info.plist
           plutil -replace CFBundleVersion -string "$VERSION" \
-            release/CuaDriverRs.app/Contents/Info.plist
+            release/CuaDriver.app/Contents/Info.plist
           # Remove the .gitkeep we use in source control — it's not
           # part of the runtime bundle.
-          rm -f release/CuaDriverRs.app/Contents/MacOS/.gitkeep
-          ls -la release/CuaDriverRs.app/Contents/MacOS
-          plutil -p release/CuaDriverRs.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
-      - name: Codesign + notarize + staple CuaDriverRs.app
+          rm -f release/CuaDriver.app/Contents/MacOS/.gitkeep
+          ls -la release/CuaDriver.app/Contents/MacOS
+          plutil -p release/CuaDriver.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
+      - name: Codesign + notarize + staple CuaDriver.app
         if: env.DO_NOTARIZE == 'true'
         working-directory: libs/cua-driver-rs
         env:
@@ -298,26 +298,26 @@ jobs:
           # is essentially a no-op on the binary and a fresh signature
           # on the bundle wrapper.
           codesign --force --deep --timestamp --options runtime \
-            --sign "$IDENTITY" release/CuaDriverRs.app
-          codesign --verify --strict --verbose=2 release/CuaDriverRs.app
+            --sign "$IDENTITY" release/CuaDriver.app
+          codesign --verify --strict --verbose=2 release/CuaDriver.app
 
           # notarytool wants a zip (or .dmg / .pkg). Build one next to
           # the .app, submit, wait, then staple the bundle in place.
-          /usr/bin/ditto -c -k --keepParent release/CuaDriverRs.app \
-            release/CuaDriverRs.app.zip
+          /usr/bin/ditto -c -k --keepParent release/CuaDriver.app \
+            release/CuaDriver.app.zip
 
-          xcrun notarytool submit release/CuaDriverRs.app.zip \
+          xcrun notarytool submit release/CuaDriver.app.zip \
             --apple-id "$APPLE_ID" \
             --team-id "$TEAM_ID" \
             --password "$APP_SPECIFIC_PASSWORD" \
             --wait --timeout 20m
 
-          xcrun stapler staple release/CuaDriverRs.app
-          spctl -a -vv -t exec release/CuaDriverRs.app
+          xcrun stapler staple release/CuaDriver.app
+          spctl -a -vv -t exec release/CuaDriver.app
 
           # The zip we used to submit is throwaway; the packaging step
           # below builds the final tarballs from the stapled .app.
-          rm -f release/CuaDriverRs.app.zip
+          rm -f release/CuaDriver.app.zip
       - name: Package
         working-directory: libs/cua-driver-rs
         run: |
@@ -330,10 +330,10 @@ jobs:
             # (matches the Swift `cd-swift-cua-driver.yml` convention).
             cp release/universal/cua-driver "release/${STAGE}/"
             # Ship the .app bundle in every macOS tarball so install.sh
-            # can drop it into /Applications/CuaDriverRs.app for TCC
+            # can drop it into /Applications/CuaDriver.app for TCC
             # attribution (issue #1525). Tarball callers that want only
             # the bare binary can grab the *-binary.tar.gz below.
-            cp -R release/CuaDriverRs.app "release/${STAGE}/CuaDriverRs.app"
+            cp -R release/CuaDriver.app "release/${STAGE}/CuaDriver.app"
             cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
             (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           done
@@ -546,7 +546,7 @@ jobs:
             ### Artifacts
 
             **macOS (universal — arm64 + x86_64 in one binary, like the Swift cua-driver)**
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal.tar.gz` — directory tarball with LICENSE + `CuaDriverRs.app` bundle (install.sh expects this layout)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal.tar.gz` — directory tarball with LICENSE + `CuaDriver.app` bundle (install.sh expects this layout)
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz` — same payload, named for arm64 callers
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-x86_64.tar.gz` — same payload, named for x86_64 callers
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root; **no** .app — bypasses the TCC auto-relaunch path)

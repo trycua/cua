@@ -1,3 +1,4 @@
+import os
 import platform
 import subprocess
 import sys
@@ -6,9 +7,14 @@ import pytest
 
 
 def _assert_import_exits_cleanly(import_statement: str):
+    env = os.environ.copy()
+    for key in ("CUA_BACKEND", "CUA_VNC_HOST", "CUA_VNC_PORT", "CUA_VNC_PASSWORD"):
+        env.pop(key, None)
+
     result = subprocess.run(
         [sys.executable, "-X", "faulthandler", "-c", f"{import_statement}; print('ok')"],
         capture_output=True,
+        env=env,
         text=True,
         timeout=20,
     )

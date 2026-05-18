@@ -1,46 +1,61 @@
-//! Phase 1 of the native NSPanel onboarding UI — minimal modal dialog
-//! that replaces the terminal banner with a visible window.
+//! Native NSPanel onboarding UI — live status rows, dynamic heading,
+//! auto-dismiss on all-green.
 //!
-//! ## What this is
-//!
-//! When `gate::run_if_needed` detects missing TCC grants, it can now
-//! present a small native window before falling back to the polling
-//! loop in `wait_for_grants`. The window lists the missing permissions
-//! and offers two buttons:
-//!
-//!   * **Open System Settings** — opens the matching Privacy panes
-//!     (handled by the caller; the panel just records the choice).
-//!   * **Continue anyway** — dismisses without opening Settings; the
-//!     gate enters its polling phase regardless.
-//!
-//! Closing the window via the red dot is treated as Continue anyway.
-//!
-//! ## What this is NOT (yet)
-//!
-//! Phase 1 deliberately keeps the panel **static**. It does not poll
-//! the live grant state, does not redraw red/green status icons, does
-//! not auto-dismiss when all grants flip green, and does not auto-chain
-//! between Settings panes when one grant flips. Those behaviours are
-//! Phase 2 and Phase 3 — see the parity reference in
+//! Replaces the terminal banner when the daemon is launched from the
+//! bundled `/Applications/CuaDriver.app`. Mirrors the Swift gate at
 //! `libs/cua-driver/Sources/CuaDriverCore/Permissions/PermissionsGate.swift`.
+//!
+//! ## UX
+//!
+//! On first launch with missing grants the panel shows:
+//!
+//! ```text
+//! ┌─ CuaDriver Permissions ─────────────────────┐
+//! │  CuaDriver needs your permission            │
+//! │  Grant both so CuaDriver can …              │
+//! │                                             │
+//! │  ✗ Accessibility                            │
+//! │      lets cua-driver read the accessibility │
+//! │      tree of running apps …                 │
+//! │                                             │
+//! │  ✗ Screen Recording                         │
+//! │      lets cua-driver capture per-window …   │
+//! │                                             │
+//! │  ✅ All set. CuaDriver is ready to use.      │
+//! │     (hidden until both grants flip green)   │
+//! │                                             │
+//! │  [ Continue anyway ]  [ Open Settings ]     │
+//! └─────────────────────────────────────────────┘
+//! ```
+//!
+//! A 1 Hz `NSTimer` reads [`current_status`] on every tick and updates
+//! the row icons / heading / subheading / "All set" strip in place.
+//! When both grants flip green and `suppress_auto_close == false` the
+//! poll callback calls `[NSApp stopModal]` and `show_modal` returns
+//! [`PanelOutcome::AllGranted`] so the caller can skip the trailing
+//! `wait_for_grants` loop.
 //!
 //! ## Threading
 //!
 //! `show_modal` MUST be called on the main thread. The Serve arm in
 //! `cua-driver/src/main.rs` invokes the gate synchronously before any
-//! threads are spawned, so the gate already runs on the main thread.
-//! `panel_enabled()` double-checks this and falls back to the terminal
-//! banner if anything is off (not main thread, NSApp already running,
-//! headless, opt-out env var, non-`.app` invocation).
+//! threads spawn or NSApp.run() is called by the cursor overlay, so
+//! the gate already runs on the main thread. `panel_enabled()`
+//! double-checks and falls back to the terminal banner if anything
+//! is off (not main thread, headless, opt-out env var, non-`.app`
+//! invocation).
+//!
+//! All UI updates run on the main thread because `NSTimer` callbacks
+//! dispatch through the main run loop. We do not touch UI from any
+//! other thread.
 //!
 //! ## Library choice
 //!
 //! Raw `objc2::msg_send!` macros against AppKit classes — same style
 //! as `cursor/overlay.rs`. Avoids pulling additional `objc2-app-kit`
-//! feature flags or adding new crate dependencies. Every UI call goes
-//! through `MainThreadMarker::new().expect(...)` so a non-main-thread
-//! invocation panics loudly instead of corrupting AppKit state.
+//! feature flags or adding new crate dependencies.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 
 use objc2::runtime::AnyObject;
@@ -48,6 +63,7 @@ use objc2::{class, msg_send};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::permissions::gate::MissingPermission;
+use crate::permissions::status::{current_status, PermissionsStatus};
 
 // ── Public API ──────────────────────────────────────────────────────────
 
@@ -61,33 +77,45 @@ pub enum PanelOutcome {
     /// User dismissed (Continue anyway button or red-dot close) — the
     /// caller should enter the polling phase without opening Settings.
     Dismissed,
+    /// Both grants flipped green while the panel was up; the poll
+    /// callback auto-dismissed. Caller can skip the polling phase.
+    AllGranted,
 }
 
 /// Inputs for [`show_modal`].
 #[derive(Debug, Clone)]
 pub struct PanelOpts {
-    pub missing: Vec<MissingPermission>,
+    /// Used for the initial render only — the poll loop re-derives the
+    /// full live status on every tick and re-renders icons / heading
+    /// accordingly. Caller passes the snapshot it already has so we
+    /// don't double-probe TCC at startup.
+    pub initial_status: PermissionsStatus,
 }
 
-/// Decide whether the panel can be shown right now. Returns false (and
-/// the caller falls back to the terminal banner) when:
+/// Decide whether the panel can be shown right now. The panel is
+/// **opt-in**: the default behaviour is the terminal banner, and the
+/// panel only appears when:
 ///
-///   * `CUA_DRIVER_RS_PERMISSIONS_PANEL` env var is set to an off
-///     sentinel (`0` / `false` / `no` / `off`, case-insensitive).
-///   * Not running on the main thread.
-///   * `NSApp` already has a run loop active — Phase 1 deliberately
-///     does not try to interleave with an existing AppKit loop.
-///   * No graphical session is available (`NSScreen.mainScreen` is
-///     nil — headless / launchd-spawned daemons before a display
-///     attaches).
-///   * The current binary is not running inside an `.app` bundle
-///     (bare-binary invocations e.g. `target/release/cua-driver serve`
-///     don't get a window — they keep the terminal flow).
+///   * `CUA_DRIVER_RS_PERMISSIONS_PANEL` env var is set to an on
+///     sentinel (`1` / `true` / `yes` / `on`, case-insensitive); AND
+///   * the process is running on the main thread (a hard requirement
+///     for AppKit calls); AND
+///   * the binary lives inside an `.app` bundle (bare-binary
+///     invocations have no Info.plist / bundle id for TCC to attribute
+///     the window to, so they always use the terminal flow).
 ///
-/// All checks are best-effort. Any failure path returns false so the
-/// terminal banner kicks in.
+/// Rationale for opt-in: the panel relies on a chain of macOS
+/// behaviours that are easy to break in practice — TCC responsible-
+/// process attribution, session-level TCC caches that survive
+/// `tccutil reset`, ad-hoc codesign identity mismatches between dev
+/// builds and the bundle id, and AppKit modal-run-loop modes. When
+/// any link is off, the panel can present a confusing UX (e.g. shows
+/// "missing" rows because TCC returns stale cache, or auto-dismisses
+/// against the user's intent). The terminal flow has none of those
+/// failure modes, so it's the safer default until we have signals
+/// that the UI is consistently helpful across users.
 pub fn panel_enabled() -> bool {
-    if env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL") {
+    if !env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL") {
         return false;
     }
     if MainThreadMarker::new().is_none() {
@@ -96,16 +124,13 @@ pub fn panel_enabled() -> bool {
     if !running_inside_app_bundle() {
         return false;
     }
-    // Defer NSApp / NSScreen probes into show_modal so we can keep this
-    // function side-effect-free — they require an autorelease pool and
-    // touching them here just to return a bool would force callers to
-    // wrap in @autoreleasepool unnecessarily.
     true
 }
 
 /// Show the panel modally. Blocks the calling (main) thread until the
-/// user clicks one of the buttons or closes the window. Returns the
-/// outcome so the caller can decide whether to open Settings.
+/// user clicks one of the buttons, closes the window, or all grants
+/// flip green. Returns the outcome so the caller can decide how to
+/// proceed.
 ///
 /// Safety / threading: panics if invoked off the main thread. Callers
 /// should check [`panel_enabled`] first to avoid the panic.
@@ -117,22 +142,17 @@ pub fn show_modal(opts: PanelOpts) -> PanelOutcome {
 
 // ── Implementation ──────────────────────────────────────────────────────
 
-fn env_off(key: &str) -> bool {
+fn env_on(key: &str) -> bool {
     std::env::var(key)
         .ok()
         .map(|v| {
             let lower = v.to_ascii_lowercase();
-            matches!(lower.as_str(), "0" | "false" | "no" | "off")
+            matches!(lower.as_str(), "1" | "true" | "yes" | "on")
         })
         .unwrap_or(false)
 }
 
 /// Detect whether the current executable lives under a `.app` bundle.
-/// Phase 1 only opens the panel from the canonical install path so a
-/// `cargo run` from inside the repo (where the binary has no Info.plist
-/// and is not TCC-attributed to the bundle id) still uses the terminal
-/// flow. The check is a path-suffix sniff against
-/// `std::env::current_exe()` — no AppKit calls.
 fn running_inside_app_bundle() -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
@@ -145,36 +165,39 @@ fn running_inside_app_bundle() -> bool {
     })
 }
 
+// ── Layout constants ────────────────────────────────────────────────────
+//
+// Window geometry mirrors Swift's `.frame(width: 460)` plus heights
+// chosen to fit: heading (24) + subheading (40) + 2 rows (76 each) +
+// "All set" strip (32) + button row (48) + paddings (20·5). Keeping
+// the numbers as a block here so the math is auditable.
+
+const WIN_W: f64 = 460.0;
+const WIN_H: f64 = 360.0;
+const PAD: f64 = 20.0;
+const ROW_H: f64 = 76.0;
+const BUTTON_BAR_H: f64 = 56.0;
+const READY_STRIP_H: f64 = 36.0;
+
 unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     // ---- NSApplication setup ----
-    // `sharedApplication` is idempotent; matches the pattern in
-    // `cursor/overlay.rs::run_appkit`. We set the activation policy to
-    // Accessory (1) so the panel doesn't add a Dock icon for the daemon
-    // — same as the overlay path. `finishLaunching` is required before
-    // `runModalForWindow:` will dispatch events.
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     let _: bool = msg_send![app, setActivationPolicy: 1i64];
     let _: () = msg_send![app, finishLaunching];
 
-    // Bail to caller's fallback if no display is attached — the
-    // terminal banner is the right UX in that case.
     let main_screen: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
     if main_screen.is_null() {
         return PanelOutcome::Dismissed;
     }
 
-    // ---- Window geometry ----
-    // 460x320 matches PermissionsGate.swift's `.frame(width: 460)` plus
-    // intrinsic SwiftUI heights. We pick a fixed height here since we
-    // know the row count up-front (max 2 rows + heading + buttons).
+    // ---- Window ----
     let content_rect = NSRect {
         origin: NSPoint { x: 0.0, y: 0.0 },
         size: NSSize {
-            width: 460.0,
-            height: 280.0,
+            width: WIN_W,
+            height: WIN_H,
         },
     };
-
     // NSWindowStyleMaskTitled (1) | NSWindowStyleMaskClosable (2) — matches
     // PermissionsGate.swift line 97: `[.titled, .closable]`.
     let style_mask: u64 = 1 | 2;
@@ -198,81 +221,87 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     // NSFloatingWindowLevel (3) so it stays on top of System Settings
     // when the user navigates over to grant permissions.
     let _: () = msg_send![window, setLevel: 3i64];
-
     let title = ns_string("CuaDriver Permissions");
     let _: () = msg_send![window, setTitle: title];
 
-    // ---- Content view ----
     let content_view: *mut AnyObject = msg_send![window, contentView];
 
-    // Heading text — semibold 17pt, top-left.
+    // ---- Heading + subheading ----
+    //
+    // Y coordinates use AppKit's bottom-left origin. We lay out top-
+    // down: subtract row heights from `WIN_H - PAD` as we go.
+    let mut y = WIN_H - PAD - 24.0;
+
     let heading = build_label(
-        "CuaDriver needs your permission",
+        heading_for(opts.initial_status),
         17.0,
         /*bold=*/ true,
-        NSPoint { x: 20.0, y: 230.0 },
+        NSPoint { x: PAD, y },
         NSSize {
-            width: 420.0,
+            width: WIN_W - 2.0 * PAD,
             height: 24.0,
         },
     );
     let _: () = msg_send![content_view, addSubview: heading];
 
-    // Subheading copy — verbatim from PermissionsGate.swift line 259-262
-    // when both rows are missing. We don't try to switch wording based
-    // on which subset is missing in Phase 1 — that's a Phase 2 task
-    // tied to the dynamic-heading work.
-    let subheading_text =
-        "Grant the items below so CuaDriver can inspect and drive native \
-         apps on your behalf.";
+    y -= 8.0 + 40.0; // gap + subheading height
+
     let subheading = build_label(
-        subheading_text,
+        subheading_for(opts.initial_status),
         12.0,
         /*bold=*/ false,
-        NSPoint { x: 20.0, y: 190.0 },
+        NSPoint { x: PAD, y },
         NSSize {
-            width: 420.0,
-            height: 36.0,
+            width: WIN_W - 2.0 * PAD,
+            height: 40.0,
         },
     );
     let _: () = msg_send![content_view, addSubview: subheading];
+    // Subheading is secondary text — apply secondaryLabelColor.
+    let secondary_color: *mut AnyObject =
+        msg_send![class!(NSColor), secondaryLabelColor];
+    let _: () = msg_send![subheading, setTextColor: secondary_color];
 
-    // Missing-permissions list. Each row is one label spanning two
-    // lines: the permission name and the rationale.
-    let mut row_y: f64 = 130.0;
-    for (i, m) in opts.missing.iter().enumerate() {
-        let row_text = format!("• {}\n   {}", m.label(), m.rationale());
-        let label = build_label(
-            &row_text,
-            12.0,
-            /*bold=*/ false,
-            NSPoint { x: 20.0, y: row_y },
-            NSSize {
-                width: 420.0,
-                height: 44.0,
-            },
-        );
-        let _: () = msg_send![content_view, addSubview: label];
-        row_y -= 56.0;
-        // Phase 1 only ever has at most two missing rows (AX + SR);
-        // stop after that so the layout stays inside the window.
-        if i >= 1 {
-            break;
-        }
-    }
+    y -= 16.0; // gap before first row
 
-    // ---- Buttons ----
-    //
-    // Two buttons across the bottom: Continue anyway (left, secondary)
-    // and Open System Settings (right, primary / default). We give
-    // them shared static targets so the modal session can read the
-    // outcome via a single thread-local — overkill abstractions aren't
-    // worth it for two buttons.
+    // ---- Permission rows ----
+    let ax_row = build_row(
+        MissingPermission::Accessibility,
+        opts.initial_status.accessibility,
+        NSPoint { x: PAD, y: y - ROW_H },
+        NSSize {
+            width: WIN_W - 2.0 * PAD,
+            height: ROW_H,
+        },
+    );
+    let _: () = msg_send![content_view, addSubview: ax_row.container];
+    y -= ROW_H + 8.0;
+
+    let sr_row = build_row(
+        MissingPermission::ScreenRecording,
+        opts.initial_status.screen_recording,
+        NSPoint { x: PAD, y: y - ROW_H },
+        NSSize {
+            width: WIN_W - 2.0 * PAD,
+            height: ROW_H,
+        },
+    );
+    let _: () = msg_send![content_view, addSubview: sr_row.container];
+    y -= ROW_H + 8.0;
+
+    // ---- Ready strip (initially hidden; shown by poll on all-green) ----
+    let ready_strip = build_ready_strip(NSPoint { x: PAD, y: y - READY_STRIP_H }, WIN_W - 2.0 * PAD);
+    let _: () = msg_send![content_view, addSubview: ready_strip];
+    let initially_all_green =
+        opts.initial_status.accessibility && opts.initial_status.screen_recording;
+    let _: () = msg_send![ready_strip, setHidden: !initially_all_green];
+
+    // ---- Buttons across the bottom ----
     OUTCOME.with(|cell| *cell.borrow_mut() = None);
 
     let continue_btn = build_button(
         "Continue anyway",
-        NSPoint { x: 20.0, y: 16.0 },
+        NSPoint { x: PAD, y: 16.0 },
         NSSize {
             width: 160.0,
             height: 32.0,
@@ -283,7 +312,10 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
 
     let open_settings_btn = build_button(
         "Open System Settings",
-        NSPoint { x: 260.0, y: 16.0 },
+        NSPoint {
+            x: WIN_W - PAD - 180.0,
+            y: 16.0,
+        },
         NSSize {
             width: 180.0,
             height: 32.0,
@@ -291,41 +323,229 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
         ButtonAction::OpenSettings,
     );
     let _: () = msg_send![content_view, addSubview: open_settings_btn];
-    // Mark Open Settings as the default button (Return key triggers it).
     let _: () = msg_send![open_settings_btn, setKeyEquivalent: ns_string("\r")];
 
-    // ---- Show and run modal ----
+    // ---- Stash handles for the timer callback ----
+    HANDLES.with(|cell| {
+        *cell.borrow_mut() = Some(PanelHandles {
+            window: ptr_to_usize(window),
+            heading: ptr_to_usize(heading),
+            subheading: ptr_to_usize(subheading),
+            ready_strip: ptr_to_usize(ready_strip),
+            ax_row,
+            sr_row,
+            last_status: opts.initial_status,
+        });
+    });
+
+    // ---- Show window + start poll timer + run modal ----
     let _: () = msg_send![window, center];
     let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
-    // ignoringOtherApps:YES — Swift line 117. Forces the daemon's
-    // window to the front even when launched from a background context.
     let _: () = msg_send![app, activateIgnoringOtherApps: true];
-    // Blocks the main thread; returns when stopModal is called by a
-    // button action or when the window is closed.
-    let _: i64 = msg_send![app, runModalForWindow: window];
 
-    // Read the outcome the action callback set. If neither button was
-    // pressed (window closed via red dot) the cell stays empty and we
-    // treat it as Dismissed.
+    let timer = schedule_poll_timer();
+    let _: i64 = msg_send![app, runModalForWindow: window];
+    // Stop timer first so any in-flight tick can't race with teardown.
+    let _: () = msg_send![timer, invalidate];
+
+    // Resolve final outcome. The OUTCOME thread-local has the value
+    // most actions set; if neither button nor the poll fired, treat
+    // it as Dismissed (red-dot close).
     let outcome = OUTCOME
         .with(|cell| *cell.borrow())
         .unwrap_or(PanelOutcome::Dismissed);
+
+    // Tear down the handles before any later panel invocation can
+    // observe stale pointers. We can't rely on Drop because everything
+    // here is raw pointer Objective-C.
+    HANDLES.with(|cell| *cell.borrow_mut() = None);
 
     let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
     outcome
 }
 
-// ── Helpers: NSString, labels, buttons ───────────────────────────────────
+// ── Live-update plumbing ────────────────────────────────────────────────
+//
+// AppKit timers fire on the main run loop's thread, so the callback
+// runs on the same thread that built the panel — pointers we stashed
+// in a thread-local are safe to dereference. We use raw `usize` to
+// sidestep Send/Sync requirements (NSWindow / NSView are !Send).
+
+#[derive(Debug, Clone, Copy)]
+struct RowHandles {
+    container: *mut AnyObject,
+    icon: *mut AnyObject,
+    title: *mut AnyObject,
+}
+
+struct PanelHandles {
+    window: usize,
+    heading: usize,
+    subheading: usize,
+    ready_strip: usize,
+    ax_row: RowHandles,
+    sr_row: RowHandles,
+    last_status: PermissionsStatus,
+}
+
+thread_local! {
+    static OUTCOME: RefCell<Option<PanelOutcome>> = const { RefCell::new(None) };
+    static HANDLES: RefCell<Option<PanelHandles>> = const { RefCell::new(None) };
+}
+
+fn ptr_to_usize(p: *mut AnyObject) -> usize {
+    p as usize
+}
+
+fn usize_to_ptr(u: usize) -> *mut AnyObject {
+    u as *mut AnyObject
+}
+
+unsafe fn schedule_poll_timer() -> *mut AnyObject {
+    // 1 second cadence — matches Swift's
+    // `Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true)`.
+    //
+    // Critical: `[NSApp runModalForWindow:]` runs the main run loop in
+    // `NSModalPanelRunLoopMode`, which is NOT one of the standard
+    // "common" modes by default. A timer added only to
+    // `NSRunLoopCommonModes` (or unmodified, which lands it in
+    // `NSDefaultRunLoopMode`) won't fire while the modal is up — the
+    // panel renders fine but its icons never update.
+    //
+    // We construct a non-scheduled timer with `+timerWithTimeInterval:…`
+    // and then explicitly add it to the modal-panel mode. We do not
+    // also add it to NSDefaultRunLoopMode because the timer's lifetime
+    // is bounded by the modal session: as soon as the modal stops
+    // (button click or auto-dismiss) we `invalidate` it.
+    let target = panel_target_instance();
+    let sel = objc2::sel!(pollTick:);
+    let timer: *mut AnyObject = msg_send![class!(NSTimer),
+        timerWithTimeInterval: 1.0_f64
+        target: target
+        selector: sel
+        userInfo: std::ptr::null::<AnyObject>()
+        repeats: true
+    ];
+    let run_loop: *mut AnyObject = msg_send![class!(NSRunLoop), currentRunLoop];
+    let modal_mode = ns_string("NSModalPanelRunLoopMode");
+    let _: () = msg_send![run_loop, addTimer: timer forMode: modal_mode];
+    timer
+}
+
+extern "C" fn on_poll_tick(
+    _self: *mut AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _timer: *mut AnyObject,
+) {
+    // Wrap the whole thing in a panic guard — if anything goes wrong
+    // we want to stop modal rather than have the panel hang forever.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        poll_tick_inner();
+    }));
+    if let Err(e) = result {
+        eprintln!("[cua-driver] permissions panel poll tick panicked: {e:?}");
+        OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::Dismissed));
+        stop_modal();
+    }
+}
+
+unsafe fn poll_tick_inner() {
+    let status = current_status();
+    let mut should_stop = false;
+    HANDLES.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        let Some(handles) = guard.as_mut() else { return };
+        if status == handles.last_status {
+            // No change — skip the redraw. Avoids needlessly thrashing
+            // the layout engine every second on a steady-state panel.
+            return;
+        }
+        // Update row icons + label color tints.
+        update_row(handles.ax_row, status.accessibility);
+        update_row(handles.sr_row, status.screen_recording);
+        // Update heading + subheading copy.
+        let new_heading = ns_string(heading_for(status));
+        let _: () = msg_send![usize_to_ptr(handles.heading), setStringValue: new_heading];
+        let new_subheading = ns_string(subheading_for(status));
+        let _: () = msg_send![usize_to_ptr(handles.subheading), setStringValue: new_subheading];
+        // Toggle the ready strip.
+        let all_green = status.accessibility && status.screen_recording;
+        let _: () = msg_send![usize_to_ptr(handles.ready_strip), setHidden: !all_green];
+        handles.last_status = status;
+        if all_green {
+            should_stop = true;
+        }
+    });
+    if should_stop {
+        OUTCOME.with(|cell| *cell.borrow_mut() = Some(PanelOutcome::AllGranted));
+        stop_modal();
+    }
+}
+
+unsafe fn update_row(row: RowHandles, granted: bool) {
+    // Swap icon symbol and tint.
+    let symbol = if granted {
+        "checkmark.circle.fill"
+    } else {
+        "xmark.circle.fill"
+    };
+    let img = ns_image_for_symbol(symbol);
+    let _: () = msg_send![row.icon, setImage: img];
+    let tint: *mut AnyObject = if granted {
+        msg_send![class!(NSColor), systemGreenColor]
+    } else {
+        msg_send![class!(NSColor), systemRedColor]
+    };
+    let _: () = msg_send![row.icon, setContentTintColor: tint];
+    // Title bold turns from default → secondary on grant (subtle visual
+    // de-emphasis once granted).
+    let title_color: *mut AnyObject = if granted {
+        msg_send![class!(NSColor), secondaryLabelColor]
+    } else {
+        msg_send![class!(NSColor), labelColor]
+    };
+    let _: () = msg_send![row.title, setTextColor: title_color];
+}
+
+// ── Heading / subheading copy (parity with Swift) ────────────────────────
+
+fn heading_for(s: PermissionsStatus) -> &'static str {
+    match (s.accessibility, s.screen_recording) {
+        (true, true) => "CuaDriver is ready",
+        (true, false) | (false, true) => "One more permission",
+        (false, false) => "CuaDriver needs your permission",
+    }
+}
+
+fn subheading_for(s: PermissionsStatus) -> &'static str {
+    match (s.accessibility, s.screen_recording) {
+        (true, true) =>
+            "Both permissions are granted. You can close this window whenever you're ready.",
+        (true, false) =>
+            "Accessibility is granted. Now grant Screen Recording in the System Settings window that just opened.",
+        (false, true) =>
+            "Screen Recording is granted. Now grant Accessibility in the System Settings window that just opened.",
+        (false, false) =>
+            "Grant both so CuaDriver can inspect and drive native apps on your behalf. This window closes on its own once each item turns green.",
+    }
+}
+
+// ── Helpers: NSString, labels, buttons, icons, rows ──────────────────────
 
 /// Bridge `&str` → autoreleased `NSString` via `stringWithUTF8String:`.
-/// The selector requires a NUL-terminated C string; we build one with a
-/// trailing `\0`, hand off `.as_ptr()` for the duration of the call,
-/// and rely on AppKit to copy the bytes into the NSString. The
-/// `CString` lives until the end of the statement so the pointer
-/// stays valid.
 unsafe fn ns_string(text: &str) -> *mut AnyObject {
     let owned = std::ffi::CString::new(text).unwrap_or_default();
     msg_send![class!(NSString), stringWithUTF8String: owned.as_ptr() as *const c_void]
+}
+
+unsafe fn ns_image_for_symbol(symbol: &str) -> *mut AnyObject {
+    let name = ns_string(symbol);
+    let desc = ns_string("permission status");
+    let img: *mut AnyObject = msg_send![class!(NSImage),
+        imageWithSystemSymbolName: name
+        accessibilityDescription: desc
+    ];
+    img
 }
 
 unsafe fn build_label(
@@ -344,7 +564,6 @@ unsafe fn build_label(
     let _: () = msg_send![label, setBordered: false];
     let _: () = msg_send![label, setDrawsBackground: false];
     let _: () = msg_send![label, setSelectable: false];
-    // Allow multi-line wrapping for the subheading + row rationale.
     let _: () = msg_send![label, setUsesSingleLineMode: false];
     let cell: *mut AnyObject = msg_send![label, cell];
     if !cell.is_null() {
@@ -378,29 +597,114 @@ unsafe fn build_button(
     let button: *mut AnyObject = msg_send![button, initWithFrame: frame];
     let ns_title = ns_string(title);
     let _: () = msg_send![button, setTitle: ns_title];
-    // NSBezelStyleRounded = 1.
     let _: () = msg_send![button, setBezelStyle: 1i64];
-    // NSButtonTypeMomentaryPushIn = 7.
     let _: () = msg_send![button, setButtonType: 7i64];
     install_target(button, action);
     button
 }
 
-// ── Button target/action plumbing ────────────────────────────────────────
-//
-// AppKit's target/action pattern requires a target Objective-C object
-// implementing a selector with the right shape. We register a tiny
-// custom class (`CuaDriverPanelTarget`) at first call and instantiate
-// one instance per panel. Each button's action is encoded by its
-// selector (`openSettings:` / `dismiss:`); both handlers set the
-// thread-local outcome cell and call `[NSApp stopModal]` to break the
-// runModal loop.
+/// Build one permission row: container NSView with three subviews
+/// (icon, title, subtitle). Returns handles so the poll timer can
+/// update the icon + title tint live.
+unsafe fn build_row(
+    permission: MissingPermission,
+    granted: bool,
+    origin: NSPoint,
+    size: NSSize,
+) -> RowHandles {
+    let container: *mut AnyObject = msg_send![class!(NSView), alloc];
+    let container: *mut AnyObject = msg_send![container, initWithFrame: NSRect {
+        origin,
+        size,
+    }];
 
-use std::cell::RefCell;
+    // Icon
+    let icon_frame = NSRect {
+        origin: NSPoint {
+            x: 8.0,
+            y: size.height - 32.0,
+        },
+        size: NSSize {
+            width: 24.0,
+            height: 24.0,
+        },
+    };
+    let icon: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+    let icon: *mut AnyObject = msg_send![icon, initWithFrame: icon_frame];
+    let symbol = if granted {
+        "checkmark.circle.fill"
+    } else {
+        "xmark.circle.fill"
+    };
+    let img = ns_image_for_symbol(symbol);
+    let _: () = msg_send![icon, setImage: img];
+    let tint: *mut AnyObject = if granted {
+        msg_send![class!(NSColor), systemGreenColor]
+    } else {
+        msg_send![class!(NSColor), systemRedColor]
+    };
+    let _: () = msg_send![icon, setContentTintColor: tint];
+    let _: () = msg_send![container, addSubview: icon];
 
-thread_local! {
-    static OUTCOME: RefCell<Option<PanelOutcome>> = const { RefCell::new(None) };
+    // Title
+    let title = build_label(
+        permission.label(),
+        13.0,
+        /*bold=*/ true,
+        NSPoint {
+            x: 44.0,
+            y: size.height - 28.0,
+        },
+        NSSize {
+            width: size.width - 60.0,
+            height: 20.0,
+        },
+    );
+    if granted {
+        let c: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
+        let _: () = msg_send![title, setTextColor: c];
+    }
+    let _: () = msg_send![container, addSubview: title];
+
+    // Subtitle (rationale)
+    let subtitle = build_label(
+        permission.rationale(),
+        11.0,
+        /*bold=*/ false,
+        NSPoint { x: 44.0, y: 8.0 },
+        NSSize {
+            width: size.width - 60.0,
+            height: 40.0,
+        },
+    );
+    let secondary: *mut AnyObject = msg_send![class!(NSColor), secondaryLabelColor];
+    let _: () = msg_send![subtitle, setTextColor: secondary];
+    let _: () = msg_send![container, addSubview: subtitle];
+
+    RowHandles {
+        container,
+        icon,
+        title,
+    }
 }
+
+unsafe fn build_ready_strip(origin: NSPoint, width: f64) -> *mut AnyObject {
+    let strip = build_label(
+        "✅  All set. CuaDriver is ready to use.",
+        12.0,
+        /*bold=*/ false,
+        origin,
+        NSSize {
+            width,
+            height: READY_STRIP_H,
+        },
+    );
+    let green: *mut AnyObject = msg_send![class!(NSColor), systemGreenColor];
+    let _: () = msg_send![strip, setTextColor: green];
+    strip
+}
+
+// ── Button target/action plumbing + poll timer target ────────────────────
 
 unsafe fn install_target(button: *mut AnyObject, action: ButtonAction) {
     let target = panel_target_instance();
@@ -421,9 +725,8 @@ unsafe fn panel_target_instance() -> *mut AnyObject {
 
 /// Returns the runtime-registered `CuaDriverPermissionsPanelTarget`
 /// class. Registration happens lazily on the first call and is then
-/// memoised in a `OnceLock` — Objective-C requires that any given
-/// runtime class name is registered exactly once per process, and
-/// `ClassBuilder::new` returns `None` on the second attempt.
+/// memoised — Objective-C requires that any given runtime class name
+/// is registered exactly once per process.
 fn panel_target_class() -> &'static objc2::runtime::AnyClass {
     use objc2::declare::ClassBuilder;
     use std::sync::OnceLock;
@@ -441,6 +744,10 @@ fn panel_target_class() -> &'static objc2::runtime::AnyClass {
             builder.add_method(
                 objc2::sel!(dismiss:),
                 on_dismiss as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(pollTick:),
+                on_poll_tick as extern "C" fn(_, _, _),
             );
         }
         builder.register()
@@ -477,11 +784,6 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
-    /// Serialises every test that mutates `CUA_DRIVER_RS_PERMISSIONS_PANEL`.
-    /// Mirrors the same pattern as `permissions::gate::tests::env_lock`: env
-    /// vars are process-global and `cargo test` runs the suite in parallel,
-    /// so a missing lock here makes the three env-parsing tests trample
-    /// each other's `set_var` / `remove_var` calls and flake.
     static PANEL_ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -492,35 +794,65 @@ mod tests {
     }
 
     #[test]
-    fn env_off_recognises_documented_sentinels() {
+    fn env_on_recognises_documented_sentinels() {
         let _guard = env_lock();
-        for v in &["0", "false", "FALSE", "no", "NO", "off", "OFF"] {
+        for v in &["1", "true", "TRUE", "True", "yes", "YES", "on", "ON"] {
             std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_PANEL", v);
             assert!(
-                env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
-                "value {v:?} must be treated as off",
+                env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
+                "value {v:?} must be treated as on",
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
     }
 
     #[test]
-    fn env_off_ignores_truthy_and_unknown() {
+    fn env_on_ignores_falsy_and_unknown() {
         let _guard = env_lock();
-        for v in &["1", "true", "yes", "on", "garbage", ""] {
+        for v in &["0", "false", "no", "off", "garbage", ""] {
             std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_PANEL", v);
             assert!(
-                !env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
-                "value {v:?} must not be treated as off",
+                !env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"),
+                "value {v:?} must not be treated as on",
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
     }
 
     #[test]
-    fn missing_unset_env_keeps_panel_enabled_byte() {
+    fn unset_env_keeps_panel_disabled_by_default() {
+        // Opt-in default: with no env var set, the panel does not show
+        // and the gate falls back to the terminal banner.
         let _guard = env_lock();
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
-        assert!(!env_off("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
+        assert!(!env_on("CUA_DRIVER_RS_PERMISSIONS_PANEL"));
+    }
+
+    #[test]
+    fn heading_parity_with_swift() {
+        // Verbatim parity with PermissionsGate.swift lines 239-244.
+        let st = |a: bool, sr: bool| PermissionsStatus {
+            accessibility: a,
+            screen_recording: sr,
+        };
+        assert_eq!(heading_for(st(true, true)), "CuaDriver is ready");
+        assert_eq!(heading_for(st(true, false)), "One more permission");
+        assert_eq!(heading_for(st(false, true)), "One more permission");
+        assert_eq!(
+            heading_for(st(false, false)),
+            "CuaDriver needs your permission"
+        );
+    }
+
+    #[test]
+    fn subheading_mentions_remaining_permission() {
+        let st = |a: bool, sr: bool| PermissionsStatus {
+            accessibility: a,
+            screen_recording: sr,
+        };
+        // Only Accessibility granted → mentions Screen Recording next.
+        assert!(subheading_for(st(true, false)).contains("Screen Recording"));
+        // Only Screen Recording granted → mentions Accessibility next.
+        assert!(subheading_for(st(false, true)).contains("Accessibility"));
     }
 }

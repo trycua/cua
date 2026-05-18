@@ -346,21 +346,31 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
 <Callout type="info">
   **First-launch permissions gate (`cua-driver serve`).** On the Rust port,
   `cua-driver serve` runs an interactive permissions gate at startup. If
-  Accessibility or Screen Recording is missing it presents a small native
-  `CuaDriver Permissions` window listing the missing grants with **Open
-  System Settings** and **Continue anyway** buttons, then polls until you
-  grant the missing items. When both grants are already active the gate is
-  a transparent no-op.
+  Accessibility or Screen Recording is missing it prints a clear terminal
+  banner, opens the matching System Settings pane(s), and polls TCC every
+  second until you grant the missing items. When both grants are already
+  active the gate is a transparent no-op.
 
-  **Headless / terminal-only fallback.** The native window only shows when
-  the daemon is launched from the bundled `.app` (e.g.
-  `open -n -g -a CuaDriver --args serve`). Bare-binary launches
-  (`./target/release/cua-driver serve`), `CUA_DRIVER_RS_PERMISSIONS_PANEL=0`,
-  and environments with no graphical session fall back to the historical
-  terminal banner + polling flow.
+  **Experimental native panel.** A `CuaDriver Permissions` NSPanel with
+  live status rows + auto-dismiss is also available behind an opt-in env
+  var. The terminal flow is the safer default because the panel relies on
+  a chain of macOS behaviours that are easy to break in dev environments
+  (TCC responsible-process attribution, session-level TCC caches that
+  survive `tccutil reset`, ad-hoc codesign identity mismatches, AppKit
+  modal-run-loop modes). Opt in with:
 
-  **CI / headless runners** should skip the entire gate so the daemon does
-  not block waiting for a TTY-attached human:
+  ```bash
+  CUA_DRIVER_RS_PERMISSIONS_PANEL=1 cua-driver serve
+  ```
+
+  Accepted "on" values (case-insensitive): `1`, `true`, `yes`, `on`. Any
+  other value (or unset) keeps the terminal flow. The panel also requires
+  the daemon to be launched from the bundled `.app` (e.g.
+  `open -n -g -a CuaDriver --args serve`); bare-binary launches always
+  use the terminal flow regardless of the env var.
+
+  **CI / headless runners** should skip the entire gate so the daemon
+  does not block waiting for a TTY-attached human:
 
   ```bash
   # As a flag …
@@ -370,9 +380,9 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   CUA_DRIVER_RS_PERMISSIONS_GATE=0 cua-driver serve
   ```
 
-  Accepted "off" values for both env-vars (case-insensitive): `0`, `false`,
-  `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any other value
-  (including unset) leaves the corresponding behaviour active.
+  Accepted "off" values for the gate env-var (case-insensitive): `0`,
+  `false`, `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any
+  other value (including unset) leaves the gate active.
 </Callout>
 
 <Callout type="info">

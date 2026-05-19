@@ -1,0 +1,277 @@
+---
+title: MCP client wire-up
+description: One-page reference for registering cua-driver as an MCP server in every supported client — Claude Code, Codex, Cursor, Hermes, OpenClaw, OpenCode.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver mcp` is a stdio MCP server. Any agent that speaks MCP can drive cua-driver — the only per-client work is telling the agent where the binary lives.
+
+The fastest path is `cua-driver mcp-config --client <name>`. The CLI prints either a one-shot `... mcp add` command (Claude Code, Codex), a ready-to-paste JSON / YAML block (Cursor, OpenCode, Hermes), or a single shell command (OpenClaw). This page summarises what the CLI emits per client, where the registration lands on disk, and how to verify it worked.
+
+<Callout type="warn">
+**macOS — grant TCC first.** Accessibility and Screen Recording grants must be in place before any client can drive real apps. See [Installation → Grant TCC permissions](/cua-driver/guide/getting-started/installation#grant-tcc-permissions).
+
+**Windows — daemon-proxy required for SSH.** Headless / SSH-driven MCP clients on Windows only see real GUI apps when a daemon is already listening in the user's interactive session. See [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh).
+</Callout>
+
+## Supported clients at a glance
+
+| Client | CLI install one-liner | Config file (manual edit path) |
+|---|---|---|
+| [Claude Code](#claude-code) | `claude mcp add --transport stdio cua-driver -- cua-driver mcp` | `~/.claude.json` |
+| [Codex (OpenAI)](#codex-openai) | `codex mcp add cua-driver -- cua-driver mcp` | `~/.codex/config.toml` |
+| [Cursor](#cursor) | `cua-driver mcp-config --client cursor` (JSON to paste) | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) |
+| [Hermes (NousResearch)](#hermes-nousresearch) | `cua-driver mcp-config --client hermes` (YAML to paste) | `~/.hermes/config.yaml` |
+| [OpenClaw](#openclaw) | `cua-driver mcp-config --client openclaw \| sh` | `openclaw mcp set` writes its own config |
+| [OpenCode (sst/opencode)](#opencode-sstopencode) | `cua-driver mcp-config --client opencode` (JSON to paste) | `opencode.json` (project) or `~/.config/opencode/config.json` (global) |
+
+Run `cua-driver mcp-config` with no `--client` flag for the generic `mcpServers` shape any other MCP client can ingest.
+
+## Claude Code
+
+Claude Code is documented in full under [Installation → Register with an MCP client](/cua-driver/guide/getting-started/installation#register-with-an-mcp-client) — including the [macOS computer-use compatibility mode](/cua-driver/guide/getting-started/integrations#claude-code-computer-use-compatibility-mode) and the [TCC auto-delegation behaviour](/cua-driver/guide/getting-started/installation#register-with-an-mcp-client). Quick reference:
+
+**CLI install (output of `cua-driver mcp-config --client claude`):**
+
+```bash
+claude mcp add --transport stdio cua-driver -- cua-driver mcp
+```
+
+Add `--scope project|global` as needed. The registration lands in `~/.claude.json` (global scope) or `.mcp.json` in the project root.
+
+**Manual JSON** (paste into `~/.claude.json` under `mcpServers`):
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Verify:**
+
+```bash
+claude mcp list
+# cua-driver: cua-driver mcp (stdio) - ✓ Connected
+```
+
+<Callout type="info">
+**macOS TCC quirk** — Claude Code spawns `cua-driver mcp` from its own process tree, so TCC attributes the subprocess to Claude Code rather than `CuaDriver.app`. The MCP entrypoint detects this and auto-relaunches a daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call through it. No manual `serve` step required — see the [TCC auto-delegation callout](/cua-driver/guide/getting-started/installation#register-with-an-mcp-client) on the Installation page.
+</Callout>
+
+## Codex (OpenAI)
+
+**CLI install (output of `cua-driver mcp-config --client codex`):**
+
+```bash
+codex mcp add cua-driver -- cua-driver mcp
+```
+
+This writes the registration into Codex CLI's TOML config at `~/.codex/config.toml` under the `[mcp_servers.cua-driver]` table. The exact field layout matches whatever your installed `codex` version expects, which is why the CLI add command is the canonical path.
+
+**Manual TOML** (paste into `~/.codex/config.toml`):
+
+```toml
+[mcp_servers.cua-driver]
+command = "cua-driver"
+args = ["mcp"]
+```
+
+**Verify:**
+
+```bash
+codex mcp list
+# cua-driver  cua-driver mcp
+```
+
+<Callout type="info">
+**Config file location varies by Codex version.** Older Codex builds read from `~/.config/codex/mcp.json` instead of `~/.codex/config.toml`. If `codex mcp list` doesn't see the registration after a manual edit, run `codex mcp add cua-driver -- cua-driver mcp` once — that always writes to the file Codex actually reads on your machine.
+</Callout>
+
+## Cursor
+
+`mcp-config --client cursor` emits Cursor's `mcpServers` JSON shape (note the `"type": "stdio"` field, which Cursor requires):
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+**Paste into one of:**
+
+- `~/.cursor/mcp.json` — global, available in every Cursor workspace.
+- `<project>/.cursor/mcp.json` — project-scoped, checked into source control if you want teammates to inherit the registration.
+
+One-liner to generate-and-copy on macOS:
+
+```bash
+cua-driver mcp-config --client cursor | pbcopy
+```
+
+**Verify:** Cursor → Settings → MCP. `cua-driver` should appear with a green dot. Tools surface in chat as `mcp_cua-driver_<tool>`.
+
+## Hermes (NousResearch)
+
+`mcp-config --client hermes` emits YAML preceded by two comment lines telling you exactly where to paste it:
+
+```yaml
+# paste under mcp_servers in ~/.hermes/config.yaml,
+# then run /reload-mcp inside Hermes:
+mcp_servers:
+  cua-driver:
+    command: "cua-driver"
+    args: ["mcp"]
+```
+
+**Paste into:** `~/.hermes/config.yaml`, under the existing `mcp_servers:` key (create the key if it doesn't exist).
+
+**Activate without restarting Hermes:**
+
+```
+/reload-mcp
+```
+
+inside the Hermes TUI. Hermes re-reads `config.yaml` and spawns the new stdio server on the spot.
+
+**Verify:** Hermes prints a one-line `mcp: cua-driver attached (N tools)` log on successful reload.
+
+## OpenClaw
+
+`mcp-config --client openclaw` emits a single `openclaw mcp set` command that registers the server in OpenClaw's own config store:
+
+```bash
+openclaw mcp set cua-driver '{"command":"cua-driver","args":["mcp"]}'
+```
+
+You can pipe it straight into a shell:
+
+```bash
+cua-driver mcp-config --client openclaw | sh
+```
+
+**Verify:**
+
+```bash
+openclaw mcp list
+# cua-driver   cua-driver mcp   (stdio)
+```
+
+OpenClaw also reads `~/.claude/skills/cua-driver` automatically — the cua-driver installer drops that symlink during `install.sh`, so the SKILL.md pack auto-loads alongside the MCP registration. See [Installation → Agent skills (auto-wired)](/cua-driver/guide/getting-started/installation#agent-skills-auto-wired).
+
+## OpenCode (sst/opencode)
+
+`mcp-config --client opencode` emits a JSON block prefixed by a comment telling you where to paste it:
+
+```text
+// paste under "mcp" in opencode.json:
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "cua-driver": {
+      "type": "local",
+      "command": ["cua-driver", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Paste into one of:**
+
+- `opencode.json` at the project root — preferred for repo-scoped registrations.
+- `~/.config/opencode/config.json` — global, applies to every OpenCode session.
+
+If the file already has an `mcp` object, merge the `cua-driver` entry into it rather than overwriting the whole block.
+
+**Verify:** `opencode mcp list` (if your build supports it), or open an OpenCode session and check that the `cua-driver` tools appear in the tool palette.
+
+<Callout type="warn">
+**Always configure cua-driver as an MCP server in OpenCode — never rely on the CLI fallback.** Without an MCP registration, OpenCode shells out to `cua-driver` as a plain subprocess. The screenshot image block is silently dropped on that path — the model receives only the AX tree with no visual context. If you must use the CLI path, pass `--screenshot-out-file` (or the `screenshot_out_file` tool param) to preserve the image to disk.
+</Callout>
+
+<Callout type="info">
+**Local vision models (Ollama).** If you're driving OpenCode against a vision-capable Ollama model, you also need to declare the model's input modalities in `config.json` — OpenCode's `@ai-sdk/openai-compatible` provider defaults to text-only and strips images before they reach the model. See the full snippet on [Getting Started → Integrations](/cua-driver/guide/getting-started/integrations#local-vision-models-ollama).
+</Callout>
+
+## Pi (badlogic/pi-mono) — not MCP
+
+`cua-driver mcp-config --client pi` prints the following guidance verbatim:
+
+```text
+Pi (badlogic/pi-mono) does not support MCP natively — the author
+has stated MCP support will not be added for context-budget reasons.
+
+Use cua-driver as a plain CLI from inside Pi instead:
+
+    cua-driver list_apps
+    cua-driver click  '{"pid": 1234, "x": 100, "y": 200}'
+    cua-driver --help        # full tool catalog
+
+Each call is one-shot and returns JSON / text on stdout, which is
+exactly the shape Pi is designed around.
+```
+
+Pi reads tool output directly from stdout, so the CLI surface is the integration. See the [Quickstart](/cua-driver/guide/getting-started/quickstart) for the CLI tool inventory.
+
+## Other clients
+
+For any client that accepts the standard `mcpServers` JSON shape, run `cua-driver mcp-config` with no `--client` flag:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Paste it into whatever config file the client reads. This is the shape Claude Code, generic VS Code MCP extensions, and most homegrown agents accept.
+
+## Per-platform gotchas
+
+### macOS — TCC attribution
+
+Every MCP client spawns `cua-driver mcp` as a subprocess of itself. macOS attributes that subprocess to the parent's bundle id (Claude.app, Cursor.app, ...) — not `CuaDriver.app`. The MCP entrypoint detects this on every launch and auto-relaunches the daemon via `open -n -g -a CuaDriver --args serve`, then proxies tool calls through the daemon's Unix socket. The client sees an ordinary stdio MCP server; the daemon runs under LaunchServices with the correct TCC context.
+
+Opt out (e.g. when the bundle id is already correct) with `--no-daemon-relaunch` or `CUA_DRIVER_MCP_NO_RELAUNCH=1`. See the [TCC auto-delegation callout on the Installation page](/cua-driver/guide/getting-started/installation#register-with-an-mcp-client).
+
+### Windows — daemon-proxy over SSH
+
+SSH-launched processes default to Session 0 (no interactive desktop), so `list_windows` / `click` / `screenshot` return empty results unless the MCP server proxies through a daemon running in the user's Session 1+ logon. The canonical setup:
+
+1. `cua-driver autostart enable && cua-driver autostart kick` from an RDP / console session — registers a Scheduled Task that runs `cua-driver serve` at every interactive logon.
+2. SSH in. `cua-driver mcp` and `cua-driver call <tool>` detect the listening daemon and proxy every request to it.
+
+Full workflow, diagnostics, and opt-outs: [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh).
+
+### Linux — `cua-driver serve &` in the user's session
+
+Linux doesn't have macOS's TCC attribution problem or Windows' Session 0, but the daemon is still useful for per-pid element-cache sharing across CLI calls. Start it once per session:
+
+```bash
+cua-driver serve &
+```
+
+Or register it as a user-scoped systemd unit (`~/.config/systemd/user/cua-driver-rs.service`) — the install script's `cua-driver autostart enable` does this for you on Linux.
+
+## See also
+
+- [Installation](/cua-driver/guide/getting-started/installation) — single-command install, TCC grants, autostart, daemon-proxy details.
+- [Integrations (legacy reference)](/cua-driver/guide/getting-started/integrations) — original per-client reference page; this page replaces it as the canonical entry point and will keep that one as deep-link target for vision-model and computer-use specifics.
+- [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) — Session 0 / daemon-proxy workflow.
+- [Autostart](/cua-driver/guide/getting-started/autostart) — `cua-driver autostart enable/disable/kick/status` on macOS, Linux, Windows.

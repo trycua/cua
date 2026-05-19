@@ -74,6 +74,13 @@ The Windows installer auto-detects host architecture (x64 / arm64) via `[System.
 
 It runs **without admin** and **without Developer Mode**.
 
+It also appends `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` to your **User-scope `Path`** so `cua-driver --version` resolves in any new PowerShell window. The write is idempotent (re-running the installer never duplicates the entry) and falls back to printing manual `[Environment]::SetEnvironmentVariable(...)` instructions if the registry write is blocked (group policy, locked-down account). Pass `-NoPathUpdate` to suppress the auto-add — useful when you manage `Path` out-of-band via chezmoi / dotfiles / GPO:
+
+```powershell
+# Fetch + invoke explicitly so we can pass the switch:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1))) -NoPathUpdate
+```
+
 The install layout is wired with NTFS directory junctions (`IO_REPARSE_TAG_MOUNT_POINT`), which any unprivileged user can create — no elevated symlink privilege required.
 
 #### Versioned-dirs install layout
@@ -144,7 +151,7 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 | `CUA_DRIVER_RS_VERSION` | unset → use baked version | unset → use baked version | Pin a specific release (e.g. `0.2.0`). |
 | `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
 | `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver-rs` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
-| `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | n/a — Windows installer never auto-edits PATH | Skip the rc-file PATH append. |
+| `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | use `-NoPathUpdate` switch on `install.ps1` | Skip the PATH append. On Windows the installer appends `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` to the User-scope `Path` by default; use the fetch+invoke form with `-NoPathUpdate` to opt out (see the Windows install section above for the exact one-liner). |
 | `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants. |
 
 <Callout type="info">

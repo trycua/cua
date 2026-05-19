@@ -55,6 +55,14 @@
 #               to function. Default off; the post-install message prints
 #               the registration command so you can opt in later. Safe to
 #               re-run: existing task is replaced.
+#   -NoPathUpdate
+#               skip the auto-append of $VisibleBinDir to the User PATH.
+#               Default off — the installer auto-adds the bin dir so
+#               `cua-driver --version` works in new shells without manual
+#               `[Environment]::SetEnvironmentVariable` gymnastics. Pass
+#               this when you manage PATH out-of-band (chezmoi, a dotfiles
+#               repo, group policy). Idempotent either way: if the dir is
+#               already on PATH, nothing changes.
 #
 # WARNING — BETA: cua-driver-rs is the cross-platform Rust port of the
 # Swift cua-driver. Windows and Linux support is feature-complete;
@@ -63,7 +71,8 @@
 [CmdletBinding()]
 param(
     [string]$Release = "latest",
-    [switch]$AutoStart
+    [switch]$AutoStart,
+    [switch]$NoPathUpdate
 )
 
 Set-StrictMode -Version Latest
@@ -852,24 +861,56 @@ if (Test-Path -LiteralPath $installedBinary) {
     }
 }
 
-# ---------- PATH check (info only — we don't auto-edit on Windows) --------
+# ---------- PATH update (User scope, idempotent, fallback to manual) ------
 #
-# Modifying the user's PATH from PowerShell is doable
-# ([Environment]::SetEnvironmentVariable("Path", ..., "User")) but it
-# (a) requires the user's old PATH be sane, (b) doesn't take effect in
-# the calling shell anyway, and (c) is the kind of side-effect that
-# surprises power users. So we print a hint with the exact command
-# instead and let the user opt in.
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$onPath   = $false
-if ($userPath) {
-    $entries = $userPath.Split(';') | Where-Object { $_ }
-    foreach ($entry in $entries) {
-        if ($entry.TrimEnd('\') -ieq $VisibleBinDir.TrimEnd('\')) {
-            $onPath = $true
-            break
-        }
+# We append $VisibleBinDir to the User-scope PATH so `cua-driver` resolves
+# in any newly-spawned shell. User scope (not Machine) keeps the installer
+# non-admin — Machine scope would require elevation. The write doesn't
+# affect the calling shell's $env:Path; the post-install message tells the
+# user to open a new shell (or stitch $env:Path manually for this session).
+#
+# Failure modes we tolerate gracefully:
+#   - Locked-down accounts where SetEnvironmentVariable throws (group
+#     policy, OneDrive-redirected HKCU, etc.). We catch, print the
+#     manual command, and exit success.
+#   - User passed -NoPathUpdate. Same fallback message, no write attempt.
+#
+# Idempotency: if $VisibleBinDir is already on the User PATH we no-op
+# silently (same shape as the existing "already added" branch).
+function Get-UserPathEntries {
+    $raw = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $raw) { return @() }
+    return @($raw.Split(';') | Where-Object { $_ })
+}
+
+function Test-OnUserPath([string]$dir) {
+    $needle = $dir.TrimEnd('\')
+    foreach ($entry in (Get-UserPathEntries)) {
+        if ($entry.TrimEnd('\') -ieq $needle) { return $true }
     }
+    return $false
+}
+
+function Add-UserPathEntry([string]$dir) {
+    $existing = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($existing) {
+        $newValue = ($existing.TrimEnd(';')) + ';' + $dir
+    } else {
+        $newValue = $dir
+    }
+    [Environment]::SetEnvironmentVariable("Path", $newValue, "User")
+}
+
+function Write-ManualPathInstructions([string]$dir) {
+    Write-Host "$dir is not on your user PATH yet." -ForegroundColor Yellow
+    Write-Host "Add it for future shells with:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$dir`", 'User')"
+    Write-Host ""
+    Write-Host "Then open a new PowerShell window. To use it in the current session:"
+    Write-Host ""
+    Write-Host "  `$env:Path += `";$dir`""
+    Write-Host ""
 }
 
 Write-Host ""
@@ -879,20 +920,28 @@ Write-Host "Try it:"
 Write-Host "  $installedBinary --version"
 Write-Host ""
 
-if (-not $onPath) {
-    Write-Host "$VisibleBinDir is not on your user PATH yet." -ForegroundColor Yellow
-    Write-Host "Add it for future shells with:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$VisibleBinDir`", 'User')"
-    Write-Host ""
-    Write-Host "Then open a new PowerShell window. To use it in the current session:"
-    Write-Host ""
-    Write-Host "  `$env:Path += `";$VisibleBinDir`""
-    Write-Host ""
-}
-else {
+$onPath = Test-OnUserPath $VisibleBinDir
+if ($onPath) {
     Write-Host "$VisibleBinDir is on your user PATH — cua-driver should resolve in any new shell."
     Write-Host ""
+}
+elseif ($NoPathUpdate) {
+    Write-Host "Skipping PATH update (-NoPathUpdate set)." -ForegroundColor Yellow
+    Write-ManualPathInstructions $VisibleBinDir
+}
+else {
+    try {
+        Add-UserPathEntry $VisibleBinDir
+        Write-Host "Added $VisibleBinDir to your User PATH." -ForegroundColor Green
+        Write-Host '  Open a new PowerShell window for cua-driver to resolve.'
+        Write-Host "  Use in the current session:  `$env:Path += `";$VisibleBinDir`""
+        Write-Host '  Opt out next time with:      install.ps1 -NoPathUpdate'
+        Write-Host ""
+    }
+    catch {
+        Write-WarningStep "could not auto-update User PATH: $($_.Exception.Message)"
+        Write-ManualPathInstructions $VisibleBinDir
+    }
 }
 
 if ($AutoStart) {

@@ -27,28 +27,42 @@ import Foundation
 public func resolveLaunchURL(_ raw: String) -> URL? {
     guard !raw.isEmpty else { return nil }
 
-    // Detect explicit URL schemes (http / https / file).
-    if let schemeRange = raw.range(of: "://") {
-        let scheme = raw[raw.startIndex..<schemeRange.lowerBound].lowercased()
+    // Detect any URI scheme by looking for the first ':' that appears
+    // before any '/' — this correctly handles both "://" schemes
+    // (http, https, file) and single-colon schemes (about:, mailto:, etc.).
+    if let colon = raw.firstIndex(of: ":") {
+        let beforeColon = raw[raw.startIndex..<colon]
+        // RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+        let isValidScheme = !beforeColon.isEmpty &&
+            beforeColon.range(of: "^[A-Za-z][A-Za-z0-9+.\\-]*$",
+                              options: .regularExpression) != nil
 
-        if scheme == "http" || scheme == "https" {
-            // Percent-encode non-ASCII so URL(string:) doesn't return nil.
-            if let encoded = raw.addingPercentEncoding(
-                withAllowedCharacters: .urlQueryAllowed),
-               let url = URL(string: encoded)
-            {
-                return url
+        if isValidScheme {
+            let scheme = beforeColon.lowercased()
+
+            if scheme == "http" || scheme == "https" {
+                // Percent-encode non-ASCII so URL(string:) doesn't return nil.
+                if let encoded = raw.addingPercentEncoding(
+                    withAllowedCharacters: .urlQueryAllowed),
+                   let url = URL(string: encoded)
+                {
+                    return url
+                }
+                return URL(string: raw)
             }
-            // Already encoded by caller — try as-is.
-            return URL(string: raw)
-        }
 
-        if scheme == "file" {
-            // Strip "file://" prefix, decode any existing percent-encoding,
-            // then re-encode via fileURLWithPath for a clean round-trip.
-            let pathPart = String(raw[schemeRange.upperBound...])
-            let decoded = pathPart.removingPercentEncoding ?? pathPart
-            return URL(fileURLWithPath: decoded).standardizedFileURL
+            if scheme == "file", let schemeRange = raw.range(of: "://") {
+                // Strip "file://" prefix, decode any existing percent-encoding,
+                // then re-encode via fileURLWithPath for a clean round-trip.
+                let pathPart = String(raw[schemeRange.upperBound...])
+                let decoded = pathPart.removingPercentEncoding ?? pathPart
+                return URL(fileURLWithPath: decoded).standardizedFileURL
+            }
+
+            // All other schemes (about:, mailto:, data:, etc.) — pass through
+            // as-is via URL(string:). NSWorkspace handles about:blank natively
+            // for browsers; other schemes are passed verbatim to LaunchServices.
+            return URL(string: raw)
         }
     }
 

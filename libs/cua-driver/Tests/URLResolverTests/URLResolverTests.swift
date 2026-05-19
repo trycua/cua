@@ -89,11 +89,16 @@ final class URLResolverTests: XCTestCase {
     }
 
     func testAboutBlank() throws {
-        // about:blank is used by browsers — not a file/http/https scheme,
-        // so it falls through to the plain-path branch. Verify it doesn't crash.
-        // (NSWorkspace handles about:blank natively for browsers.)
-        let result = resolveLaunchURL("about:blank")
-        // We don't assert a specific value — just that it doesn't crash/throw.
-        _ = result
+        // about:blank is used by browsers — must preserve scheme semantics,
+        // not fall through to the file-path branch.
+        let url = try XCTUnwrap(resolveLaunchURL("about:blank"))
+        XCTAssertEqual(url.scheme, "about")
+        XCTAssertEqual(url.absoluteString, "about:blank")
+    }
+
+    func testMailtoScheme() throws {
+        // Other single-colon schemes must also pass through as-is.
+        let url = try XCTUnwrap(resolveLaunchURL("mailto:user@example.com"))
+        XCTAssertEqual(url.scheme, "mailto")
     }
 }

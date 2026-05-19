@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -1057,7 +1057,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.7.39"
+version = "0.8.2"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1269,7 +1269,7 @@ requires-dist = [
 
 [[package]]
 name = "cua-computer"
-version = "0.5.17"
+version = "0.5.18"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },
@@ -1313,7 +1313,7 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.28"
+version = "0.3.39"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
@@ -1389,7 +1389,7 @@ provides-extras = ["macos", "linux", "windows", "vnc"]
 
 [[package]]
 name = "cua-core"
-version = "0.1.19"
+version = "0.3.1"
 source = { editable = "libs/python/core" }
 dependencies = [
     { name = "posthog" },
@@ -5832,15 +5832,15 @@ crypto = [
 
 [[package]]
 name = "pymdown-extensions"
-version = "10.19.1"
+version = "10.21.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/2d/9f30cee56d4d6d222430d401e85b0a6a1ae229819362f5786943d1a8c03b/pymdown_extensions-10.19.1.tar.gz", hash = "sha256:4969c691009a389fb1f9712dd8e7bd70dcc418d15a0faf70acb5117d022f7de8", size = 847839, upload-time = "2025-12-14T17:25:24.42Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/26/d1015444da4d952a1ca487a236b522eb979766f0295a0bd0c5fc089989a9/pymdown_extensions-10.21.3.tar.gz", hash = "sha256:72cfcf55f07aea0d4af2c4f11dd4e52466ddfb1bb819673146398e0bd3a77354", size = 854140, upload-time = "2026-05-13T12:57:32.267Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/35/b763e8fbcd51968329b9adc52d188fc97859f85f2ee15fe9f379987d99c5/pymdown_extensions-10.19.1-py3-none-any.whl", hash = "sha256:e8698a66055b1dc0dca2a7f2c9d0ea6f5faa7834a9c432e3535ab96c0c4e509b", size = 266693, upload-time = "2025-12-14T17:25:22.999Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/85/545a951eecc270fcd688288c600017e2050a1aacb56c711d208586d3e470/pymdown_extensions-10.21.3-py3-none-any.whl", hash = "sha256:d7a5d08014fc571e80ca21dd6f854e31f94c489800350564d55d15b3c41e76b6", size = 269002, upload-time = "2026-05-13T12:57:30.296Z" },
 ]
 
 [[package]]

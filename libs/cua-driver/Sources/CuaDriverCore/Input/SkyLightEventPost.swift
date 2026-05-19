@@ -104,13 +104,22 @@ public enum SkyLightEventPost {
                 "SLSEventAuthenticationMessage")
         else { return nil }
 
+        // macOS 14 (Sonoma) compatibility: the class exists on macOS 14 but
+        // `messageWithEventRecord:pid:version:` was added in macOS 15 (Sequoia).
+        // `NSSelectorFromString` always succeeds (it interns the string), so we
+        // must verify the class actually responds to the selector before storing
+        // it — otherwise `objc_msgSend` raises NSInvalidArgumentException at
+        // runtime and crashes the daemon.
+        // See: https://github.com/trycua/cua/issues/1503
+        let factorySelector = NSSelectorFromString("messageWithEventRecord:pid:version:")
+        guard messageClass.responds(to: factorySelector) else { return nil }
+
         return Resolved(
             postToPid: postToPid,
             setAuthMessage: setAuth,
             msgSendFactory: msgSend,
             messageClass: messageClass,
-            factorySelector: NSSelectorFromString(
-                "messageWithEventRecord:pid:version:")
+            factorySelector: factorySelector
         )
     }()
 

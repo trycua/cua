@@ -366,9 +366,38 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
     true
 }
 
+/// Non-macOS targets don't have TCC, but they DO have the equivalent
+/// problem of session attribution on Windows (Session 0 vs the user's
+/// interactive Session 1+). When the CLI is spawned via SSH or a
+/// Windows service, it lands in Session 0 where the desktop, window
+/// APIs, and UI Automation return empty. A daemon running in the
+/// interactive session (via `cua-driver autostart enable && kick`,
+/// or any other Session-1+ launch) can answer tool calls correctly —
+/// so when one is up, we proxy through it.
+///
+/// Behaviour:
+///   * `--no-daemon-relaunch` or `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1`
+///     forces in-process (matches macOS opt-out).
+///   * `CUA_DRIVER_RS_MCP_FORCE_PROXY=1` always proxies, even with
+///     no daemon up — the caller is responsible for having one
+///     already.
+///   * Otherwise we probe `is_daemon_listening` on the default
+///     socket: a live daemon means proxy through it; nothing
+///     listening means run in-process (no autospawn equivalent on
+///     Linux/Windows — there's no `open -a CuaDriver` analog).
 #[cfg(not(target_os = "macos"))]
-pub fn should_use_daemon_proxy(_no_daemon_relaunch: bool) -> bool {
-    false
+pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
+    use crate::bundle::is_env_truthy;
+    if no_daemon_relaunch {
+        return false;
+    }
+    if is_env_truthy("CUA_DRIVER_RS_MCP_NO_RELAUNCH") {
+        return false;
+    }
+    if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
+        return true;
+    }
+    crate::serve::is_daemon_listening(&crate::serve::default_socket_path())
 }
 
 /// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve` to launch
@@ -449,15 +478,15 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
 /// `open` if needed), then `crate::proxy::run_proxy` against its
 /// socket. Builds its own tokio runtime — same shape as the other
 /// `run_*` helpers in this file that own their event loop.
-#[cfg(target_os = "macos")]
 pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
     let socket_path = socket.unwrap_or_else(crate::serve::default_socket_path);
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
-        // bundle setups) supply their own daemon — skip the `open -a`
-        // step, since they don't have an installed CuaDriver.app to
-        // relaunch into. Fail fast if no daemon is up at this point.
+        // bundle setups) supply their own daemon — skip the auto-
+        // launch step, since they don't have an installed
+        // CuaDriver.app to relaunch into. Fail fast if no daemon is
+        // up at this point.
         if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
             anyhow::bail!(
                 "CUA_DRIVER_RS_MCP_FORCE_PROXY=1 but no daemon listening on \
@@ -465,17 +494,40 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
                  and retry."
             );
         }
-        let socket_suffix = if socket_path != crate::serve::default_socket_path() {
-            format!(" --socket {socket_path}")
-        } else {
-            String::new()
-        };
-        eprintln!(
-            "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
-             auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
-             and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
-        );
-        launch_daemon_and_wait(&socket_path, 10)?;
+        #[cfg(target_os = "macos")]
+        {
+            let socket_suffix = if socket_path != crate::serve::default_socket_path() {
+                format!(" --socket {socket_path}")
+            } else {
+                String::new()
+            };
+            eprintln!(
+                "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
+                 auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
+                 and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
+            );
+            launch_daemon_and_wait(&socket_path, 10)?;
+        }
+        // On Linux / Windows there's no equivalent `open -a CuaDriver`
+        // mechanism to spawn a daemon attributed to the user's
+        // interactive session. The caller is expected to have one
+        // running already (e.g. via `cua-driver autostart enable && kick`
+        // on Windows). Bail with an actionable error rather than
+        // silently falling back to an in-process server that would
+        // be attributed to whatever session spawned us (typically
+        // Session 0 over SSH).
+        #[cfg(not(target_os = "macos"))]
+        {
+            anyhow::bail!(
+                "no cua-driver daemon listening on {socket_path}. Start one in \
+                 your interactive session — on Windows run \
+                 `cua-driver autostart enable && cua-driver autostart kick`; \
+                 on Linux run `cua-driver serve &` in the user's session. \
+                 Then re-run `cua-driver mcp`. To skip the proxy and run \
+                 in-process anyway (Session 0 attribution, GUI tools will \
+                 return empty), pass --no-daemon-relaunch."
+            );
+        }
     }
 
     let rt = tokio::runtime::Builder::new_multi_thread()

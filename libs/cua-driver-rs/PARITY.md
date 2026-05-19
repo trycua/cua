@@ -680,6 +680,18 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    scan-and-match race. Matches Swift.
 6. **Window-resolution retry** — same 5-attempt 100ms retry as before;
    unchanged.
+7. **`locate_by_name` Pass 3 — case-insensitive fuzzy scan** — ports
+   Swift `AppLauncher.locate(name:)` Pass 3 (PR #1492 / commit 3b5c372d).
+   `locate_by_name` now runs three passes:
+   - Pass 1: exact filesystem `<name>.app` lookup (unchanged).
+   - Pass 2: LaunchServices bundle-id lookup (unchanged).
+   - Pass 3 (new): case-insensitive scan — first checks
+     `localizedName` of running `NSRunningApplication` instances
+     (locale-aware; covers e.g. `計算機` on JP macOS), then scans
+     `CFBundleDisplayName` / `CFBundleName` / bundle stem from
+     `Info.plist` in the canonical roots.
+   Fixes: `name="com.apple.calculator"` → resolved (Pass 2),
+   `name="CALCULATOR"` → resolved (Pass 3). Closes #1523.
 
 ### Verified on macOS
 

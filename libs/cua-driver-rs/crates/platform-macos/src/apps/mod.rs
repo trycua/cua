@@ -291,18 +291,28 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
     }
 }
 
-/// Mirror of Swift's `AppLauncher.locate(name:)`.
+/// Mirror of Swift's `AppLauncher.locate(name:)` — three-pass chain.
 ///
-/// 1. filesystem lookup by bundle filename in the canonical roots
-///    (system first so /Applications wins over ~/Applications);
-/// 2. LaunchServices bundle-id lookup, in case the caller passed a
-///    bundle identifier in the `name` slot — preserved as
-///    `AppLocator::BundleId` so the launch path uses the live NSURL
-///    (Cryptex-safe — see CodeRabbit #3);
-/// 3. (skipped) full localized-name scan — not yet needed by current
-///    integration tests; can be added if we hit a non-English-name app
-///    in the wild.
+/// **Pass 1** — filesystem `<name>.app` lookup in canonical roots.
+/// Fast, locale-independent, exact filename match.
+///
+/// **Pass 2** — LaunchServices bundle-id lookup via
+/// `NSWorkspace.URLForApplicationWithBundleIdentifier`. Lets callers
+/// pass a bundle identifier in the `name` slot (e.g.
+/// `name="com.apple.calculator"`) without switching to `bundle_id`.
+/// Returns `AppLocator::BundleId` so the launch path uses the live
+/// NSURL (Cryptex-safe — see `resolve_bundle_id_to_locator`).
+///
+/// **Pass 3** — case-insensitive fuzzy scan (mirrors Swift Pass 3):
+///   a) `localizedName` from running `NSRunningApplication` instances
+///      (locale-aware; covers e.g. `計算機` on JP macOS for Calculator).
+///   b) `CFBundleDisplayName` → `CFBundleName` → bundle URL stem from
+///      each candidate bundle's `Info.plist` in the canonical roots.
+///
+/// Matching is case-insensitive throughout so `"calculator"` and
+/// `"CALCULATOR"` both resolve.
 fn locate_by_name(name: &str) -> Option<AppLocator> {
+    // Pass 1 — exact filesystem lookup by bundle filename.
     let app_name = if name.ends_with(".app") {
         name.to_owned()
     } else {
@@ -323,10 +333,55 @@ fn locate_by_name(name: &str) -> Option<AppLocator> {
             return Some(AppLocator::Path(path));
         }
     }
-    // Fallback: maybe caller passed a bundle id as `name`. Use the
-    // Cryptex-safe locator (carries the bundle id, never the lossy
-    // url.path()).
-    resolve_bundle_id_to_locator(name)
+
+    // Pass 2 — caller may have passed a bundle id as `name`.
+    if let Some(loc) = resolve_bundle_id_to_locator(name) {
+        return Some(loc);
+    }
+
+    // Pass 3 — case-insensitive fuzzy scan (mirrors Swift AppLauncher.locate).
+    let needle = name.to_lowercase();
+
+    // 3a) Check running apps first — localizedName is locale-aware and
+    //     doesn't require touching the disk.
+    for app in list_running_apps() {
+        if app.name.to_lowercase() == needle {
+            if let Some(bid) = app.bundle_id {
+                return Some(AppLocator::BundleId(bid));
+            }
+        }
+    }
+
+    // 3b) Scan installed bundles: CFBundleDisplayName > CFBundleName > stem.
+    for root in &roots {
+        let Ok(entries) = std::fs::read_dir(root) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                continue;
+            }
+            let path_str = match path.to_str() {
+                Some(s) => s.to_owned(),
+                None => continue,
+            };
+            let plist_path = path.join("Contents/Info.plist");
+            if let Some(info) = read_app_plist(&plist_path) {
+                if info.name.to_lowercase() == needle {
+                    return Some(AppLocator::Path(path_str));
+                }
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if stem == needle {
+                    return Some(AppLocator::Path(path_str));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Read `CFBundleIdentifier` from an `.app` bundle's `Info.plist`.

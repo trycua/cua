@@ -671,12 +671,12 @@ so permissions granted to CuaDriver.app may read as \"NOT granted\" here.\n\
 For authoritative results, start the daemon first: `cua-driver serve`, \
 then re-run this check."
         );
-        let mut coerced = json_args
-            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
-        if let serde_json::Value::Object(ref mut map) = coerced {
-            map.insert("prompt".into(), serde_json::Value::Bool(false));
-        }
-        Some(coerced)
+        let mut map = match json_args {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        map.insert("prompt".into(), serde_json::Value::Bool(false));
+        Some(serde_json::Value::Object(map))
     } else {
         json_args
     };

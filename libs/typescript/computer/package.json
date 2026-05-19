@@ -41,7 +41,7 @@
     "@trycua/core": "workspace:^",
     "pino": "^9.7.0",
     "uuid": "^11.0.0",
-    "ws": "^8.18.0"
+    "ws": "^8.20.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

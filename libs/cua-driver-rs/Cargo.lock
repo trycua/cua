@@ -242,12 +242,13 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
  "cursor-overlay",
+ "flate2",
  "image",
  "libc",
  "mcp-server",
@@ -257,17 +258,19 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "ureq",
  "uuid",
+ "wait-timeout",
 ]
 
 [[package]]
 name = "cursor-overlay"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "image",
@@ -371,6 +374,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -394,7 +407,7 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
 name = "focus-monitor-win"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "windows",
 ]
@@ -831,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-server"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1117,7 +1130,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-linux"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1136,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1166,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.2.1"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1673,6 +1686,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+dependencies = [
+ "filetime",
+ "libc",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2114,6 +2137,15 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "wasi"

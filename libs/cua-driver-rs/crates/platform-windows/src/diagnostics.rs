@@ -88,6 +88,14 @@ pub fn interactive_desktop_check() -> Result<bool, String> {
 /// Initialises COM (apartment-threaded) for the duration of the probe
 /// and uninitialises before returning so the rest of the doctor run is
 /// unaffected.
+///
+/// **COM lifecycle invariant** — the IUIAutomation interface produced by
+/// CoCreateInstance must be released BEFORE CoUninitialize tears down
+/// the apartment, or `IUnknown::Release` will dereference freed COM
+/// infrastructure and segfault (0xC0000005 ACCESS_VIOLATION). We flatten
+/// the probe result into a plain `Result<(), String>` first so the
+/// `IUIAutomation` is dropped at the end of the statement, then call
+/// CoUninitialize on the next line.
 #[cfg(target_os = "windows")]
 pub fn ui_automation_available() -> Result<(), String> {
     unsafe {
@@ -97,17 +105,24 @@ pub fn ui_automation_available() -> Result<(), String> {
         let init_result = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let need_uninit = init_result.is_ok();
 
-        let probe = CoCreateInstance::<_, IUIAutomation>(
+        // Bind to `_` immediately so the IUIAutomation interface is
+        // dropped (and `Release()` runs while COM is still up) before
+        // we proceed to CoUninitialize. Holding the binding past
+        // CoUninitialize and letting Drop run at function return
+        // causes a use-after-free in the COM apartment.
+        let result = CoCreateInstance::<_, IUIAutomation>(
             &CUIAutomation,
             None,
             CLSCTX_INPROC_SERVER,
-        );
+        )
+        .map(|_| ())
+        .map_err(|e| format!("{e}"));
 
         if need_uninit {
             CoUninitialize();
         }
 
-        probe.map(|_| ()).map_err(|e| format!("{e}"))
+        result
     }
 }
 

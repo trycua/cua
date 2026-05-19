@@ -55,8 +55,14 @@ pub struct InstalledApp {
 /// enumeration, not a guaranteed-complete catalog.
 pub fn list_installed_apps() -> Vec<InstalledApp> {
     let mut out = Vec::new();
-    out.extend(scan_start_menu());
-    out.extend(scan_uwp_packages());
+    let t0 = std::time::Instant::now();
+    let sm = scan_start_menu();
+    tracing::debug!(target: "installed_apps", "scan_start_menu: {} entries ({}ms)", sm.len(), t0.elapsed().as_millis());
+    out.extend(sm);
+    let t1 = std::time::Instant::now();
+    let uwp = scan_uwp_packages();
+    tracing::debug!(target: "installed_apps", "scan_uwp_packages: {} entries ({}ms)", uwp.len(), t1.elapsed().as_millis());
+    out.extend(uwp);
 
     // Dedupe by (kind, bundle_id) — Start Menu may list both a per-user and a
     // machine-wide shortcut for the same .exe target.
@@ -258,8 +264,26 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
                 continue;
             }
 
+            // (Frameworks: Visual C++ runtime, .NET shared assemblies,
+            // language packs etc.) — we'd ideally filter via
+            // `pkg.IsFramework()`, but that WinRT call has been observed
+            // to hang in Session 0 on some Win11 SKUs. Skipping for now;
+            // the opaque-family-name filter below catches most of the
+            // noise these would have contributed.
+
             let raw_display = pkg.DisplayName().ok().map(|h| h.to_string());
             let display = normalize_uwp_display_name(raw_display, &pkg, &family_name);
+
+            // Filter out packages whose display name ended up identical
+            // to the family name (e.g. `1527c705-839a-4832-...!App` for
+            // an opaque system Component without a `<Properties><DisplayName>`
+            // entry in its manifest). These show up as line noise in
+            // list_apps and are typically unactivatable system pieces
+            // the agent should never invoke. Real user-facing apps
+            // almost always have a meaningful DisplayName.
+            if display == family_name && looks_like_opaque_system_family(&family_name) {
+                continue;
+            }
 
             // Resolve manifest Application.Id when available so launch_path
             // works for multi-entry packages too; fallback to "App" for
@@ -337,6 +361,44 @@ fn normalize_uwp_display_name(
     trimmed.to_owned()
 }
 
+/// True when a UWP family name looks like an opaque system component
+/// rather than a real user-facing app — GUID-prefixed packages
+/// (`{8-4-4-4-12}_pubid`) or names that begin with `Windows.Internal`.
+///
+/// These packages routinely ship without a meaningful `DisplayName` /
+/// `Properties/DisplayName` (e.g. `CredentialDialogHost`,
+/// `CloudExperienceHost`, internal language shims), so they fall through
+/// `normalize_uwp_display_name`'s fallbacks to the family name itself.
+/// Reporting that in `list_apps` is just noise — agents can't usefully
+/// launch them and they crowd out actual installed apps.
+fn looks_like_opaque_system_family(family_name: &str) -> bool {
+    // Strip the publisher suffix (`_pubid`) before testing the
+    // package-name half — that's where the GUID lives.
+    let pkg_name = family_name.split('_').next().unwrap_or(family_name);
+
+    // `Windows.Internal.*` is Microsoft's own conventional namespace
+    // for internal-only packages.
+    if pkg_name.starts_with("Windows.Internal") {
+        return true;
+    }
+
+    // GUID pattern: 8-4-4-4-12 hex with `-` separators.
+    let mut parts = pkg_name.splitn(5, '-');
+    let segs = [
+        parts.next().unwrap_or(""),
+        parts.next().unwrap_or(""),
+        parts.next().unwrap_or(""),
+        parts.next().unwrap_or(""),
+        parts.next().unwrap_or(""),
+    ];
+    let expected_lens = [8, 4, 4, 4, 12];
+    let all_hex = segs
+        .iter()
+        .zip(expected_lens.iter())
+        .all(|(s, &n)| s.len() == n && s.chars().all(|c| c.is_ascii_hexdigit()));
+    all_hex
+}
+
 /// Best-effort parse of AppxManifest.xml to extract `<Properties><DisplayName>`.
 fn read_uwp_manifest_display_name(pkg: &windows::ApplicationModel::Package) -> Option<String> {
     let base = pkg.InstalledPath().ok()?.to_string();
@@ -394,4 +456,62 @@ fn unix_secs_to_rfc3339(secs: i64) -> String {
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         y, m, d, hour, minute, second
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opaque_system_family_matches_guid_prefix() {
+        // Both real-world examples seen on a stock Win11 image where
+        // Package.DisplayName resolved to an unresolved ms-resource:
+        // token and AppxManifest.xml didn't have a Properties/DisplayName.
+        assert!(looks_like_opaque_system_family(
+            "1527c705-839a-4832-9118-54d4Bd6a0c89_cw5n1h2txyewy"
+        ));
+        assert!(looks_like_opaque_system_family(
+            "F46D4000-FD22-4DB4-AC8E-4E1DDDE828FE_cw5n1h2txyewy"
+        ));
+    }
+
+    #[test]
+    fn opaque_system_family_matches_internal_namespace() {
+        assert!(looks_like_opaque_system_family(
+            "Windows.Internal.ShellExperience_cw5n1h2txyewy"
+        ));
+        assert!(looks_like_opaque_system_family(
+            "Windows.Internal.PrintingFramework_cw5n1h2txyewy"
+        ));
+    }
+
+    #[test]
+    fn opaque_system_family_keeps_real_apps() {
+        // Familiar packaged apps must NOT be filtered out — their family
+        // names don't look like GUIDs and don't start with the internal
+        // prefix.
+        assert!(!looks_like_opaque_system_family(
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe"
+        ));
+        assert!(!looks_like_opaque_system_family(
+            "Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+        ));
+        assert!(!looks_like_opaque_system_family(
+            "Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe"
+        ));
+        assert!(!looks_like_opaque_system_family(
+            "SpotifyAB.SpotifyMusic_zpdnekdrzrea0"
+        ));
+    }
+
+    #[test]
+    fn opaque_system_family_handles_missing_publisher_suffix() {
+        // No underscore = no publisher half. Still examine the whole
+        // string for the GUID / internal-namespace shape.
+        assert!(looks_like_opaque_system_family(
+            "1527c705-839a-4832-9118-54d4Bd6a0c89"
+        ));
+        assert!(!looks_like_opaque_system_family("Microsoft.WindowsNotepad"));
+        assert!(!looks_like_opaque_system_family(""));
+    }
 }

@@ -1,4 +1,4 @@
-name: "CD: Cua Driver RS (cross-platform)"
+name: "CD: Cua Driver (cross-platform)"
 
 # Matches the artifact convention from cd-swift-cua-driver.yml:
 #   - macOS: ONE universal binary tarball + bare universal binary
@@ -245,14 +245,19 @@ jobs:
           codesign --force --timestamp --options runtime \
             --sign "$IDENTITY" release/universal/cua-driver
           codesign --verify --strict --verbose=2 release/universal/cua-driver
-      - name: Assemble CuaDriverRs.app bundle
+      - name: Assemble CuaDriver.app bundle
         working-directory: libs/cua-driver-rs
         run: |
-          # Copy the bundle skeleton (Info.plist) from scripts/ and drop
-          # the universal binary into Contents/MacOS/cua-driver. The
-          # assembled bundle goes into every directory tarball so
-          # install.sh can `ditto` it to /Applications/CuaDriverRs.app
-          # for the TCC auto-relaunch path.
+          # Copy the bundle skeleton (Info.plist) from
+          # scripts/CuaDriverBundle/ and drop the universal binary into
+          # Contents/MacOS/cua-driver. The skeleton lives under a non-
+          # `.app` directory so macOS LaunchServices on developer
+          # machines doesn't index it as a second installed app with
+          # the `com.trycua.driver` bundle id (which used to surface as
+          # a "ghost CuaDriver" entry in System Settings → Privacy &
+          # Security). The assembled bundle goes into every directory
+          # tarball so install.sh can `ditto` it to
+          # /Applications/CuaDriver.app for the TCC auto-relaunch path.
           #
           # No codesigning at this layer — the bundle ships ad-hoc
           # signed (the bare binary inherits whatever signature was
@@ -263,26 +268,26 @@ jobs:
           # change that wires up the notarization script the way the
           # Swift driver does.
           VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p release/CuaDriverRs.app
-          cp -R scripts/CuaDriverRs.app/Contents release/CuaDriverRs.app/Contents
+          mkdir -p release/CuaDriver.app
+          cp -R scripts/CuaDriverBundle/Contents release/CuaDriver.app/Contents
           cp release/universal/cua-driver \
-             release/CuaDriverRs.app/Contents/MacOS/cua-driver
-          chmod +x release/CuaDriverRs.app/Contents/MacOS/cua-driver
+             release/CuaDriver.app/Contents/MacOS/cua-driver
+          chmod +x release/CuaDriver.app/Contents/MacOS/cua-driver
           # Stamp the release version into Info.plist so the bundle
           # version tracks the tag instead of whatever was last
           # checked in. Without this the in-tree Info.plist's
           # CFBundleShortVersionString drifts from the release tag on
           # every cut. CodeRabbit #4.
           plutil -replace CFBundleShortVersionString -string "$VERSION" \
-            release/CuaDriverRs.app/Contents/Info.plist
+            release/CuaDriver.app/Contents/Info.plist
           plutil -replace CFBundleVersion -string "$VERSION" \
-            release/CuaDriverRs.app/Contents/Info.plist
+            release/CuaDriver.app/Contents/Info.plist
           # Remove the .gitkeep we use in source control — it's not
           # part of the runtime bundle.
-          rm -f release/CuaDriverRs.app/Contents/MacOS/.gitkeep
-          ls -la release/CuaDriverRs.app/Contents/MacOS
-          plutil -p release/CuaDriverRs.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
-      - name: Codesign + notarize + staple CuaDriverRs.app
+          rm -f release/CuaDriver.app/Contents/MacOS/.gitkeep
+          ls -la release/CuaDriver.app/Contents/MacOS
+          plutil -p release/CuaDriver.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
+      - name: Codesign + notarize + staple CuaDriver.app
         if: env.DO_NOTARIZE == 'true'
         working-directory: libs/cua-driver-rs
         env:
@@ -298,26 +303,26 @@ jobs:
           # is essentially a no-op on the binary and a fresh signature
           # on the bundle wrapper.
           codesign --force --deep --timestamp --options runtime \
-            --sign "$IDENTITY" release/CuaDriverRs.app
-          codesign --verify --strict --verbose=2 release/CuaDriverRs.app
+            --sign "$IDENTITY" release/CuaDriver.app
+          codesign --verify --strict --verbose=2 release/CuaDriver.app
 
           # notarytool wants a zip (or .dmg / .pkg). Build one next to
           # the .app, submit, wait, then staple the bundle in place.
-          /usr/bin/ditto -c -k --keepParent release/CuaDriverRs.app \
-            release/CuaDriverRs.app.zip
+          /usr/bin/ditto -c -k --keepParent release/CuaDriver.app \
+            release/CuaDriver.app.zip
 
-          xcrun notarytool submit release/CuaDriverRs.app.zip \
+          xcrun notarytool submit release/CuaDriver.app.zip \
             --apple-id "$APPLE_ID" \
             --team-id "$TEAM_ID" \
             --password "$APP_SPECIFIC_PASSWORD" \
             --wait --timeout 20m
 
-          xcrun stapler staple release/CuaDriverRs.app
-          spctl -a -vv -t exec release/CuaDriverRs.app
+          xcrun stapler staple release/CuaDriver.app
+          spctl -a -vv -t exec release/CuaDriver.app
 
           # The zip we used to submit is throwaway; the packaging step
           # below builds the final tarballs from the stapled .app.
-          rm -f release/CuaDriverRs.app.zip
+          rm -f release/CuaDriver.app.zip
       - name: Package
         working-directory: libs/cua-driver-rs
         run: |
@@ -330,10 +335,10 @@ jobs:
             # (matches the Swift `cd-swift-cua-driver.yml` convention).
             cp release/universal/cua-driver "release/${STAGE}/"
             # Ship the .app bundle in every macOS tarball so install.sh
-            # can drop it into /Applications/CuaDriverRs.app for TCC
+            # can drop it into /Applications/CuaDriver.app for TCC
             # attribution (issue #1525). Tarball callers that want only
             # the bare binary can grab the *-binary.tar.gz below.
-            cp -R release/CuaDriverRs.app "release/${STAGE}/CuaDriverRs.app"
+            cp -R release/CuaDriver.app "release/${STAGE}/CuaDriver.app"
             cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
             (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           done
@@ -386,19 +391,24 @@ jobs:
         run: |
           # GNU sed (ubuntu-latest). The Swift CD workflow runs on
           # macos-15 and uses the BSD form (`sed -i ''`).
+          # The Rust install logic now lives at
+          # libs/cua-driver/scripts/_install-rust.sh (a private helper
+          # invoked by libs/cua-driver/scripts/install.sh on
+          # --backend=rust / non-macOS auto-detect).
           sed -i \
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.sh
+            libs/cua-driver/scripts/_install-rust.sh
 
+          # install.ps1 lives at the canonical Swift install dir;
           # PowerShell line starts with `$Script:` — escape the `$` for
           # sed's BRE so it matches the literal dollar sign.
           sed -i \
             "s/^\\\$Script:CuaDriverRsBakedVersion = .*/\\\$Script:CuaDriverRsBakedVersion = \"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.ps1
+            libs/cua-driver/scripts/install.ps1
 
           echo "Baked version ${VERSION} into working-tree install scripts:"
-          grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver-rs/scripts/install.sh
-          grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver-rs/scripts/install.ps1
+          grep -E '^CUA_DRIVER_RS_BAKED_VERSION=' libs/cua-driver/scripts/_install-rust.sh
+          grep -E '^\$Script:CuaDriverRsBakedVersion = ' libs/cua-driver/scripts/install.ps1
 
       - name: Stage release files
         run: |
@@ -416,8 +426,42 @@ jobs:
           # The freshly-baked scripts (rewritten in the prior step) are
           # what gets copied here, so the per-tag release assets carry the
           # current version's baked default — not the previous version's.
-          cp libs/cua-driver-rs/scripts/install.sh  release-upload/install.sh
-          cp libs/cua-driver-rs/scripts/install.ps1 release-upload/install.ps1
+          # Both user-facing installers live under libs/cua-driver/scripts/:
+          # install.sh is the Swift driver's installer that
+          # auto-delegates to the Rust _install-rust.sh helper on
+          # --experimental-rust / non-macOS hosts. install.ps1 is the
+          # canonical Windows installer (Rust port; Swift has no
+          # Windows build). The Rust install logic itself lives at
+          # _install-rust.sh — published as a release asset alongside
+          # the installers so curl|bash flows can fetch it.
+          cp libs/cua-driver/scripts/install.sh         release-upload/install.sh
+          cp libs/cua-driver/scripts/install.ps1        release-upload/install.ps1
+          cp libs/cua-driver/scripts/_install-rust.sh   release-upload/_install-rust.sh
+
+          # Uninstaller scripts — mirror the install side. The canonical
+          # uninstall.sh dispatches to the Swift uninstall path by default
+          # and to _uninstall-rust.sh on --experimental-rust / non-macOS
+          # auto-detect. uninstall.ps1 is the canonical Windows
+          # uninstaller (cua-driver-rs only — no Swift Windows build).
+          cp libs/cua-driver/scripts/uninstall.sh       release-upload/uninstall.sh
+          cp libs/cua-driver/scripts/uninstall.ps1      release-upload/uninstall.ps1
+          cp libs/cua-driver/scripts/_uninstall-rust.sh release-upload/_uninstall-rust.sh
+
+          # Skill pack — single platform-agnostic tarball fetched by
+          # `cua-driver skills install`. The .md files are identical across
+          # OS so we publish one asset per release tag. Naming matches the
+          # versioned binary tarballs.
+          VERSION="${{ steps.version.outputs.version }}"
+          SKILLS_STAGE="cua-driver-rs-v${VERSION}-skills"
+          mkdir -p "${SKILLS_STAGE}/cua-driver-rs"
+          if [ -d libs/cua-driver-rs/Skills/cua-driver-rs ]; then
+            cp -R libs/cua-driver-rs/Skills/cua-driver-rs/* "${SKILLS_STAGE}/cua-driver-rs/"
+            tar -czf "release-upload/${SKILLS_STAGE}.tar.gz" "${SKILLS_STAGE}"
+            echo "Packaged skill pack: release-upload/${SKILLS_STAGE}.tar.gz"
+          else
+            echo "Note: libs/cua-driver-rs/Skills/cua-driver-rs not present; skipping skill-pack asset."
+          fi
+
           echo "Release files:"
           ls -lh release-upload/
 
@@ -490,14 +534,24 @@ jobs:
             ### Install (Linux / macOS)
 
             ```bash
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
             ```
+
+            On macOS the installer defaults to the Swift driver; pass
+            `--experimental-rust` to get the cua-driver-rs Rust port.
+            On Linux it auto-detects the non-macOS host and installs
+            the Rust port directly.
 
             ### Install (Windows)
 
             ```powershell
-            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
             ```
+
+            > Note: both canonical installer URLs now live under
+            > `libs/cua-driver/scripts/`. Old URLs at
+            > `libs/cua-driver-rs/scripts/install.{sh,ps1}` still work via a
+            > deprecation shim that fetches the canonical script.
 
             The installer auto-detects host architecture (x86_64 / arm64) and uses
             directory junctions for the install layout, so it runs without admin
@@ -506,7 +560,7 @@ jobs:
             ### Artifacts
 
             **macOS (universal — arm64 + x86_64 in one binary, like the Swift cua-driver)**
-            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal.tar.gz` — directory tarball with LICENSE + `CuaDriverRs.app` bundle (install.sh expects this layout)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal.tar.gz` — directory tarball with LICENSE + `CuaDriver.app` bundle (install.sh expects this layout)
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-arm64.tar.gz` — same payload, named for arm64 callers
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-x86_64.tar.gz` — same payload, named for x86_64 callers
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root; **no** .app — bypasses the TCC auto-relaunch path)
@@ -524,6 +578,8 @@ jobs:
             **Installer scripts**
             - `install.sh` — Linux / macOS one-liner installer
             - `install.ps1` — Windows one-liner installer
+            - `uninstall.sh` — Linux / macOS one-liner uninstaller (mirrors the install flag set: Swift by default; `--experimental-rust` for the Rust port; non-macOS auto-detects)
+            - `uninstall.ps1` — Windows one-liner uninstaller
           generate_release_notes: false
           make_latest: false
 
@@ -573,18 +629,23 @@ jobs:
           # syntax (`sed -i` with no empty-string arg) — the Swift CD
           # workflow's bake step runs on macos-15 and uses the BSD form
           # (`sed -i ''`).
+          # Rust install logic lives at libs/cua-driver/scripts/_install-rust.sh
+          # (private helper invoked by the canonical libs/cua-driver/scripts/install.sh
+          # on --backend=rust / non-macOS auto-detect).
           sed -i \
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.sh
+            libs/cua-driver/scripts/_install-rust.sh
 
-          # The PowerShell line starts with `$Script:` — escape the `$`
-          # for sed's BRE so it matches the literal dollar sign.
+          # install.ps1 lives at libs/cua-driver/scripts/install.ps1
+          # (canonical Windows entry point). The PowerShell line starts
+          # with `$Script:` — escape the `$` for sed's BRE so it matches
+          # the literal dollar sign.
           sed -i \
             "s/^\\\$Script:CuaDriverRsBakedVersion = .*/\\\$Script:CuaDriverRsBakedVersion = \"${VERSION}\"/" \
-            libs/cua-driver-rs/scripts/install.ps1
+            libs/cua-driver/scripts/install.ps1
 
           git config user.name  "trycua-release[bot]"
           git config user.email "trycua-release[bot]@users.noreply.github.com"
-          git add libs/cua-driver-rs/scripts/install.sh libs/cua-driver-rs/scripts/install.ps1
+          git add libs/cua-driver/scripts/_install-rust.sh libs/cua-driver/scripts/install.ps1
           git commit -m "chore(cua-driver-rs): bake version ${VERSION} into install scripts [skip ci]"
           git push origin bake-version:main

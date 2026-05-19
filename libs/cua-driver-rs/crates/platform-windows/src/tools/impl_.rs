@@ -161,25 +161,36 @@ impl Tool for ListAppsTool {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
+            // Per-step timings logged via `tracing::debug!` (silent at default
+            // log level — enable with `RUST_LOG=cua_driver=debug` when debugging
+            // a slow list_apps invocation).
+            let t0 = std::time::Instant::now();
             let wins = crate::win32::list_windows(None);
+            tracing::debug!(target: "list_apps", "step 1 list_windows: {} wins ({}ms)", wins.len(), t0.elapsed().as_millis());
             let mut seen_pids = std::collections::HashSet::new();
             let mut running_pids: Vec<u32> = Vec::new();
             for w in &wins {
                 if seen_pids.insert(w.pid) { running_pids.push(w.pid); }
             }
 
+            let t1 = std::time::Instant::now();
             let foreground_pid = unsafe {
                 let fg = GetForegroundWindow();
                 let mut pid = 0u32;
                 let _ = GetWindowThreadProcessId(fg, Some(&mut pid));
                 pid
             };
+            tracing::debug!(target: "list_apps", "step 2 fg-window: pid={} ({}ms)", foreground_pid, t1.elapsed().as_millis());
 
+            let t2 = std::time::Instant::now();
             let procs = crate::win32::list_processes();
+            tracing::debug!(target: "list_apps", "step 3 list_processes: {} procs ({}ms)", procs.len(), t2.elapsed().as_millis());
             let pid_to_name: std::collections::HashMap<u32, String> =
                 procs.iter().map(|p| (p.pid, p.name.clone())).collect();
 
+            let t3 = std::time::Instant::now();
             let installed = crate::win32::list_installed_apps();
+            tracing::debug!(target: "list_apps", "step 4 list_installed_apps: {} installed ({}ms)", installed.len(), t3.elapsed().as_millis());
             // Lowercase-exe-basename → installed-app indices. We match running
             // processes by basename rather than full path because the process
             // table's executable name is `notepad.exe` while the Start-Menu
@@ -1055,23 +1066,62 @@ impl Tool for ClickTool {
             };
             // Step 2: animate cursor to screen coords (awaits glide_duration_ms).
             overlay_glide_to(cx as f64, cy as f64).await;
-            // Step 3: click pulse + post click.
+            // Step 3: click pulse + actual click.
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
                 x: cx as f64, y: cy as f64,
             });
             let btn = button.clone();
-            let action_name = match btn.as_str() {
-                "right"  => "ShowMenu",  // closest UIA analogue of Swift "show_menu"
-                "middle" => "Invoke",
-                _        => "Invoke",    // left-click = UIA Invoke pattern (matches Swift "AXPress")
-            };
+            // Try UIA Invoke first (it works for UWP / modern XAML / web
+            // content where PostMessage(WM_LBUTTONDOWN) hits the outer
+            // HWND but never reaches the inner XAML/composition element).
+            // Fall through to PostMessage when:
+            //   - element doesn't support InvokePattern (most text inputs,
+            //     non-interactive elements)
+            //   - right-click (UIA's ExpandCollapse / ShowContextMenu are
+            //     different patterns; keep PostMessage for now)
+            //   - count > 1 (double-click semantics aren't an Invoke
+            //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
+            let state_clone = self.state.clone();
+            let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-                // cx/cy are screen coords from CurrentBoundingRectangle; use
-                // post_click_screen so deepest-child resolution happens once.
+                if use_uia_invoke {
+                    if let Some(ptr) = state_clone.element_cache.get_element_ptr(pid, hwnd, idx) {
+                        use windows::Win32::UI::Accessibility::{
+                            IUIAutomationElement, IUIAutomationInvokePattern, UIA_InvokePatternId,
+                        };
+                        use windows::core::Interface;
+                        // Reconstruct without consuming the cache's AddRef;
+                        // forget after we extract the pattern so Drop doesn't
+                        // double-Release the cached pointer.
+                        let elem: IUIAutomationElement =
+                            unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+                        let invoke_result = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) };
+                        std::mem::forget(elem);
+                        if let Ok(pattern) = invoke_result {
+                            if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
+                                match unsafe { inv.Invoke() } {
+                                    Ok(()) => {
+                                        return Ok(format!(
+                                            "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            target: "click",
+                                            "UIA Invoke failed for [{idx}]: {e}; falling back to PostMessage"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // PostMessage fallback (legacy Win32 + non-Invokable elements).
                 crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
-                // Match Swift text format: "✅ Performed AXPress on [N] role \"title\"."
-                // (UIA has no readily-available role/name on the cached element here;
-                // emit element_index + screen coords for traceability instead).
+                let action_name = match btn.as_str() {
+                    "right"  => "ShowMenu",
+                    _        => "PostMessage click",
+                };
                 Ok(format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."))
             }).await;
             match result {
@@ -1103,6 +1153,51 @@ impl Tool for ClickTool {
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let btn = button.clone();
+            // Vision-mode (x, y) dispatch is **layered**, mirroring the
+            // trope-cua reference impl
+            // (`src/CuaDriver.Win/Tools/ClickTool.cs::InvokePixelClickAsync`):
+            //
+            //   1. UIA hit-test in the target HWND's subtree. If the
+            //      deepest InvokePattern-bearing element at (sx, sy) is
+            //      found, fire `Invoke()`. Works occluded, no focus
+            //      steal, and is the **only** path that lands on UWP /
+            //      WebView2 / DirectComposition surfaces — those route
+            //      input through `Windows.UI.Input`, not WM_LBUTTONDOWN.
+            //
+            //   2. If UIA returns false (no Invokable element under the
+            //      pixel inside `hwnd`, or `hwnd` has no useful UIA
+            //      tree at all), fall through to
+            //      `PostMessage(WM_LBUTTONDOWN/UP)` against the deepest
+            //      child HWND at the screen point. Covers plain Win32
+            //      controls without UIA InvokePattern (most edit
+            //      fields, custom-drawn widgets, native containers) and
+            //      apps that don't expose UIA at all.
+            //
+            // The combination closes the gap macOS gets for free from
+            // `CGEventPostToPSN` (per-pid event routing): UIA covers
+            // UWP-style targets without z-order tricks, PostMessage
+            // covers plain Win32 without z-order tricks. Neither path
+            // moves the OS cursor or activates the receiver.
+            //
+            // UIA path runs only for single left/middle clicks —
+            // right-click (UIA has no by-coord `ShowContextMenu`) and
+            // multi-click (`Invoke()` is single-fire by definition)
+            // skip directly to PostMessage.
+            let use_uia = (btn == "left" || btn == "middle") && count == 1;
+            if use_uia {
+                let invoked = tokio::task::spawn_blocking(move || {
+                    crate::uia::windows_enum::try_invoke_in_window_at_point(
+                        hwnd as isize, sx as i32, sy as i32,
+                    )
+                })
+                .await
+                .unwrap_or(false);
+                if invoked {
+                    return ToolResult::text(format!(
+                        "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
+                    ));
+                }
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
             }).await;

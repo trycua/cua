@@ -19,10 +19,10 @@ use mcp_server::{protocol::Content, tool::ToolRegistry};
 pub enum Command {
     Mcp {
         /// Force in-process MCP execution — skip the TCC auto-relaunch
-        /// path that would spawn a daemon via `open -n -g -a CuaDriverRs
+        /// path that would spawn a daemon via `open -n -g -a CuaDriver
         /// --args serve` and proxy stdio MCP requests through its Unix
         /// socket. Useful when the calling context already has the right
-        /// TCC grants (CuaDriverRs.app launched us directly), or when
+        /// TCC grants (CuaDriver.app launched us directly), or when
         /// diagnosing in-process failures. Also toggleable via
         /// `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1`.
         no_daemon_relaunch: bool,
@@ -65,6 +65,24 @@ pub enum Command {
     /// after install. Subsequent runs see the `.installation_recorded`
     /// marker file and become no-ops.
     TelemetryInstallEvent,
+    /// `cua-driver autostart {enable|disable|status|kick}` —
+    /// platform-native auto-start so `cua-driver serve` comes up on
+    /// every logon. Windows: Scheduled Task with LogonType=Interactive
+    /// (lands in Session 1+). macOS / Linux: not yet implemented; the
+    /// stub returns a helpful "use install-local.sh --autostart"
+    /// message. See `crates/cua-driver/src/autostart.rs`.
+    Autostart { subcommand: String },
+    /// `cua-driver skills {install|update|uninstall|status|path}` —
+    /// agent skill-pack management. The verb is the ONLY way a user
+    /// installs or updates the cua-driver-rs skill pack into their
+    /// agent dirs (Claude Code / Codex / OpenClaw / OpenCode); the
+    /// install scripts never touch ~/.claude/skills/ etc. directly.
+    /// `install` fetches the matching versioned release asset
+    /// (`cua-driver-rs-v<v>-skills.tar.gz`) from GitHub, places it
+    /// under `<HomeDir>/skills/cua-driver-rs/`, and symlinks into each
+    /// detected agent's `skills/` dir. See
+    /// `crates/cua-driver/src/skills.rs`.
+    Skills { subcommand: String, flags: Vec<String> },
 }
 
 /// Flags whose next token is a value (not a subcommand).
@@ -90,10 +108,26 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose, autostart, skills");
+        println!();
+        println!("autostart options (Windows-only today):");
+        println!("  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.");
+        println!("  cua-driver autostart disable    Remove the autostart entry. No-op if not registered.");
+        println!("  cua-driver autostart status     Print whether the entry is registered + whether the daemon is running.");
+        println!("  cua-driver autostart kick       Start the entry now without re-logging.");
+        println!();
+        println!("skills options (agent skill-pack management, opt-in):");
+        println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
+        println!("                                  into each detected agent's skills/ dir (Claude Code, Codex, OpenClaw,");
+        println!("                                  OpenCode). Idempotent. Never overwrites existing user links.");
+        println!("  cua-driver skills update        Re-fetch the skill pack from GitHub, refreshing the local copy + links.");
+        println!("  cua-driver skills uninstall     Remove the agent symlinks. Add --all to also delete the local copy.");
+        println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
+        println!("  cua-driver skills path          Print where the local skill pack lives.");
+        println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
         println!("mcp options (macOS):");
-        println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriverRs daemon.");
+        println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriver daemon.");
         println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
         println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
         println!();
@@ -188,6 +222,33 @@ pub fn parse_command() -> Command {
                 }
             }
         }
+        Some("autostart") => {
+            // No `cua-driver autostart` (no subcommand) shortcut today —
+            // every operation is destructive enough that we want the
+            // user to be explicit about which one.
+            let subcommand = pos.next().unwrap_or("").to_string();
+            if subcommand.is_empty() {
+                eprintln!("Usage: cua-driver autostart {{enable|disable|status|kick}}");
+                process::exit(64);
+            }
+            Command::Autostart { subcommand }
+        }
+        Some("skills") => {
+            // Skills subcommand. Default is `status` so plain `cua-driver
+            // skills` is a read-only probe — won't ever modify user state.
+            let subcommand = pos.next().unwrap_or("status").to_string();
+            // Pass through any other flags / args after the subcommand for
+            // the verb's own parsing (e.g. `--force`, `--from main`,
+            // `--agent claude-code`, `--local`, `--all`). Collect from `pos`
+            // and dotted long-form flags from the raw args too.
+            let mut flags: Vec<String> = pos.map(str::to_owned).collect();
+            for a in &args {
+                if a.starts_with("--") && !flags.contains(a) {
+                    flags.push(a.clone());
+                }
+            }
+            Command::Skills { subcommand, flags }
+        }
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
             let tool = first.to_string();
@@ -267,7 +328,7 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
 ///
 /// Mirrors Swift `MCPCommand.shouldUseDaemonProxy` in spirit:
 /// the trigger is "shell-spawned bare binary that resolves into an
-/// installed `CuaDriverRs.app` bundle, with a non-launchd parent".
+/// installed `CuaDriver.app` bundle, with a non-launchd parent".
 /// When any of those conditions fails — explicit opt-out, dev-mode
 /// `cargo run` invocation, already-relaunched-via-launchd — we stay
 /// in-process. The proxy path is purely additive.
@@ -276,7 +337,7 @@ pub fn run_describe(registry: &ToolRegistry, name: &str) {
 /// there's no `open -a` equivalent on Linux / Windows.
 #[cfg(target_os = "macos")]
 pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
-    use crate::bundle::{is_env_truthy, is_executable_inside_cuadriverrs_app, parent_is_not_launchd};
+    use crate::bundle::{is_env_truthy, is_executable_inside_cuadriver_app, parent_is_not_launchd};
     if no_daemon_relaunch {
         return false;
     }
@@ -284,7 +345,7 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
         return false;
     }
     // Hidden test/escape hook: force proxy mode without requiring the
-    // executable to live inside CuaDriverRs.app. Used by the
+    // executable to live inside CuaDriver.app. Used by the
     // integration test (which spawns a daemon manually) and by users
     // who've wrapped the binary in a custom bundle. Skips the
     // launch_daemon_and_wait `open -a` step too — caller is expected
@@ -292,7 +353,7 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
     if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
         return true;
     }
-    if !is_executable_inside_cuadriverrs_app() {
+    if !is_executable_inside_cuadriver_app() {
         // Raw `cargo run` / dev binary — no installed bundle to land
         // in, so relaunching would fail. Stay in-process.
         return false;
@@ -310,7 +371,7 @@ pub fn should_use_daemon_proxy(_no_daemon_relaunch: bool) -> bool {
     false
 }
 
-/// Spawn `/usr/bin/open -n -g -a CuaDriverRs --args serve` to launch
+/// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve` to launch
 /// the daemon under `LaunchServices` (so it inherits the bundle's
 /// TCC attribution), then poll the socket for up to `timeout_secs`
 /// seconds. Returns Err with a diagnostic message if `open` failed
@@ -332,14 +393,14 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
     // actually differs from the default, so the common case keeps the
     // shorter `open` argv (and matches Swift's invocation byte-for-byte).
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriverRs", "--args", "serve"];
+    let mut open_args: Vec<&str> = vec!["-n", "-g", "-a", "CuaDriver", "--args", "serve"];
     if pass_socket {
         open_args.push("--socket");
         open_args.push(socket_path);
     }
 
     let status = Cmd::new("/usr/bin/open")
-        // `-n` forces a new instance: CuaDriverRs.app might already be
+        // `-n` forces a new instance: CuaDriver.app might already be
         // running from a previous MCP session, and without `-n`, `open
         // -a` would re-use it and drop our `--args serve`, leaving no
         // daemon up. `-g` keeps the new instance backgrounded —
@@ -358,8 +419,8 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
 
     if !status.success() {
         anyhow::bail!(
-            "`open -n -g -a CuaDriverRs --args serve{}` exited {:?}. \
-             Check that `/Applications/CuaDriverRs.app` is installed, or \
+            "`open -n -g -a CuaDriver --args serve{}` exited {:?}. \
+             Check that `/Applications/CuaDriver.app` is installed, or \
              pass --no-daemon-relaunch to bypass.",
             if pass_socket { format!(" --socket {socket_path}") } else { String::new() },
             status.code()
@@ -379,7 +440,7 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
     anyhow::bail!(
         "daemon did not appear on {socket_path} within {timeout_secs}s. If this \
          is the first launch, grant Accessibility + Screen Recording to \
-         CuaDriverRs.app in System Settings and retry. Pass --no-daemon-relaunch \
+         CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch \
          to stay in-process."
     );
 }
@@ -395,7 +456,7 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
     if !crate::serve::is_daemon_listening(&socket_path) {
         // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
         // bundle setups) supply their own daemon — skip the `open -a`
-        // step, since they don't have an installed CuaDriverRs.app to
+        // step, since they don't have an installed CuaDriver.app to
         // relaunch into. Fail fast if no daemon is up at this point.
         if crate::bundle::is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
             anyhow::bail!(
@@ -410,8 +471,8 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
             String::new()
         };
         eprintln!(
-            "cua-driver-rs: mcp launched without CuaDriverRs.app's TCC grants; \
-             auto-launching the daemon via `open -n -g -a CuaDriverRs --args serve{socket_suffix}` \
+            "cua-driver-rs: mcp launched without CuaDriver.app's TCC grants; \
+             auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
              and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
         );
         launch_daemon_and_wait(&socket_path, 10)?;
@@ -835,14 +896,14 @@ pub fn run_update_cmd(apply: bool) {
                 println!("  cua-driver update --apply");
                 println!();
                 println!("Or reinstall directly:");
-                println!("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh | bash");
+                println!("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash");
                 return;
             }
 
             println!("Downloading and installing cua-driver {v}…");
             let status = std::process::Command::new("bash")
                 .arg("-c")
-                .arg("curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh | bash")
+                .arg("curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash")
                 .status();
             match status {
                 Ok(s) if s.success() => {}
@@ -1448,6 +1509,16 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Update { .. } => "cua_driver_update".to_owned(),
         Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
+        // Per-subcommand event so dashboards can split enable / disable /
+        // status / kick separately — they have very different meanings
+        // for adoption. `sanitize_tool_name` already does what we want
+        // (lowercase ASCII / underscore-only / max 64 chars / fallback).
+        Command::Autostart { subcommand } => {
+            format!("cua_driver_autostart_{}", sanitize_tool_name(subcommand))
+        }
+        Command::Skills { subcommand, .. } => {
+            format!("cua_driver_skills_{}", sanitize_tool_name(subcommand))
+        }
         Command::TelemetryInstallEvent => return None,
     };
     Some(name)

@@ -202,6 +202,26 @@ Or set `CUA_DRIVER_TELEMETRY_ENABLED=0` in the environment for a one-off overrid
 
 Telemetry records anonymous subcommand usage (`cua_driver_api_click`, `cua_driver_serve`, etc). No command arguments, file paths, or personal information are collected.
 
+## Windows (cua-driver-rs)
+
+### Why do `click` / `type_text` / `screenshot` / `list_windows` return empty results?
+
+Your `cua-driver` daemon is probably running in **Windows Session 0** (services / SSH-launched processes). Every window-driving Win32 API — `EnumWindows`, `PostMessage`, `PrintWindow`, UI Automation tree walks — is scoped to the calling process's WindowStation + Desktop. Session 0 has no attached interactive desktop, so all these APIs silently succeed but return empty.
+
+Run `cua-driver doctor` — it surfaces this directly:
+
+```
+[warn] interactive session: running in Session 0 (services); window-driving tools
+        (list_windows, click, type_text, screenshot, get_window_state) will return
+        empty results — these APIs need an attached interactive desktop.
+```
+
+Fix: re-launch `cua-driver serve` from an interactive logon — RDP into the host, console session, or a scheduled task configured with `/RU <user> /IT` so it runs in the user's session. The non-GUI tools (`list_apps` for Win32 entries, `get_config`, `doctor`, telemetry plumbing) work normally in Session 0 either way.
+
+### `launch_app` with a UWP app fails with "requires an interactive session" in Session 0.
+
+Same root cause: `IApplicationActivationManager::ActivateApplication` needs the per-user AppX runtime which only exists in interactive logons. Until you re-run the daemon from a Session 1+ logon, fall back to the Win32 path (`launch_app {"path":"C:\\Windows\\System32\\notepad.exe"}`) — `ShellExecuteEx`-based launches work in Session 0 for anything reachable via PATH.
+
 ## Testing
 
 ### Are there tests I can run against my install?

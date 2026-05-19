@@ -24,11 +24,13 @@
 //!
 //! On all other platforms `#[tokio::main]` is used directly.
 
+mod autostart;
 mod bundle;
 mod cli;
 mod doctor;
 mod proxy;
 mod serve;
+mod skills;
 mod telemetry;
 mod version_check;
 
@@ -198,6 +200,14 @@ fn main() {
             cli::run_diagnose_cmd(reg);
             return;
         }
+        cli::Command::Autostart { subcommand } => {
+            autostart::run_autostart_cmd(&subcommand);
+            return;
+        }
+        cli::Command::Skills { subcommand, flags } => {
+            skills::run(&subcommand, &flags);
+            return;
+        }
         cli::Command::Config { subcommand, key, value, socket } => {
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
@@ -210,7 +220,7 @@ fn main() {
             // banner can land on stderr in either dispatch path.
             version_check::maybe_announce_update();
             // TCC sidestep: if we're a shell-spawned bare binary that
-            // resolves into /Applications/CuaDriverRs.app, run the
+            // resolves into /Applications/CuaDriver.app, run the
             // proxy path instead of the in-process MCP server. The
             // proxy ensures a daemon is up under the bundle's TCC
             // attribution and forwards stdio MCP through its socket.
@@ -401,6 +411,14 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Diagnose => {
             let reg = Arc::new(build_registry_no_cursor());
             cli::run_diagnose_cmd(reg);
+            return Ok(());
+        }
+        cli::Command::Autostart { subcommand } => {
+            autostart::run_autostart_cmd(&subcommand);
+            return Ok(());
+        }
+        cli::Command::Skills { subcommand, flags } => {
+            skills::run(&subcommand, &flags);
             return Ok(());
         }
         cli::Command::Config { subcommand, key, value, socket } => {

@@ -313,7 +313,12 @@ terminal-only flow proves insufficient; the CLI is the MVP.
          + `crates/platform-linux/src/installed_apps.rs`
 - Status:
   - macOS: VERIFIED — unified shape + installed-app scan + running merge
-  - windows: VERIFIED for Win32 path (cross-target check), live-run pending on a Windows host
+  - windows: VERIFIED live — Win11 24H2 in Session 0 returns ~150 apps
+    (Start-Menu .lnk + WinRT PackageManager UWP), cold call ~370ms
+    (80ms Start-Menu, 320ms UWP), warm call sub-100ms. All entries
+    expose the unified shape (`pid`, `name`, `bundle_id`, `kind`,
+    `launch_path`, `last_used`, `windows`, `running`, `active`).
+    Validated against `list_apps_parity` example.
   - linux: code ready (cross-target check pending Linux host)
 - Test: `tests/integration/test_api_parity.py::RustParityTests::test_call_list_apps_*`
         + `crates/platform-windows/examples/list_apps_parity.rs`
@@ -564,11 +569,18 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   - macOS=`crates/platform-macos/src/tools/launch_app.rs` (full focus-steal contract)
   - linux=`crates/platform-linux/src/tools/impl_.rs` (TBD audit)
 - Status:
-  - windows: VERIFIED
+  - windows: VERIFIED for Win32 path; UWP path requires interactive session
+    (returns descriptive error in Session 0 — never hangs). Win32 launches
+    use `ShellExecuteExW` + `SW_SHOWNOACTIVATE` (no focus steal, matches
+    macOS oapp). UWP launches use `IApplicationActivationManager` +
+    best-effort `GetForegroundWindow` snapshot/restore (best-effort
+    because `SetForegroundWindow` is subject to Windows' foreground-lock
+    restrictions — visual confirmation in Session 1+ recommended).
   - macOS: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
 - Tests:
-  - windows=`crates/platform-windows/examples/launch_app_parity.rs`
+  - windows=`crates/platform-windows/examples/launch_app_parity.rs` (accepts
+    Session-0 fast-fail for UWP path the same way it accepts "not installed")
   - macOS=`tests/integration/test_focus_steal_parity.py` + `crates/platform-macos/src/focus_steal.rs` (Rust unit tests)
 
 ### Fixed (Windows)
@@ -1268,7 +1280,7 @@ Swift.
     `CallTool` over the daemon UDS).
 - Rust:
   - `libs/cua-driver-rs/crates/cua-driver/src/bundle.rs` —
-    `is_executable_inside_cuadriverrs_app`,
+    `is_executable_inside_cuadriver_app`,
     `parent_is_not_launchd`, `is_env_truthy`.
   - `libs/cua-driver-rs/crates/cua-driver/src/cli.rs` —
     `should_use_daemon_proxy`, `launch_daemon_and_wait`,
@@ -1276,10 +1288,14 @@ Swift.
   - `libs/cua-driver-rs/crates/cua-driver/src/proxy.rs` —
     `run_proxy` (the stdio loop forwarding `tools/list` and
     `tools/call` through the daemon socket).
-  - `libs/cua-driver-rs/scripts/CuaDriverRs.app/Contents/Info.plist` —
-    the bundle the auto-relaunch path lands in.
+  - `libs/cua-driver-rs/scripts/CuaDriverBundle/Contents/Info.plist` —
+    skeleton (Info.plist + empty MacOS/) that CD assembles into the
+    release-tarball `CuaDriver.app` that the auto-relaunch path lands
+    in. Stored under a non-`.app` directory so LaunchServices on
+    developer machines doesn't surface a ghost entry alongside the
+    real install.
   - `libs/cua-driver-rs/scripts/install.sh` — drops the bundle to
-    `/Applications/CuaDriverRs.app` and symlinks the bin into it.
+    `/Applications/CuaDriver.app` and symlinks the bin into it.
 - Status: implemented on macOS (issue #1525); smoke-tested manually
   before merge.
 
@@ -1287,7 +1303,7 @@ Swift.
 When `cua-driver-rs mcp` is invoked from an IDE terminal (Claude
 Code, Cursor, VS Code, Warp), macOS attributes the spawned process
 to the parent terminal's TCC responsibility chain — *not* to
-`com.trycua.cuadriverrs`. AX probes against the process silently
+`com.trycua.driver`. AX probes against the process silently
 fail because the user granted Accessibility to the bundle, not to
 the IDE terminal. The Swift driver hit the same pathology and fixed
 it in PR #1479; the Rust port hit it on the macOS GA flip path and
@@ -1295,7 +1311,7 @@ fixed it here. See issue #1525 for the full background.
 
 ### Bundle id divergence (intentional)
 Swift `CuaDriver.app` → `com.trycua.driver`.
-Rust `CuaDriverRs.app` → `com.trycua.cuadriverrs`.
+Rust `CuaDriver.app` → `com.trycua.driver`.
 The two bundles coexist on disk and in TCC; a user can grant
 Accessibility + Screen Recording to each independently. The Rust
 port has its own bundle name + identifier so:
@@ -2179,7 +2195,7 @@ post-install GC pass to trim oldest dirs back to a configurable cap.
    `Invoke-OldReleasesGc` (ps1) is invoked only after `current` has
    been retargeted at the new install, so the about-to-be-active
    version is never a deletion candidate.
-4. **macOS path unchanged** — the macOS `/Applications/CuaDriverRs.app`
+4. **macOS path unchanged** — the macOS `/Applications/CuaDriver.app`
    install is an in-place replacement (no per-version directory
    accumulation), so the GC pass is a no-op there by construction
    (the Darwin branch never enters the versioned-dirs install path).

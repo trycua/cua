@@ -431,12 +431,30 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Mcp { no_daemon_relaunch, socket } => {
             // Long-running MCP server — kick off the background update
-            // check before falling through to the in-process server.
+            // check before any daemon-proxy decisions.
             version_check::maybe_announce_update();
-            // Non-macOS: TCC doesn't exist, no daemon proxy path. The
-            // flags parse cleanly so cross-platform MCP config
-            // snippets work, but we ignore them and run in-process.
-            let _ = (no_daemon_relaunch, socket);
+            // Daemon-proxy sidestep for Windows Session 0 attribution
+            // (and equivalent on Linux when a daemon is up): if a
+            // daemon is listening on the default socket, forward
+            // stdio MCP through it instead of running the server
+            // in-process. The proxy preserves the daemon's session
+            // identity (typically Session 1+ on Windows) so window /
+            // UIA / screen tools see the user's actual desktop —
+            // without this, an `cua-driver mcp` spawned by Claude
+            // Code over SSH lands in Session 0 and every desktop
+            // tool returns empty. See `cli::should_use_daemon_proxy`.
+            if cli::should_use_daemon_proxy(no_daemon_relaunch) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                    eprintln!("cua-driver-rs: {e}");
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            // Fall through to the in-process MCP server below. The
+            // `socket` flag is daemon-proxy-only; ignored on the
+            // in-process path (mirrors the macOS arm's drop-on-floor
+            // behaviour).
+            let _ = socket;
         }
     }
 

@@ -274,15 +274,19 @@ A healthy interactive logon reports the inverse:
 
 - **Run from RDP or the local console** — the simplest fix; both put your shell in your own interactive session, not Session 0.
 - **Run from a Windows Terminal / PowerShell launched by your logged-in user** — same effect.
-- **Register a logon Scheduled Task** (recommended, equivalent to macOS LaunchAgent) — see [Auto-start at logon](#auto-start-at-logon-windows) below.
-- **Use a session-launcher utility** — if you must invoke from a service / SSH context, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
-- **Configure your SSH server to spawn inside the interactive session** — possible with most modern Windows SSH server distributions but requires extra setup; the scheduled-task approach is usually simpler.
+- **Register a logon Scheduled Task** (recommended, equivalent to macOS LaunchAgent) — see [Auto-start at logon](#auto-start-at-logon-windows) below, or the [Autostart concept page](/cua-driver/guide/getting-started/autostart) for the `cua-driver autostart enable` one-liner.
+- **Driving over SSH?** Register the autostart task once from an interactive session, then `cua-driver mcp` and `cua-driver call` over SSH proxy through the running daemon automatically. See [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
+- **Use a session-launcher utility** — if you must invoke from a service / SSH context *without* the daemon-proxy path, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
 
 Run `cua-driver doctor` after switching contexts to confirm the warning has cleared.
 
 #### Auto-start at logon (Windows)
 
 The Windows-native equivalent of macOS's LaunchAgent is a **Scheduled Task triggered at logon, running as your user, with `Run only when user is logged on`** (i.e. `LogonType: Interactive`). Once registered, `cua-driver serve` starts automatically every time you sign in via RDP or the console — no more pasting a startup one-liner.
+
+<Callout type="info">
+**One-liner:** `cua-driver autostart enable && cua-driver autostart kick` does everything the manual block below does. See the [Autostart concept page](/cua-driver/guide/getting-started/autostart) for the full `enable / disable / kick / status` verb family, and [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the recommended headless workflow on top of it.
+</Callout>
 
 `install.ps1` prints the exact one-shot registration block on a successful install. To register it manually (substitute your install path if you built from source):
 
@@ -524,6 +528,18 @@ The client spawns `cua-driver mcp` on demand once registered.
   under LaunchServices with the right TCC context. No Python bridge, no manual `serve` step required.
   Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to opt out, e.g. when MCP is
   launched from CuaDriver.app directly and already has the right TCC grants.
+</Callout>
+
+<Callout type="info">
+  **Daemon-proxy on Windows / Linux (`cua-driver-rs` v0.2.7+).** The same proxy mechanism applies on
+  Windows and Linux, addressing the Session 0 / interactive-session problem rather than TCC: when
+  `cua-driver mcp` starts up and detects a daemon already listening on the default socket, it
+  proxies every tool call through to it instead of running in-process. Crucial for SSH on Windows,
+  where the SSH session lands in Session 0 (no desktop) but the daemon — registered via
+  `cua-driver autostart enable` — lives in the user's Session 1+ interactive logon. Same
+  `--no-daemon-relaunch` / `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` opt-out as macOS. See
+  [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the
+  full workflow.
 </Callout>
 
 ## Agent skills (auto-wired)

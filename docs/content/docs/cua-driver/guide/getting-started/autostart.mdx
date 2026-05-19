@@ -1,0 +1,118 @@
+---
+title: Autostart
+description: Keep cua-driver's daemon running in the user's interactive session across logons, RDP disconnects, and reboots.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver autostart` registers the platform-native "run at logon" mechanism that keeps a `cua-driver serve` daemon alive in the user's interactive session. On Windows this is the difference between GUI tools that work over SSH and GUI tools that return empty arrays — see [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full reasoning.
+
+```bash
+cua-driver autostart enable    # register the platform entry
+cua-driver autostart kick      # start it now without waiting for next logon
+cua-driver autostart status    # registered? running?
+cua-driver autostart disable   # remove the entry
+```
+
+## What it does per platform
+
+| Platform | Mechanism | Where it lives |
+|---|---|---|
+| Windows | Scheduled Task `cua-driver-serve` with `LogonType: Interactive` | Task Scheduler (`schtasks /Query /TN cua-driver-serve`) |
+| macOS | Not yet implemented in the Rust port — use the manual `LaunchAgent` recipe ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/scripts/install-local.sh)) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` |
+| Linux | Not yet implemented in the Rust port — use the manual `systemd --user` unit ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/scripts/install-local.sh)) | `~/.config/systemd/user/cua-driver-rs.service` |
+
+<Callout type="info">
+**Platform parity status.** `cua-driver autostart` is currently a Windows-only verb in the Rust port — the macOS / Linux cases return an error pointing at the manual recipe. A cross-platform native impl is tracked as a follow-up. The verb is documented as the cross-platform interface so existing scripts and skill-pack instructions land in the right place once parity ships.
+</Callout>
+
+## The four verbs
+
+### `enable`
+
+Registers the Scheduled Task on Windows. Idempotent — any existing task with the same name is replaced, so re-running after a `cua-driver` upgrade picks up the new binary path automatically.
+
+```powershell
+cua-driver autostart enable
+# Registered autostart entry 'cua-driver-serve'.
+#   cua-driver serve will start at every interactive logon.
+```
+
+The registered task pins to `LogonType: Interactive` — load-bearing, because the alternative (`S4U` / `Password`) would land the daemon back in Session 0. The exact PowerShell that gets run is in [`autostart.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/crates/cua-driver/src/autostart.rs) and stays in lock-step with `scripts/install.ps1`.
+
+### `kick`
+
+Runs the registered task immediately, without waiting for the next logon. Use this right after `enable` so the daemon is up in the current session — otherwise `enable` is a "next-logon" change and your current shell still has no daemon to talk to.
+
+```powershell
+cua-driver autostart enable
+cua-driver autostart kick
+cua-driver status    # confirms the daemon's listening
+```
+
+### `status`
+
+Reports the registration + liveness state in three flavours:
+
+```text
+not-registered                  # no Scheduled Task exists
+registered (not running)        # task is there but no daemon process
+registered (running)            # task is there AND a daemon is listening on the socket
+```
+
+The "running" check probes the daemon's named pipe directly (no `tasklist` spawn — that's slow on first run), so it reflects real liveness, not just "Task Scheduler thinks the task is registered".
+
+### `disable`
+
+Removes the Scheduled Task. No-op if nothing's registered, so it's safe to script unconditionally.
+
+```powershell
+cua-driver autostart disable
+# Removed autostart entry 'cua-driver-serve' (no-op if it was already absent).
+```
+
+## Worked example: `enable && kick` from an interactive shell
+
+The canonical first-time recipe — run this once from an interactive shell (RDP, local console, Windows Terminal under your logged-in user) and the daemon is up immediately *and* will come back after every logon:
+
+```powershell
+cua-driver autostart enable
+cua-driver autostart kick
+cua-driver status
+# cua-driver daemon is running
+#   socket: \\.\pipe\cua-driver
+#   pid: 12345
+```
+
+After this, you can SSH into the box and `cua-driver mcp` / `cua-driver call <tool>` will proxy through the running daemon — see [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh).
+
+## The "daemon survives RDP disconnect" property
+
+Scheduled Tasks registered with `LogonType: Interactive` are *session-attached* — the task and any processes it spawned live and die with the interactive session, not with the RDP client window. Disconnecting the RDP client leaves the session in `Disc` (disconnected) state, which is still a live interactive session as far as Windows is concerned:
+
+```powershell
+query session
+# SESSIONNAME    USERNAME    ID  STATE   TYPE     DEVICE
+# console                     0  Disc
+# rdp-tcp#23     you         2  Disc                                  ← still alive
+```
+
+The daemon keeps running in session `2`. A subsequent SSH connection (which lands in Session 0) can proxy through the still-listening daemon. Reconnecting RDP reattaches to the same session — the daemon was never killed.
+
+The session only dies on explicit logoff (`logoff` / Start menu → Sign out) or reboot. On reboot, the next interactive logon re-triggers the Scheduled Task and a fresh daemon comes back up.
+
+<Callout type="info">
+**Prerequisite — an active interactive session must exist.** `kick` runs the task in *some* session, but Task Scheduler only triggers it when an interactive logon is present. If you've never logged in via RDP / console on a fresh box, `kick` has nowhere to land the daemon. The fix is to RDP in once (the logon trigger fires `serve` automatically) — after that, even an RDP-disconnect keeps the session alive in `Disc` state and the daemon along with it.
+</Callout>
+
+## Why not just `cua-driver serve &` over SSH?
+
+A naively-spawned `cua-driver serve &` over SSH inherits the SSH session — which on Windows OpenSSH is **Session 0**, the non-interactive services session. The daemon comes up, but every GUI tool it answers (`list_windows`, `click`, `screenshot`, ...) bottoms out in Win32 APIs scoped to the calling session's WindowStation + Desktop, which Session 0 doesn't have. Tools silently return empty arrays.
+
+`autostart enable && kick` sidesteps this by running the daemon under the user's interactive logon (Session 1+) instead of inheriting whatever session called `serve`. The daemon then has a real desktop attached and GUI tools work.
+
+See [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the end-to-end SSH workflow.
+
+## Uninstall behaviour
+
+The platform uninstaller (`uninstall.ps1` on Windows, `uninstall.sh` elsewhere) removes the autostart entry automatically as part of its teardown — you don't need to call `autostart disable` explicitly before uninstalling. See the [uninstall removal matrix](/cua-driver/guide/getting-started/installation#uninstall) for the per-platform specifics.

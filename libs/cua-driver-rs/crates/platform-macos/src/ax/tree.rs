@@ -18,6 +18,13 @@ use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 /// pathological trees (mirrors Swift reference implementation).
 const MAX_DEPTH: usize = 25;
 
+/// Maximum total nodes visited during a single AX walk. Chromium-family apps
+/// (Arc, VS Code, Chrome) can expose thousands of nodes; capping at 2 000
+/// keeps the walk bounded while still covering realistic app chrome.
+/// When the cap is hit the walk stops early and the partial tree is returned
+/// with a warning line appended (mirrors Swift reference implementation).
+const MAX_ELEMENTS: usize = 2_000;
+
 /// A single node in the AX tree.
 #[derive(Debug, Clone)]
 pub struct AXNode {
@@ -42,6 +49,8 @@ pub struct AXNode {
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
+    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    pub truncated: bool,
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -62,11 +71,13 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
+    // Shared visited-node counter passed into walk_element to enforce MAX_ELEMENTS.
+    let mut visited_count = 0usize;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
         if app_elem.is_null() {
-            return TreeWalkResult { tree_markdown: String::new(), nodes };
+            return TreeWalkResult { tree_markdown: String::new(), nodes, truncated: false };
         }
 
         // Union AXChildren + AXWindows — the only way to see background windows.
@@ -102,7 +113,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 
         // Walk each top-level child at depth 0.
         for child in walk_these {
-            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter);
+            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter, &mut visited_count);
         }
 
         // Release all top-level elements (copy_children / copy_ax_windows both retain).
@@ -113,14 +124,24 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         CFRelease(app_elem as CFTypeRef);
     }
 
+    let truncated = visited_count >= MAX_ELEMENTS;
     let raw_markdown = render_lines(&lines);
-    let tree_markdown = if let Some(q) = query {
+    let mut tree_markdown = if let Some(q) = query {
         filter_tree(&raw_markdown, q)
     } else {
         raw_markdown
     };
 
-    TreeWalkResult { tree_markdown, nodes }
+    if truncated {
+        tree_markdown.push_str(&format!(
+            "\n⚠️  AX tree truncated at {MAX_ELEMENTS} nodes \
+             (app has a very large accessibility tree — Arc, Electron, or similar). \
+             Element indices above are still valid. Use pixel clicks for elements \
+             not visible in this partial tree."
+        ));
+    }
+
+    TreeWalkResult { tree_markdown, nodes, truncated }
 }
 
 unsafe fn walk_element(
@@ -129,8 +150,12 @@ unsafe fn walk_element(
     nodes: &mut Vec<AXNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
+    visited_count: &mut usize,
 ) {
     if depth > MAX_DEPTH { return; }
+    // Enforce total-node cap — mirrors Swift's maxElements guard.
+    if *visited_count >= MAX_ELEMENTS { return; }
+    *visited_count += 1;
 
     let role = copy_string_attr(element, "AXRole")
         .unwrap_or_else(|| "AXUnknown".into());
@@ -140,7 +165,7 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting.
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth, nodes, lines, counter);
+            walk_element(child, depth, nodes, lines, counter, visited_count);
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -173,7 +198,7 @@ unsafe fn walk_element(
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth + 1, nodes, lines, counter);
+            walk_element(child, depth + 1, nodes, lines, counter, visited_count);
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -217,7 +242,7 @@ unsafe fn walk_element(
 
     let children = copy_children(element);
     for child in children {
-        walk_element(child, depth + 1, nodes, lines, counter);
+        walk_element(child, depth + 1, nodes, lines, counter, visited_count);
         CFRelease(child as CFTypeRef);
     }
 }

@@ -148,6 +148,7 @@ public enum AppStateError: Error, CustomStringConvertible, Sendable {
     case appNotFound(Int32)
     case noCachedState(pid: Int32, windowId: UInt32)
     case invalidElementIndex(pid: Int32, windowId: UInt32, index: Int)
+    case axWalkTimedOut(pid: Int32)
 
     public var description: String {
         switch self {
@@ -167,6 +168,13 @@ public enum AppStateError: Error, CustomStringConvertible, Sendable {
                 + "out of range in the cached snapshot. Re-run "
                 + "`get_window_state({pid: \(pid), window_id: \(windowId)})` and use "
                 + "an index from the fresh tree."
+        case .axWalkTimedOut(let pid):
+            return "AX tree walk for pid \(pid) timed out after 30 s. "
+                + "The app (likely Arc, Electron, or Safari with many tabs) has a "
+                + "pathologically large accessibility tree. "
+                + "Workarounds: switch to `capture_mode: vision` for pixel-click "
+                + "workflows, or use `capture_mode: ax` with a `query` filter to "
+                + "limit the walk scope."
         }
     }
 }
@@ -192,6 +200,13 @@ public actor AppStateEngine {
     /// Depth cap for AX walks. Menus and complex web views can nest deep;
     /// 25 covers realistic app chrome without exploding on pathological trees.
     public static let maxDepth = 25
+
+    /// Maximum total elements visited during a single AX walk. Chromium-family
+    /// apps (Arc, VS Code, Chrome) can expose thousands of nodes; capping at
+    /// 2 000 keeps the walk bounded while still covering realistic app chrome.
+    /// When the cap is hit the walk stops and the partial tree is returned with
+    /// a warning appended to the markdown.
+    public static let maxElements = 2_000
 
     /// Shared assertion that tracks which pids accept AXManualAccessibility /
     /// AXEnhancedUserInterface. Extracted into its own actor so a call-site-
@@ -252,34 +267,63 @@ public actor AppStateEngine {
             throw AppStateError.appNotFound(pid)
         }
 
-        let root = AXUIElementCreateApplication(pid)
-
         // Cue Chromium/Electron apps to turn on their web accessibility tree.
         // Non-Chromium apps ignore these attribute writes — safe no-op.
-        try await activateAccessibilityIfNeeded(pid: pid, root: root)
+        // Must be called before the task group so it runs on the actor.
+        try await activateAccessibilityIfNeeded(pid: pid, root: AXUIElementCreateApplication(pid))
 
         nextTurnId += 1
         let turnId = nextTurnId
 
-        var elements: [Int: AXUIElement] = [:]
-        var nextIndex = 0
-        var markdown = ""
+        // Wrap the AX walk in a 30-second timeout. Heavy webview apps (Arc,
+        // Safari with many tabs, Electron) can block AXUIElementCopyAttributeValue
+        // indefinitely via XPC. The walk runs on a detached task so the timeout
+        // can cancel it; the main snapshot task throws axWalkTimedOut if the
+        // deadline is exceeded.
+        let (snapshotMarkdown, snapshotElements, snapshotVisited) = try await withThrowingTaskGroup(
+            of: (String, [Int: AXUIElement], Int).self
+        ) { group in
+            group.addTask {
+                let root = AXUIElementCreateApplication(pid)
+                var els: [Int: AXUIElement] = [:]
+                var idx = 0
+                var md = ""
+                var visited = 0
+                let layer0WindowIds: Set<CGWindowID> = Set(
+                    WindowEnumerator.allWindows()
+                        .filter { $0.layer == 0 }
+                        .map { CGWindowID($0.id) }
+                )
+                self.renderTree(
+                    root,
+                    depth: 0,
+                    targetWindowId: windowId,
+                    layer0WindowIds: layer0WindowIds,
+                    elements: &els,
+                    nextIndex: &idx,
+                    output: &md,
+                    visitedCount: &visited
+                )
+                return (md, els, visited)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 30_000_000_000)
+                throw AppStateError.axWalkTimedOut(pid: pid)
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
 
-        let layer0WindowIds: Set<CGWindowID> = Set(
-            WindowEnumerator.allWindows()
-                .filter { $0.layer == 0 }
-                .map { CGWindowID($0.id) }
-        )
+        var markdown = snapshotMarkdown
+        let elements = snapshotElements
 
-        renderTree(
-            root,
-            depth: 0,
-            targetWindowId: windowId,
-            layer0WindowIds: layer0WindowIds,
-            elements: &elements,
-            nextIndex: &nextIndex,
-            output: &markdown
-        )
+        if snapshotVisited >= AppStateEngine.maxElements {
+            markdown += "\n⚠️  AX tree truncated at \(AppStateEngine.maxElements) nodes"
+                + " (app has a very large accessibility tree — Arc, Electron, or similar)."
+                + " Element indices above are still valid. Use pixel clicks for elements"
+                + " not visible in this partial tree."
+        }
 
         sessions[SessionKey(pid: pid, windowId: windowId)] =
             SessionState(turnId: turnId, elements: elements)
@@ -513,16 +557,19 @@ public actor AppStateEngine {
 
     // MARK: - Walking
 
-    private func renderTree(
+    private nonisolated func renderTree(
         _ element: AXUIElement,
         depth: Int,
         targetWindowId: UInt32?,
         layer0WindowIds: Set<CGWindowID> = [],
         elements: inout [Int: AXUIElement],
         nextIndex: inout Int,
-        output: inout String
+        output: inout String,
+        visitedCount: inout Int
     ) {
         guard depth <= AppStateEngine.maxDepth else { return }
+        guard visitedCount < AppStateEngine.maxElements else { return }
+        visitedCount += 1
 
         let role = attributeString(element, "AXRole") ?? "?"
         let title = attributeString(element, "AXTitle")
@@ -616,7 +663,8 @@ public actor AppStateEngine {
                 layer0WindowIds: layer0WindowIds,
                 elements: &elements,
                 nextIndex: &nextIndex,
-                output: &output
+                output: &output,
+                visitedCount: &visitedCount
             )
         }
     }

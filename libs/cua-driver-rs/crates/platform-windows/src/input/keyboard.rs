@@ -23,9 +23,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetWindowThreadProcessId,
+    GetClassNameW, GetWindowThreadProcessId, IsChild,
     PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{AttachThreadInput, GetFocus};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 // ── XAML / UWP host detection ────────────────────────────────────────────────
 //
@@ -114,20 +116,73 @@ pub fn is_xaml_host_hwnd(hwnd: u64) -> bool {
 
 const KEY_DELAY_MS: u64 = 4;
 
+/// If the target's UI thread has a focused child window that's a descendant
+/// of `parent`, return that child. Otherwise `None`. Used to retarget
+/// `PostMessage(WM_CHAR/WM_KEYDOWN)` from the top-level frame to the actual
+/// editor control (Scintilla in Notepad++, RichEdit in WordPad, etc.) —
+/// top-level WindowProcs don't forward keyboard messages to embedded editors
+/// automatically, so without this drill-down `type_text` silently no-ops
+/// against any app that puts its text surface in a child HWND.
+///
+/// Uses `AttachThreadInput` to read the target thread's focus state, which
+/// is the standard cross-thread way to read another thread's `GetFocus()`.
+/// We detach immediately after — attaching for the duration of the post
+/// would change input-state visibility for the duration.
+fn focused_descendant(parent: HWND) -> Option<HWND> {
+    if parent.0.is_null() { return None; }
+    let mut target_pid: u32 = 0;
+    let target_thread = unsafe { GetWindowThreadProcessId(parent, Some(&mut target_pid)) };
+    if target_thread == 0 { return None; }
+    let our_thread = unsafe { GetCurrentThreadId() };
+
+    let focused = if our_thread == target_thread {
+        unsafe { GetFocus() }
+    } else {
+        let _ = unsafe { AttachThreadInput(our_thread, target_thread, true) };
+        let f = unsafe { GetFocus() };
+        let _ = unsafe { AttachThreadInput(our_thread, target_thread, false) };
+        f
+    };
+    if focused.0.is_null() { return None; }
+    if focused == parent { return None; }
+    // Only retarget if focus is genuinely a descendant of `parent` — protects
+    // against accidentally posting to an unrelated window if the target is
+    // not the foreground app at the moment.
+    if unsafe { IsChild(parent, focused) }.as_bool() {
+        Some(focused)
+    } else {
+        None
+    }
+}
+
 /// Post a Unicode character as WM_CHAR.
 pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
-    let hwnd = HWND(hwnd as *mut _);
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        anyhow::bail!(msg);
+    }
+    // Retarget to the focused child if any — top-level WindowProcs typically
+    // don't forward WM_CHAR to embedded editor children (Scintilla, RichEdit).
+    let h_parent = HWND(hwnd as *mut _);
+    let h = focused_descendant(h_parent).unwrap_or(h_parent);
     let code = ch as u32 as usize;
     unsafe {
-        PostMessageW(hwnd, WM_CHAR, WPARAM(code), LPARAM(1))?;
+        PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
     }
     Ok(())
 }
 
 /// Post all characters in a string as WM_CHAR messages with inter-key delay.
 pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        anyhow::bail!(msg);
+    }
+    let h_parent = HWND(hwnd as *mut _);
+    // Resolve focused-child once at entry — re-querying per-character would
+    // race with text-insertion side effects on the focus.
+    let h = focused_descendant(h_parent).unwrap_or(h_parent);
     for ch in text.chars() {
-        post_char(hwnd, ch)?;
+        let code = ch as u32 as usize;
+        unsafe { PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?; }
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
     Ok(())
@@ -136,8 +191,14 @@ pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
 /// Post all characters in `text` as WM_CHAR messages with a configurable
 /// inter-character delay (on top of the baseline KEY_DELAY_MS gap).
 pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> Result<()> {
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        anyhow::bail!(msg);
+    }
+    let h_parent = HWND(hwnd as *mut _);
+    let h = focused_descendant(h_parent).unwrap_or(h_parent);
     for ch in text.chars() {
-        post_char(hwnd, ch)?;
+        let code = ch as u32 as usize;
+        unsafe { PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?; }
         sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
     }
     Ok(())
@@ -145,6 +206,9 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
 
 /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
 pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        anyhow::bail!(msg);
+    }
     let hwnd_win = HWND(hwnd as *mut _);
     let vk = key_name_to_vk(key)?;
     let has_alt = modifiers.iter().any(|m| *m == "alt" || *m == "menu");

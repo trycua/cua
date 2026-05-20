@@ -82,6 +82,13 @@ pub fn post_click_screen(root: u64, sx: i32, sy: i32, count: usize, button: &str
 
 /// Internal: post click messages to `hwnd` using its own client coordinates.
 fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Result<()> {
+    // UIPI check — Medium-IL daemon → High-IL target silently drops mouse
+    // messages just like keyboard ones. Surface an actionable error before
+    // PostMessage returns its misleading TRUE. See post_message_blocked_by_uipi.
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd.0 as u64) {
+        anyhow::bail!(msg);
+    }
+
     let (down_msg, up_msg, mk_flag) = match button {
         "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
         "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),

@@ -26,7 +26,7 @@ cua-driver call list_windows
 # []                       ← empty. The user's RDP session has 12 windows open.
 ```
 
-That's not a cua-driver bug — those APIs are working as designed against a session with no desktop. The same thing would happen to any native Win32 tool spawned the same way.
+That's not a cua-driver bug — those APIs are working as designed against a session with no desktop. The same thing would happen to any native Win32 tool spawned the same way. See [Process attribution](/cua-driver/explanation/process-attribution) for the full mechanics across both Windows session attribution and macOS TCC.
 
 <Callout type="info">
 **Confirm with `cua-driver doctor`.** The Windows session probe surfaces this directly:

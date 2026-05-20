@@ -324,6 +324,8 @@ Cua Driver needs two permissions:
 - **Accessibility** — to walk AX trees and dispatch `AXUIElementPerformAction`.
 - **Screen Recording** — to capture per-window screenshots via ScreenCaptureKit.
 
+For the deep dive on *why* the recipe below works the way it does — and what to do when grants seem present but tool calls still come back empty — see [Process attribution](/cua-driver/explanation/process-attribution).
+
 Start the daemon first so TCC attributes the subsequent requests to `CuaDriver.app` rather than to whatever shell parent launched the CLI:
 
 ```bash

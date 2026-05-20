@@ -1,0 +1,131 @@
+---
+title: Process attribution
+description: Why your tool calls see what they see — Windows session attribution and macOS TCC, the two OS subsystems that decide which desktop a cua-driver process is allowed to touch.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+When you run `cua-driver call list_apps` or fire an MCP tool, the result does **not** depend on which CLI you typed it from — it depends on the OS's notion of the *responsible process*: which user, session, and signed identity the running binary is attributed to. Both Windows and macOS attribute responsibility, but they use entirely different machinery. The same surface symptom ("my tool calls return empty arrays") can mean two completely different things on the two platforms.
+
+This page explains the *mechanics* — the why behind the howtos in [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) and the [macOS TCC section of installation](/cua-driver/guide/getting-started/installation#grant-tcc-permissions). For the recipes themselves, follow those links; this page is for when the recipe didn't do what you expected and you need to know what to debug.
+
+## Windows: session attribution
+
+Every Windows process runs inside a numbered *session*. The session determines which `WindowStation` + `Desktop` the process is connected to, and the entire Win32 GUI API surface — `EnumWindows`, `GetForegroundWindow`, `PrintWindow`, UI Automation, ScreenCaptureKit's Windows equivalent `BitBlt` — is scoped to the caller's session-attached desktop.
+
+```powershell
+query session
+# SESSIONNAME    USERNAME    ID  STATE   TYPE     DEVICE
+# services                    0  Disc
+# console                     1  Active
+# rdp-tcp#23     you          2  Active
+```
+
+- **Session 0** is reserved for Windows services. It has no interactive desktop attached. The Windows OpenSSH server (`sshd`) runs as a service, so every shell spawned by an SSH connection inherits Session 0.
+- **Session 1+** are interactive logons — one per console user, one per RDP user. These have a real `WinSta0` desktop with windows, a foreground app, and a mouse cursor.
+
+A `cua-driver` process running in Session 0 is not broken — it's working as designed against a session that has no desktop. `EnumWindows` returns the empty list because *Session 0's desktop* has no windows. The user's RDP session with 12 windows open is over in Session 2 and is invisible to Session 0 processes.
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Session 2 (your RDP / console logon)        ◀── has desktop   │
+│    cua-driver-serve  (autostart Scheduled Task)                │
+│      │                                                         │
+│      └─ named pipe: \\.\pipe\cua-driver                        │
+└──────┼─────────────────────────────────────────────────────────┘
+       │
+┌──────┼─────────────────────────────────────────────────────────┐
+│  Session 0 (services / SSH)                   ◀── no desktop   │
+│      │                                                         │
+│    cua-driver mcp     ──proxies through──▶ daemon in Session 2 │
+│    cua-driver call ...                                         │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**The fix is the daemon-proxy.** Keep a `cua-driver serve` daemon running in your interactive Session 1+ (the [`cua-driver autostart enable && cua-driver autostart kick`](/cua-driver/guide/getting-started/autostart) one-liner sets this up via a `LogonType: Interactive` Scheduled Task). Any `cua-driver mcp` or `cua-driver call <tool>` invocation from elsewhere — including SSH in Session 0 — detects the listening daemon and proxies the tool call through it. The daemon executes the call in its own (correct) session; the CLI just shuttles bytes.
+
+The router that makes this decision is [`should_use_daemon_proxy` in `libs/cua-driver-rs/crates/cua-driver/src/cli.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/crates/cua-driver/src/cli.rs). Until `cua-driver-rs` v0.2.7, only `call` proxied — `mcp` ran in-process on Windows / Linux and silently returned empty arrays over SSH. [PR #1580](https://github.com/trycua/cua/pull/1580) lined `mcp` up with `call` so both proxy on the same condition: a daemon is listening on the default socket and `--no-daemon-relaunch` / `CUA_DRIVER_RS_MCP_NO_RELAUNCH` are not set.
+
+## macOS: TCC
+
+TCC (Transparency, Consent, and Control) is macOS's per-app privacy gate for sensitive APIs. The grants `cua-driver` needs are **Accessibility** (to walk AX trees and dispatch synthetic events) and **Screen Recording** (to capture per-window screenshots via ScreenCaptureKit). TCC keys grants on the tuple **(bundle id, cdhash)**:
+
+- **bundle id** — `com.trycua.driver`, taken from `Info.plist`.
+- **cdhash** — a SHA-256 over the binary's code-signing blob, computed at sign time and embedded into the Mach-O `LC_CODE_SIGNATURE` load command.
+
+When the CD pipeline builds `/Applications/CuaDriver.app`, it Developer-ID-signs the bundle, producing a stable cdhash that the user grants TCC against. Subsequent releases preserve the bundle id and re-sign cleanly, so grants survive every upgrade.
+
+```bash
+codesign -dv /Applications/CuaDriver.app 2>&1 | grep -E '^(Identifier|CDHash)'
+# Identifier=com.trycua.driver
+# CDHash=a1b2c3...
+```
+
+A locally-built dev binary doesn't have this attribution by default. `cargo build` produces a binary whose Mach-O identifier is the linker default — `cua_driver-<random-hex>` — not `com.trycua.driver`. Even if you `cp` it into `/Applications/CuaDriver.app/Contents/MacOS/`, the cdhash differs from the signed release, and TCC's `(bundle id, cdhash)` lookup misses. Grants don't transfer; the binary runs as if it had never been granted anything.
+
+**The fix for dev builds** is to re-sign with the right identifier:
+
+```bash
+codesign --force --sign - -i com.trycua.driver --deep /Applications/CuaDriver.app
+codesign -dv /Applications/CuaDriver.app 2>&1 | grep Identifier
+# Identifier=com.trycua.driver
+```
+
+`--sign -` is ad-hoc (no Developer ID needed); `-i com.trycua.driver` overrides the linker default; `--deep` walks all nested executables. The cdhash will still differ from the released `.app`, so you may see a one-time re-grant prompt the first time TCC notices — but after that, the dev binary inherits the bundle id's grant lineage.
+
+**The daemon-proxy on macOS** solves a related but separate problem: TCC's *responsible process* attribution. When the user runs `cua-driver mcp` from a shell, macOS attributes the responsible process to whichever app owns the terminal — Claude Code, Cursor, VS Code, Warp — *not* `com.trycua.driver`. AX probes silently fail because TCC checks Cursor's grants, not CuaDriver's. So `cua-driver mcp` detects this case and relaunches the daemon under LaunchServices via `open -n -g -a CuaDriver --args serve` ([`launchDaemonViaOpen` in `CuaDriverCommand.swift`](https://github.com/trycua/cua/blob/main/libs/cua-driver/Sources/CuaDriverCLI/CuaDriverCommand.swift), mirrored by `should_use_daemon_proxy` in the Rust port). The bundled daemon has the right TCC responsibility; the CLI proxies through it.
+
+## What `cua-driver doctor` shows about this
+
+`cua-driver doctor` is the diagnostic entry point for both subsystems. The probes are platform-conditional — only the relevant ones fire per OS.
+
+**On Windows**, the `interactive session` probe reports the calling process's session id and whether it has an attached desktop. Session 0 produces a warning:
+
+```text
+[warn] interactive session: running in Session 0 (services); window-driving
+       tools (list_windows, click, type_text, screenshot, get_window_state)
+       will return empty results — these APIs need an attached interactive
+       desktop.
+         re-run cua-driver from an interactive logon (RDP, console, or a
+         scheduled task in the user's session) for the GUI tools to function.
+```
+
+A healthy interactive logon reports the inverse, and the follow-up `EnumWindows visible` probe doubles as a cross-check (zero windows + Session 0 = the warning is consistent; many windows + Session 0 should not happen):
+
+```text
+[ok  ] interactive session: session 2 has an attached interactive desktop
+       (WinSta0 + foreground window)
+[ok  ] EnumWindows visible: 12 windows
+```
+
+**On macOS**, `doctor` only points at the dedicated detailed report — `cua-driver diagnose` prints the full bundle-path + signing identity + cdhash + per-permission TCC status dump:
+
+```text
+[ok  ] TCC + cdhash report: for a full bundle / signature / TCC dump, run `cua-driver diagnose`
+```
+
+The exact probe set lives in [`libs/cua-driver-rs/crates/cua-driver/src/doctor.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/crates/cua-driver/src/doctor.rs).
+
+## Common symptoms → likely cause
+
+| Symptom | Platform | Likely cause | Fix |
+|---|---|---|---|
+| `list_apps` / `list_windows` returns `[]` over SSH | Windows | The CLI is in Session 0; no daemon in your interactive session to proxy to | `cua-driver autostart enable && cua-driver autostart kick` from an [RDP / console session](/cua-driver/guide/getting-started/autostart) |
+| `list_apps` / `list_windows` returns `[]` from an IDE terminal | macOS | TCC attributes the process to the terminal, not `com.trycua.driver` | Start the daemon first (`open -n -g -a CuaDriver --args serve`), then re-run; `cua-driver mcp` does this automatically via `should_use_daemon_proxy` |
+| `claude --print` returns "no apps running" over SSH but `cua-driver call list_apps` works | Windows / Linux | You're on `cua-driver-rs ≤ 0.2.6` — `mcp` didn't proxy on those versions, only `call` did | Upgrade to v0.2.7+; see [PR #1580](https://github.com/trycua/cua/pull/1580) and the [v0.2.7 callout in windows-ssh](/cua-driver/guide/getting-started/windows-ssh#how-the-proxy-decides-whether-to-forward) |
+| TCC prompts fire on every launch | macOS | Local dev binary with the wrong cdhash; TCC's `(bundle id, cdhash)` lookup misses each time | `codesign --force --sign - -i com.trycua.driver --deep /Applications/CuaDriver.app` after copying in the dev binary |
+| `tccutil reset` doesn't seem to take effect | macOS | The running daemon process cached the old TCC responsibility — `tccutil` cleared the on-disk grants but the in-process cache is stale | Restart the daemon: `cua-driver stop && open -n -g -a CuaDriver --args serve`. The [re-exec fix in PR #1567](https://github.com/trycua/cua/pull/1567) auto-handles this on subsequent launches |
+
+If `doctor` reports `[ok]` for the relevant probe on your platform and tool calls are still empty, the next step is `cua-driver diagnose` (macOS) or `cua-driver doctor --json` from the calling session + the daemon's session (Windows) — the diff between the two reports usually pinpoints whether the proxy is activating.
+
+<Callout type="info">
+**The takeaway in one line.** Windows asks "which session is this process in?"; macOS asks "which signed bundle is this process attributed to?". `cua-driver` answers both with the same machinery — a long-lived daemon in the *correct* context, and a thin in-process proxy that shuttles tool calls through it from wherever you happen to be calling from.
+</Callout>
+
+## See also
+
+- [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) — the canonical Windows recipe.
+- [Autostart](/cua-driver/guide/getting-started/autostart) — `cua-driver autostart` verb family.
+- [MCP process model](/cua-driver/guide/getting-started/process-model) — in-process vs daemon-proxy modes on macOS, end-to-end.
+- [Installation → Grant TCC permissions](/cua-driver/guide/getting-started/installation#grant-tcc-permissions) — the macOS first-launch recipe.
+- [Installation → Windows interactive-session requirements](/cua-driver/guide/getting-started/installation#windows-interactive-session-requirements) — the symptoms-first Windows section.

@@ -13,4 +13,6 @@ pub mod mouse;
 pub mod keyboard;
 
 pub use mouse::{post_click, post_click_screen};
-pub use keyboard::{post_char, post_key, post_type_text, post_type_text_with_delay};
+pub use keyboard::{
+    is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
+};

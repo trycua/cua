@@ -4,6 +4,16 @@
 //! WM_KEYDOWN/WM_KEYUP — used for non-printable keys (Enter, Tab, arrows, F-keys, etc.)
 //!
 //! All messages are posted async (PostMessageW), so they do NOT steal focus.
+//!
+//! Modern XAML / WinUI3 / UWP targets reject PostMessage-based keyboard
+//! injection because their CoreInput dispatcher only consumes events from
+//! the system input queue, not posted messages. This module exposes
+//! [`is_xaml_host_hwnd`] so callers (e.g. the `type_text` tool) can route
+//! around the PostMessage path for those targets — see CUA-543 and
+//! `tools::impl_::TypeTextTool` for the routing logic. The actual UIA
+//! `ValuePattern.SetValue` injection lives in the tools layer alongside
+//! the existing `set_value` tool; this module deliberately stays
+//! Win32-only so the unit tests don't depend on UIA initialisation.
 
 use anyhow::{bail, Result};
 use std::thread::sleep;
@@ -13,8 +23,94 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
+    GetClassNameW, GetWindowThreadProcessId,
     PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
+
+// ── XAML / UWP host detection ────────────────────────────────────────────────
+//
+// Two routing signals, OR'd:
+//   1. Top-level window class name matches a known XAML host class.
+//   2. Owning process .exe basename matches a known XAML-hosted .exe.
+//
+// The EXE-basename signal is the more reliable of the two: cross-session
+// `GetClassNameW` can return nothing, and modern apps like Win 11 Notepad
+// keep the legacy `"Notepad"` window class even though they render XAML
+// underneath. Diagnostic data captured by `tools::DebugWindowInfoTool`
+// (see CUA-543) confirms `notepad.exe` is the reliable signal for modern
+// Notepad; class name is not.
+
+const XAML_HOST_CLASSES: &[&str] = &[
+    "ApplicationFrameWindow",
+    "WinUIDesktopWin32WindowClass",
+    "Windows.UI.Core.CoreWindow",
+    "Microsoft.UI.Content.DesktopChildSiteBridge",
+];
+
+const XAML_HOST_EXES: &[&str] = &[
+    "notepad.exe",              // Win 11 modern Notepad (UWP-packaged)
+    "calculatorapp.exe",        // UWP Calculator
+    "calc.exe",                 // some Win 11 builds expose the stub directly
+    "applicationframehost.exe", // generic UWP frame host
+    "photos.exe",               // UWP Photos
+    "systemsettings.exe",       // modern Settings
+];
+
+fn class_name(hwnd: HWND) -> Option<String> {
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if n <= 0 { None } else { Some(String::from_utf16_lossy(&buf[..n as usize])) }
+}
+
+fn owning_exe_basename(hwnd: HWND) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW,
+        PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let mut pid: u32 = 0;
+    let tid = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    if tid == 0 || pid == 0 {
+        return None;
+    }
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut buf = [0u16; 1024];
+    let mut len: u32 = buf.len() as u32;
+    let result = unsafe {
+        QueryFullProcessImageNameW(handle, PROCESS_NAME_FORMAT(0),
+                                   windows::core::PWSTR(buf.as_mut_ptr()), &mut len)
+    };
+    let _ = unsafe { CloseHandle(handle) };
+    if result.is_err() || len == 0 {
+        return None;
+    }
+    let path = String::from_utf16_lossy(&buf[..len as usize]);
+    let name = path
+        .rsplit(|c: char| c == '\\' || c == '/')
+        .next()
+        .unwrap_or(&path)
+        .to_ascii_lowercase();
+    Some(name)
+}
+
+/// `true` iff the given HWND should bypass the PostMessage keyboard
+/// path and route through UIA patterns (or another non-PostMessage
+/// mechanism). See module docs + CUA-543 for the routing rationale.
+pub fn is_xaml_host_hwnd(hwnd: u64) -> bool {
+    let h = HWND(hwnd as *mut _);
+    if let Some(cls) = class_name(h) {
+        if XAML_HOST_CLASSES.iter().any(|known| cls == *known) {
+            return true;
+        }
+    }
+    if let Some(exe) = owning_exe_basename(h) {
+        if XAML_HOST_EXES.iter().any(|known| exe == *known) {
+            return true;
+        }
+    }
+    false
+}
 
 const KEY_DELAY_MS: u64 = 4;
 

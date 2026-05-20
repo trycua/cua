@@ -826,6 +826,15 @@ if (-not $skipDownload) {
         New-Item -ItemType Directory -Force -Path $versionedDir | Out-Null
         Copy-Item -LiteralPath (Join-Path $stageDir $BinaryName) -Destination (Join-Path $versionedDir $BinaryName) -Force
         Write-Step "installed $versionedDir\$BinaryName (version $version, target $target)"
+        # Optional sibling: the uiAccess'd worker (cua-driver-uia.exe). Started
+        # shipping with cua-driver-rs-v0.2.8; absent in earlier releases. Copy
+        # it when present so `cua-driver autostart enable` can register the
+        # second ShellExecute-based scheduled task. See #1602.
+        $uiaStage = Join-Path $stageDir 'cua-driver-uia.exe'
+        if (Test-Path -LiteralPath $uiaStage) {
+            Copy-Item -LiteralPath $uiaStage -Destination (Join-Path $versionedDir 'cua-driver-uia.exe') -Force
+            Write-Step "installed $versionedDir\cua-driver-uia.exe (uiAccess worker)"
+        }
     }
     finally {
         Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue

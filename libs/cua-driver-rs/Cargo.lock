@@ -269,6 +269,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-driver-uia"
+version = "0.2.7"
+dependencies = [
+ "anyhow",
+ "embed-manifest",
+ "mcp-server",
+ "platform-windows",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cursor-overlay"
 version = "0.2.7"
 dependencies = [
@@ -332,6 +347,12 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
+
+[[package]]
+name = "embed-manifest"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94cdc65b1cf9e871453ce2f86f5aaec24ff2eaa36a1fa3e02e441dddc3613b99"
 
 [[package]]
 name = "equivalent"

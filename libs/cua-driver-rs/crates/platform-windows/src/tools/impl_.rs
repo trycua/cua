@@ -1474,9 +1474,11 @@ impl Tool for HotkeyTool {
             // specific FocusWithoutRaise/SLEventPostToPid mechanics — Windows
             // uses PostMessage which doesn't need a NSMenu-activation dance).
             description: "Press a combination of keys simultaneously — e.g. `[\"ctrl\", \"c\"]` \
-                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. The combo is \
-                posted directly to the target pid's window via PostMessage(WM_KEYDOWN/UP); \
-                the target does NOT need to be frontmost.\n\n\
+                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. Legacy Win32 \
+                targets receive the combo directly via PostMessage(WM_KEYDOWN/UP); modern \
+                XAML / WinUI / UWP targets route through UI Automation by finding a descendant \
+                whose AcceleratorKey matches the combo and invoking it. The target does NOT \
+                need to be frontmost.\n\n\
                 **`window_id`** (optional): explicit HWND when the pid owns more than one \
                 window; otherwise the pid's first visible window is used.\n\n\
                 Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier \
@@ -1548,6 +1550,38 @@ impl Tool for HotkeyTool {
         // where K1+K2+... is `keys.joined(separator: "+")` of the FULL keys
         // array as the caller supplied it (modifiers + non-modifier in order).
         let key_display = full_keys.join("+");
+
+        if crate::input::is_xaml_host_hwnd(hwnd) {
+            let mut accelerator_keys = mods.clone();
+            accelerator_keys.push(key.clone());
+            let accelerator_combo = accelerator_keys.join("+");
+            let key_display_for_result = key_display.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::uia::windows_enum::try_invoke_accelerator_in_window(
+                    hwnd as isize,
+                    &accelerator_combo,
+                )
+            })
+            .await;
+            return match result {
+                Ok(Ok((true, _))) => ToolResult::text(format!(
+                    "✅ Pressed {key_display_for_result} on pid {raw_pid} via UIA \
+                     InvokePattern/TogglePattern (XAML / UWP target)."
+                )),
+                Ok(Ok((false, scanned))) => ToolResult::error(format!(
+                    "hotkey on a modern XAML / UWP target (pid {raw_pid}, hwnd {hwnd}) \
+                     could not find a descendant UIA AcceleratorKey matching \
+                     `{key_display_for_result}` (scanned {scanned} element(s)). \
+                     PostMessage WM_KEYDOWN/UP is ignored by this target's input pipeline. \
+                     Call `get_window_state(pid={raw_pid}, window_id={hwnd})` to inspect \
+                     available UIA actions, then use an exposed accelerator or invoke/click \
+                     the matching element."
+                )),
+                Ok(Err(e)) => ToolResult::error(format!("hotkey (UIA path): {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::post_key(hwnd, &key, &m)

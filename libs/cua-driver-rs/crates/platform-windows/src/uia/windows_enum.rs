@@ -14,6 +14,7 @@
 
 use std::cell::RefCell;
 
+use anyhow::{bail, Context};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::System::Com::{
@@ -21,9 +22,11 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-    TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
+    IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
+    UIA_AcceleratorKeyPropertyId, UIA_InvokePatternId, UIA_PROPERTY_ID,
+    UIA_TogglePatternId,
 };
-use windows::core::Interface;
+use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
@@ -254,6 +257,237 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                 false
             }
         }
+    }
+}
+
+/// Find a descendant of `hwnd` whose UIA `AcceleratorKey` property matches
+/// `combo` (e.g. `ctrl+s`) and fire its `InvokePattern`.
+///
+/// Modern XAML / WinUI / UWP apps ignore posted WM_KEYDOWN/WM_KEYUP messages;
+/// their keyboard accelerators are surfaced through UI Automation instead.
+/// This helper keeps that routing narrow by requiring an advertised
+/// AcceleratorKey match before invoking anything.
+pub fn try_invoke_accelerator_in_window(
+    hwnd: isize,
+    combo: &str,
+) -> anyhow::Result<(bool, usize)> {
+    if hwnd == 0 {
+        bail!("invalid target hwnd 0");
+    }
+    let target = canonical_accelerator(combo)
+        .ok_or_else(|| anyhow::anyhow!("invalid accelerator combo `{combo}`"))?;
+    let uia = get_uia().ok_or_else(|| anyhow::anyhow!("UI Automation is unavailable"))?;
+
+    unsafe {
+        let root = uia
+            .ElementFromHandle(HWND(hwnd as *mut _))
+            .with_context(|| format!("ElementFromHandle(0x{hwnd:x}) failed"))?;
+        let cond = uia
+            .CreateTrueCondition()
+            .context("CreateTrueCondition failed")?;
+        let arr = root
+            .FindAll(TreeScope_Subtree, &cond)
+            .with_context(|| format!("FindAll(TreeScope_Subtree) on 0x{hwnd:x} failed"))?;
+        let count = arr.Length().unwrap_or(0);
+        let mut matched_failure: Option<String> = None;
+
+        for i in 0..count {
+            let elem = match arr.GetElement(i) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::debug!(
+                        target: "uia_windows_enum",
+                        "GetElement({i}) failed while scanning accelerator {combo}: {e}"
+                    );
+                    continue;
+                }
+            };
+            // Primary match: the UIA AcceleratorKey property — the conventional
+            // place a WinUI / XAML control advertises its shortcut.
+            let mut accelerator: Option<String> = read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
+            // Fallback match: many shipping XAML apps (e.g. modern Notepad)
+            // don't set AcceleratorKey at all and instead encode the shortcut
+            // in the visible element name as a parenthetical hint like
+            // "Bold (Ctrl+B)". Scan the Name property for that pattern so
+            // toolbar buttons remain reachable via hotkey.
+            if accelerator.is_none() {
+                if let Some(name) = read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId) {
+                    if let Some(extracted) = extract_shortcut_from_name(&name) {
+                        accelerator = Some(extracted);
+                    }
+                }
+            }
+            let accelerator = match accelerator {
+                Some(a) => a,
+                None => continue,
+            };
+            let Some(candidate) = canonical_accelerator(&accelerator) else {
+                continue;
+            };
+            if candidate != target {
+                continue;
+            }
+
+            // Pattern fallback chain. Different XAML controls expose
+            // different "activation" patterns: a Save button uses Invoke, a
+            // Bold toggle uses Toggle, a list item uses SelectionItem. Try
+            // Invoke first (the conventional shortcut handler), then Toggle
+            // (Bold/Italic/etc.). The Notepad toolbar in particular has Bold
+            // as a TogglePattern button — calling .Invoke on it returns the
+            // misleading "operation completed successfully (0x00000000)"
+            // error because Invoke isn't supported on the element.
+            match try_invoke_via_patterns(&elem) {
+                Ok(true) => return Ok((true, count as usize)),
+                Ok(false) => {
+                    matched_failure = Some(format!(
+                        "matched AcceleratorKey `{accelerator}`, but the element exposes \
+                         neither InvokePattern nor TogglePattern"
+                    ));
+                }
+                Err(e) => {
+                    matched_failure = Some(format!(
+                        "matched AcceleratorKey `{accelerator}`, but Invoke / Toggle failed: {e}"
+                    ));
+                }
+            }
+        }
+
+        if let Some(reason) = matched_failure {
+            bail!("{reason}");
+        }
+        Ok((false, count as usize))
+    }
+}
+
+fn read_current_bstr(
+    element: &IUIAutomationElement,
+    property_id: UIA_PROPERTY_ID,
+) -> Option<String> {
+    unsafe {
+        let variant = element.GetCurrentPropertyValue(property_id).ok()?;
+        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
+            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
+            let s = bstr.to_string();
+            std::mem::forget(bstr);
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        } else {
+            None
+        }
+    }
+}
+
+fn canonical_accelerator(value: &str) -> Option<String> {
+    let mut modifiers: Vec<String> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+
+    for raw in value.split('+') {
+        let token = canonical_accelerator_token(raw);
+        if token.is_empty() {
+            continue;
+        }
+        if accelerator_modifier_rank(&token).is_some() {
+            modifiers.push(token);
+        } else {
+            keys.push(token);
+        }
+    }
+
+    if keys.is_empty() {
+        return None;
+    }
+
+    modifiers.sort_by_key(|m| accelerator_modifier_rank(m).unwrap_or(usize::MAX));
+    modifiers.dedup();
+    modifiers.extend(keys);
+    Some(modifiers.join("+"))
+}
+
+fn canonical_accelerator_token(value: &str) -> String {
+    if value == " " {
+        return "space".to_owned();
+    }
+    let compact = value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(' ', "")
+        .replace('-', "");
+    match compact.as_str() {
+        "control" => "ctrl".to_owned(),
+        "windows" | "window" | "meta" | "cmd" | "command" => "win".to_owned(),
+        "return" => "enter".to_owned(),
+        "esc" => "escape".to_owned(),
+        "del" => "delete".to_owned(),
+        "ins" => "insert".to_owned(),
+        "pgup" => "pageup".to_owned(),
+        "pgdn" => "pagedown".to_owned(),
+        "spacebar" => "space".to_owned(),
+        _ => compact,
+    }
+}
+
+fn accelerator_modifier_rank(value: &str) -> Option<usize> {
+    match value {
+        "ctrl" => Some(0),
+        "shift" => Some(1),
+        "alt" => Some(2),
+        "win" => Some(3),
+        _ => None,
+    }
+}
+
+/// Try to "activate" a UIA element via the conventional patterns in priority
+/// order: InvokePattern (for buttons / menu items that fire an action), then
+/// TogglePattern (for Bold / Italic / etc. that flip a binary state).
+///
+/// Returns `Ok(true)` if a pattern was found AND its Invoke/Toggle call
+/// succeeded. `Ok(false)` means the element exposes neither pattern (caller
+/// should surface an actionable error). `Err` means a pattern was found but
+/// its call failed (caller should surface the underlying error).
+unsafe fn try_invoke_via_patterns(elem: &IUIAutomationElement) -> anyhow::Result<bool> {
+    // Invoke first — that's what most accelerator-targeted controls advertise.
+    if let Ok(pattern) = elem.GetCurrentPattern(UIA_InvokePatternId) {
+        if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
+            return inv.Invoke().map(|()| true).map_err(|e| anyhow::anyhow!("InvokePattern.Invoke: {e}"));
+        }
+    }
+    // Toggle next — Bold/Italic/Underline-style toolbar buttons sit here.
+    if let Ok(pattern) = elem.GetCurrentPattern(UIA_TogglePatternId) {
+        if let Ok(tog) = pattern.cast::<IUIAutomationTogglePattern>() {
+            return tog.Toggle().map(|()| true).map_err(|e| anyhow::anyhow!("TogglePattern.Toggle: {e}"));
+        }
+    }
+    Ok(false)
+}
+
+/// Extract a shortcut hint from a UIA element name like `"Bold (Ctrl+B)"`,
+/// `"Italic (Ctrl+I)"`, `"Save (Ctrl+S)"` — modern XAML apps (notably modern
+/// Notepad) don't set `AcceleratorKey` but encode the shortcut in the visible
+/// name. Returns the parenthesized accelerator string if one is present and
+/// contains a modifier-like token; otherwise `None`.
+fn extract_shortcut_from_name(name: &str) -> Option<String> {
+    let open = name.rfind('(')?;
+    let close = name[open..].find(')')?;
+    let inner = name[open + 1..open + close].trim();
+    if inner.is_empty() {
+        return None;
+    }
+    // Require at least one modifier-like token to avoid matching arbitrary
+    // parentheticals (e.g. "(2)" or "(beta)").
+    let has_modifier = inner.split('+').any(|tok| {
+        let t = tok.trim().to_ascii_lowercase();
+        matches!(t.as_str(),
+            "ctrl" | "control" | "shift" | "alt" |
+            "win" | "windows" | "meta" | "cmd" | "command")
+    });
+    if has_modifier {
+        Some(inner.to_owned())
+    } else {
+        None
     }
 }
 

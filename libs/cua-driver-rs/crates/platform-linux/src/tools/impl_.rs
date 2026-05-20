@@ -1933,6 +1933,49 @@ impl Tool for TypeTextCharsTool {
     }
 }
 
+// ── kill_app ──────────────────────────────────────────────────────────────────
+
+pub struct KillAppTool;
+static KILL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for KillAppTool {
+    fn def(&self) -> &ToolDef {
+        KILL_DEF.get_or_init(|| ToolDef {
+            name: "kill_app".into(),
+            description: "Force-terminate a process by pid (kill -9 equivalent on Linux). \
+                Use as escalation when the cooperative close path failed to make the process \
+                exit. Unsaved state is lost — prefer the cooperative path first.".into(),
+            input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "pid":{"type":"integer","description":"PID of the process to terminate."}
+            },"additionalProperties":false}),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
+            Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
+            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".into()),
+            None => return ToolResult::error("kill_app: missing required integer field `pid`".into()),
+        };
+        // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
+        let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
+        if rc == 0 {
+            ToolResult::text(format!("✅ Sent SIGKILL to pid {pid_i}."))
+        } else {
+            let err = std::io::Error::last_os_error();
+            ToolResult::error(format!(
+                "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
+                 The process may not exist, or the daemon lacks permission to signal it."
+            ))
+        }
+    }
+}
+
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry() -> ToolRegistry {
@@ -1942,6 +1985,7 @@ pub fn build_registry() -> ToolRegistry {
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
+    r.register(Box::new(KillAppTool));
     r.register(Box::new(ClickTool { state: state.clone() }));
     r.register(Box::new(DoubleClickTool { state: state.clone() }));
     r.register(Box::new(RightClickTool { state: state.clone() }));

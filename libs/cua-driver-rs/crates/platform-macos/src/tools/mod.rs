@@ -4,6 +4,7 @@ mod list_apps;
 mod list_windows;
 mod get_window_state;
 mod launch_app;
+mod kill_app;
 mod click;
 mod double_click;
 mod right_click;
@@ -203,6 +204,7 @@ pub fn register_all(registry: &mut ToolRegistry) {
     registry.register(Box::new(list_windows::ListWindowsTool));
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(state.clone())));
     registry.register(Box::new(launch_app::LaunchAppTool));
+    registry.register(Box::new(kill_app::KillAppTool));
     registry.register(Box::new(click::ClickTool::new(state.clone())));
     registry.register(Box::new(double_click::DoubleClickTool::new(state.clone())));
     registry.register(Box::new(right_click::RightClickTool::new(state.clone())));

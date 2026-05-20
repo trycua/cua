@@ -56,6 +56,10 @@ stub_tool!(launch_app_m, LaunchAppTool, "launch_app",
     "Launch an app in the background. Provide name or bundle_id.",
     serde_json::json!({"type":"object","properties":{"bundle_id":{"type":"string"},"name":{"type":"string"},"urls":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}));
 
+stub_tool!(kill_app_m, KillAppTool, "kill_app",
+    "Force-terminate a process by pid (taskkill /F on Windows, kill -9 on macOS / Linux). Use as escalation when the cooperative close path didn't make the process exit.",
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"pid":{"type":"integer","description":"PID of the process to terminate."}},"additionalProperties":false}));
+
 stub_tool!(click_m, ClickTool, "click",
     "Click at (x, y) or on an AT-SPI element by element_index + window_id.",
     serde_json::json!({"type":"object","required":["pid"],"properties":{"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier":{"type":"array","items":{"type":"string"}},"from_zoom":{"type":"boolean"}},"additionalProperties":false}));
@@ -200,6 +204,7 @@ pub fn build_registry() -> mcp_server::tool::ToolRegistry {
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool));
     r.register(Box::new(LaunchAppTool));
+    r.register(Box::new(KillAppTool));
     r.register(Box::new(ClickTool));
     r.register(Box::new(DoubleClickTool));
     r.register(Box::new(RightClickTool));

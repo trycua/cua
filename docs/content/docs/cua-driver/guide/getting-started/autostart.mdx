@@ -130,9 +130,15 @@ No additional `autostart` configuration is needed: the single `cua-driver-serve`
 - `type_text` via UIA `ValuePattern.SetValue` against modern Notepad's document area
 - `SendInput`-based interactions that previously failed with `ERROR_ACCESS_DENIED`
 
+### CoreWindow-class apps and the UIA root-walk fallback
+
+Some apps (Calculator, Settings, older UWPs) host their top-level window as a `Windows.UI.Core.CoreWindow`. For these, `IUIAutomation::ElementFromHandle(hwnd)` returns an empty wrapper — the actual XAML tree is registered at the desktop root as a sibling UIA element with the same `ProcessId`, not as a child of the wrapper element. This is the same pattern `inspect.exe` and Accessibility Insights walk.
+
+`get_window_state` already handles this transparently: when the primary `ElementFromHandle` path yields zero actionable nodes, it falls back to `GetRootElement().FindAll(Children, TrueCondition)` filtered by `ProcessId`. Callers don't need to know which path produced the result. See [#1606](https://github.com/trycua/cua/pull/1606) for the fix and [#1601](https://github.com/trycua/cua/issues/1601) for the diagnosis.
+
 ### What it does NOT unlock
 
-- **Calculator-class apps** whose UI lives in a DirectComposition `CoreWindow` with no addressable `HWND` from external processes. uiAccess lifts UIPI but cannot reach a window that has no public handle. See the architectural-limit discussion in [GH #1601](https://github.com/trycua/cua/issues/1601).
+- **`hotkey` accelerator shortcuts on XAML targets** (Ctrl+S, Ctrl+F, etc.). `hotkey` posts `WM_KEYDOWN`/`WM_KEYUP` via `PostMessage`, but modern Notepad's CoreInput dispatcher only reads from the system input queue. Workaround: walk the UIA tree for the matching menu item and `click` it. Tracked in [#1607](https://github.com/trycua/cua/issues/1607) — the planned fix mirrors the UIA `ValuePattern.SetValue` routing already done for `type_text`.
 - Apps that explicitly opt out of UI Automation
 - Cross-session injection (the worker still has to live in the same interactive session as the target app)
 

@@ -16,10 +16,11 @@ use windows::Win32::UI::Accessibility::{
     UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
     UIA_ControlTypePropertyId, UIA_HelpTextPropertyId,
     UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
-    UIA_ValueValuePropertyId, UIA_InvokePatternId, UIA_SelectionItemPatternId,
+    UIA_ProcessIdPropertyId, UIA_ValueValuePropertyId,
+    UIA_InvokePatternId, UIA_SelectionItemPatternId,
     UIA_TogglePatternId, UIA_ExpandCollapsePatternId, UIA_TextPatternId,
     UIA_ValuePatternId, UIA_ScrollPatternId,
-    TreeScope_Subtree,
+    TreeScope_Children, TreeScope_Subtree,
 };
 
 pub mod cache;
@@ -128,6 +129,35 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
 
     walk_cached(&root_elem, 0, &mut nodes, &mut lines, &mut counter, &mut total);
 
+    // Fallback for CoreWindow-class apps (Calculator, Settings, older UWPs).
+    // `ElementFromHandle(hwnd)` on a `Windows.UI.Core.CoreWindow` HWND returns
+    // an empty wrapper — the actual XAML tree is registered at the desktop
+    // root as a separate UIA element with the same ProcessId, not as a child
+    // of the hwnd's UIA element. inspect.exe walks from root for these apps;
+    // we mirror that here when the primary path yields nothing actionable.
+    //
+    // Trigger: walk produced ≤1 node (typically just the bare pane wrapper).
+    // We re-query from `GetRootElement()`, filter children by `ProcessId`
+    // matching the target window's owning process, and walk that subtree.
+    if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
+        if let Some(target_pid) = pid_from_hwnd(hwnd_win) {
+            tracing::debug!(
+                target: "uia",
+                "ElementFromHandle returned empty tree for hwnd 0x{hwnd:x}; \
+                 falling back to GetRootElement + filter ProcessId={target_pid}"
+            );
+            walk_root_by_pid(
+                &automation,
+                &cache_req,
+                target_pid,
+                &mut nodes,
+                &mut lines,
+                &mut counter,
+                &mut total,
+            );
+        }
+    }
+
     let raw_md = render_lines(&lines);
     let tree_markdown = if let Some(q) = query {
         filter_tree(&raw_md, q)
@@ -136,6 +166,75 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     };
 
     UiaTreeResult { tree_markdown, nodes }
+}
+
+/// Resolve the owning process id of `hwnd` via `GetWindowThreadProcessId`.
+/// Returns `None` if the API fails or the HWND is invalid.
+unsafe fn pid_from_hwnd(hwnd: windows::Win32::Foundation::HWND) -> Option<u32> {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let mut pid: u32 = 0;
+    let tid = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if tid == 0 || pid == 0 { None } else { Some(pid) }
+}
+
+/// Root-walk UIA fallback for apps whose top-level window is a
+/// `Windows.UI.Core.CoreWindow` (Calculator, Settings, older UWPs).
+///
+/// `ElementFromHandle(CoreWindow_hwnd)` returns an empty wrapper for these —
+/// the actual XAML tree is registered at the desktop root as a sibling
+/// element with the same `ProcessId`. We enumerate the root's children
+/// (filtered by `ProcessId == target_pid`) and walk descendants from there,
+/// reusing the caller's `cache_req` so the same properties + patterns get
+/// pre-fetched as the primary path.
+unsafe fn walk_root_by_pid(
+    automation: &IUIAutomation,
+    cache_req: &IUIAutomationCacheRequest,
+    target_pid: u32,
+    nodes: &mut Vec<UiaNode>,
+    lines: &mut Vec<(usize, String)>,
+    counter: &mut usize,
+    total: &mut usize,
+) {
+    let root = match automation.GetRootElement() {
+        Ok(r) => r,
+        Err(e) => { tracing::debug!(target: "uia", "GetRootElement failed: {e}"); return; }
+    };
+    let true_cond = match automation.CreateTrueCondition() {
+        Ok(c) => c,
+        Err(e) => { tracing::debug!(target: "uia", "CreateTrueCondition failed: {e}"); return; }
+    };
+    let kids = match root.FindAll(TreeScope_Children, &true_cond) {
+        Ok(a) => a,
+        Err(e) => { tracing::debug!(target: "uia", "root.FindAll(Children) failed: {e}"); return; }
+    };
+    let count = kids.Length().unwrap_or(0);
+    for i in 0..count {
+        let elem = match kids.GetElement(i) { Ok(e) => e, Err(_) => continue };
+        // Read ProcessId without a cache — root.FindAll didn't use one.
+        // VARIANT for VT_I4 (UIA's ProcessId type) puts the int at
+        // Anonymous.Anonymous.Anonymous.lVal; mirrors the read_cached_bool
+        // pattern below for VT_BOOL.
+        let pid: u32 = match elem.GetCurrentPropertyValue(UIA_ProcessIdPropertyId) {
+            Ok(v) => {
+                let raw = v.as_raw();
+                if raw.Anonymous.Anonymous.vt != 3 /* VT_I4 */ { continue; }
+                raw.Anonymous.Anonymous.Anonymous.lVal as u32
+            }
+            Err(_) => continue,
+        };
+        if pid != target_pid { continue; }
+        // Match — pull a cached subtree from this element using the same
+        // cache_req shape as the primary path so walk_cached sees the same
+        // properties + patterns.
+        let cached = match elem.BuildUpdatedCache(cache_req) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!(target: "uia", "BuildUpdatedCache on pid={target_pid} match failed: {e}");
+                continue;
+            }
+        };
+        walk_cached(&cached, 0, nodes, lines, counter, total);
+    }
 }
 
 unsafe fn walk_cached(

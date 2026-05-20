@@ -136,11 +136,22 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     // of the hwnd's UIA element. inspect.exe walks from root for these apps;
     // we mirror that here when the primary path yields nothing actionable.
     //
-    // Trigger: walk produced ≤1 node (typically just the bare pane wrapper).
-    // We re-query from `GetRootElement()`, filter children by `ProcessId`
-    // matching the target window's owning process, and walk that subtree.
+    // Trigger: walk produced zero actionable nodes (the primary path may have
+    // still pushed a wrapper-only node — that's why we filter on
+    // `element_index.is_some()`).
+    //
+    // Stage the fallback walk into fresh accumulators and only swap them in
+    // if the fallback actually finds actionable elements. Otherwise the
+    // wrapper-only node from the primary walk stays the result — better than
+    // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
+    // for the fallback (which would then truncate large trees prematurely).
     if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
         if let Some(target_pid) = pid_from_hwnd(hwnd_win) {
+            let mut fallback_nodes: Vec<UiaNode> = Vec::new();
+            let mut fallback_lines: Vec<(usize, String)> = Vec::new();
+            let mut fallback_counter = 0usize;
+            let mut fallback_total = 0usize;
+
             tracing::debug!(
                 target: "uia",
                 "ElementFromHandle returned empty tree for hwnd 0x{hwnd:x}; \
@@ -150,11 +161,18 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
                 &automation,
                 &cache_req,
                 target_pid,
-                &mut nodes,
-                &mut lines,
-                &mut counter,
-                &mut total,
+                &mut fallback_nodes,
+                &mut fallback_lines,
+                &mut fallback_counter,
+                &mut fallback_total,
             );
+
+            if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
+                nodes = fallback_nodes;
+                lines = fallback_lines;
+                counter = fallback_counter;
+                total = fallback_total;
+            }
         }
     }
 

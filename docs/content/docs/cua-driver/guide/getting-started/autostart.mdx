@@ -105,6 +105,41 @@ The session only dies on explicit logoff (`logoff` / Start menu → Sign out) or
 **Prerequisite — an active interactive session must exist.** `kick` runs the task in *some* session, but Task Scheduler only triggers it when an interactive logon is present. If you've never logged in via RDP / console on a fresh box, `kick` has nowhere to land the daemon. The fix is to RDP in once (the logon trigger fires `serve` automatically) — after that, even an RDP-disconnect keeps the session alive in `Disc` state and the daemon along with it.
 </Callout>
 
+## UWP automation and the uiAccess worker (Windows)
+
+Modern UWP apps (modern Notepad, Settings, Calculator, the new File Explorer) run inside an AppContainer with **User Interface Privilege Isolation (UIPI)** enabled. UIPI is an integrity-level boundary: a process at Medium integrity (like the regular `cua-driver serve` daemon) cannot inject `SendInput`, read the UI Automation tree, or `PostMessage` across the boundary into an AppContainer'd process. The OS returns `ERROR_ACCESS_DENIED` and the tool call silently fails.
+
+Windows' answer is **`uiAccess="true"`** in the application manifest — a flag that asks the OS to elevate the process to UIAccess integrity at launch, lifting UIPI for that process. The catch: a uiAccess-marked PE can only be launched via `ShellExecute` (not `CreateProcess`), must be Authenticode-signed, and must live in a "secure" location (`\Program Files\` by default, or anywhere if the `EnableSecureUIAPaths` policy is relaxed).
+
+cua-driver-rs satisfies these constraints with a **second sibling binary**, `cua-driver-uia.exe`, that ships alongside `cua-driver.exe` and is the only PE in the project carrying `uiAccess="true"` in its manifest. The main binary (CLI + MCP) stays a normal `asInvoker` process so all the existing CLI / stdio MCP entrypoints continue to work — UWP tool calls just route through the sibling worker over a separate named pipe.
+
+### How it works at runtime
+
+| Component | Integrity | Pipe |
+|---|---|---|
+| `cua-driver.exe serve` | Medium | `\\.\pipe\cua-driver` |
+| `cua-driver-uia.exe` (auto-spawned by `serve`) | UIAccess | `\\.\pipe\cua-driver-uia` |
+
+When `cua-driver serve` starts, it checks for `cua-driver-uia.exe` next to its own binary and `ShellExecute`s it as a child. The OS elevates the child to UIAccess integrity (provided the signing + secure-location requirements are met) and the child binds the second pipe. `cua-driver call ...` and `cua-driver mcp` both prefer `\\.\pipe\cua-driver-uia` over the main daemon pipe when both are listening — tool calls land in the uiAccess process, UIPI doesn't block them.
+
+No additional `autostart` configuration is needed: the single `cua-driver-serve` Scheduled Task is the only registered entry. The worker is a child of the daemon, sharing its lifecycle.
+
+### What it unlocks
+
+- Reading the **UI Automation tree** of modern Notepad, Settings, modern File Explorer, and other XAML / UWP apps
+- `type_text` via UIA `ValuePattern.SetValue` against modern Notepad's document area
+- `SendInput`-based interactions that previously failed with `ERROR_ACCESS_DENIED`
+
+### What it does NOT unlock
+
+- **Calculator-class apps** whose UI lives in a DirectComposition `CoreWindow` with no addressable `HWND` from external processes. uiAccess lifts UIPI but cannot reach a window that has no public handle. See the architectural-limit discussion in [GH #1601](https://github.com/trycua/cua/issues/1601).
+- Apps that explicitly opt out of UI Automation
+- Cross-session injection (the worker still has to live in the same interactive session as the target app)
+
+<Callout type="warn">
+**Signing prerequisite.** `uiAccess` apps must be Authenticode-signed by a cert trusted on the machine — Microsoft does not honor the manifest otherwise. Until the production CD pipeline ships a signed `cua-driver-uia.exe` ([GH #1602](https://github.com/trycua/cua/issues/1602)), the worker fails to elevate on default-policy machines, and UWP automation falls back to the Medium-integrity behavior (UIPI blocking). The main CLI / MCP daemon is unaffected — only the worker depends on the signature. Until then, the daemon logs `uia spawn failed` to stderr and proceeds without it.
+</Callout>
+
 ## Why not just `cua-driver serve &` over SSH?
 
 A naively-spawned `cua-driver serve &` over SSH inherits the SSH session — which on Windows OpenSSH is **Session 0**, the non-interactive services session. The daemon comes up, but every GUI tool it answers (`list_windows`, `click`, `screenshot`, ...) bottoms out in Win32 APIs scoped to the calling session's WindowStation + Desktop, which Session 0 doesn't have. Tools silently return empty arrays.

@@ -123,7 +123,11 @@ jobs:
             rust-cua-driver-rs-windows-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver-rs
-        run: cargo build -p cua-driver --release --target ${{ matrix.target }}
+        # Build both the main CLI/MCP binary AND the uiAccess'd worker.
+        # `cua-driver-uia.exe` is the Windows-only sibling daemon that runs
+        # at UIAccess integrity so SendInput / UI Automation can cross UIPI
+        # into UWP apps — see crates/cua-driver-uia/ and #1602.
+        run: cargo build -p cua-driver -p cua-driver-uia --release --target ${{ matrix.target }}
       - name: Package
         working-directory: libs/cua-driver-rs
         shell: pwsh
@@ -134,6 +138,7 @@ jobs:
           $stage   = "cua-driver-rs-${version}-${label}"
           New-Item -ItemType Directory -Force -Path "release/$stage" | Out-Null
           Copy-Item "target/$target/release/cua-driver.exe" "release/$stage/"
+          Copy-Item "target/$target/release/cua-driver-uia.exe" "release/$stage/"
           if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
           # Zip the directory itself (no trailing /*) so the archive contains
           # the top-level "$stage" wrapper dir — install.ps1 walks into
@@ -142,10 +147,13 @@ jobs:
           # wrapper and dumps the files at the archive root, which breaks
           # the installer's path lookup.
           Compress-Archive -Path "release/$stage" -DestinationPath "release/$stage.zip" -Force
-          # Bare binary (cua-driver.exe by itself) — matches Swift's
-          # `*-binary.tar.gz` convention but as .zip since Windows tools
-          # don't always have tar on PATH.
-          Compress-Archive -Path "release/$stage/cua-driver.exe" -DestinationPath "release/$stage-binary.zip" -Force
+          # Bare-binaries zip: both exes side-by-side (no wrapper dir).
+          # `cua-driver-uia.exe` is currently shipped UNSIGNED in this archive
+          # — until #1602 wires an EV cert into CD, the worker won't elevate
+          # to UIAccess integrity on a default-policy machine. The main CLI/MCP
+          # binary stays fully functional regardless; uia is opt-in dead-weight
+          # until signed.
+          Compress-Archive -Path "release/$stage/cua-driver.exe","release/$stage/cua-driver-uia.exe" -DestinationPath "release/$stage-binary.zip" -Force
           Get-ChildItem "release/$stage*.zip"
       - uses: actions/upload-artifact@v4
         with:

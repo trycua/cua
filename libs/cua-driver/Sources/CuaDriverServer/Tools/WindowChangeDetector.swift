@@ -185,10 +185,13 @@ public enum WindowChangeDetector {
             let newIds = current.subtracting(snapshot.windowIds)
             var newEvents: [WindowEvent] = []
             if !newIds.isEmpty {
-                // Resolve app names / titles from the live window list.
+                let ownPid = ProcessInfo.processInfo.processIdentifier
+                // Resolve app names / titles from the live window list,
+                // excluding windows owned by the cua-driver daemon itself
+                // (e.g. the AgentCursorOverlayWindow).
                 let allVisible = WindowEnumerator.visibleWindows().filter { $0.layer == 0 }
                 newEvents = allVisible
-                    .filter { newIds.contains($0.id) }
+                    .filter { newIds.contains($0.id) && $0.pid != ownPid }
                     .map { WindowEvent(
                         windowId: $0.id,
                         pid: $0.pid,

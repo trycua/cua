@@ -158,6 +158,25 @@ public enum TypeTextTool {
                 } else {
                     do {
                         let element = try AXInput.focusedElement(pid: pid)
+                        let target = AXInput.describe(element)
+                        let role = target.role ?? ""
+
+                        // Guard against writing into non-text containers.
+                        // macOS AX focus tracking can lag behind modal sheets,
+                        // leaving a container (e.g. sidebar AXOutline) as the
+                        // focused element even when a text field is visually
+                        // active. Fall through to CGEvent which targets the
+                        // actual key-focus owner.
+                        let nonTextRoles: Set<String> = [
+                            "AXOutline", "AXTable", "AXList",
+                            "AXBrowser", "AXScrollArea", "AXGroup",
+                        ]
+                        guard !nonTextRoles.contains(role) else {
+                            // Fall through to CGEvent synthesis.
+                            throw AXInputError.setAttributeFailed(
+                                attribute: "AXSelectedText", code: -1)
+                        }
+
                         // Animate the cursor to the focused element before writing.
                         if let center = AXInput.screenCenter(of: element) {
                             await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
@@ -175,9 +194,9 @@ public enum TypeTextTool {
                         {
                             // Silent-accept detected — fall through.
                         } else {
-                            let target = AXInput.describe(element)
+                            let roleLabel = role.isEmpty ? "?" : role
                             let summary =
-                                "✅ Inserted \(text.count) char(s) into focused \(target.role ?? "?") \"\(target.title ?? "")\" on pid \(rawPid) via AX."
+                                "✅ Inserted \(text.count) char(s) into focused \(roleLabel) \"\(target.title ?? "")\" on pid \(rawPid) via AX."
                             await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }
                             await AgentCursor.shared.playClickPress()
                             await AgentCursor.shared.finishClick(pid: pid)

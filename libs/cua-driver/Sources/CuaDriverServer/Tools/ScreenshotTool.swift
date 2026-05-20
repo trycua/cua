@@ -87,11 +87,31 @@ public enum ScreenshotTool {
             }
 
             do {
+                let config = await ConfigStore.shared.load()
+                let maxDim = config.maxImageDimension
+
                 let shot = try await capture.captureWindow(
                     windowID: windowID,
                     format: format,
-                    quality: quality
+                    quality: quality,
+                    maxImageDimension: maxDim
                 )
+
+                // Register the resize ratio so ClickTool can map
+                // screenshot-pixel coordinates back to native pixels,
+                // matching what GetWindowStateTool already does.
+                if let ownerPid = WindowEnumerator.allWindows()
+                    .first(where: { UInt32($0.id) == windowID })?.pid
+                {
+                    if let origW = shot.originalWidth, shot.width > 0 {
+                        await ImageResizeRegistry.shared.setRatio(
+                            Double(origW) / Double(shot.width),
+                            forPid: ownerPid)
+                    } else {
+                        await ImageResizeRegistry.shared.clearRatio(forPid: ownerPid)
+                    }
+                }
+
                 let base64 = shot.imageData.base64EncodedString()
                 let mime = format == .png ? "image/png" : "image/jpeg"
                 var summaryLines: [String] = [

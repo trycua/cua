@@ -1959,8 +1959,8 @@ impl Tool for KillAppTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid_i = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) if p > 0 && p <= i32::MAX as i64 => p as i32,
-            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".into()),
-            None => return ToolResult::error("kill_app: missing required integer field `pid`".into()),
+            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".to_string()),
+            None => return ToolResult::error("kill_app: missing required integer field `pid`".to_string()),
         };
         // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
         let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };

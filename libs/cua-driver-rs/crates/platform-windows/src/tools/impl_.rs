@@ -3126,8 +3126,8 @@ impl Tool for KillAppTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         let pid_v: u32 = match args.get("pid").and_then(|v| v.as_u64()) {
             Some(p) if p > 0 && p <= u32::MAX as u64 => p as u32,
-            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".into()),
-            None => return ToolResult::error("kill_app: missing required integer field `pid`".into()),
+            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".to_string()),
+            None => return ToolResult::error("kill_app: missing required integer field `pid`".to_string()),
         };
 
         // Run the syscalls on a blocking thread — TerminateProcess + the

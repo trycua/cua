@@ -1,0 +1,174 @@
+---
+title: Running cua-driver under SSH on Windows
+description: The "daemon in interactive session + SSH-side proxy" workflow that makes cua-driver work headlessly over SSH on Windows.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The canonical headless / remote-driving setup for cua-driver on Windows is:
+
+1. A `cua-driver serve` daemon runs in the user's **interactive session** (Session 1+), kept alive by [`cua-driver autostart`](/cua-driver/guide/getting-started/autostart).
+2. You SSH into the same box (which lands in Session 0).
+3. `cua-driver mcp` and `cua-driver call <tool>` on the SSH side **proxy through the interactive-session daemon** over the daemon's named pipe.
+4. Claude Code (or any MCP client) over SSH drives real GUI apps — `list_apps`, `click`, `type_text`, `screenshot` all respond against the user's real desktop.
+
+This page explains why the proxy is necessary, how to wire it up, and the opt-outs.
+
+## The Session 0 problem
+
+Windows OpenSSH server runs in **Session 0** — the non-interactive services session. Sessions `1`, `2`, ... are interactive logons (one per console / RDP user). Every process inherits the session of its parent, so a shell spawned from `sshd` lands in Session 0 too.
+
+The Win32 APIs that cua-driver's window tools bottom out in — `EnumWindows`, `GetForegroundWindow`, `PrintWindow`, UIA, `BitBlt` over the screen DC — are all scoped to the **calling process's WindowStation + Desktop**. Session 0 has no interactive desktop attached. So:
+
+```powershell
+# Over SSH (Session 0), with no daemon helper:
+cua-driver call list_windows
+# []                       ← empty. The user's RDP session has 12 windows open.
+```
+
+That's not a cua-driver bug — those APIs are working as designed against a session with no desktop. The same thing would happen to any native Win32 tool spawned the same way.
+
+<Callout type="info">
+**Confirm with `cua-driver doctor`.** The Windows session probe surfaces this directly:
+
+```text
+[warn] interactive session: running in Session 0 (services); window-driving
+       tools (list_windows, click, type_text, screenshot, get_window_state)
+       will return empty results — these APIs need an attached interactive
+       desktop.
+```
+</Callout>
+
+## The fix: daemon in Session 1+, proxy from Session 0
+
+The Rust port (`cua-driver-rs`) ships with a daemon-proxy path on every platform. When `cua-driver mcp` or `cua-driver call <tool>` starts up and detects a daemon already listening on the default socket, it forwards every request through to the daemon instead of running tool calls in-process.
+
+The daemon runs in the user's interactive session (registered via `cua-driver autostart enable`, which uses a Scheduled Task with `LogonType: Interactive`). The SSH-side CLI runs in Session 0 but only does protocol-shuttling — the actual tool invocations execute inside the daemon, which has a real desktop attached.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  Session 1+ (RDP / console — has interactive desktop)         │
+│                                                               │
+│    cua-driver-serve  (autostart Scheduled Task)               │
+│      ↑                                                        │
+│      │ named pipe: \\.\pipe\cua-driver                        │
+│      │                                                        │
+└──────┼────────────────────────────────────────────────────────┘
+       │
+┌──────┼────────────────────────────────────────────────────────┐
+│  Session 0 (services / SSH — no desktop)                      │
+│      │                                                        │
+│    cua-driver mcp                                             │
+│    cua-driver call list_windows                               │
+│    Claude Code → MCP stdio → cua-driver mcp                   │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## The canonical recipe
+
+```powershell
+# ── ONE-TIME from your interactive session (RDP or console) ──────────
+cua-driver autostart enable        # register the Scheduled Task
+cua-driver autostart kick          # start it now, don't wait for next logon
+
+# ── from SSH (or any session — Just Works) ───────────────────────────
+cua-driver status
+# cua-driver daemon is running
+#   socket: \\.\pipe\cua-driver
+#   pid: 12345
+#   session: 2                     ← daemon's in your interactive session
+
+cua-driver call list_apps          # sees real GUI apps
+claude                             # Claude Code's MCP tool calls proxy through
+```
+
+`autostart enable` registers a Scheduled Task that re-runs `cua-driver serve` at every interactive logon — see the [Autostart concept page](/cua-driver/guide/getting-started/autostart) for the verb-by-verb breakdown and the RDP-disconnect-survives property.
+
+<Callout type="warn">
+**Prerequisite — the user must have an active interactive session.** Either:
+
+- An RDP client is connected, OR
+- An RDP client *was* connected and has disconnected without logging off (the session stays in `Disc` state and is still considered active), OR
+- The user is logged in at the local console.
+
+Confirm with `query session` from any shell — the user row should show `Active` or `Disc`:
+
+```powershell
+query session
+# SESSIONNAME    USERNAME    ID  STATE   TYPE
+# rdp-tcp#23     you         2  Active                     ← good
+# # — or —
+# rdp-tcp#23     you         2  Disc                       ← also good
+```
+
+No interactive session means `autostart kick` has no Session 1+ to land the daemon in — `kick` will report success but the daemon won't have a desktop attached. Open an RDP session once and the autostart trigger will fire `serve` automatically next logon.
+</Callout>
+
+## How the proxy decides whether to forward
+
+`cua-driver mcp` and `cua-driver call <tool>` share the same gating function ([`should_use_daemon_proxy` in `cli.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/crates/cua-driver/src/cli.rs)):
+
+- If `--no-daemon-relaunch` is passed, **stay in-process**.
+- If `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` is set, **stay in-process**.
+- Otherwise, **proxy if a daemon is listening** on the default socket; **run in-process if none is up**.
+
+There's no auto-spawn on Windows / Linux — unlike macOS, there's no `open -a CuaDriver` equivalent that could land a fresh daemon in the right session. If no daemon is listening when you run `cua-driver mcp`, the CLI bails with an actionable error:
+
+```text
+no cua-driver daemon listening on \\.\pipe\cua-driver. Start one in your
+interactive session — on Windows run `cua-driver autostart enable &&
+cua-driver autostart kick`; on Linux run `cua-driver serve &` in the user's
+session. Then re-run `cua-driver mcp`. To skip the proxy and run in-process
+anyway (Session 0 attribution, GUI tools will return empty), pass
+--no-daemon-relaunch.
+```
+
+<Callout type="info">
+**Why `call` worked over SSH before v0.2.7 but `mcp` didn't.** The `call` CLI had its own daemon-proxy shortcut baked in from the start (the daemon is the only place the per-pid element cache lives, so `call` had to proxy to share state across invocations anyway). The `mcp` entrypoint was hardcoded to run in-process on Windows / Linux on the assumption that MCP clients spawn fresh subprocesses — true, but irrelevant: a fresh subprocess over SSH is still in Session 0. `cua-driver-rs` v0.2.7 ([PR #1580](https://github.com/trycua/cua/pull/1580)) lined the two entrypoints up so `mcp` proxies on the same conditions `call` does.
+
+If you're on v0.2.6 or earlier and saw empty MCP results over SSH while `cua-driver call list_apps` worked, upgrade — `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex`.
+</Callout>
+
+## Wiring Claude Code over SSH
+
+Once the daemon is up in your interactive session, the Claude Code registration is unchanged from the local case:
+
+```powershell
+# From inside your SSH session:
+claude mcp add --transport stdio cua-driver -- cua-driver.exe mcp
+claude
+```
+
+Every MCP tool call Claude makes over the stdio link triggers `cua-driver mcp` on the SSH side, which detects the daemon and proxies to it. The MCP client sees an ordinary stdio server; the daemon sees a steady stream of tool calls from its Session 1+ desktop context.
+
+## Opt-out: in-process even when a daemon is up
+
+There are legitimate reasons to skip the proxy — running inside CI in an already-interactive runner that owns its own session, debugging the in-process MCP server, or running an integration test that boots its own daemon and wants the CLI to talk to a different socket.
+
+Two equivalent opt-outs:
+
+```powershell
+cua-driver mcp --no-daemon-relaunch                    # CLI flag, per-invocation
+$env:CUA_DRIVER_RS_MCP_NO_RELAUNCH = "1"               # env var, per-shell
+cua-driver mcp                                         # now stays in-process
+```
+
+Either form keeps `cua-driver mcp` in-process and the tool calls execute against whatever session spawned the CLI — Session 0 over SSH (empty GUI results), or the interactive session if you're running locally.
+
+## Diagnostics — "my MCP calls return empty over SSH"
+
+Walk this list before opening an issue:
+
+1. **`cua-driver --version` on the SSH side reports `0.2.7` or later.** Earlier versions don't proxy `mcp` on Windows / Linux. Upgrade with the [install one-liner](/cua-driver/guide/getting-started/installation#install-cua-driver-rs-directly-linux--windows--macos).
+2. **`cua-driver status` from SSH reports a running daemon.** If not, `cua-driver autostart status` will tell you whether the Scheduled Task is registered. Re-run `enable && kick` from an RDP session if not.
+3. **`query session` shows an `Active` or `Disc` row for your user.** No interactive session means no Session 1+ for the daemon to land in.
+4. **`cua-driver doctor` from RDP reports `[ok] interactive session: session N has an attached interactive desktop`** — confirms the daemon's session has a desktop attached. Run from the same session you registered autostart in.
+5. **You did not pass `--no-daemon-relaunch`** and `CUA_DRIVER_RS_MCP_NO_RELAUNCH` is unset — both opt the proxy out.
+
+If all five pass and tool calls still come back empty, run `cua-driver call list_windows` over SSH and compare with the same call from RDP. Same empty result on both means the daemon's in the wrong session; differing results mean the proxy isn't activating (file an issue with `cua-driver doctor --json` from both sessions).
+
+## See also
+
+- [Autostart](/cua-driver/guide/getting-started/autostart) — verb-by-verb breakdown of `cua-driver autostart`, the daemon-survives-RDP-disconnect property.
+- [Installation → Windows interactive-session requirements](/cua-driver/guide/getting-started/installation#windows-interactive-session-requirements) — the underlying session model.
+- [Installation → Auto-start at logon (Windows)](/cua-driver/guide/getting-started/installation#auto-start-at-logon-windows) — manual Scheduled Task registration (equivalent to `autostart enable`, kept for users who want to hand-craft the task).

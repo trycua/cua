@@ -1154,7 +1154,11 @@ async def agent_response_endpoint(
             parts = [normalize_key(p) for p in parts]
 
             if len(parts) == 1:
-                await self._auto.press_key(parts[0])
+                key = parts[0]
+                if len(key) == 1 and key.isprintable():
+                    await self._auto.type_text(key)
+                else:
+                    await self._auto.press_key(key)
             else:
                 await self._auto.hotkey(parts)
 

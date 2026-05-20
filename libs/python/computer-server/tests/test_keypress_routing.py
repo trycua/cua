@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock
 
 
 # Inline Key enum so the test runs without installing the computer package.
-# Values match computer.interface.models.Key exactly.
+# Must match computer.interface.models.Key exactly — same members, same
+# from_string mapping and fallback semantics. See models.py:31-120.
 class Key(Enum):
     PAGE_DOWN = "pagedown"
     PAGE_UP = "pageup"
@@ -58,24 +59,15 @@ class Key(Enum):
             "return": cls.RETURN, "enter": cls.ENTER,
             "escape": cls.ESCAPE, "esc": cls.ESC,
             "delete": cls.DELETE, "del": cls.DELETE,
+            "alt": cls.ALT,
             "ctrl": cls.CTRL, "control": cls.CTRL,
-            "alt": cls.ALT, "option": cls.OPTION,
-            "shift": cls.SHIFT, "command": cls.COMMAND, "cmd": cls.COMMAND,
-            "win": cls.WIN, "super": cls.WIN, "meta": cls.WIN,
-            "backspace": cls.BACKSPACE, "space": cls.SPACE,
-            "tab": cls.TAB, "home": cls.HOME, "end": cls.END,
-            "left": cls.LEFT, "right": cls.RIGHT, "up": cls.UP, "down": cls.DOWN,
-            "f1": cls.F1, "f2": cls.F2, "f3": cls.F3, "f4": cls.F4,
-            "f5": cls.F5, "f6": cls.F6, "f7": cls.F7, "f8": cls.F8,
-            "f9": cls.F9, "f10": cls.F10, "f11": cls.F11, "f12": cls.F12,
+            "shift": cls.SHIFT,
+            "win": cls.WIN, "windows": cls.WIN, "super": cls.WIN,
+            "command": cls.COMMAND, "cmd": cls.COMMAND, "⌘": cls.COMMAND,
+            "option": cls.OPTION, "⌥": cls.OPTION,
         }
-        lower = key.lower()
-        if lower in key_mapping:
-            return key_mapping[lower]
-        try:
-            return cls(lower)
-        except ValueError:
-            return key
+        normalized = key.lower().strip()
+        return key_mapping.get(normalized, key)
 
 
 class FakeAutomationHandler:
@@ -191,6 +183,23 @@ class TestKeypressRouting(unittest.TestCase):
     def test_raw_newline_char(self):
         self._run("\n")
         self.auto.press_key.assert_awaited_once()
+        self.auto.type_text.assert_not_awaited()
+
+    # --- Unicode modifier aliases → press_key (not type_text) ---
+
+    def test_command_symbol(self):
+        self._run("⌘")
+        self.auto.press_key.assert_awaited_once_with("command")
+        self.auto.type_text.assert_not_awaited()
+
+    def test_option_symbol(self):
+        self._run("⌥")
+        self.auto.press_key.assert_awaited_once_with("option")
+        self.auto.type_text.assert_not_awaited()
+
+    def test_windows_alias(self):
+        self._run("windows")
+        self.auto.press_key.assert_awaited_once_with("win")
         self.auto.type_text.assert_not_awaited()
 
     # --- Multi-part combos → hotkey ---

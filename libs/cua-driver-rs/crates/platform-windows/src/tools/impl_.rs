@@ -1723,15 +1723,31 @@ impl Tool for HotkeyTool {
     fn def(&self) -> &ToolDef {
         HOTKEY_DEF.get_or_init(|| ToolDef {
             name: "hotkey".into(),
-            // Description ported from Swift `HotkeyTool.swift` (omitting macOS-
-            // specific FocusWithoutRaise/SLEventPostToPid mechanics — Windows
-            // uses PostMessage which doesn't need a NSMenu-activation dance).
+            // Description ported from Swift `HotkeyTool.swift` with the
+            // Windows-specific dispatch (UIA accelerator for XAML; SendInput
+            // for legacy Win32 with modifiers per #1614 / #1618; PostMessage
+            // for modifier-less keys).
             description: "Press a combination of keys simultaneously — e.g. `[\"ctrl\", \"c\"]` \
-                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. Legacy Win32 \
-                targets receive the combo directly via PostMessage(WM_KEYDOWN/UP); modern \
-                XAML / WinUI / UWP targets route through UI Automation by finding a descendant \
-                whose AcceleratorKey matches the combo and invoking it. The target does NOT \
-                need to be frontmost.\n\n\
+                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. Dispatch is \
+                target-aware:\n\n\
+                - **Modern XAML / WinUI / UWP targets** route through UI Automation: the driver \
+                walks the target's accessibility subtree, finds a descendant whose AcceleratorKey \
+                matches the combo, and invokes it. No focus steal, no system-queue input.\n\n\
+                - **Legacy Win32 targets with modifiers** (Ctrl+S, Alt+Tab, etc.) route through \
+                `SendInput` against the system input queue, with a brief `SetForegroundWindow` \
+                swap so the events land on the target. This path is necessary because \
+                PostMessage(WM_KEYDOWN, VK_CONTROL) does NOT update the OS-wide modifier state \
+                visible to `GetKeyState` / `TranslateAccelerator`, so Win32 apps that bind \
+                accelerators via `TranslateAccelerator` (LibreOffice, FAR, classic Notepad, etc.) \
+                never see the combo as a real accelerator on the PostMessage-only path. \
+                Trade-off: brief foreground swap (mitigated by restoring the previous foreground \
+                after the keystrokes flush). Requires the daemon to have UIAccess integrity so \
+                `SetForegroundWindow` is permitted — the MCP proxy auto-prefers the \
+                `cua-driver-uia.exe` worker pipe when both daemons are running.\n\n\
+                - **Legacy Win32 targets without modifiers** (plain `enter`, `tab`, `f5`, etc.) \
+                route through `PostMessage(WM_KEYDOWN/UP)` — no focus steal, no need to update \
+                modifier state.\n\n\
+                The target does NOT need to be frontmost in any branch.\n\n\
                 **`window_id`** (optional): explicit HWND when the pid owns more than one \
                 window; otherwise the pid's first visible window is used.\n\n\
                 Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier \

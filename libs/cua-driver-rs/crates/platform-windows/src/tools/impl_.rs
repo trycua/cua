@@ -966,37 +966,78 @@ impl Tool for LaunchAppTool {
                 .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
                 .unwrap_or("")
                 .to_owned();
-            let candidates = tokio::task::spawn_blocking(move || {
-                crate::win32::related_processes(pid, &basename_for_match)
+            // Known-slow launchers get an extended retry budget. GIMP 3.x in
+            // particular spends 10-20s on its first launch (font cache rebuild,
+            // plugin scan, etc.) before the main window registers. We don't
+            // want to wait 20s for every launcher — gate on basename prefix
+            // matching known-slow apps. Add to this list as encountered.
+            let bn_lower = basename_for_match.to_ascii_lowercase();
+            let is_slow_launcher = bn_lower.starts_with("gimp")
+                || bn_lower.starts_with("blender")          // OpenGL init can stall
+                || bn_lower.starts_with("inkscape")         // similar GTK pattern
+                || bn_lower.starts_with("krita")
+                || bn_lower.starts_with("freecad");
+            let max_candidate_attempts: usize = if is_slow_launcher { 30 } else { 3 };
+
+            let basename_clone = basename_for_match.clone();
+            let candidates_initial = tokio::task::spawn_blocking(move || {
+                crate::win32::related_processes(pid, &basename_clone)
             })
             .await
             .unwrap_or_default();
 
-            for candidate_pid in candidates.iter().copied() {
-                if candidate_pid == pid { continue; } // already tried
-                // One short retry per candidate — the descendant may also be
-                // still spawning. 3×200ms is the same budget Swift uses for
-                // similar lookups.
-                for _ in 0..3 {
-                    let wins = tokio::task::spawn_blocking(move || {
-                        crate::win32::list_windows(Some(candidate_pid))
-                    })
-                    .await
-                    .unwrap_or_default();
-                    if !wins.is_empty() {
-                        windows_json = wins.iter().map(|w| json!({
-                            "window_id": w.hwnd, "title": w.title,
-                            "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
-                            "layer": 0,
-                            "z_index": 0,
-                            "is_on_screen": true,
-                        })).collect();
-                        resolved_pid = candidate_pid;
-                        break;
+            // For slow launchers we may also need to RE-SCAN candidates over
+            // time, because the wrapper may not have spawned its child yet
+            // when we first scanned. Cap total wait at ~12s (slow) / 0.6s (fast).
+            let mut tried: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            tried.insert(pid); // already tried in the primary loop
+            let mut candidate_queue: Vec<u32> = candidates_initial
+                .into_iter()
+                .filter(|p| tried.insert(*p))
+                .collect();
+            let mut total_attempts: usize = 0;
+            'outer: loop {
+                while let Some(candidate_pid) = candidate_queue.pop() {
+                    for _ in 0..max_candidate_attempts {
+                        total_attempts += 1;
+                        let wins = tokio::task::spawn_blocking(move || {
+                            crate::win32::list_windows(Some(candidate_pid))
+                        })
+                        .await
+                        .unwrap_or_default();
+                        if !wins.is_empty() {
+                            windows_json = wins.iter().map(|w| json!({
+                                "window_id": w.hwnd, "title": w.title,
+                                "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                                "layer": 0,
+                                "z_index": 0,
+                                "is_on_screen": true,
+                            })).collect();
+                            resolved_pid = candidate_pid;
+                            break 'outer;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
-                if !windows_json.is_empty() { break; }
+                // For slow launchers, keep re-scanning descendants — the
+                // wrapper may not have spawned its child yet. Cap total
+                // wait at ~12s (60 × 200ms) for the slow path.
+                if !is_slow_launcher || total_attempts > 60 { break; }
+                // Give the wrapper a moment to spawn before re-scanning.
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                total_attempts += 3; // count the 500ms wait as 3 attempts
+                let basename_rescan = basename_for_match.clone();
+                let fresh = tokio::task::spawn_blocking(move || {
+                    crate::win32::related_processes(pid, &basename_rescan)
+                })
+                .await
+                .unwrap_or_default();
+                let new_ones: Vec<u32> = fresh.into_iter().filter(|p| tried.insert(*p)).collect();
+                candidate_queue = new_ones;
+                // Continue the outer loop regardless — even with empty
+                // new_ones we want another iteration that hits the
+                // total_attempts cap. The loop body handles the empty queue
+                // by falling through to the re-scan again.
             }
         }
         let pid = resolved_pid;

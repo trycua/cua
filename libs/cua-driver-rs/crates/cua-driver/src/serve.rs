@@ -398,21 +398,54 @@ pub async fn run_serve(
     Ok(())
 }
 
-/// On Windows, spawn the sibling uiAccess'd worker (`cua-driver-uia.exe`) via
-/// ShellExecute (through a PowerShell one-liner — no new deps) if it lives
-/// next to the main binary. uiAccess PEs can only be launched via
-/// ShellExecute (CreateProcess returns ERROR_ELEVATION_REQUIRED), and Task
-/// Scheduler's PowerShell-wrapper Action path can't establish a logon
-/// session for the call (ERROR_NOT_LOGGED_ON). But spawning it as a child
-/// of `cua-driver serve` works because the call originates from an already-
-/// Session-2 process with an interactive desktop attached.
+/// On Windows, optionally spawn the sibling uiAccess'd worker
+/// (`cua-driver-uia.exe`) via ShellExecute if it lives next to the main binary
+/// AND we're at Medium IL AND the binary is opt-in via env var.
 ///
-/// Best-effort: if the worker isn't installed, the spawn fails, or
-/// ShellExecute returns an error, the main daemon still serves requests
-/// via the regular `\\.\pipe\cua-driver` path — just without UIPI bypass
-/// for UWP apps. See #1602 / the `cua-driver-uia` crate.
+/// History: the uia worker was the original answer to "drive UWP / AppContainer
+/// apps from a Medium-IL daemon" — it carries `uiAccess="true"` in its manifest
+/// and was meant to be Authenticode-signed (EV cert per #1602) so Windows AIS
+/// would elevate it to UIAccess integrity at launch. With #1630 the canonical
+/// answer became "register the autostart task at RunLevel=Highest so the main
+/// daemon is already at High IL", which obviates the worker entirely for the
+/// vast majority of users.
+///
+/// Current behavior:
+///
+/// 1. If the main daemon is already at High IL (the RunLevel=Highest path),
+///    skip the worker — it's redundant and, more importantly, attempting to
+///    ShellExecute an unsigned uiAccess'd PE pops a Windows error dialog
+///    ("A referral was returned from the server" = AIS refusing to elevate
+///    an unsigned uiAccess binary). That dialog blocks the daemon's startup
+///    and confuses users.
+///
+/// 2. If the main daemon is at Medium IL (older installs without the
+///    Highest task), AND `CUA_DRIVER_RS_SPAWN_UIA_WORKER=1` is set (opt-in),
+///    AND a uiAccess'd worker is installed, spawn it. This path is kept for
+///    the future EV-cert flow where the worker IS properly signed.
+///
+/// 3. Otherwise: skip silently. The main daemon still serves requests; UWP
+///    automation will require either re-running with the Highest autostart
+///    task or (when shipped) the signed uia worker. See #1602.
 #[cfg(target_os = "windows")]
 fn maybe_spawn_uia_worker() {
+    // Skip when at High IL — main daemon already has the privileges the
+    // worker was supposed to provide.
+    if is_self_at_high_il() {
+        tracing::debug!("uia spawn skipped: main daemon already at High IL");
+        return;
+    }
+
+    // Opt-in for the future EV-cert flow. Default-off until the worker is
+    // actually signed and tested.
+    if !crate::bundle::is_env_truthy("CUA_DRIVER_RS_SPAWN_UIA_WORKER") {
+        tracing::debug!(
+            "uia spawn skipped: CUA_DRIVER_RS_SPAWN_UIA_WORKER not set (opt-in only \
+             until the worker is EV-signed; see #1602)"
+        );
+        return;
+    }
+
     let current = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -429,8 +462,6 @@ fn maybe_spawn_uia_worker() {
         return;
     }
     let uia_str = uia.display().to_string();
-    // PowerShell ShellExecute call — same shape we proved works from Session 2.
-    // `0` = SW_HIDE so the worker doesn't flash a window.
     let cmd = format!(
         "(New-Object -ComObject Shell.Application).ShellExecute('{uia_str}','','','',0)"
     );
@@ -444,6 +475,33 @@ fn maybe_spawn_uia_worker() {
         Err(e) => {
             tracing::warn!("uia spawn failed: {e}");
         }
+    }
+}
+
+/// Returns true when the current process is at High IL (admin token). Checked
+/// via a one-shot PowerShell call to `WindowsPrincipal.IsInRole(Administrator)`
+/// — the standard managed equivalent of OpenProcessToken + GetTokenInformation.
+///
+/// Done via PowerShell instead of the windows-crate Win32 API because cua-driver
+/// doesn't depend on the `windows` crate directly (only platform-windows does),
+/// and `serve.rs` runs only once at daemon start so the ~50ms PowerShell-spawn
+/// cost is acceptable.
+#[cfg(target_os = "windows")]
+fn is_self_at_high_il() -> bool {
+    let out = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "([System.Security.Principal.WindowsPrincipal][System.Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)",
+        ])
+        .output();
+    match out {
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            s.trim().eq_ignore_ascii_case("True")
+        }
+        Err(_) => false,
     }
 }
 

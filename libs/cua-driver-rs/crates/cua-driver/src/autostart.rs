@@ -115,6 +115,19 @@ mod platform {
     /// install.ps1 surfaces any divergence; the moment install.ps1 changes
     /// shape, this script needs the same edit.
     ///
+    /// **RunLevel = Highest** (since 2026-05-21): the daemon is registered to
+    /// run at the user's elevated/admin token rather than the filtered
+    /// standard-user token. This is what lets the daemon drive UWP /
+    /// AppContainer apps (Calculator, modern Settings, Photos, …) — at
+    /// Medium IL the cross-AppContainer UIA RPC returns a stub (~1 element
+    /// instead of the full tree, see #1602 / #1601). High IL crosses that
+    /// boundary cleanly. Trade-off: `Register-ScheduledTask -RunLevel
+    /// Highest` requires the caller to already be at High IL, so this
+    /// function emits an actionable error when invoked from a non-elevated
+    /// shell. Users opt into autostart via the installer's `-AutoStart`
+    /// flag or `cua-driver autostart enable`, both of which prompt for
+    /// elevation when needed.
+    ///
     /// **Account-name format**: on domain-joined machines USERDOMAIN holds the
     /// AD domain name (e.g. CORP) and the principal must be `CORP\username`.
     /// On workgroup machines USERDOMAIN holds either the literal string
@@ -134,10 +147,10 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
 $user = "$domain\$env:USERNAME"
 $action = New-ScheduledTaskAction -Execute $env:CUA_DRIVER_AS_EXE -Argument 'serve' -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
 Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
+Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support' | Out-Null
 
 # Note: the uiAccess'd worker (`cua-driver-uia.exe`) does NOT get its own
 # scheduled task. uiAccess PEs can only be launched via ShellExecute, and
@@ -158,6 +171,27 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
             .map_err(|e| anyhow!("failed to invoke powershell: {e}"))?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
+            // Detect the most common cause — non-elevated caller can't
+            // register a RunLevel=Highest task — and surface an actionable
+            // message instead of the raw PowerShell stack trace.
+            let stderr_lower = stderr.to_lowercase();
+            let looks_like_access_denied = stderr_lower.contains("access is denied")
+                || stderr_lower.contains("0x80070005")
+                || stderr_lower.contains("permission")
+                || stderr_lower.contains("requires elevation");
+            if looks_like_access_denied {
+                return Err(anyhow!(
+                    "Register-ScheduledTask failed: this task is registered with \
+                     RunLevel=Highest so the daemon can drive UWP / AppContainer apps \
+                     (Calculator, modern Settings, Photos, ...). Registering a Highest \
+                     task itself requires admin. Re-run from an elevated PowerShell, or \
+                     run install.ps1 with -AutoStart from an elevated session. See \
+                     https://github.com/trycua/cua/issues/1602 for context.\n\
+                     \n\
+                     Raw error: {}",
+                    stderr.trim()
+                ));
+            }
             return Err(anyhow!(
                 "PowerShell Register-ScheduledTask failed (exit {}): {}",
                 out.status.code().unwrap_or(-1),

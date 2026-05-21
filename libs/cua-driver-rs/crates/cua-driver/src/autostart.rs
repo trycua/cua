@@ -138,6 +138,14 @@ $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -Ru
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
 Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
+
+# Note: the uiAccess'd worker (`cua-driver-uia.exe`) does NOT get its own
+# scheduled task. uiAccess PEs can only be launched via ShellExecute, and
+# Task Scheduler's PowerShell-wrapper Action path returns ERROR_NOT_LOGGED_ON
+# (0x800710E0). Instead, `cua-driver serve` itself spawns the sibling worker
+# via ShellExecuteEx at startup (see serve.rs `maybe_spawn_uia_worker`),
+# which works because the spawn originates from a Session-2 process with an
+# interactive desktop. See #1602.
 "#;
 
     pub fn enable(exe: &str) -> Result<()> {
@@ -160,6 +168,15 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
     }
 
     pub fn disable() -> Result<()> {
+        // Tear down any legacy `cua-driver-uia` task from earlier autostart
+        // versions that registered a separate scheduled task for the uia
+        // worker. Current versions don't register one (serve.rs spawns the
+        // worker as a child), but `disable` should still clean up old
+        // installs. Best-effort — "task not found" is ignored.
+        let _ = Command::new("schtasks")
+            .args(["/Delete", "/TN", "cua-driver-uia", "/F"])
+            .output();
+
         // schtasks /Delete returns 0 on success, 1 on "task not found"
         // (which we treat as success: the goal is "no task registered"
         // and it already isn't). Match on stderr text rather than exit

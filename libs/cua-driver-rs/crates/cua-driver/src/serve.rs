@@ -43,6 +43,16 @@ pub fn default_socket_path() -> String {
     }
 }
 
+/// On Windows, returns the named-pipe path of the uiAccess-elevated worker
+/// (`cua-driver-uia.exe`). The main CLI/MCP binary prefers this pipe over the
+/// regular daemon pipe so UIPI-blocked Windows tools (SendInput / UI Automation
+/// against UWP apps) run in a UIAccess-integrity process. See #1602 / the
+/// `cua-driver-uia` crate for the worker side.
+#[cfg(target_os = "windows")]
+pub fn default_uia_pipe_path() -> String {
+    r"\\.\pipe\cua-driver-uia".to_owned()
+}
+
 /// Returns the platform default PID file path.
 pub fn default_pid_file_path() -> String {
     #[cfg(target_os = "macos")]
@@ -388,6 +398,55 @@ pub async fn run_serve(
     Ok(())
 }
 
+/// On Windows, spawn the sibling uiAccess'd worker (`cua-driver-uia.exe`) via
+/// ShellExecute (through a PowerShell one-liner — no new deps) if it lives
+/// next to the main binary. uiAccess PEs can only be launched via
+/// ShellExecute (CreateProcess returns ERROR_ELEVATION_REQUIRED), and Task
+/// Scheduler's PowerShell-wrapper Action path can't establish a logon
+/// session for the call (ERROR_NOT_LOGGED_ON). But spawning it as a child
+/// of `cua-driver serve` works because the call originates from an already-
+/// Session-2 process with an interactive desktop attached.
+///
+/// Best-effort: if the worker isn't installed, the spawn fails, or
+/// ShellExecute returns an error, the main daemon still serves requests
+/// via the regular `\\.\pipe\cua-driver` path — just without UIPI bypass
+/// for UWP apps. See #1602 / the `cua-driver-uia` crate.
+#[cfg(target_os = "windows")]
+fn maybe_spawn_uia_worker() {
+    let current = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!("uia spawn skipped: current_exe failed: {e}");
+            return;
+        }
+    };
+    let uia = match current.parent() {
+        Some(dir) => dir.join("cua-driver-uia.exe"),
+        None => return,
+    };
+    if !uia.exists() {
+        tracing::debug!("uia spawn skipped: {} not present", uia.display());
+        return;
+    }
+    let uia_str = uia.display().to_string();
+    // PowerShell ShellExecute call — same shape we proved works from Session 2.
+    // `0` = SW_HIDE so the worker doesn't flash a window.
+    let cmd = format!(
+        "(New-Object -ComObject Shell.Application).ShellExecute('{uia_str}','','','',0)"
+    );
+    match std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
+        .spawn()
+    {
+        Ok(_child) => {
+            eprintln!("cua-driver: spawned uiAccess worker via {}", uia.display());
+        }
+        Err(e) => {
+            tracing::warn!("uia spawn failed: {e}");
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub async fn run_serve(
     registry: std::sync::Arc<mcp_server::tool::ToolRegistry>,
@@ -398,6 +457,10 @@ pub async fn run_serve(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     eprintln!("cua-driver daemon listening on {socket_path}");
+
+    // Spawn the sibling uiAccess'd worker if it's installed. Best-effort —
+    // the main daemon still serves requests even if the worker fails to start.
+    maybe_spawn_uia_worker();
 
     // Write PID file.
     if let Some(pid_path) = pid_file_path {

@@ -1244,12 +1244,20 @@ impl Tool for TypeTextTool {
                 PostMessage(WM_CHAR) to the focused window. No focus steal.\n\n\
                 Special keys (Return, Escape, arrows, Tab) go through `press_key` / \
                 `hotkey` — they are not text.\n\n\
-                Optional `element_index` + `window_id` (from the last `get_window_state` \
-                snapshot of that window) is accepted for parity but currently no-op on \
-                Windows (UIA SetFocus not wired up yet); without `element_index`, the \
-                write targets the pid's focused window — same as Swift's no-element path.\n\n\
-                `delay_ms` (0–200, default 30) spaces successive characters so \
-                autocomplete and IME can keep up.".into(),
+                **Routing on Windows.** When the target's owning EXE or top-level window \
+                class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, \
+                Calculator, Photos, Settings, etc.), the tool requires `element_index` \
+                + `window_id` and routes through UI Automation's `ValuePattern.SetValue` \
+                — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't \
+                reach those hosts (their CoreInput dispatcher only consumes events from \
+                the system input queue), so the fallback path silently dropped chars. \
+                If you call `type_text(pid, text)` on a XAML host without `element_index`, \
+                the tool returns an actionable error pointing you at `get_window_state` \
+                first. Legacy Win32 apps still use the PostMessage path, preserving the \
+                no-focus-steal property.\n\n\
+                `delay_ms` (0–200, default 30) spaces successive characters on the \
+                PostMessage path so autocomplete and IME can keep up. Ignored on the \
+                UIA path (SetValue is atomic).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
                     "pid":{"type":"integer","description":"Target process ID."},
@@ -1294,13 +1302,65 @@ impl Tool for TypeTextTool {
             }
         };
         let text_len = text.chars().count();
+
+        // CUA-543 routing: PostMessage WM_CHAR doesn't reach modern
+        // XAML / WinUI3 hosts. When the target is one of those AND the
+        // caller has supplied an element_index, route through UIA
+        // `ValuePattern.SetValue` — same code path the `set_value` tool
+        // uses, which we've verified works on modern Notepad / WinUI3.
+        // Legacy Win32 stays on the PostMessage path so the no-focus-
+        // steal property is preserved.
+        if crate::input::is_xaml_host_hwnd(hwnd) {
+            if let Some(idx) = elem_idx {
+                let idx = idx as usize;
+                let state = self.state.clone();
+                let text_for_uia = text.clone();
+                let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "Element {idx} not in cache — call get_window_state(pid={pid}, window_id={hwnd}) first."
+                        ))?;
+                    use windows::Win32::UI::Accessibility::{
+                        IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId,
+                    };
+                    use windows::core::{Interface, BSTR};
+                    let elem: IUIAutomationElement =
+                        unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+                    let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId)? };
+                    std::mem::forget(elem);
+                    let vp: IUIAutomationValuePattern = pattern.cast()?;
+                    unsafe { vp.SetValue(&BSTR::from(text_for_uia.as_str()))? };
+                    Ok(())
+                }).await;
+                return match result {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern \
+                         (XAML / UWP target, element_index=[{idx}])."
+                    )),
+                    Ok(Err(e)) => ToolResult::error(format!("type_text (UIA path): {e}")),
+                    Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                };
+            } else {
+                // XAML target without element_index: PostMessage will silently
+                // drop chars. Surface a clear error pointing the agent at the
+                // right workflow rather than lying with a "✅ Typed" message.
+                return ToolResult::error(format!(
+                    "type_text on a modern XAML / UWP target (pid {raw_pid}, hwnd {hwnd}) \
+                     requires `element_index` — its WM_CHAR pipeline ignores PostMessage \
+                     without keyboard focus. Call `get_window_state(pid={raw_pid}, \
+                     window_id={hwnd})` to enumerate elements, then re-call \
+                     `type_text(pid, window_id, element_index, text)`. Or call \
+                     `set_value(pid, window_id, element_index, value)` directly — same \
+                     UIA backend."
+                ));
+            }
+        }
+
+        // Legacy Win32 path — PostMessage WM_CHAR, no focus steal.
         let result = tokio::task::spawn_blocking(move || {
             crate::input::post_type_text(hwnd, &text)
         }).await;
         match result {
-            // Match Swift's CGEvent-fallback text format 1:1 (Windows always
-            // takes the synthesis path since AXSelectedText has no UIA
-            // equivalent wired up here yet).
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage ({_delay_ms}ms delay)."
             )),
@@ -1414,9 +1474,11 @@ impl Tool for HotkeyTool {
             // specific FocusWithoutRaise/SLEventPostToPid mechanics — Windows
             // uses PostMessage which doesn't need a NSMenu-activation dance).
             description: "Press a combination of keys simultaneously — e.g. `[\"ctrl\", \"c\"]` \
-                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. The combo is \
-                posted directly to the target pid's window via PostMessage(WM_KEYDOWN/UP); \
-                the target does NOT need to be frontmost.\n\n\
+                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. Legacy Win32 \
+                targets receive the combo directly via PostMessage(WM_KEYDOWN/UP); modern \
+                XAML / WinUI / UWP targets route through UI Automation by finding a descendant \
+                whose AcceleratorKey matches the combo and invoking it. The target does NOT \
+                need to be frontmost.\n\n\
                 **`window_id`** (optional): explicit HWND when the pid owns more than one \
                 window; otherwise the pid's first visible window is used.\n\n\
                 Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier \
@@ -1488,6 +1550,59 @@ impl Tool for HotkeyTool {
         // where K1+K2+... is `keys.joined(separator: "+")` of the FULL keys
         // array as the caller supplied it (modifiers + non-modifier in order).
         let key_display = full_keys.join("+");
+
+        if crate::input::is_xaml_host_hwnd(hwnd) {
+            let mut accelerator_keys = mods.clone();
+            accelerator_keys.push(key.clone());
+            let accelerator_combo = accelerator_keys.join("+");
+            let key_display_for_result = key_display.clone();
+            // UIA cross-process subtree walks can wedge on a bad provider —
+            // bound the call so a hung provider returns an error instead of
+            // blocking the daemon indefinitely. 4 s matches the budget the
+            // rest of this file uses for similar UIA scans.
+            let blocking = tokio::task::spawn_blocking(move || {
+                crate::uia::windows_enum::try_invoke_accelerator_in_window(
+                    hwnd as isize,
+                    &accelerator_combo,
+                )
+            });
+            let result = match tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                blocking,
+            )
+            .await
+            {
+                Ok(join_result) => join_result,
+                Err(_) => {
+                    return ToolResult::error(format!(
+                        "hotkey timed out after 4s while scanning UIA accelerators on pid \
+                         {raw_pid} (hwnd {hwnd}). A UIA provider in this app is likely \
+                         unresponsive."
+                    ));
+                }
+            };
+            return match result {
+                Ok(Ok((true, _))) => ToolResult::text(format!(
+                    "✅ Pressed {key_display_for_result} on pid {raw_pid} via UIA \
+                     InvokePattern/TogglePattern (XAML / UWP target)."
+                )),
+                Ok(Ok((false, scanned))) => ToolResult::error(format!(
+                    "hotkey on a modern XAML / UWP target (pid {raw_pid}, hwnd {hwnd}) \
+                     could not find a UIA AcceleratorKey or `(Ctrl+X)`-style name hint \
+                     matching `{key_display_for_result}` (scanned {scanned} element(s)). \
+                     PostMessage WM_KEYDOWN/UP is ignored by this target's input pipeline. \
+                     Common cause: the action is nested behind a closed menu (e.g. modern \
+                     Notepad's Save under the File menu) — its element isn't in the visible \
+                     subtree until the menu is opened. Call \
+                     `get_window_state(pid={raw_pid}, window_id={hwnd})` to inspect available \
+                     UIA actions, then use an exposed accelerator or `click` the matching \
+                     element directly."
+                )),
+                Ok(Err(e)) => ToolResult::error(format!("hotkey (UIA path): {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::post_key(hwnd, &key, &m)
@@ -3082,6 +3197,362 @@ impl Tool for TypeTextCharsTool {
     }
 }
 
+// ── kill_app ──────────────────────────────────────────────────────────────────
+//
+// Force-terminate a process by pid. Background:
+//   * Win32 / GDI apps respond cleanly to `WM_CLOSE` (Alt+F4 via PostMessage),
+//     so `click` on the X button or a hand-rolled hotkey gesture suffices.
+//   * UWP / WinUI3 apps (Calculator, Photos, modern Settings, Win11 Notepad)
+//     have backgrounding semantics — they accept `WM_CLOSE` but route it
+//     into a "minimize to suspended" path instead of exiting. Cooperative
+//     close-button automation produces orphan processes that survive every
+//     polite eviction attempt. See CUA-541 for the live repro from
+//     WINDOWS_CLAUDE_CODE_TEST_PLAN.md Test G (3 leftover CalculatorApp.exe).
+//
+// `kill_app` is the force-terminate escalation — `taskkill /F` equivalent —
+// keyed on pid. Marked `destructive: true` so MCP clients with permission
+// gating prompt before invoking.
+
+pub struct KillAppTool;
+static KILL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for KillAppTool {
+    fn def(&self) -> &ToolDef {
+        KILL_DEF.get_or_init(|| ToolDef {
+            name: "kill_app".into(),
+            description: "Force-terminate a process by pid. Use when the standard close path \
+                (Alt+F4 / WM_CLOSE via `click` on the X button) fails to make the process \
+                exit — typical for UWP / WinUI3 apps (Calculator, Photos, modern Notepad) \
+                that route WM_CLOSE into a suspended-but-resident state. Equivalent to \
+                `taskkill /F /PID <pid>`. Unsaved state is lost. Prefer the click-the-X path \
+                first; only escalate to `kill_app` when polite close didn't terminate."
+                .into(),
+            input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "pid":{"type":"integer","description":"PID of the process to terminate."}
+            },"additionalProperties":false}),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let pid_v: u32 = match args.get("pid").and_then(|v| v.as_u64()) {
+            Some(p) if p > 0 && p <= u32::MAX as u64 => p as u32,
+            Some(_) => return ToolResult::error("kill_app: `pid` must be a positive integer".to_string()),
+            None => return ToolResult::error("kill_app: missing required integer field `pid`".to_string()),
+        };
+
+        // Run the syscalls on a blocking thread — TerminateProcess + the
+        // WaitForSingleObject confirmation are both blocking, and we don't
+        // want to stall the tokio reactor.
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+            use windows::Win32::System::Threading::{
+                OpenProcess, TerminateProcess, WaitForSingleObject,
+                PROCESS_TERMINATE, PROCESS_SYNCHRONIZE,
+            };
+
+            // SAFETY: OpenProcess returns a Result<HANDLE> in windows-rs;
+            // PROCESS_TERMINATE | PROCESS_SYNCHRONIZE lets us both kill the
+            // target AND wait for the OS to fully reap it (so the caller's
+            // follow-up list_apps reflects the change immediately).
+            let h = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, pid_v) }
+                .map_err(|e| format!(
+                    "OpenProcess(pid={pid_v}, PROCESS_TERMINATE|PROCESS_SYNCHRONIZE) failed: {e}. \
+                     The process may not exist, or the daemon lacks the right to terminate it. \
+                     Try listing processes first to confirm the pid is correct."
+                ))?;
+
+            let term_result = unsafe { TerminateProcess(h, 1) };
+
+            // WaitForSingleObject so the caller can assume the process is
+            // really gone on return. 2-second cap — TerminateProcess is
+            // synchronous in practice but the OS still needs a moment to
+            // reap kernel structures. WAIT_TIMEOUT is treated as a soft
+            // success (the kill request landed; the process may take a
+            // little longer to disappear from list_apps).
+            let wait_status = unsafe { WaitForSingleObject(h, 2000) };
+            let _ = unsafe { CloseHandle(h) };
+
+            match (term_result, wait_status) {
+                (Ok(()), s) if s == WAIT_OBJECT_0 => Ok(()),
+                (Ok(()), _) => Ok(()), // killed, wait timed out — caller can re-check
+                (Err(e), _) => Err(format!(
+                    "TerminateProcess(pid={pid_v}) failed: {e}. The handle was opened \
+                     successfully but the kill itself was rejected; this is unusual for \
+                     PROCESS_TERMINATE rights and may indicate a protected-process target \
+                     (PPL, e.g. csrss / system services)."
+                )),
+            }
+        }).await;
+
+        match outcome {
+            Ok(Ok(())) => ToolResult::text(format!("✅ Terminated pid {pid_v}.")),
+            Ok(Err(e)) => ToolResult::error(format!("kill_app: {e}")),
+            Err(join_err) => ToolResult::error(format!(
+                "kill_app: blocking-task join error: {join_err}"
+            )),
+        }
+    }
+}
+
+// ── debug_window_info ─────────────────────────────────────────────────────────
+//
+// Diagnostic tool: dump everything the daemon (Session 2 when launched via
+// `cua-driver autostart kick`) sees about a given pid's top-level windows.
+// Includes Win32 class names, owning .exe basename + full path, and — when
+// CUIAutomation is available — the currently-focused UIA element with the
+// list of patterns it supports.
+//
+// Built for CUA-543 investigation: the routing between PostMessage-based
+// input and UIA-pattern-based input depends on what the OS actually reports
+// for modern XAML / UWP / WinUI3 targets. SSH-side PowerShell probes from
+// Session 0 see nothing (cross-session HWNDs return empty class names);
+// this tool gives the same view from inside the daemon process.
+
+pub struct DebugWindowInfoTool;
+static DEBUG_WI_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for DebugWindowInfoTool {
+    fn def(&self) -> &ToolDef {
+        DEBUG_WI_DEF.get_or_init(|| ToolDef {
+            name: "debug_window_info".into(),
+            description: "Diagnostic: dump everything cua-driver sees about a pid's \
+                top-level windows from the daemon's session perspective. Returns \
+                window class names, owning .exe basename + path, and — when \
+                CUIAutomation succeeds — the focused UIA element with the list of \
+                patterns it supports (ValuePattern, InvokePattern, TextPattern, \
+                TogglePattern, etc.). Used to design / debug input routing for \
+                XAML / UWP / WinUI3 targets; see CUA-543.".into(),
+            input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "pid":{"type":"integer","description":"PID of the process to inspect."}
+            },"additionalProperties":false}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let pid_v: u32 = match args.get("pid").and_then(|v| v.as_u64()) {
+            Some(p) if p > 0 && p <= u32::MAX as u64 => p as u32,
+            _ => return ToolResult::error("debug_window_info: missing or invalid `pid`".to_string()),
+        };
+
+        let outcome = tokio::task::spawn_blocking(move || -> serde_json::Value {
+            use std::collections::HashSet;
+            use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, BOOL, TRUE};
+            use windows::Win32::System::Com::{
+                CoCreateInstance, CoInitializeEx, CoUninitialize,
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+            };
+            use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+            use windows::Win32::System::Threading::{
+                GetCurrentProcessId, OpenProcess,
+                QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+                PROCESS_QUERY_LIMITED_INFORMATION,
+            };
+            use windows::Win32::UI::Accessibility::{
+                CUIAutomation, IUIAutomation,
+                UIA_InvokePatternId, UIA_TextPatternId, UIA_TogglePatternId,
+                UIA_ValuePatternId, UIA_LegacyIAccessiblePatternId,
+                UIA_SelectionItemPatternId, UIA_ExpandCollapsePatternId,
+            };
+            use windows::Win32::UI::WindowsAndMessaging::{
+                EnumWindows, GetClassNameW, GetWindow, GetWindowTextW,
+                GetWindowThreadProcessId, IsWindowVisible, GW_OWNER,
+            };
+
+            // Helper: read class name + title
+            fn class_name(h: HWND) -> Option<String> {
+                let mut buf = [0u16; 256];
+                let n = unsafe { GetClassNameW(h, &mut buf) };
+                if n <= 0 { None } else { Some(String::from_utf16_lossy(&buf[..n as usize])) }
+            }
+            fn window_title(h: HWND) -> Option<String> {
+                let mut buf = [0u16; 512];
+                let n = unsafe { GetWindowTextW(h, &mut buf) };
+                if n <= 0 { None } else { Some(String::from_utf16_lossy(&buf[..n as usize])) }
+            }
+
+            // ── Process info: session id + exe path
+            let mut session_id: u32 = 0;
+            let _ = unsafe { ProcessIdToSessionId(pid_v, &mut session_id) };
+
+            let (exe_path, exe_basename) = unsafe {
+                match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid_v) {
+                    Ok(h) => {
+                        let mut buf = [0u16; 1024];
+                        let mut len: u32 = buf.len() as u32;
+                        let ok = QueryFullProcessImageNameW(
+                            h, PROCESS_NAME_FORMAT(0),
+                            windows::core::PWSTR(buf.as_mut_ptr()),
+                            &mut len,
+                        );
+                        let _ = CloseHandle(h);
+                        if ok.is_ok() && len > 0 {
+                            let path = String::from_utf16_lossy(&buf[..len as usize]);
+                            let base = path
+                                .rsplit(|c: char| c == '\\' || c == '/')
+                                .next()
+                                .unwrap_or(&path)
+                                .to_ascii_lowercase();
+                            (Some(path), Some(base))
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    Err(_) => (None, None),
+                }
+            };
+
+            // ── Enumerate top-level visible windows owned by this pid
+            struct Ctx { target_pid: u32, hwnds: Vec<isize> }
+            extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                unsafe {
+                    let ctx = &mut *(lparam.0 as *mut Ctx);
+                    let mut p: u32 = 0;
+                    GetWindowThreadProcessId(hwnd, Some(&mut p));
+                    if p == ctx.target_pid && IsWindowVisible(hwnd).as_bool() {
+                        // Only true top-level (no owner) windows.
+                        let owner = GetWindow(hwnd, GW_OWNER);
+                        if owner.unwrap_or_default().is_invalid() {
+                            ctx.hwnds.push(hwnd.0 as isize);
+                        }
+                    }
+                    TRUE
+                }
+            }
+            let mut ctx = Ctx { target_pid: pid_v, hwnds: vec![] };
+            let _ = unsafe {
+                EnumWindows(Some(enum_cb), LPARAM(&mut ctx as *mut Ctx as isize))
+            };
+
+            // ── Init UIA (best-effort; non-fatal if it fails)
+            let mut focused_info: Option<serde_json::Value> = None;
+            let coinit_ok = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
+            if let Ok(uia) = unsafe {
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            } {
+                if let Ok(focused) = unsafe { uia.GetFocusedElement() } {
+                    // Patterns we care about for input routing
+                    let pattern_ids = [
+                        (UIA_ValuePatternId.0, "Value"),
+                        (UIA_InvokePatternId.0, "Invoke"),
+                        (UIA_TextPatternId.0, "Text"),
+                        (UIA_TogglePatternId.0, "Toggle"),
+                        (UIA_ExpandCollapsePatternId.0, "ExpandCollapse"),
+                        (UIA_SelectionItemPatternId.0, "SelectionItem"),
+                        (UIA_LegacyIAccessiblePatternId.0, "LegacyIAccessible"),
+                    ];
+                    let mut patterns: Vec<&str> = vec![];
+                    for (id, name) in &pattern_ids {
+                        let pid_struct = windows::Win32::UI::Accessibility::UIA_PATTERN_ID(*id);
+                        if unsafe { focused.GetCurrentPattern(pid_struct) }.is_ok() {
+                            patterns.push(name);
+                        }
+                    }
+                    let name = unsafe { focused.CurrentName() }
+                        .ok()
+                        .map(|b| b.to_string())
+                        .unwrap_or_default();
+                    let class = unsafe { focused.CurrentClassName() }
+                        .ok()
+                        .map(|b| b.to_string())
+                        .unwrap_or_default();
+                    let ctype = unsafe { focused.CurrentControlType() }
+                        .map(|t| t.0)
+                        .unwrap_or(0);
+                    let value_ro = if patterns.contains(&"Value") {
+                        unsafe {
+                            focused.GetCurrentPattern(UIA_ValuePatternId)
+                                .and_then(|p| p.cast::<windows::Win32::UI::Accessibility::IUIAutomationValuePattern>())
+                                .and_then(|vp| vp.CurrentIsReadOnly())
+                                .map(|b| b.as_bool())
+                                .ok()
+                        }
+                    } else { None };
+                    focused_info = Some(serde_json::json!({
+                        "name": name,
+                        "class_name": class,
+                        "control_type_id": ctype,
+                        "supported_patterns": patterns,
+                        "value_pattern_is_read_only": value_ro,
+                    }));
+                }
+            }
+            if coinit_ok {
+                unsafe { CoUninitialize(); }
+            }
+
+            // ── Build per-window JSON
+            let xaml_classes: HashSet<&str> = [
+                "ApplicationFrameWindow",
+                "WinUIDesktopWin32WindowClass",
+                "Windows.UI.Core.CoreWindow",
+                "Microsoft.UI.Content.DesktopChildSiteBridge",
+            ].iter().copied().collect();
+            let xaml_exes: HashSet<&str> = [
+                "notepad.exe", "calculatorapp.exe", "calc.exe",
+                "applicationframehost.exe", "photos.exe", "systemsettings.exe",
+            ].iter().copied().collect();
+
+            let windows_json: Vec<serde_json::Value> = ctx.hwnds.iter()
+                .map(|&h| {
+                    let hwnd = HWND(h as *mut _);
+                    let cls = class_name(hwnd);
+                    let title = window_title(hwnd);
+                    let xaml_class_match = cls.as_deref()
+                        .map(|c| xaml_classes.contains(c))
+                        .unwrap_or(false);
+                    serde_json::json!({
+                        "hwnd": h,
+                        "class_name": cls,
+                        "title": title,
+                        "xaml_class_match": xaml_class_match,
+                    })
+                })
+                .collect();
+
+            let exe_xaml_match = exe_basename.as_deref()
+                .map(|e| xaml_exes.contains(e))
+                .unwrap_or(false);
+
+            let daemon_pid = unsafe { GetCurrentProcessId() };
+            let mut daemon_session: u32 = 0;
+            let _ = unsafe { ProcessIdToSessionId(daemon_pid, &mut daemon_session) };
+
+            serde_json::json!({
+                "pid": pid_v,
+                "session_id": session_id,
+                "daemon_pid": daemon_pid,
+                "daemon_session_id": daemon_session,
+                "exe_path": exe_path,
+                "exe_basename": exe_basename,
+                "exe_xaml_match": exe_xaml_match,
+                "windows": windows_json,
+                "focused_element": focused_info,
+                "xaml_routing_recommended": exe_xaml_match
+                    || windows_json.iter()
+                        .any(|w| w.get("xaml_class_match").and_then(|v| v.as_bool()).unwrap_or(false)),
+            })
+        }).await;
+
+        match outcome {
+            Ok(j) => {
+                let pretty = serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string());
+                ToolResult::text(pretty).with_structured(j)
+            }
+            Err(e) => ToolResult::error(format!("debug_window_info: join error: {e}")),
+        }
+    }
+}
+
 // ── registry builder ──────────────────────────────────────────────────────────
 
 pub fn build_registry() -> ToolRegistry {
@@ -3091,6 +3562,8 @@ pub fn build_registry() -> ToolRegistry {
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
+    r.register(Box::new(KillAppTool));
+    r.register(Box::new(DebugWindowInfoTool));
     r.register(Box::new(ClickTool { state: state.clone() }));
     r.register(Box::new(DoubleClickTool { state: state.clone() }));
     r.register(Box::new(RightClickTool { state: state.clone() }));

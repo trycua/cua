@@ -397,6 +397,17 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
     if is_env_truthy("CUA_DRIVER_RS_MCP_FORCE_PROXY") {
         return true;
     }
+    // Either the regular daemon (`\\.\pipe\cua-driver`) OR the uiAccess'd
+    // worker (`\\.\pipe\cua-driver-uia`) is a valid proxy target on Windows:
+    // both speak the same line-delimited JSON protocol. Preferring proxy mode
+    // when only the uia worker is up means MCP tool calls land in a process
+    // that bypasses UIPI for UWP apps. See #1602 / the cua-driver-uia crate.
+    #[cfg(target_os = "windows")]
+    {
+        if crate::serve::is_daemon_listening(&crate::serve::default_uia_pipe_path()) {
+            return true;
+        }
+    }
     crate::serve::is_daemon_listening(&crate::serve::default_socket_path())
 }
 
@@ -479,7 +490,27 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
 /// socket. Builds its own tokio runtime — same shape as the other
 /// `run_*` helpers in this file that own their event loop.
 pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
-    let socket_path = socket.unwrap_or_else(crate::serve::default_socket_path);
+    // Windows: prefer the uiAccess'd worker pipe over the regular daemon pipe
+    // when both are running, so MCP tool calls land in a process that can
+    // bypass UIPI for UWP apps. The protocol on both pipes is identical so
+    // the proxy doesn't need to know which one it's talking to. See #1602.
+    let socket_path = if let Some(s) = socket {
+        s
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let uia = crate::serve::default_uia_pipe_path();
+            if crate::serve::is_daemon_listening(&uia) {
+                uia
+            } else {
+                crate::serve::default_socket_path()
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            crate::serve::default_socket_path()
+        }
+    };
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         // CUA_DRIVER_RS_MCP_FORCE_PROXY callers (test harness, custom
@@ -633,6 +664,22 @@ pub fn run_call(
 ) {
     // Daemon forwarding: if a daemon is listening, proxy the request
     // through it so AppStateEngine's element_index cache is shared.
+    //
+    // On Windows, prefer the uiAccess-elevated worker (cua-driver-uia.exe) when
+    // present — it runs at UIAccess integrity and bypasses UIPI for UWP apps
+    // like Calculator / modern Notepad / Settings. The regular daemon at
+    // `\\.\pipe\cua-driver` is Medium integrity and gets ERROR_ACCESS_DENIED on
+    // SendInput into AppContainer'd processes. See #1602.
+    #[cfg(target_os = "windows")]
+    let socket_path = {
+        let uia = crate::serve::default_uia_pipe_path();
+        if crate::serve::is_daemon_listening(&uia) {
+            uia
+        } else {
+            crate::serve::default_socket_path()
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
     let socket_path = crate::serve::default_socket_path();
     if crate::serve::is_daemon_listening(&socket_path) {
         let args_for_daemon = json_args.clone()

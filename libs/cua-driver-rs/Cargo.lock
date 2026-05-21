@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -269,8 +269,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-driver-uia"
+version = "0.2.7"
+dependencies = [
+ "anyhow",
+ "embed-manifest",
+ "mcp-server",
+ "platform-windows",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cursor-overlay"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "image",
@@ -332,6 +347,12 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
+
+[[package]]
+name = "embed-manifest"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94cdc65b1cf9e871453ce2f86f5aaec24ff2eaa36a1fa3e02e441dddc3613b99"
 
 [[package]]
 name = "equivalent"
@@ -407,7 +428,7 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
 name = "focus-monitor-win"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "windows",
 ]
@@ -844,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-server"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1130,13 +1151,14 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-linux"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
  "cursor-overlay",
  "image",
+ "libc",
  "mcp-server",
  "serde",
  "serde_json",
@@ -1149,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1179,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "async-trait",

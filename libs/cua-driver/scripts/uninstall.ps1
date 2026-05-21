@@ -17,9 +17,9 @@
 #     `cua-driver autostart enable` or install.ps1 -AutoStart)
 #   - Any running cua-driver.exe processes (so file handles don't pin
 #     the binary directory open during the delete pass)
-#   - <visibleBinDir>     = %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin  (directory junction)
-#   - <currentDir>        = %USERPROFILE%\.cua-driver-rs\packages\current     (directory junction)
-#   - <packageHome>       = %USERPROFILE%\.cua-driver-rs\                     (entire tree:
+#   - <visibleBinDir>     = %LOCALAPPDATA%\Programs\Cua\cua-driver\bin  (directory junction)
+#   - <currentDir>        = %USERPROFILE%\.cua-driver\packages\current  (directory junction)
+#   - <packageHome>       = %USERPROFILE%\.cua-driver\                  (entire tree:
 #                                                                              releases, lockfile,
 #                                                                              telemetry id,
 #                                                                              install marker,
@@ -38,9 +38,13 @@
 #
 # Env overrides (mirror install.ps1's variable names):
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   visible bin dir to remove
-#                                    (default %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin)
+#                                    (default %LOCALAPPDATA%\Programs\Cua\cua-driver\bin;
+#                                     v0.2.13 and earlier used Programs\trycua\cua-driver-rs\bin
+#                                     — that legacy path is always cleaned up too)
 #   $env:CUA_DRIVER_RS_HOME          package home to remove
-#                                    (default %USERPROFILE%\.cua-driver-rs)
+#                                    (default %USERPROFILE%\.cua-driver;
+#                                     v0.2.13 and earlier used .cua-driver-rs —
+#                                     that legacy path is always cleaned up too)
 #
 # Params:
 #   -Force      non-interactive: skip the "remove? [y/N]" prompt before
@@ -62,14 +66,24 @@ $ProgressPreference = "SilentlyContinue"
 if ($env:CUA_DRIVER_RS_INSTALL_DIR) {
     $VisibleBinDir = $env:CUA_DRIVER_RS_INSTALL_DIR
 } else {
-    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+    # New layout (v0.2.14+). Path rename rationale: see install.ps1.
+    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin"
 }
+
+# Legacy bin dir from v0.2.13 and earlier. We also clean these up so a
+# fresh uninstall after upgrading leaves nothing behind. Empty-vendor-dir
+# (Programs\trycua\) gets pruned if no other apps live under it.
+$LegacyVisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+$LegacyVendorDir     = Join-Path $env:LOCALAPPDATA "Programs\trycua"
 
 if ($env:CUA_DRIVER_RS_HOME) {
     $HomeDir = $env:CUA_DRIVER_RS_HOME
 } else {
-    $HomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
+    $HomeDir = Join-Path $env:USERPROFILE ".cua-driver"
 }
+
+# Legacy package home from v0.2.13 and earlier.
+$LegacyHomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
 
 $PackagesDir  = Join-Path $HomeDir   "packages"
 $CurrentDir   = Join-Path $PackagesDir "current"
@@ -258,7 +272,42 @@ if (Test-Path -LiteralPath $HomeDir) {
     Write-Step "no package home at $HomeDir (skipping)"
 }
 
-# 6. Skill junctions. Only remove reparse points — leave a real dir
+# 6. Legacy install layout from v0.2.13 and earlier
+#    (`Programs\trycua\cua-driver-rs\` + `.cua-driver-rs\`). We always
+#    sweep these so a fresh uninstall after upgrading via install.ps1
+#    leaves nothing behind. Skip silently when the legacy paths don't
+#    exist — common case post-v0.2.14.
+if (Test-Path -LiteralPath $LegacyVisibleBinDir) {
+    if (Test-IsReparsePoint $LegacyVisibleBinDir) {
+        Remove-Item -LiteralPath $LegacyVisibleBinDir -Force -Recurse -ErrorAction SilentlyContinue
+        Write-Step "removed legacy junction $LegacyVisibleBinDir"
+    } else {
+        Remove-Item -LiteralPath $LegacyVisibleBinDir -Force -Recurse -ErrorAction SilentlyContinue
+        Write-Step "removed legacy directory $LegacyVisibleBinDir"
+    }
+}
+# Empty cua-driver-rs parent (under trycua\)
+$legacyParent = Split-Path -Parent $LegacyVisibleBinDir
+if ((Test-Path -LiteralPath $legacyParent) -and -not (Get-ChildItem -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue)) {
+    Remove-Item -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue
+    Write-Step "removed empty legacy parent $legacyParent"
+}
+# Empty trycua vendor dir
+if ((Test-Path -LiteralPath $LegacyVendorDir) -and -not (Get-ChildItem -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue)) {
+    Remove-Item -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue
+    Write-Step "removed empty legacy vendor dir $LegacyVendorDir"
+}
+# Legacy package home
+if (Test-Path -LiteralPath $LegacyHomeDir) {
+    Remove-Item -LiteralPath $LegacyHomeDir -Force -Recurse -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $LegacyHomeDir) {
+        Write-WarningStep "$LegacyHomeDir was not fully removed — some files may still be locked."
+    } else {
+        Write-Step "removed legacy package home $LegacyHomeDir"
+    }
+}
+
+# 7. Skill junctions. Only remove reparse points — leave a real dir
 #    in place (a user with a hand-managed cua-driver-rs skill dir
 #    gets to keep it). Same defensive shape as Linux/macOS.
 foreach ($skillLink in $SkillJunctions) {
@@ -286,7 +335,8 @@ Write-Host ""
 Write-Host "    claude mcp remove cua-driver-rs"
 Write-Host ""
 Write-Host "  Or edit ~/.claude.json directly and delete entries whose 'command' points at"
-Write-Host "  cua-driver.exe under %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\."
+Write-Host "  cua-driver.exe under %LOCALAPPDATA%\Programs\Cua\cua-driver\bin\"
+Write-Host "  (or the legacy %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\ from v0.2.13 and earlier)."
 Write-Host ""
 Write-Host "PATH:"
 Write-Host "  If you added $VisibleBinDir to your User PATH after the install, remove it:"

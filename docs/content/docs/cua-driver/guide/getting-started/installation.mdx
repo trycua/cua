@@ -78,7 +78,7 @@ The legacy `libs/cua-driver-rs/scripts/install.{sh,ps1}` URLs continue to work v
   $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x86_64' }
   $url = "https://github.com/trycua/cua/releases/download/cua-driver-rs-v$version/cua-driver-rs-$version-windows-$arch-binary.zip"
   iwr $url -OutFile $env:TEMP\cua.zip -UseBasicParsing
-  $dest = "$env:LOCALAPPDATA\Programs\trycua\cua-driver-rs\bin"
+  $dest = "$env:LOCALAPPDATA\Programs\Cua\cua-driver\bin"
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
   Expand-Archive -Force -Path $env:TEMP\cua.zip -DestinationPath $dest
   # Idempotent User PATH update — only add $dest if not already present.
@@ -96,7 +96,7 @@ The Windows installer auto-detects host architecture (x64 / arm64) via `[System.
 
 It runs **without admin** and **without Developer Mode**.
 
-It also appends `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` to your **User-scope `Path`** so `cua-driver --version` resolves in any new PowerShell window. The write is idempotent (re-running the installer never duplicates the entry) and falls back to printing manual `[Environment]::SetEnvironmentVariable(...)` instructions if the registry write is blocked (group policy, locked-down account). Pass `-NoPathUpdate` to suppress the auto-add — useful when you manage `Path` out-of-band via chezmoi / dotfiles / GPO:
+It also appends `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` to your **User-scope `Path`** so `cua-driver --version` resolves in any new PowerShell window. (v0.2.13 and earlier used `Programs\trycua\cua-driver-rs\bin`; the v0.2.14 installer auto-migrates the legacy layout.) The write is idempotent (re-running the installer never duplicates the entry) and falls back to printing manual `[Environment]::SetEnvironmentVariable(...)` instructions if the registry write is blocked (group policy, locked-down account). Pass `-NoPathUpdate` to suppress the auto-add — useful when you manage `Path` out-of-band via chezmoi / dotfiles / GPO:
 
 ```powershell
 # Fetch + invoke explicitly so we can pass the switch:
@@ -126,15 +126,17 @@ $CUA_DRIVER_RS_INSTALL_DIR/cua-driver -> $CUA_DRIVER_RS_HOME/packages/current/cu
 **Windows**
 
 ```
-%USERPROFILE%\.cua-driver-rs\               ($env:CUA_DRIVER_RS_HOME)
+%USERPROFILE%\.cua-driver\                  ($env:CUA_DRIVER_RS_HOME)
   packages\
     releases\
-      0.2.0-x86_64-pc-windows-msvc\cua-driver.exe       (real binary, immutable)
-      0.2.1-x86_64-pc-windows-msvc\cua-driver.exe       (real binary, immutable)
-    current\                                            (directory junction → releases\0.2.1-...)
-%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\       ($env:CUA_DRIVER_RS_INSTALL_DIR)
+      0.2.14-x86_64-pc-windows-msvc\cua-driver.exe      (real binary, immutable)
+      0.2.15-x86_64-pc-windows-msvc\cua-driver.exe      (real binary, immutable)
+    current\                                            (directory junction → releases\0.2.15-...)
+%LOCALAPPDATA%\Programs\Cua\cua-driver\bin\             ($env:CUA_DRIVER_RS_INSTALL_DIR)
                                                         (directory junction → packages\current)
 ```
+
+v0.2.13 and earlier used `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\` and `%USERPROFILE%\.cua-driver-rs\`. The v0.2.14+ installer detects the legacy layout and migrates transparently — stop any running daemon, delete the legacy task / junctions / package home, prune the legacy PATH entry, then install at the new path.
 
 Both junctions are NTFS reparse points (`IO_REPARSE_TAG_MOUNT_POINT`), so the whole PATH-resolution chain `bin\ → current\ → releases\<v>\cua-driver.exe` is two filesystem hops transparently served from whichever release the inner junction currently points at.
 

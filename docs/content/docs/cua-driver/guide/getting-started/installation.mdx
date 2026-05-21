@@ -81,7 +81,12 @@ The legacy `libs/cua-driver-rs/scripts/install.{sh,ps1}` URLs continue to work v
   $dest = "$env:LOCALAPPDATA\Programs\trycua\cua-driver-rs\bin"
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
   Expand-Archive -Force -Path $env:TEMP\cua.zip -DestinationPath $dest
-  [Environment]::SetEnvironmentVariable('Path', "$dest;" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')
+  # Idempotent User PATH update — only add $dest if not already present.
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $parts = @($userPath -split ';' | Where-Object { $_ -ne '' })
+  if ($parts -notcontains $dest) {
+    [Environment]::SetEnvironmentVariable('Path', "$dest;$userPath", 'User')
+  }
   ```
 
   PowerShell 7+ (`pwsh`) parses `install.ps1` correctly, so the one-liner works there.

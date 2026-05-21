@@ -142,16 +142,34 @@ Write-Step "  package home: $HomeDir"
 Write-Host ""
 
 # 1. Scheduled Task autostart (registered by `cua-driver autostart enable`
-#    or install.ps1 -AutoStart). Idempotent — schtasks /Delete returns
-#    non-zero when the task is absent, which we swallow.
-$taskQuery = & schtasks.exe /Query /TN $AutoStartTask 2>$null
-if ($LASTEXITCODE -eq 0 -and $taskQuery) {
+#    or install.ps1 -AutoStart). Idempotent — schtasks /Query returns
+#    non-zero AND writes stderr when the task is absent. Under PS 5.1 with
+#    $ErrorActionPreference=Stop (set at the top of this script), native
+#    command stderr becomes a terminating error even when we redirect with
+#    `2>$null` — the redirect suppresses display but the error record is
+#    still emitted into the error stream. Locally lower ErrorActionPreference
+#    around the native call so the missing-task case is non-fatal.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $taskQuery = & schtasks.exe /Query /TN $AutoStartTask 2>$null
+    $taskExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $prevEAP
+}
+if ($taskExitCode -eq 0 -and $taskQuery) {
     if (Confirm-Remove "scheduled task '$AutoStartTask' (autostart at logon)") {
-        & schtasks.exe /Delete /TN $AutoStartTask /F 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        $ErrorActionPreference = 'Continue'
+        try {
+            & schtasks.exe /Delete /TN $AutoStartTask /F 2>$null | Out-Null
+            $delExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEAP
+        }
+        if ($delExit -eq 0) {
             Write-Step "removed scheduled task $AutoStartTask"
         } else {
-            Write-WarningStep "schtasks /Delete /TN $AutoStartTask returned $LASTEXITCODE"
+            Write-WarningStep "schtasks /Delete /TN $AutoStartTask returned $delExit"
         }
     } else {
         Write-Step "skipped scheduled task $AutoStartTask (user declined)"

@@ -1402,6 +1402,55 @@ impl Tool for ClickTool {
                     ));
                 }
             }
+
+            // #1623: PostMessage(WM_LBUTTONDOWN) to Chromium frame HWNDs doesn't
+            // reach the DOM input pipeline — Chromium's input thread only accepts
+            // events with SendInput-queue origin. For Chromium targets, take the
+            // SendInput path; for everything else, take the existing PostMessage
+            // path (the path was added as a no-focus-steal click delivery, which
+            // PostMessage uniquely provides). The Chromium path moves the cursor
+            // visibly and briefly steals foreground — there's no Chromium-native
+            // alternative that gets DOM events to fire without these tradeoffs.
+            //
+            // SendInput on Chromium requires the daemon to have UIAccess integrity
+            // (otherwise SetForegroundWindow is rejected and the events land on the
+            // wrong window). The MCP proxy auto-prefers the cua-driver-uia worker
+            // when both pipes are up, so this path runs with UIAccess in the
+            // common case. When UIAccess is missing, send_click_synthesized
+            // surfaces an actionable error and we fall through to PostMessage —
+            // PostMessage won't fire DOM events on Chromium either, but the user
+            // gets a meaningful diagnostic instead of silent no-op.
+            let chromium = tokio::task::spawn_blocking(move || {
+                crate::input::is_chromium_target_window(hwnd)
+            })
+            .await
+            .unwrap_or(false);
+            if chromium {
+                let send_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, count, &btn)
+                })
+                .await;
+                match send_result {
+                    Ok(Ok(())) => {
+                        let click_word = match count {
+                            2 => "double-click",
+                            3 => "triple-click",
+                            _ => "click",
+                        };
+                        return ToolResult::text(format!(
+                            "✅ Sent {click_word} via SendInput to pid {pid} (Chromium target)."
+                        ));
+                    }
+                    Ok(Err(e)) => {
+                        // Bubble the actionable diagnostic ("Run through uia worker") up
+                        // to the caller rather than silently falling to PostMessage,
+                        // which we know doesn't work for Chromium.
+                        return ToolResult::error(e.to_string());
+                    }
+                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                }
+            }
+
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
             }).await;

@@ -648,6 +648,96 @@ fn split_launchable_target(s: &str) -> (String, String) {
     (trimmed.to_owned(), String::new())
 }
 
+/// Returns `true` when the launch target names a Chromium-based browser
+/// — i.e. one whose hidden launch under `SW_SHOWNOACTIVATE` will trigger
+/// renderer-occlusion throttling unless we inject the anti-throttling flags
+/// below. See #1620.
+///
+/// Matches the executable basename (case-insensitive, with or without
+/// `.exe`). Accepts bare names (the App Paths shortcut, e.g. `"msedge"`),
+/// full paths (`"C:\...\msedge.exe"`), and round-tripped launch paths with
+/// trailing arguments (`"\"C:\...\chrome.exe\" --foo"` — the first token is
+/// matched via `split_launchable_target`).
+fn is_chromium_browser_target(target: &str) -> bool {
+    let (file, _) = split_launchable_target(target);
+    let candidate = if file.is_empty() { target } else { file.as_str() };
+    let lower = candidate.to_ascii_lowercase();
+    let basename = lower
+        .rsplit_once('\\')
+        .map(|(_, b)| b)
+        .or_else(|| lower.rsplit_once('/').map(|(_, b)| b))
+        .unwrap_or(lower.as_str());
+    let stem = basename.strip_suffix(".exe").unwrap_or(basename);
+    matches!(
+        stem,
+        "msedge"
+            | "chrome"
+            | "brave"
+            | "opera"
+            | "vivaldi"
+            | "chromium"
+            | "thorium"
+            | "iridium"
+            | "browser" // Yandex Browser's exe is browser.exe
+            | "arc"
+    )
+}
+
+/// Anti-throttling flags injected on hidden Chromium launches (#1620).
+///
+/// `launch_app` uses `SW_SHOWNOACTIVATE` so the launched window is
+/// non-foreground from birth. Chromium's `CalculateNativeWinOcclusion`
+/// feature treats that as occluded and suspends the renderer process for
+/// the tab's entire lifetime — UIA tree exposes only browser chrome, no
+/// page DOM, and `PrintWindow` returns a blank body.
+///
+/// `CalculateNativeWinOcclusion` is the root cause; the two
+/// `--disable-backgrounding-*` flags backstop the same effect through the
+/// process-priority and renderer-throttling layers (Chromium suspends
+/// renderers on multiple signals).
+const CHROMIUM_ANTI_THROTTLING_FLAGS: &[&str] = &[
+    "--disable-features=CalculateNativeWinOcclusion",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+];
+
+/// Prepend the Chromium anti-throttling flags to `extra_args` unless the
+/// caller already has each one. Merges into an existing `--disable-features=`
+/// list rather than appending a second `--disable-features=` entry (Chromium
+/// has subtle merging rules across duplicate flags).
+fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
+    const OCCLUSION_FEATURE: &str = "CalculateNativeWinOcclusion";
+
+    // Merge `CalculateNativeWinOcclusion` into any existing
+    // `--disable-features=` entry, or insert a fresh one at the front.
+    let has_occlusion = extra_args.iter().any(|a| {
+        a.strip_prefix("--disable-features=")
+            .map(|v| v.split(',').any(|f| f.trim() == OCCLUSION_FEATURE))
+            .unwrap_or(false)
+    });
+    if !has_occlusion {
+        if let Some(idx) = extra_args
+            .iter()
+            .position(|a| a.starts_with("--disable-features="))
+        {
+            extra_args[idx] = format!("{},{OCCLUSION_FEATURE}", extra_args[idx]);
+        } else {
+            extra_args.insert(
+                0,
+                format!("--disable-features={OCCLUSION_FEATURE}"),
+            );
+        }
+    }
+
+    // Boolean toggles — insert at front only when not already present.
+    for flag in &["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] {
+        if !extra_args.iter().any(|a| a == flag) {
+            extra_args.insert(0, (*flag).to_string());
+        }
+    }
+    let _ = CHROMIUM_ANTI_THROTTLING_FLAGS; // referenced for docs alignment
+}
+
 // ── launch_app ───────────────────────────────────────────────────────────────
 
 pub struct LaunchAppTool;
@@ -718,7 +808,7 @@ impl Tool for LaunchAppTool {
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
-        let extra_args: Vec<String> = args.get("additional_arguments").and_then(|v| v.as_array())
+        let mut extra_args: Vec<String> = args.get("additional_arguments").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
@@ -731,6 +821,26 @@ impl Tool for LaunchAppTool {
             .or(aumid_opt.clone())
             .or(name_opt.clone())
             .or(bundle_id_opt.clone());
+
+        // #1620: auto-inject Chromium anti-throttling flags when the resolved
+        // target names a Chromium-based browser (Edge / Chrome / Brave /
+        // Vivaldi / Opera / Chromium / Arc / Thorium / Iridium / Yandex).
+        // launch_app hides the window via SW_SHOWNOACTIVATE; Chromium's
+        // occlusion logic suspends the renderer in that case, leaving the
+        // UIA tree empty and PrintWindow capturing a blank body. The three
+        // flags below defeat that for the lifetime of the launched process
+        // without affecting normal interactive use.
+        //
+        // Skipped when `aumid` or `bundle_id` route through the UWP path
+        // (packaged Edge is the exception; the desktop Edge channel is what
+        // ships now and that goes through the ShellExecuteEx path below).
+        if launch_path_opt.is_some() || path_opt.is_some() || name_opt.is_some() {
+            if let Some(t) = target.as_deref() {
+                if is_chromium_browser_target(t) {
+                    inject_chromium_anti_throttling_flags(&mut extra_args);
+                }
+            }
+        }
 
         if target.is_none() && urls.is_empty() {
             // Match Swift's wording verbatim.
@@ -3709,4 +3819,100 @@ pub fn build_registry() -> ToolRegistry {
     let _: &TypeTextCharsTool = &TypeTextCharsTool { state: state.clone() }; // touch struct so it stays in this crate for now
     r.register_recording_tools();
     r
+}
+
+#[cfg(test)]
+mod chromium_flag_injection_tests {
+    use super::{inject_chromium_anti_throttling_flags, is_chromium_browser_target};
+
+    #[test]
+    fn detects_bare_browser_names() {
+        for name in [
+            "msedge", "chrome", "brave", "opera", "vivaldi",
+            "chromium", "thorium", "iridium", "browser", "arc",
+        ] {
+            assert!(is_chromium_browser_target(name), "{name} should match");
+            assert!(is_chromium_browser_target(&format!("{name}.exe")), "{name}.exe should match");
+            // Case-insensitive.
+            assert!(is_chromium_browser_target(&name.to_uppercase()), "uppercase {name} should match");
+        }
+    }
+
+    #[test]
+    fn detects_full_paths() {
+        assert!(is_chromium_browser_target(
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        ));
+        assert!(is_chromium_browser_target(
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        ));
+        // Forward slashes too (some shells write paths that way).
+        assert!(is_chromium_browser_target(
+            r"C:/Program Files/Google/Chrome/Application/chrome.exe"
+        ));
+    }
+
+    #[test]
+    fn detects_launch_path_with_trailing_args() {
+        // Round-tripped launch_path from list_apps with shortcut arguments.
+        assert!(is_chromium_browser_target(
+            r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Profile 2""#
+        ));
+    }
+
+    #[test]
+    fn does_not_match_non_chromium_apps() {
+        for name in ["firefox", "notepad", "explorer", "code", "soffice"] {
+            assert!(!is_chromium_browser_target(name), "{name} should NOT match");
+            assert!(!is_chromium_browser_target(&format!("{name}.exe")), "{name}.exe should NOT match");
+        }
+        // Empty target.
+        assert!(!is_chromium_browser_target(""));
+    }
+
+    #[test]
+    fn injects_three_flags_into_empty_args() {
+        let mut args: Vec<String> = vec![];
+        inject_chromium_anti_throttling_flags(&mut args);
+        assert!(args.contains(&"--disable-features=CalculateNativeWinOcclusion".to_string()));
+        assert!(args.contains(&"--disable-backgrounding-occluded-windows".to_string()));
+        assert!(args.contains(&"--disable-renderer-backgrounding".to_string()));
+        assert_eq!(args.len(), 3);
+    }
+
+    #[test]
+    fn merges_into_existing_disable_features_list() {
+        let mut args = vec!["--disable-features=Foo,Bar".to_string()];
+        inject_chromium_anti_throttling_flags(&mut args);
+        // Should NOT have two --disable-features= entries.
+        let dfe: Vec<_> = args.iter().filter(|a| a.starts_with("--disable-features=")).collect();
+        assert_eq!(dfe.len(), 1);
+        assert!(dfe[0].contains("CalculateNativeWinOcclusion"));
+        assert!(dfe[0].contains("Foo"));
+        assert!(dfe[0].contains("Bar"));
+    }
+
+    #[test]
+    fn idempotent_when_all_flags_already_present() {
+        let mut args = vec![
+            "--disable-features=CalculateNativeWinOcclusion".to_string(),
+            "--disable-backgrounding-occluded-windows".to_string(),
+            "--disable-renderer-backgrounding".to_string(),
+        ];
+        let before = args.clone();
+        inject_chromium_anti_throttling_flags(&mut args);
+        assert_eq!(args, before, "must not duplicate flags");
+    }
+
+    #[test]
+    fn preserves_user_url_argument_after_flags() {
+        let mut args = vec!["file:///C:/test_page.html".to_string()];
+        inject_chromium_anti_throttling_flags(&mut args);
+        // URL must still be present.
+        assert!(args.iter().any(|a| a == "file:///C:/test_page.html"));
+        // All three flags now in args.
+        assert!(args.iter().any(|a| a == "--disable-features=CalculateNativeWinOcclusion"));
+        assert!(args.iter().any(|a| a == "--disable-backgrounding-occluded-windows"));
+        assert!(args.iter().any(|a| a == "--disable-renderer-backgrounding"));
+    }
 }

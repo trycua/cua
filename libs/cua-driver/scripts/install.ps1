@@ -478,15 +478,53 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
 # itself owns the platform-specific registration logic so the install
 # scripts and the runtime stay in lock-step — when the verb's behavior
 # changes, this script picks it up automatically with no edit needed.
+function Test-IsElevated {
+    # Returns $true if the current process is running at High IL (admin token).
+    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($id)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Register-CuaDriverAutostart {
     param([Parameter(Mandatory = $true)][string]$InstalledBinary)
 
     if (-not (Test-Path -LiteralPath $InstalledBinary)) {
         throw "binary not found at $InstalledBinary"
     }
-    & $InstalledBinary autostart enable
-    if ($LASTEXITCODE -ne 0) {
-        throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+
+    # The autostart task is registered with RunLevel=Highest so the daemon runs
+    # at the user's elevated/admin token. This is what lets cua-driver drive
+    # UWP / AppContainer apps (Calculator, modern Settings, Photos) — at the
+    # default Medium IL token, the cross-AppContainer UIA RPC truncates the
+    # tree to ~1 element (see issue 1602 / 1601). Registering a RunLevel=Highest
+    # task itself requires admin, so we self-elevate if needed and run only
+    # the registration step in an elevated PowerShell window. The rest of the
+    # install (file extraction, junction creation, User PATH update) stays
+    # unelevated as before.
+    if (Test-IsElevated) {
+        & $InstalledBinary autostart enable
+        if ($LASTEXITCODE -ne 0) {
+            throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+        }
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Auto-start at logon needs admin one time to register the" -ForegroundColor Yellow
+    Write-Host "Scheduled Task with RunLevel=Highest. A UAC prompt will appear." -ForegroundColor Yellow
+    Write-Host "The task itself runs silently at every logon afterwards." -ForegroundColor Yellow
+    Write-Host ""
+
+    $elevCmd = "& `"$InstalledBinary`" autostart enable; `$ec = `$LASTEXITCODE; if (`$ec -ne 0) { Read-Host 'cua-driver autostart enable failed; press Enter to close' }; exit `$ec"
+    try {
+        $proc = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",$elevCmd `
+            -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        if ($proc.ExitCode -ne 0) {
+            throw "cua-driver autostart enable failed in elevated session (exit $($proc.ExitCode))"
+        }
+    } catch {
+        throw "elevation cancelled or failed: $($_.Exception.Message). Re-run install.ps1 -AutoStart from an elevated PowerShell to retry."
     }
 }
 
@@ -958,7 +996,7 @@ if ($AutoStart) {
     Write-Host "Registering auto-start (cua-driver autostart enable)..." -ForegroundColor Cyan
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
-        Write-Host "  cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
+        Write-Host "  cua-driver serve will auto-start at every interactive logon (RunLevel=Highest)." -ForegroundColor Green
         Write-Host '  In a new PowerShell window, manage with:'
         Write-Host '    cua-driver autostart kick     (run now without re-logging)'
         Write-Host '    cua-driver autostart status   (inspect the task)'
@@ -968,8 +1006,8 @@ if ($AutoStart) {
     }
     catch {
         Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host '  Install otherwise succeeded; in a new shell run: cua-driver autostart enable'
-        Write-Host "  In THIS shell, use: $installedBinary autostart enable"
+        Write-Host '  Install otherwise succeeded; from an elevated shell run: cua-driver autostart enable'
+        Write-Host "  In THIS shell (if already elevated), use: $installedBinary autostart enable"
         Write-Host ""
     }
 }
@@ -978,8 +1016,8 @@ else {
     Write-Host "Auto-start at logon (Windows equivalent of macOS LaunchAgent):"            -ForegroundColor Cyan
     Write-Host "  Run cua-driver serve automatically every time you sign in."              -ForegroundColor Cyan
     Write-Host ""                                                                          -ForegroundColor Cyan
-    Write-Host "  In a new PowerShell window:"                                             -ForegroundColor Cyan
-    Write-Host "    cua-driver autostart enable    (register the task)"                    -ForegroundColor Cyan
+    Write-Host "  In a new PowerShell window (will prompt for admin once to register):"    -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart enable    (register the task at RunLevel=Highest)" -ForegroundColor Cyan
     Write-Host "    cua-driver autostart kick      (start now without re-logging)"         -ForegroundColor Cyan
     Write-Host "    cua-driver autostart status    (inspect)"                              -ForegroundColor Cyan
     Write-Host "    cua-driver autostart disable   (remove)"                               -ForegroundColor Cyan
@@ -988,6 +1026,10 @@ else {
     Write-Host "    $installedBinary"                                                      -ForegroundColor Cyan
     Write-Host ""                                                                          -ForegroundColor Cyan
     Write-Host "  Or re-run this installer with -AutoStart for the same result."           -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  Without auto-start, the daemon runs at the user's default token IL."     -ForegroundColor Cyan
+    Write-Host "  That's fine for Win32 + Chromium apps. UWP / AppContainer apps"          -ForegroundColor Cyan
+    Write-Host "  (Calculator, modern Settings, Photos) need the elevated autostart task." -ForegroundColor Cyan
 }
 
 

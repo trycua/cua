@@ -3101,35 +3101,125 @@ impl Tool for CheckPermissionsTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // On Windows, background PostMessage access doesn't require elevated permissions.
-        // UIA works for most apps without elevation; some system apps require elevation.
+        // `elevated` reports the daemon's actual token integrity level, NOT the
+        // legacy `TokenIsElevated` UAC-elevation flag. The two diverge in two
+        // important cases that matter to cua-driver:
+        //
+        //   1. RID-500 built-in Administrator — runs at High IL all the time
+        //      because RID 500 has no UAC split token (FilterAdministratorToken=0
+        //      default). `TokenIsElevated` returns false (never UAC-prompted)
+        //      but the IL is High and admin-level access works fine.
+        //
+        //   2. Task-Scheduler-spawned processes registered at RunLevel=Highest
+        //      and triggered by AtLogon — Task Scheduler hands out the user's
+        //      full admin token without going through the UAC prompt path, so
+        //      `TokenIsElevated` returns false while IL is High. This is the
+        //      common case for cua-driver's autostart task on non-RID-500
+        //      admin users — the daemon IS at High IL (cross-AppContainer UIA
+        //      works, Calculator-class UWP apps drive cleanly) but the legacy
+        //      flag reports it as a "standard user", which confused everyone
+        //      tracking #1602 / #1601. See issue #1640.
+        //
+        // TokenIntegrityLevel asks the kernel directly: what IL is this token
+        // at? RID 0x3000 (High) or higher == elevated; anything below is not.
         use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-        use windows::Win32::Security::{TOKEN_QUERY, GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
-        let is_elevated = unsafe {
+        use windows::Win32::Security::{
+            GetTokenInformation, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+            GetSidSubAuthority, GetSidSubAuthorityCount,
+        };
+
+        const HIGH_IL_RID: u32 = 0x3000;
+
+        let il_rid: Option<u32> = unsafe {
             let proc = GetCurrentProcess();
             let mut token = windows::Win32::Foundation::HANDLE::default();
-            if OpenProcessToken(proc, TOKEN_QUERY, &mut token).is_ok() {
-                let mut elevation = TOKEN_ELEVATION::default();
-                let mut ret_len = 0u32;
-                let ok = GetTokenInformation(
-                    token,
-                    TokenElevation,
-                    Some(&mut elevation as *mut _ as *mut _),
-                    std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-                    &mut ret_len,
-                ).is_ok();
-                let _ = windows::Win32::Foundation::CloseHandle(token);
-                ok && elevation.TokenIsElevated != 0
+            if OpenProcessToken(proc, TOKEN_QUERY, &mut token).is_err() {
+                None
             } else {
-                false
+                let mut needed: u32 = 0;
+                let _ = GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut needed);
+                let rid = if needed == 0 {
+                    None
+                } else {
+                    // Vec<u64> gives 8-byte alignment, which is the alignment
+                    // requirement of TOKEN_MANDATORY_LABEL on x64 (its first
+                    // field is a pointer). Using Vec<u8> would only guarantee
+                    // 1-byte alignment, which makes the subsequent &* cast
+                    // undefined behaviour even though Windows happens to
+                    // allocate aligned heap blocks in practice. See CodeRabbit
+                    // review on PR #1641.
+                    let words = (needed as usize + 7) / 8;
+                    let mut buf: Vec<u64> = vec![0u64; words];
+                    let buf_ptr = buf.as_mut_ptr() as *mut u8;
+                    let ok = GetTokenInformation(
+                        token,
+                        TokenIntegrityLevel,
+                        Some(buf_ptr as _),
+                        needed,
+                        &mut needed,
+                    ).is_ok();
+                    if !ok {
+                        None
+                    } else {
+                        // Now safe: buf_ptr is 8-byte aligned per Vec<u64>'s
+                        // alignment guarantee, matching TOKEN_MANDATORY_LABEL's
+                        // requirement.
+                        let tml = &*(buf_ptr as *const TOKEN_MANDATORY_LABEL);
+                        let sid = tml.Label.Sid;
+                        let count_ptr = GetSidSubAuthorityCount(sid);
+                        if count_ptr.is_null() {
+                            None
+                        } else {
+                            let count = *count_ptr;
+                            if count == 0 {
+                                None
+                            } else {
+                                let rid_ptr = GetSidSubAuthority(sid, (count - 1) as u32);
+                                if rid_ptr.is_null() { None } else { Some(*rid_ptr) }
+                            }
+                        }
+                    }
+                };
+                let _ = windows::Win32::Foundation::CloseHandle(token);
+                rid
             }
         };
-        let status_text = format!(
-            "Process elevation: {}\nUIA accessibility: available (no special permission needed)\nPostMessage injection: available",
-            if is_elevated { "✅ elevated (administrator)" } else { "ℹ️ standard user" }
-        );
+
+        let is_elevated = il_rid.map(|r| r >= HIGH_IL_RID).unwrap_or(false);
+        let il_name = match il_rid {
+            Some(0x0000) => "Untrusted",
+            Some(0x1000) => "Low",
+            Some(0x2000) => "Medium",
+            Some(0x2100) => "Medium+",
+            Some(0x3000) => "High",
+            Some(0x4000) => "System",
+            Some(_) => "Unknown",
+            None => "Unavailable",
+        };
+        // Distinguish the unavailable case from a real measurement — don't
+        // render a fake RID 0x0000 or a fake elevation status when the lookup
+        // failed. See CodeRabbit review on PR #1641.
+        let status_text = match il_rid {
+            Some(rid) => format!(
+                "Process integrity level: {il_name} (RID 0x{rid:04X}, {})\n\
+                 UIA accessibility: available (no special permission needed)\n\
+                 PostMessage injection: available",
+                if is_elevated { "elevated" } else { "non-elevated" }
+            ),
+            None => format!(
+                "Process integrity level: {il_name} (token query failed)\n\
+                 UIA accessibility: available (no special permission needed)\n\
+                 PostMessage injection: available"
+            ),
+        };
         ToolResult::text(status_text)
-            .with_structured(json!({ "elevated": is_elevated, "uia": true, "post_message": true }))
+            .with_structured(json!({
+                "elevated": is_elevated,
+                "integrity_level": il_name,
+                "integrity_level_rid": il_rid,
+                "uia": true,
+                "post_message": true
+            }))
     }
 }
 

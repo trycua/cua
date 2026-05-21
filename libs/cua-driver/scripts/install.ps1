@@ -931,7 +931,7 @@ Write-Host ""
 
 $onPath = Test-OnUserPath $VisibleBinDir
 if ($onPath) {
-    Write-Host "$VisibleBinDir is on your user PATH — cua-driver should resolve in any new shell."
+    Write-Host "$VisibleBinDir is on your user PATH -- cua-driver should resolve in any new shell."
     Write-Host ""
 }
 elseif ($NoPathUpdate) {
@@ -942,9 +942,9 @@ else {
     try {
         Add-UserPathEntry $VisibleBinDir
         Write-Host "Added $VisibleBinDir to your User PATH." -ForegroundColor Green
-        Write-Host '  Open a new PowerShell window for cua-driver to resolve.'
-        Write-Host "  Use in the current session:  `$env:Path += `";$VisibleBinDir`""
-        Write-Host '  Opt out next time with:      install.ps1 -NoPathUpdate'
+        Write-Host '  cua-driver will resolve in any NEW PowerShell window.'
+        Write-Host '  In THIS shell, invoke via the full Binary path printed below.'
+        Write-Host '  Opt out next time with: install.ps1 -NoPathUpdate'
         Write-Host ""
     }
     catch {
@@ -959,37 +959,41 @@ if ($AutoStart) {
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
         Write-Host "  cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
-        Write-Host "  Run now without re-logging:  & `"$installedBinary`" autostart kick"
-        Write-Host "  Inspect:                     & `"$installedBinary`" autostart status"
-        Write-Host "  Remove:                      & `"$installedBinary`" autostart disable"
+        Write-Host '  In a new PowerShell window, manage with:'
+        Write-Host '    cua-driver autostart kick     (run now without re-logging)'
+        Write-Host '    cua-driver autostart status   (inspect the task)'
+        Write-Host '    cua-driver autostart disable  (remove)'
+        Write-Host "  In THIS shell, use the full path: $installedBinary"
         Write-Host ""
     }
     catch {
         Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or invoke '& `"$installedBinary`" autostart enable' manually."
+        Write-Host '  Install otherwise succeeded; in a new shell run: cua-driver autostart enable'
+        Write-Host "  In THIS shell, use: $installedBinary autostart enable"
         Write-Host ""
     }
 }
 else {
-    $autostartHint = @"
-
-Auto-start at logon (Windows equivalent of macOS LaunchAgent):
-  Run cua-driver serve automatically every time you sign in (RDP, console, etc.)
-
-  Enable:   & "$installedBinary" autostart enable
-  Run now:  & "$installedBinary" autostart kick
-  Status:   & "$installedBinary" autostart status
-  Remove:   & "$installedBinary" autostart disable
-
-  Or re-run this installer with -AutoStart for the same result.
-"@
-    Write-Host $autostartHint -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "Auto-start at logon (Windows equivalent of macOS LaunchAgent):"            -ForegroundColor Cyan
+    Write-Host "  Run cua-driver serve automatically every time you sign in."              -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  In a new PowerShell window:"                                             -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart enable    (register the task)"                    -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart kick      (start now without re-logging)"         -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart status    (inspect)"                              -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart disable   (remove)"                               -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  In THIS shell, prefix with the full Binary path:"                        -ForegroundColor Cyan
+    Write-Host "    $installedBinary"                                                      -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  Or re-run this installer with -AutoStart for the same result."           -ForegroundColor Cyan
 }
 
 
 Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
 Write-Host ""
-Write-Host "WARNING — BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
+Write-Host "WARNING -- BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
 Write-Host "          cua-driver. Windows and Linux support is feature-complete; macOS" -ForegroundColor Yellow
 Write-Host "          parity is in progress." -ForegroundColor Yellow
 

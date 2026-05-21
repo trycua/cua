@@ -3141,18 +3141,30 @@ impl Tool for CheckPermissionsTool {
                 let rid = if needed == 0 {
                     None
                 } else {
-                    let mut buf = vec![0u8; needed as usize];
+                    // Vec<u64> gives 8-byte alignment, which is the alignment
+                    // requirement of TOKEN_MANDATORY_LABEL on x64 (its first
+                    // field is a pointer). Using Vec<u8> would only guarantee
+                    // 1-byte alignment, which makes the subsequent &* cast
+                    // undefined behaviour even though Windows happens to
+                    // allocate aligned heap blocks in practice. See CodeRabbit
+                    // review on PR #1641.
+                    let words = (needed as usize + 7) / 8;
+                    let mut buf: Vec<u64> = vec![0u64; words];
+                    let buf_ptr = buf.as_mut_ptr() as *mut u8;
                     let ok = GetTokenInformation(
                         token,
                         TokenIntegrityLevel,
-                        Some(buf.as_mut_ptr() as _),
+                        Some(buf_ptr as _),
                         needed,
                         &mut needed,
                     ).is_ok();
                     if !ok {
                         None
                     } else {
-                        let tml = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+                        // Now safe: buf_ptr is 8-byte aligned per Vec<u64>'s
+                        // alignment guarantee, matching TOKEN_MANDATORY_LABEL's
+                        // requirement.
+                        let tml = &*(buf_ptr as *const TOKEN_MANDATORY_LABEL);
                         let sid = tml.Label.Sid;
                         let count_ptr = GetSidSubAuthorityCount(sid);
                         if count_ptr.is_null() {
@@ -3184,13 +3196,22 @@ impl Tool for CheckPermissionsTool {
             Some(_) => "Unknown",
             None => "Unavailable",
         };
-        let status_text = format!(
-            "Process integrity level: {il_name} (RID 0x{:04X}{})\n\
-             UIA accessibility: available (no special permission needed)\n\
-             PostMessage injection: available",
-            il_rid.unwrap_or(0),
-            if is_elevated { ", elevated)" } else { ", non-elevated)" }.trim_start_matches(',')
-        );
+        // Distinguish the unavailable case from a real measurement — don't
+        // render a fake RID 0x0000 or a fake elevation status when the lookup
+        // failed. See CodeRabbit review on PR #1641.
+        let status_text = match il_rid {
+            Some(rid) => format!(
+                "Process integrity level: {il_name} (RID 0x{rid:04X}, {})\n\
+                 UIA accessibility: available (no special permission needed)\n\
+                 PostMessage injection: available",
+                if is_elevated { "elevated" } else { "non-elevated" }
+            ),
+            None => format!(
+                "Process integrity level: {il_name} (token query failed)\n\
+                 UIA accessibility: available (no special permission needed)\n\
+                 PostMessage injection: available"
+            ),
+        };
         ToolResult::text(status_text)
             .with_structured(json!({
                 "elevated": is_elevated,

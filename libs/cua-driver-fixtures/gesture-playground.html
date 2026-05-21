@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cua-driver gesture playground</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --border: #e2e2e2;
+    --ink: #1a1a1a;
+    --muted: #666;
+    --accent: #007AFF;
+    --good: #2ea043;
+    --bad: #cf222e;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px 0; }
+  h2 { font-size: 13px; margin: 0 0 8px 0; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  header { padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; }
+  .panel.full { grid-column: 1 / -1; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  button { font: inherit; padding: 8px 16px; border: 1px solid var(--border);
+    background: var(--accent); color: white; border-radius: 6px; cursor: pointer; }
+  button.secondary { background: var(--panel); color: var(--ink); }
+  button:hover { filter: brightness(1.05); }
+  input[type=text], input[type=password], input[type=email], input[type=number],
+  input[type=tel], input[type=url], input[type=search], textarea, select {
+    font: inherit; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 4px; min-width: 240px;
+  }
+  textarea { min-height: 60px; resize: vertical; }
+  .state {
+    font: 12px/1.5 var(--mono); background: #f5f5f5; padding: 8px 10px;
+    border-radius: 4px; min-height: 26px; white-space: pre-wrap; word-break: break-word;
+  }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font: 11px var(--mono); background: var(--accent); color: white; }
+  .badge.good { background: var(--good); }
+  .badge.bad { background: var(--bad); }
+  .badge.muted { background: var(--muted); }
+  .coord-marker { position: relative; height: 200px; background: repeating-linear-gradient(
+    0deg, #f0f0f0 0 19px, #e2e2e2 19px 20px),
+    repeating-linear-gradient(90deg, #f0f0f0 0 19px, #e2e2e2 19px 20px);
+    background-size: 20px 20px; border: 1px solid var(--border); border-radius: 4px;
+    overflow: hidden; cursor: crosshair;
+  }
+  .coord-marker .dot { position: absolute; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--bad); transform: translate(-50%, -50%);
+    pointer-events: none; }
+  .coord-marker .target { position: absolute; left: 60px; top: 60px;
+    width: 24px; height: 24px; border: 2px solid var(--accent);
+    border-radius: 50%; pointer-events: none; }
+  .drag-zone { display: flex; gap: 16px; align-items: center; }
+  .drag-source { width: 80px; height: 80px; background: var(--accent); color: white;
+    border-radius: 6px; display: flex; align-items: center; justify-content: center;
+    user-select: none; cursor: grab; }
+  .drag-source[draggable="true"]:active { cursor: grabbing; }
+  .drag-target { flex: 1; min-height: 80px; border: 2px dashed var(--border);
+    border-radius: 6px; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); }
+  .drag-target.over { background: #fff8e0; border-color: var(--accent); color: var(--ink); }
+  .scroll-area { height: 160px; overflow-y: auto; border: 1px solid var(--border);
+    border-radius: 4px; padding: 8px; }
+  .scroll-area .item { padding: 6px 4px; border-bottom: 1px solid #f0f0f0; }
+  .scroll-area .item:last-child { border-bottom: none; }
+  #canvas { display: block; width: 100%; height: 200px; border: 1px solid var(--border);
+    border-radius: 4px; background: white; cursor: crosshair; }
+  .hk-display { font: 16px var(--mono); padding: 8px;
+    background: #1a1a1a; color: #00ff88; border-radius: 4px; min-height: 36px; }
+  details > summary { cursor: pointer; font: 12px var(--mono); color: var(--muted); }
+  details[open] > summary { margin-bottom: 8px; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>cua-driver gesture playground</h1>
+  <div class="sub">A self-contained HTML page exercising every cua-driver Windows + macOS tool. Open this file in any browser; drive it via the cua-driver MCP. Every interaction updates a state display you can read back via <code>get_window_state</code> or <code>screenshot</code>.</div>
+</header>
+
+<main>
+
+  <!-- Click counter (clicks: 0) -->
+  <div class="panel" data-test="click-counter">
+    <h2>1 · click counter</h2>
+    <button id="counter-btn" onclick="state.counter++; render()">Click me</button>
+    <div class="row"><span>clicks:</span> <span class="badge muted" id="counter-state">0</span></div>
+    <div class="hint">Tool: <code>click(element_index)</code> via UIA — counter increments per click event.</div>
+  </div>
+
+  <!-- Click types (left / middle / right / double / triple) -->
+  <div class="panel" data-test="click-types">
+    <h2>2 · click types</h2>
+    <button id="multi-btn"
+      onclick="record('mb-left', event)"
+      ondblclick="record('mb-dbl', event)"
+      oncontextmenu="record('mb-right', event); event.preventDefault()"
+      onauxclick="if (event.button===1) record('mb-mid', event)">
+      Click target
+    </button>
+    <div class="row"><span>last:</span> <span class="badge" id="multi-state">—</span></div>
+    <div class="hint">Tools: <code>click</code>, <code>right_click</code>, <code>double_click</code>. Triple-click via <code>click(count=3)</code>.</div>
+  </div>
+
+  <!-- Text input mirror -->
+  <div class="panel" data-test="type-text">
+    <h2>3 · type_text mirror</h2>
+    <input id="textbox" type="text" placeholder="Type via cua-driver type_text…" oninput="document.getElementById('type-state').textContent = this.value">
+    <div class="state" id="type-state"></div>
+    <div class="hint">Tool: <code>type_text</code>. Type any Unicode; mirror updates on every char.</div>
+  </div>
+
+  <!-- press_key + hotkey detector -->
+  <div class="panel" data-test="keyboard">
+    <h2>4 · press_key + hotkey detector</h2>
+    <input id="keyfocus" type="text" placeholder="Focus this and press keys…"
+      onkeydown="onkey(event)">
+    <div class="hk-display" id="key-state">(focus the field above and press a key)</div>
+    <div class="hint">Display shows <code>ctrl=… alt=… shift=… key="…"</code> for the most recent keydown. Use to verify modifier state of <code>hotkey</code> calls (should report all 4 fields, not just the bare key — that proves SendInput modifier-state propagation, not just PostMessage).</div>
+  </div>
+
+  <!-- Pixel-coord click target -->
+  <div class="panel full" data-test="coord-click">
+    <h2>5 · pixel-coord click target</h2>
+    <div class="coord-marker" id="coord-area" onclick="onCoordClick(event)">
+      <div class="target"></div>
+      <!-- dots placed by JS -->
+    </div>
+    <div class="row"><span>last click @ </span>
+      <span class="badge" id="coord-state">—</span>
+      <span> · distance from target (60, 60):</span>
+      <span class="badge" id="coord-distance">—</span>
+    </div>
+    <div class="hint">Tools: <code>click(x, y)</code>. The blue ring is centered at the panel-local (60, 60). Use the distance badge to verify pixel-accuracy.</div>
+  </div>
+
+  <!-- Drag and drop -->
+  <div class="panel" data-test="drag">
+    <h2>6 · drag-and-drop</h2>
+    <div class="drag-zone">
+      <div id="drag-source" class="drag-source" draggable="true"
+        ondragstart="dragStart(event)">drag me</div>
+      <div id="drag-target" class="drag-target"
+        ondragover="dragOver(event)"
+        ondragleave="dragLeave(event)"
+        ondrop="dragDrop(event)">drop here</div>
+    </div>
+    <div class="row"><span>last drop:</span> <span class="badge muted" id="drag-state">—</span></div>
+    <div class="hint">Tool: <code>drag</code>. Should fire <code>dragstart</code> on source, <code>dragover</code> on target, <code>drop</code> on release.</div>
+  </div>
+
+  <!-- Scroll area -->
+  <div class="panel" data-test="scroll">
+    <h2>7 · scroll position</h2>
+    <div id="scroll-area" class="scroll-area" onscroll="onScroll(event)">
+      <!-- 30 items, ~40 px tall each = 1200px scrollable -->
+    </div>
+    <div class="row"><span>scrollTop:</span> <span class="badge muted" id="scroll-state">0</span>
+      <span> of <span id="scroll-max">…</span></span></div>
+    <div class="hint">Tool: <code>scroll</code>. Use to verify scroll-amount math + direction.</div>
+  </div>
+
+  <!-- Canvas / freeform paint -->
+  <div class="panel full" data-test="canvas">
+    <h2>8 · canvas (custom-drawn) — tests pixel input on a non-DOM widget</h2>
+    <canvas id="canvas" width="1200" height="200"></canvas>
+    <div class="row"><span>last canvas event:</span> <span class="badge muted" id="canvas-state">—</span></div>
+    <div class="hint">Captures <code>mousedown/move/up</code> events. Custom-drawn surfaces in apps like Audacity / GIMP / Blender behave similarly — PostMessage WM_LBUTTONDOWN typically does NOT fire <code>mousedown</code> here; SendInput-routed clicks do.</div>
+  </div>
+
+  <!-- Form-all-inputs (kept for backward compat with existing tests) -->
+  <div class="panel full" data-test="form-all-inputs">
+    <h2>9 · form (all input types — backward-compat with existing fixtures)</h2>
+    <form id="big-form" onsubmit="submitForm(event)" autocomplete="off">
+      <div class="row">
+        <input type="text" id="f-text" name="text_field" placeholder="text">
+        <input type="password" id="f-password" name="password_field" placeholder="password">
+        <input type="email" id="f-email" name="email_field" placeholder="email">
+        <input type="number" id="f-number" name="number_field" placeholder="number" min="0" max="999">
+      </div>
+      <div class="row">
+        <input type="tel" id="f-tel" name="tel_field" placeholder="tel">
+        <input type="url" id="f-url" name="url_field" placeholder="url">
+        <input type="search" id="f-search" name="search_field" placeholder="search">
+        <input type="color" id="f-color" name="color_field" value="#007AFF">
+      </div>
+      <div class="row">
+        <textarea id="f-textarea" name="textarea_field" placeholder="textarea"></textarea>
+        <select id="f-select" name="select_field">
+          <option value="">— pick —</option>
+          <option value="apple">apple</option>
+          <option value="banana">banana</option>
+          <option value="cherry">cherry</option>
+        </select>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="f-checkbox" name="checkbox_field" value="checked"> checkbox</label>
+        <label><input type="radio" id="r-apple" name="radio_field" value="apple"> apple</label>
+        <label><input type="radio" id="r-banana" name="radio_field" value="banana"> banana</label>
+        <label><input type="radio" id="r-cherry" name="radio_field" value="cherry"> cherry</label>
+        <input type="range" id="f-range" name="range_field" min="0" max="100" value="42">
+      </div>
+      <div class="row">
+        <button type="submit" id="submit-btn">Submit</button>
+        <span class="badge muted" id="form-state">not submitted</span>
+      </div>
+    </form>
+  </div>
+
+  <!-- Cumulative state dump (one place to read everything) -->
+  <div class="panel full" data-test="state">
+    <h2>10 · cumulative state dump (read this back for end-to-end verification)</h2>
+    <details open>
+      <summary>state JSON (auto-updates)</summary>
+      <pre class="state" id="state-dump"></pre>
+    </details>
+    <button onclick="resetAll()" class="secondary">Reset all state</button>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+
+// One shared state object — flat by panel so it serializes compactly. The
+// state-dump panel below renders this as JSON; tests assert on specific
+// fields via get_window_state / browser DOM reads / screenshot OCR.
+const state = {
+  counter: 0,
+  multi: null,            // {type: "left"|"right"|"middle"|"dbl", at: [x,y]}
+  text: "",
+  key: null,              // {key, code, ctrl, alt, shift, meta}
+  coord: null,            // [x, y] panel-local
+  coord_dist: null,       // dist from (60, 60) in px
+  drag: null,             // {dropped_from, dropped_at}
+  scroll: 0,
+  canvas: null,           // {type, x, y}
+  form: null,             // values on submit
+};
+
+function render() {
+  document.getElementById("counter-state").textContent = state.counter;
+
+  if (state.multi) {
+    const m = state.multi;
+    document.getElementById("multi-state").textContent =
+      `${m.type} @ (${m.at[0]}, ${m.at[1]})`;
+  }
+
+  document.getElementById("type-state").textContent = state.text;
+
+  if (state.key) {
+    const k = state.key;
+    document.getElementById("key-state").textContent =
+      `key="${k.key}" code="${k.code}" ctrl=${k.ctrl} alt=${k.alt} shift=${k.shift} meta=${k.meta}`;
+  }
+
+  if (state.coord) {
+    document.getElementById("coord-state").textContent =
+      `(${state.coord[0]}, ${state.coord[1]})`;
+    document.getElementById("coord-distance").textContent =
+      state.coord_dist != null ? `${state.coord_dist.toFixed(1)} px` : "—";
+  }
+
+  if (state.drag) {
+    document.getElementById("drag-state").textContent =
+      `dropped @ (${state.drag.dropped_at[0]}, ${state.drag.dropped_at[1]})`;
+  }
+
+  document.getElementById("scroll-state").textContent = state.scroll;
+
+  if (state.canvas) {
+    const c = state.canvas;
+    document.getElementById("canvas-state").textContent =
+      `${c.type} @ (${c.x}, ${c.y})`;
+  }
+
+  if (state.form) {
+    document.getElementById("form-state").textContent =
+      `submitted with ${Object.keys(state.form).length} fields`;
+  }
+
+  document.getElementById("state-dump").textContent = JSON.stringify(state, null, 2);
+}
+
+function record(prefix, event) {
+  const type = prefix === "mb-left"  ? "left"
+             : prefix === "mb-right" ? "right"
+             : prefix === "mb-mid"   ? "middle"
+             : prefix === "mb-dbl"   ? "dbl" : "?";
+  state.multi = { type, at: [event.clientX|0, event.clientY|0] };
+  render();
+}
+
+function onkey(event) {
+  state.key = {
+    key:   event.key,
+    code:  event.code,
+    ctrl:  event.ctrlKey,
+    alt:   event.altKey,
+    shift: event.shiftKey,
+    meta:  event.metaKey,
+  };
+  render();
+}
+
+function onCoordClick(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) | 0);
+  const y = ((event.clientY - rect.top) | 0);
+  state.coord = [x, y];
+  state.coord_dist = Math.hypot(x - 60, y - 60);
+  render();
+
+  // Drop a visual dot
+  const dot = document.createElement("div");
+  dot.className = "dot";
+  dot.style.left = x + "px";
+  dot.style.top = y + "px";
+  event.currentTarget.appendChild(dot);
+}
+
+function dragStart(event) {
+  event.dataTransfer.setData("text/plain", event.target.id);
+  event.dataTransfer.effectAllowed = "move";
+}
+function dragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  event.currentTarget.classList.add("over");
+}
+function dragLeave(event) {
+  event.currentTarget.classList.remove("over");
+}
+function dragDrop(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove("over");
+  const from = event.dataTransfer.getData("text/plain");
+  const rect = event.currentTarget.getBoundingClientRect();
+  state.drag = {
+    dropped_from: from,
+    dropped_at: [((event.clientX - rect.left) | 0), ((event.clientY - rect.top) | 0)],
+  };
+  render();
+}
+
+function onScroll(event) {
+  state.scroll = (event.target.scrollTop | 0);
+  render();
+}
+
+(function fillScroll() {
+  const root = document.getElementById("scroll-area");
+  for (let i = 1; i <= 30; i++) {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.id = "scroll-item-" + i;
+    div.textContent = "scrollable item #" + i;
+    root.appendChild(div);
+  }
+  document.getElementById("scroll-max").textContent = (root.scrollHeight - root.clientHeight) + " px";
+})();
+
+(function wireCanvas() {
+  const c = document.getElementById("canvas");
+  const ctx = c.getContext("2d");
+  // Resize canvas drawing buffer to its display size
+  function fit() {
+    const rect = c.getBoundingClientRect();
+    c.width = rect.width | 0;
+    c.height = rect.height | 0;
+  }
+  fit();
+  window.addEventListener("resize", fit);
+
+  let drawing = false;
+  function pos(e) {
+    const rect = c.getBoundingClientRect();
+    return [(e.clientX - rect.left) | 0, (e.clientY - rect.top) | 0];
+  }
+  c.addEventListener("mousedown", e => {
+    drawing = true;
+    const [x, y] = pos(e);
+    state.canvas = { type: "down", x, y };
+    ctx.fillStyle = "#cf222e";
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
+    render();
+  });
+  c.addEventListener("mousemove", e => {
+    const [x, y] = pos(e);
+    if (drawing) {
+      ctx.fillStyle = "#007AFF";
+      ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI*2); ctx.fill();
+      state.canvas = { type: "move", x, y };
+      render();
+    }
+  });
+  c.addEventListener("mouseup", e => {
+    drawing = false;
+    const [x, y] = pos(e);
+    state.canvas = { type: "up", x, y };
+    render();
+  });
+})();
+
+function submitForm(event) {
+  event.preventDefault();
+  const fd = new FormData(event.target);
+  const out = {};
+  for (const [k, v] of fd.entries()) out[k] = v;
+  state.form = out;
+  render();
+}
+
+function resetAll() {
+  state.counter = 0;
+  state.multi = null;
+  state.text = "";
+  state.key = null;
+  state.coord = null;
+  state.coord_dist = null;
+  state.drag = null;
+  state.scroll = 0;
+  state.canvas = null;
+  state.form = null;
+  document.getElementById("textbox").value = "";
+  document.getElementById("keyfocus").value = "";
+  // Clear coord dots
+  document.querySelectorAll(".coord-marker .dot").forEach(n => n.remove());
+  // Clear canvas
+  const c = document.getElementById("canvas");
+  c.getContext("2d").clearRect(0, 0, c.width, c.height);
+  // Clear form
+  document.getElementById("big-form").reset();
+  document.getElementById("form-state").textContent = "not submitted";
+  render();
+}
+
+// Mirror text input continuously into state.text so the type-state panel
+// always reflects what was typed.
+document.getElementById("textbox").addEventListener("input", e => {
+  state.text = e.target.value;
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

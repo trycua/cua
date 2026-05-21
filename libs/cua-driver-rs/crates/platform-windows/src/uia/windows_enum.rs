@@ -23,8 +23,11 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
-    UIA_AcceleratorKeyPropertyId, UIA_InvokePatternId, UIA_PROPERTY_ID,
-    UIA_TogglePatternId,
+    UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    UIA_CONTROLTYPE_ID, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
+    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PROPERTY_ID,
+    UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId, UIA_TabItemControlTypeId,
+    UIA_TogglePatternId, UIA_TreeItemControlTypeId,
 };
 use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -176,6 +179,35 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 /// `CurrentBoundingRectangle` contains the point AND which exposes
 /// `InvokePattern`. Smallest-area approximates "deepest" without
 /// having to track tree depth explicitly.
+/// Returns `true` when the element's control type has a *coord-independent*
+/// primary action — i.e. a UIA `Invoke()` on it does something semantically
+/// equivalent to "click the element" regardless of where inside its bounding
+/// rectangle the click was requested.
+///
+/// Used by the `x, y` click path to decide whether to take the UIA Invoke
+/// route or fall through to PostMessage with the literal coords. The split
+/// matters for canvases, panes, and custom-drawn surfaces where Invoke would
+/// fire `mousedown` at the element centre — losing the caller's pixel
+/// precision (see #1621).
+fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
+    let ct: UIA_CONTROLTYPE_ID = match unsafe { elem.CurrentControlType() } {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    matches!(
+        ct,
+        UIA_ButtonControlTypeId
+            | UIA_MenuItemControlTypeId
+            | UIA_HyperlinkControlTypeId
+            | UIA_TabItemControlTypeId
+            | UIA_ListItemControlTypeId
+            | UIA_CheckBoxControlTypeId
+            | UIA_RadioButtonControlTypeId
+            | UIA_SplitButtonControlTypeId
+            | UIA_TreeItemControlTypeId
+    )
+}
+
 pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
     if hwnd == 0 {
         return false;
@@ -232,6 +264,22 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
                 )
                 .is_ok();
             if !has_invoke && !has_expand {
+                continue;
+            }
+            // For coordinate-addressed clicks, only accept elements whose
+            // control type has a *coord-independent* primary action. UIA
+            // `Invoke()` fires the element's default action at its centre,
+            // ignoring the requested (sx, sy). For container surfaces
+            // (Pane, Image, Custom, Document, Group, etc.) that means the
+            // caller's pixel precision is silently lost — see #1621, where
+            // `click(canvas, x=110, y=677)` reported success but actually
+            // fired the canvas's `mousedown` at its centre (152, 77).
+            // Buttons / MenuItems / Hyperlinks / TabItems / ListItems /
+            // CheckBoxes / RadioButtons / SplitButtons / TreeItems all
+            // have a single primary action whose location is the element
+            // itself — Invoke is the right path for those. Everything
+            // else falls through to PostMessage with the literal coords.
+            if !is_coord_independent_action(&elem) {
                 continue;
             }
             let w = (rect.right - rect.left).max(0) as i64;

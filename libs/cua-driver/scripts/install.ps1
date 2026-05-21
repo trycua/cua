@@ -891,20 +891,48 @@ function Remove-LegacyInstall {
 
     Write-Step "detected legacy install layout (v0.2.13 or earlier); migrating to Cua\cua-driver"
 
-    # 1. Stop any cua-driver / cua-driver-uia daemon that's pinning the
-    #    legacy binary directory open. Use the regular Get-Process route —
-    #    these are user-owned processes, kill is allowed.
+    # 1. End the running daemon. Order matters:
+    #
+    #    a. `schtasks /End` first — Task Scheduler runs as SYSTEM and can
+    #       terminate elevated (RunLevel=Highest, High IL) processes that a
+    #       Medium-IL Stop-Process from the user's shell cannot. This is
+    #       the case any time the legacy daemon was spawned via the
+    #       AtLogon trigger of the v0.2.13 autostart task on a non-RID-500
+    #       admin account (e.g. cuademo). Without this, Step 4 below fails
+    #       with "Access to the path 'cua-driver.exe' is denied" because
+    #       the legacy binary is held open by an unkillable elevated
+    #       process. Discovered during the cuademo v0.2.13 → v0.2.14
+    #       migration dogfood.
+    #    b. taskkill /F /IM as a backstop for any cua-driver process that
+    #       wasn't task-attached (manual `cua-driver serve`, legacy uia
+    #       worker, etc.). taskkill is more permissive than Stop-Process
+    #       for cross-IL termination.
+    #    c. Stop-Process last — catches anything taskkill missed.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # Ends the running task instance. Returns non-zero when the task
+        # isn't running or doesn't exist, both of which we swallow.
+        & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
+        Start-Sleep -Milliseconds 250
+        # Force-kill via taskkill — handles High-IL processes that
+        # Stop-Process can't touch from a Medium-IL caller.
+        & taskkill.exe /F /IM "cua-driver.exe" /T 2>$null | Out-Null
+        & taskkill.exe /F /IM "cua-driver-uia.exe" /T 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
     $procs = Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue
     if ($procs) {
         foreach ($p in $procs) {
             try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
         }
-        Start-Sleep -Milliseconds 250
     }
+    Start-Sleep -Milliseconds 500
 
     # 2. Unregister the autostart Scheduled Task if present. Idempotent —
-    #    schtasks /Query returns non-zero when the task is absent, which we
-    #    swallow (matches uninstall.ps1's pattern for the same call).
+    #    schtasks /Delete returns non-zero when the task is absent, which
+    #    we swallow.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {

@@ -156,15 +156,32 @@ function Write-ErrorStep($message) {
 # shell happens to be running under WOW64.
 
 function Get-TargetTriple {
-    $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($osArch) {
+    # Primary source: $env:PROCESSOR_ARCHITECTURE — always set on Windows,
+    # never trips StrictMode property introspection, no .NET version dependency.
+    # Fallback: [RuntimeInformation]::OSArchitecture — present since .NET 4.7.1
+    # but raises 'property cannot be found on this object' under StrictMode
+    # Latest on some PowerShell 5.1 setups (observed on Windows 11 24H2 with a
+    # fresh user account, see issue tracker).
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if (-not $arch) {
+        try {
+            $arch = ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture).ToString()
+        } catch {
+            $arch = "unknown"
+        }
+    }
+    switch ($arch) {
+        # $env:PROCESSOR_ARCHITECTURE values
+        "AMD64" { return "x86_64-pc-windows-msvc" }
+        "ARM64" { return "aarch64-pc-windows-msvc" }
+        # RuntimeInformation.OSArchitecture .ToString() values (fallback path)
         "X64"   { return "x86_64-pc-windows-msvc" }
         "Arm64" { return "aarch64-pc-windows-msvc" }
         default {
-            Write-ErrorStep "unsupported Windows architecture: $osArch"
-            Write-ErrorStep "  cua-driver-rs ships prebuilts for: x86_64 (X64) and arm64 (Arm64)."
+            Write-ErrorStep "unsupported Windows architecture: $arch"
+            Write-ErrorStep "  cua-driver-rs ships prebuilts for: x86_64 (AMD64) and arm64 (ARM64)."
             Write-ErrorStep "  Please file an issue at https://github.com/trycua/cua/issues with the output of"
-            Write-ErrorStep "  '[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture'."
+            Write-ErrorStep "  'echo `$env:PROCESSOR_ARCHITECTURE'."
             exit 1
         }
     }

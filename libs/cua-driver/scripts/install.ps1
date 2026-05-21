@@ -942,8 +942,8 @@ else {
     try {
         Add-UserPathEntry $VisibleBinDir
         Write-Host "Added $VisibleBinDir to your User PATH." -ForegroundColor Green
-        Write-Host '  Open a new PowerShell window for cua-driver to resolve.'
-        Write-Host '  Or refresh PATH in the current session by reopening the shell.'
+        Write-Host '  cua-driver will resolve in any NEW PowerShell window.'
+        Write-Host '  In THIS shell, invoke via the full Binary path printed below.'
         Write-Host '  Opt out next time with: install.ps1 -NoPathUpdate'
         Write-Host ""
     }
@@ -959,16 +959,17 @@ if ($AutoStart) {
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
         Write-Host "  cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
-        Write-Host '  Run now without re-logging: cua-driver autostart kick'
-        Write-Host '  Inspect:                    cua-driver autostart status'
-        Write-Host '  Remove:                     cua-driver autostart disable'
-        Write-Host "  Binary at: $installedBinary"
+        Write-Host '  In a new PowerShell window, manage with:'
+        Write-Host '    cua-driver autostart kick     (run now without re-logging)'
+        Write-Host '    cua-driver autostart status   (inspect the task)'
+        Write-Host '    cua-driver autostart disable  (remove)'
+        Write-Host "  In THIS shell, use the full path: $installedBinary"
         Write-Host ""
     }
     catch {
         Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host '  Install otherwise succeeded; re-run with -AutoStart or invoke: cua-driver autostart enable'
-        Write-Host "  Binary at: $installedBinary"
+        Write-Host '  Install otherwise succeeded; in a new shell run: cua-driver autostart enable'
+        Write-Host "  In THIS shell, use: $installedBinary autostart enable"
         Write-Host ""
     }
 }
@@ -977,11 +978,14 @@ else {
     Write-Host "Auto-start at logon (Windows equivalent of macOS LaunchAgent):"            -ForegroundColor Cyan
     Write-Host "  Run cua-driver serve automatically every time you sign in."              -ForegroundColor Cyan
     Write-Host ""                                                                          -ForegroundColor Cyan
-    Write-Host "  Enable:   cua-driver autostart enable"                                   -ForegroundColor Cyan
-    Write-Host "  Run now:  cua-driver autostart kick"                                     -ForegroundColor Cyan
-    Write-Host "  Status:   cua-driver autostart status"                                   -ForegroundColor Cyan
-    Write-Host "  Remove:   cua-driver autostart disable"                                  -ForegroundColor Cyan
-    Write-Host "  Binary at: $installedBinary"                                             -ForegroundColor Cyan
+    Write-Host "  In a new PowerShell window:"                                             -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart enable    (register the task)"                    -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart kick      (start now without re-logging)"         -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart status    (inspect)"                              -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart disable   (remove)"                               -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  In THIS shell, prefix with the full Binary path:"                        -ForegroundColor Cyan
+    Write-Host "    $installedBinary"                                                      -ForegroundColor Cyan
     Write-Host ""                                                                          -ForegroundColor Cyan
     Write-Host "  Or re-run this installer with -AutoStart for the same result."           -ForegroundColor Cyan
 }

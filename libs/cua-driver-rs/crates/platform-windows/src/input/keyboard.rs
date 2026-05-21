@@ -20,7 +20,12 @@ use std::thread::sleep;
 use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    MapVirtualKeyW, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
+    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+    KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, SetForegroundWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetWindowThreadProcessId, IsChild,
@@ -250,6 +255,118 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Press `key` (with optional `modifiers`) via `SendInput` against the system
+/// input queue, briefly focusing `hwnd` so the keystrokes land there.
+///
+/// Why this exists alongside `post_key`: `PostMessage(WM_KEYDOWN, VK_CONTROL)`
+/// puts a message in the target's queue but does NOT update the system-wide
+/// modifier state that apps poll via `GetKeyState` / `GetAsyncKeyState`. For
+/// any Win32 app whose accelerator dispatcher uses `TranslateAccelerator` (which
+/// is most native Win32 apps — LibreOffice, FAR, classic Notepad, etc.), the
+/// shortcut never fires; the `s` arrives as plain text input.
+///
+/// `SendInput` puts the synthesized events on the **system input queue** —
+/// the same queue `GetKeyState` reads from — so `Ctrl+S` is properly detected
+/// as an accelerator. The trade-off is a brief foreground swap (focus theft),
+/// which we mitigate by saving the previous foreground HWND and restoring it
+/// after the keystrokes are flushed.
+///
+/// UIAccess constraint: `SetForegroundWindow` is restricted from non-UIAccess
+/// processes when not driven by user input. The `cua-driver-uia` worker runs
+/// at UIAccess integrity precisely so this restriction is lifted; outside the
+/// worker, the foreground swap may silently fail and SendInput land on the
+/// wrong window. Callers should funnel hotkey calls through the uia worker.
+pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    let target = HWND(hwnd as *mut _);
+    if target.0.is_null() {
+        bail!("invalid target hwnd");
+    }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        // Same UIPI defense as the PostMessage path. SendInput from UIAccess
+        // _is_ allowed cross-integrity, but if our daemon is somehow at a
+        // lower integrity than target, SendInput would land in the wrong
+        // window (we couldn't set foreground). Better to surface the
+        // diagnostic early than silently no-op.
+        bail!(msg);
+    }
+    let key_vk = key_name_to_vk(key)?;
+    let mod_vks: Vec<VIRTUAL_KEY> = modifiers
+        .iter()
+        .filter_map(|m| modifier_vk(m))
+        .collect();
+
+    // Build the INPUT sequence: modifiers down, key down, key up, modifiers up
+    // (reverse order). Each event sends the scancode + EXTENDEDKEY flag where
+    // appropriate so apps that read scancodes (not virtual keys) work too.
+    let mut events: Vec<INPUT> = Vec::with_capacity(mod_vks.len() * 2 + 2);
+    for mvk in &mod_vks {
+        events.push(key_input(*mvk, false));
+    }
+    events.push(key_input(key_vk, false));
+    events.push(key_input(key_vk, true));
+    for mvk in mod_vks.iter().rev() {
+        events.push(key_input(*mvk, true));
+    }
+
+    unsafe {
+        // Save & set foreground so SendInput lands on `target`.
+        let prev_fg = GetForegroundWindow();
+        let _ = SetForegroundWindow(target);
+        // Brief settle so the foreground swap is processed before we send.
+        sleep(Duration::from_millis(8));
+
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != events.len() {
+            // SendInput returns the number of events successfully inserted.
+            // Anything less is a partial insertion (blocked by another input
+            // injector, foreground UIPI denial, etc.).
+            let restored = SetForegroundWindow(prev_fg);
+            let _ = restored;
+            bail!(
+                "SendInput inserted only {sent} of {} events. Likely cause: \
+                 the daemon is not at UIAccess integrity, so SetForegroundWindow \
+                 was rejected and the events landed on the wrong window. Run \
+                 hotkey through the cua-driver-uia worker.",
+                events.len()
+            );
+        }
+
+        // Brief settle to let the target process the keystrokes before we
+        // restore the previous foreground (otherwise the target might not
+        // get a chance to handle the accelerator before losing focus).
+        sleep(Duration::from_millis(40));
+        if !prev_fg.0.is_null() && prev_fg != target {
+            let _ = SetForegroundWindow(prev_fg);
+        }
+    }
+    Ok(())
+}
+
+/// Build a single keyboard INPUT struct for `vk`, either down (`up = false`)
+/// or up (`up = true`). Uses scancode + EXTENDEDKEY where applicable so the
+/// target sees a hardware-like keystroke.
+fn key_input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
+    let scan = unsafe { MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    let mut flags: KEYBD_EVENT_FLAGS = KEYBD_EVENT_FLAGS(0);
+    // Scancode is more reliable than VK for some apps. EXTENDEDKEY flag
+    // makes arrow / nav / right-side modifier keys work correctly.
+    if scan != 0 { flags |= KEYEVENTF_SCANCODE; }
+    if is_extended(vk) { flags |= KEYEVENTF_EXTENDEDKEY; }
+    if up { flags |= KEYEVENTF_KEYUP; }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: if scan != 0 { VIRTUAL_KEY(0) } else { vk },
+                wScan: scan,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 fn modifier_vk(name: &str) -> Option<VIRTUAL_KEY> {

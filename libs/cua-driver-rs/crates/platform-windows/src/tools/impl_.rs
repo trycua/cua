@@ -3127,113 +3127,28 @@ impl Tool for CheckPermissionsTool {
         //      flag reports it as a "standard user", which confused everyone
         //      tracking #1602 / #1601. See issue #1640.
         //
-        // TokenIntegrityLevel asks the kernel directly: what IL is this token
-        // at? RID 0x3000 (High) or higher == elevated; anything below is not.
+        // #1646 / dogfood-iteration-3: PR #1647's in-process windows-rs
+        // implementation of TokenIntegrityLevel STILL misreported the IL.
+        // Verified externally on the cuademo dogfood VM: a daemon at
+        // demonstrably High IL (RID 0x3000 by direct PowerShell-C# Win32
+        // read against the daemon's pid) was reported by the daemon's own
+        // check_permissions as Medium IL (RID 0x2000). Both code paths used
+        // identical Win32 APIs (OpenProcess + OpenProcessToken +
+        // GetTokenInformation(TokenIntegrityLevel=25)), yet they disagreed.
+        // Root cause unclear — possibly a subtle interaction between the
+        // windows-rs crate's bindings and the named-pipe server's thread
+        // security context, possibly a Vec-buffer alignment issue that
+        // doesn't reproduce in standalone testing. RevertToSelf +
+        // OpenProcess(GetCurrentProcessId()) didn't help.
         //
-        // #1646: PR #1641's initial implementation called
-        // `OpenProcessToken(GetCurrentProcess(), ...)` and STILL misreported
-        // High-IL daemons as Medium IL. Root cause: the named-pipe server's
-        // handler thread can be left impersonating the connecting client
-        // (cuademo's Medium-IL shell, in the failing case), and on Windows
-        // the impersonation token leaks through `GetCurrentProcess()`'s
-        // pseudo-handle in a way that returns the impersonation token's IL
-        // rather than the primary token's. Two-part fix:
-        //   1. `RevertToSelf()` at the top — drops any active impersonation
-        //      on this thread so subsequent token queries see the primary.
-        //   2. `OpenProcess(GetCurrentProcessId())` — uses an explicit
-        //      handle to the daemon's own process, mirroring the working
-        //      C# diagnostic (Win32 OpenProcess + OpenProcessToken from a
-        //      Medium-IL shell against the daemon's pid). Avoids any
-        //      pseudo-handle quirks.
-        use windows::Win32::System::Threading::{
-            GetCurrentProcessId, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        use windows::Win32::Security::{
-            GetTokenInformation, RevertToSelf, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL,
-            TOKEN_QUERY, GetSidSubAuthority, GetSidSubAuthorityCount,
-        };
-
+        // Pragmatic workaround: shell out to PowerShell and run the same
+        // C# Win32 helper that's verified to return the correct IL. Cost
+        // is one PowerShell spawn (~100-200ms) per check_permissions call,
+        // which is acceptable — check_permissions is a low-frequency,
+        // user-initiated diagnostic, not a hot path.
         const HIGH_IL_RID: u32 = 0x3000;
 
-        let il_rid: Option<u32> = unsafe {
-            // Drop any impersonation on this thread before we query. The
-            // call returns BOOL — if there's nothing to revert it returns
-            // FALSE with ERROR_NO_TOKEN, which is fine and not an error.
-            let _ = RevertToSelf();
-
-            let proc_handle = match OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION,
-                false,
-                GetCurrentProcessId(),
-            ) {
-                Ok(h) => h,
-                Err(_) => {
-                    // Should never happen — we always have rights to query
-                    // our own process. Bail and report Unavailable.
-                    return ToolResult::text("Process integrity level: Unavailable (OpenProcess on self failed)")
-                        .with_structured(json!({
-                            "elevated": false,
-                            "integrity_level": "Unavailable",
-                            "integrity_level_rid": serde_json::Value::Null,
-                            "uia": true,
-                            "post_message": true,
-                        }));
-                }
-            };
-            let mut token = windows::Win32::Foundation::HANDLE::default();
-            if OpenProcessToken(proc_handle, TOKEN_QUERY, &mut token).is_err() {
-                let _ = windows::Win32::Foundation::CloseHandle(proc_handle);
-                None
-            } else {
-                let mut needed: u32 = 0;
-                let _ = GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut needed);
-                let rid = if needed == 0 {
-                    None
-                } else {
-                    // Vec<u64> gives 8-byte alignment, which is the alignment
-                    // requirement of TOKEN_MANDATORY_LABEL on x64 (its first
-                    // field is a pointer). Using Vec<u8> would only guarantee
-                    // 1-byte alignment, which makes the subsequent &* cast
-                    // undefined behaviour even though Windows happens to
-                    // allocate aligned heap blocks in practice. See CodeRabbit
-                    // review on PR #1641.
-                    let words = (needed as usize + 7) / 8;
-                    let mut buf: Vec<u64> = vec![0u64; words];
-                    let buf_ptr = buf.as_mut_ptr() as *mut u8;
-                    let ok = GetTokenInformation(
-                        token,
-                        TokenIntegrityLevel,
-                        Some(buf_ptr as _),
-                        needed,
-                        &mut needed,
-                    ).is_ok();
-                    if !ok {
-                        None
-                    } else {
-                        // Now safe: buf_ptr is 8-byte aligned per Vec<u64>'s
-                        // alignment guarantee, matching TOKEN_MANDATORY_LABEL's
-                        // requirement.
-                        let tml = &*(buf_ptr as *const TOKEN_MANDATORY_LABEL);
-                        let sid = tml.Label.Sid;
-                        let count_ptr = GetSidSubAuthorityCount(sid);
-                        if count_ptr.is_null() {
-                            None
-                        } else {
-                            let count = *count_ptr;
-                            if count == 0 {
-                                None
-                            } else {
-                                let rid_ptr = GetSidSubAuthority(sid, (count - 1) as u32);
-                                if rid_ptr.is_null() { None } else { Some(*rid_ptr) }
-                            }
-                        }
-                    }
-                };
-                let _ = windows::Win32::Foundation::CloseHandle(token);
-                let _ = windows::Win32::Foundation::CloseHandle(proc_handle);
-                rid
-            }
-        };
+        let il_rid: Option<u32> = read_self_integrity_level_via_powershell();
 
         let is_elevated = il_rid.map(|r| r >= HIGH_IL_RID).unwrap_or(false);
         let il_name = match il_rid {
@@ -3271,6 +3186,63 @@ impl Tool for CheckPermissionsTool {
                 "post_message": true
             }))
     }
+}
+
+/// Read the current process's token integrity level (RID) by shelling out
+/// to PowerShell and running a P/Invoke-based C# helper. See the long
+/// comment in `CheckPermissionsTool::invoke` for why the in-process
+/// windows-rs approach was abandoned (issue #1646 / dogfood iteration 3).
+///
+/// Returns `Some(rid)` on success (e.g. `0x3000` for High), `None` if
+/// PowerShell exits non-zero or stdout isn't a u32. Spawns one short-lived
+/// `powershell.exe` process per call; only used from `check_permissions`,
+/// which is a low-frequency, user-initiated diagnostic.
+fn read_self_integrity_level_via_powershell() -> Option<u32> {
+    let pid = std::process::id();
+    // Inline the same C# helper we verified externally on the dogfood VM.
+    // Heredoc-wrap (`@" ... "@`) avoids shell-escape acrobatics around the
+    // C# braces / double-quotes. The `Write-Output` at the end is parsed
+    // as a plain integer.
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class IL {{
+    [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(int a, bool i, int p);
+    [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+    [DllImport("advapi32.dll")] public static extern bool OpenProcessToken(IntPtr p, int a, out IntPtr t);
+    [DllImport("advapi32.dll")] public static extern bool GetTokenInformation(IntPtr t, int c, IntPtr i, int l, out int n);
+    [DllImport("advapi32.dll")] public static extern IntPtr GetSidSubAuthority(IntPtr s, int i);
+    [DllImport("advapi32.dll")] public static extern IntPtr GetSidSubAuthorityCount(IntPtr s);
+    public static uint? Rid(int pid) {{
+        var h = OpenProcess(0x1000, false, pid); if (h == IntPtr.Zero) return null;
+        try {{ IntPtr t; if (!OpenProcessToken(h, 0x8, out t)) return null;
+            try {{ int n; GetTokenInformation(t, 25, IntPtr.Zero, 0, out n); if (n == 0) return null;
+                var b = Marshal.AllocHGlobal(n); try {{ if (!GetTokenInformation(t, 25, b, n, out n)) return null;
+                    var s = Marshal.ReadIntPtr(b); var c = Marshal.ReadByte(GetSidSubAuthorityCount(s));
+                    return (uint)Marshal.ReadInt32(GetSidSubAuthority(s, c - 1)); }}
+                finally {{ Marshal.FreeHGlobal(b); }} }}
+            finally {{ CloseHandle(t); }} }}
+        finally {{ CloseHandle(h); }}
+    }}
+}}
+"@
+$rid = [IL]::Rid({pid})
+if ($null -ne $rid) {{ Write-Output ([int]$rid) }}
+"#,
+        pid = pid
+    );
+    let out = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.trim().parse::<u32>().ok()
 }
 
 // ── get_config ────────────────────────────────────────────────────────────────

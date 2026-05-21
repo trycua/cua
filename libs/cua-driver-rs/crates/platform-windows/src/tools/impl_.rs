@@ -929,9 +929,19 @@ impl Tool for LaunchAppTool {
         }
 
         // Resolve the pid's windows so the caller can skip a list_windows
-        // round-trip — same approach as Swift's `resolveWindows`.  Retry
+        // round-trip — same approach as Swift's `resolveWindows`. Retry
         // 5×200ms; Win32 window registration can lag the launch.
+        //
+        // Launcher-stub fallback: when the launched binary is a wrapper that
+        // re-execs and exits (GIMP's `gimp-3.exe` → `gimp-3.2.exe`; LO's
+        // `swriter.exe` → `soffice.bin`), the launched pid never gets a
+        // window — list_windows(Some(pid)) stays empty forever. After the
+        // primary retry budget we fall back to scanning the launched pid's
+        // descendant + name-related processes and pick the first one with a
+        // window. The resolved pid is reflected in the response's `pid` field
+        // so callers can target it with subsequent calls. See #1615.
         let mut windows_json: Vec<serde_json::Value> = Vec::new();
+        let mut resolved_pid: u32 = pid;
         for _ in 0..5 {
             let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                 .await.unwrap_or_default();
@@ -947,6 +957,49 @@ impl Tool for LaunchAppTool {
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+        if windows_json.is_empty() {
+            // Launcher-stub fallback. Compute the exe basename from the
+            // launchable target so name-based matching has something to work
+            // with (e.g. "gimp-3.exe" → prefix "gimp" matches "gimp-3.2.exe").
+            let basename_for_match = target_file_opt
+                .as_deref()
+                .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
+                .unwrap_or("")
+                .to_owned();
+            let candidates = tokio::task::spawn_blocking(move || {
+                crate::win32::related_processes(pid, &basename_for_match)
+            })
+            .await
+            .unwrap_or_default();
+
+            for candidate_pid in candidates.iter().copied() {
+                if candidate_pid == pid { continue; } // already tried
+                // One short retry per candidate — the descendant may also be
+                // still spawning. 3×200ms is the same budget Swift uses for
+                // similar lookups.
+                for _ in 0..3 {
+                    let wins = tokio::task::spawn_blocking(move || {
+                        crate::win32::list_windows(Some(candidate_pid))
+                    })
+                    .await
+                    .unwrap_or_default();
+                    if !wins.is_empty() {
+                        windows_json = wins.iter().map(|w| json!({
+                            "window_id": w.hwnd, "title": w.title,
+                            "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                            "layer": 0,
+                            "z_index": 0,
+                            "is_on_screen": true,
+                        })).collect();
+                        resolved_pid = candidate_pid;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+                if !windows_json.is_empty() { break; }
+            }
+        }
+        let pid = resolved_pid;
 
         // Match Swift text format 1:1.
         let mut summary = format!("✅ Launched {display} (pid {pid}) in background.");

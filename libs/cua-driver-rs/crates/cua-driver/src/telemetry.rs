@@ -7,8 +7,8 @@
 //!
 //! ## Differences from Swift
 //!
-//! - **Install ID path** is `~/.cua-driver-rs/.telemetry_id` (Swift uses
-//!   `~/.cua-driver/.telemetry_id`). Deliberately independent so a user
+//! - **Install ID path** is `~/.cua-driver/.telemetry_id` (matches the
+//!   v0.2.14+ install layout). Swift driver uses the same path. Deliberately
 //!   who opts out of one binary still gets a fresh distinct_id on the other.
 //! - **Opt-out env var** is `CUA_DRIVER_RS_TELEMETRY_ENABLED=false` (Swift
 //!   uses `CUA_DRIVER_TELEMETRY_ENABLED`). Same reason — opting out of one
@@ -40,8 +40,16 @@ const POSTHOG_CAPTURE_URL: &str = "https://eu.i.posthog.com/capture/";
 /// events, not read them. Matches Swift `TelemetryClient.Constants.apiKey`.
 const POSTHOG_API_KEY: &str = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
 
-/// `~/.cua-driver-rs/` subdirectory (Rust-specific — Swift uses `.cua-driver`).
-const HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
+/// `~/.cua-driver/` subdirectory. Renamed from `.cua-driver-rs/` in v0.2.16
+/// to match the install path rename (PR #1644). The Swift driver uses the
+/// same path — telemetry files are namespaced by filename, not directory.
+///
+/// One-time migration: if `~/.cua-driver-rs/.telemetry_id` exists but the
+/// new `~/.cua-driver/.telemetry_id` doesn't, the legacy file is moved to
+/// the new location (preserving the per-install UUID so analytics continuity
+/// survives the rename). See `migrate_legacy_telemetry_home` below.
+const HOME_SUBDIRECTORY: &str = ".cua-driver";
+const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
 
 /// Filename inside the home subdirectory holding the per-install UUID.
 const TELEMETRY_ID_FILE_NAME: &str = ".telemetry_id";
@@ -201,12 +209,49 @@ where
 
 // ── Internals ────────────────────────────────────────────────────────────
 
-/// Resolve `~/.cua-driver-rs`. Returns `None` only on the platform-impossible
+/// Resolve `~/.cua-driver`. Returns `None` only on the platform-impossible
 /// case where neither `HOME` (Unix) nor `USERPROFILE` (Windows) is set.
 fn telemetry_home_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(HOME_SUBDIRECTORY))
+}
+
+/// One-shot migration: when the legacy `~/.cua-driver-rs/` exists, move its
+/// telemetry files into the new `~/.cua-driver/` directory and remove the
+/// legacy dir. Best-effort — if anything fails (legacy dir not present,
+/// permissions, locks), we silently fall through and the daemon proceeds
+/// with the new path. Called once per process start from
+/// `load_or_create_install_id_uncached`.
+fn migrate_legacy_telemetry_home() {
+    let Some(home_root) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+    else {
+        return;
+    };
+    let legacy_dir = PathBuf::from(&home_root).join(LEGACY_HOME_SUBDIRECTORY);
+    if !legacy_dir.is_dir() {
+        return;
+    }
+    let new_dir = PathBuf::from(&home_root).join(HOME_SUBDIRECTORY);
+    let _ = std::fs::create_dir_all(&new_dir);
+
+    // Move the two known telemetry markers if they exist + the new
+    // location doesn't already have them (avoid clobbering newer state).
+    for name in [TELEMETRY_ID_FILE_NAME, INSTALLATION_RECORDED_FILE_NAME] {
+        let legacy_path = legacy_dir.join(name);
+        let new_path = new_dir.join(name);
+        if legacy_path.exists() && !new_path.exists() {
+            let _ = std::fs::rename(&legacy_path, &new_path);
+        }
+        // Also delete the legacy file if it lingered for any reason — we
+        // never want to leave the legacy directory inhabited.
+        let _ = std::fs::remove_file(&legacy_path);
+    }
+    // Try to remove the legacy directory. Only succeeds if it's empty,
+    // which is the only case where removal is safe (we don't want to
+    // delete user-placed files we don't know about).
+    let _ = std::fs::remove_dir(&legacy_dir);
 }
 
 /// Read the per-install UUID, creating + persisting a fresh one if absent
@@ -223,6 +268,10 @@ fn get_or_create_install_id() -> String {
 /// Separated from the `OnceLock` wrapper so tests can exercise the path logic
 /// without contaminating process-global state.
 fn load_or_create_install_id_uncached() -> String {
+    // Migrate legacy telemetry files from `.cua-driver-rs/` → `.cua-driver/`
+    // before reading the new path. Best-effort; idempotent.
+    migrate_legacy_telemetry_home();
+
     let Some(home_dir) = telemetry_home_dir() else {
         // No HOME — generate an ephemeral UUID. Telemetry will still send,
         // but the distinct_id won't be stable across runs. Acceptable

@@ -220,7 +220,18 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             if sx < rect.left || sx > rect.right || sy < rect.top || sy > rect.bottom {
                 continue;
             }
-            if elem.GetCurrentPattern(UIA_InvokePatternId).is_err() {
+            // Accept elements that support EITHER InvokePattern OR
+            // ExpandCollapsePattern. Qt menu-bar items advertise both —
+            // Invoke does nothing on them, only Expand opens the submenu.
+            // (See FreeCAD finding 2026-05-21: clicking File menu via Invoke
+            // returned ✅ but the menu never opened.)
+            let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
+            let has_expand = elem
+                .GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                )
+                .is_ok();
+            if !has_invoke && !has_expand {
                 continue;
             }
             let w = (rect.right - rect.left).max(0) as i64;
@@ -237,11 +248,49 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             None => {
                 tracing::debug!(
                     target: "click",
-                    "no InvokePattern descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
+                    "no Invoke/ExpandCollapse descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
                 );
                 return false;
             }
         };
+        // Pattern preference for menu items: when both Invoke AND
+        // ExpandCollapse are advertised, the element is almost always a
+        // top-level MenuItem whose intended click behaviour is "open the
+        // submenu" — Invoke would be a no-op. Prefer ExpandCollapse.Expand
+        // in that case. Pure-Invoke leaves (buttons, links, etc.) go
+        // through Invoke as before.
+        let winner_has_expand = winner
+            .GetCurrentPattern(
+                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+            )
+            .is_ok();
+        let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
+        if winner_has_expand && winner_has_invoke {
+            // Try Expand first, fall back to Invoke if Expand fails.
+            if let Ok(pat) = winner.GetCurrentPattern(
+                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+            ) {
+                if let Ok(ec) = pat
+                    .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                {
+                    if ec.Expand().is_ok() {
+                        return true;
+                    }
+                }
+            }
+            // Expand failed — fall through to Invoke as best-effort.
+        } else if winner_has_expand && !winner_has_invoke {
+            if let Ok(pat) = winner.GetCurrentPattern(
+                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+            ) {
+                if let Ok(ec) = pat
+                    .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                {
+                    return ec.Expand().is_ok();
+                }
+            }
+            return false;
+        }
         let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
             Ok(p) => p,
             Err(_) => return false,

@@ -206,9 +206,34 @@ pub fn parse_command() -> Command {
         }
         Some("call") => {
             let tool = pos.next().unwrap_or("").to_string();
-            let json_args = pos.next()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .or_else(|| read_stdin_json());
+            // Differentiate "no positional arg" (fall back to stdin) from
+            // "positional arg given but didn't parse as JSON" (surface the
+            // error instead of silently falling back to stdin and letting
+            // the tool's required-field validator emit a misleading
+            // "missing field X" later). See #1637.
+            //
+            // The common cause of an unparseable positional arg is
+            // PowerShell 5.1's native-command-arg quote-stripping on
+            // multi-field JSON — `'{"a":1,"b":2}'` arrives as `{a:1,b:2}`
+            // which serde_json rejects. The error message points users at
+            // the stdin-pipe workaround.
+            let json_args = match pos.next() {
+                Some(s) => match serde_json::from_str(s) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        eprintln!("error: positional JSON arg to 'cua-driver call' did not parse: {e}");
+                        eprintln!("       received: {s}");
+                        eprintln!();
+                        eprintln!("hint: PowerShell 5.1 strips quotes around JSON field names in");
+                        eprintln!("      multi-field args. Pipe the JSON via stdin instead:");
+                        eprintln!("        '{{\"pid\":1234,\"window_id\":5678}}' | cua-driver call {}", tool);
+                        eprintln!();
+                        eprintln!("      Or use PowerShell 7+ (pwsh) which preserves the quotes.");
+                        process::exit(2);
+                    }
+                },
+                None => read_stdin_json(),
+            };
             Command::Call { tool, json_args, screenshot_out_file }
         }
         Some("telemetry") => {
@@ -251,10 +276,25 @@ pub fn parse_command() -> Command {
         }
         Some(first) => {
             // Implicit call: unrecognised first positional → treat as tool name.
+            // Same parse-error handling as the explicit `call` branch above. See #1637.
             let tool = first.to_string();
-            let json_args = pos.next()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .or_else(|| read_stdin_json());
+            let json_args = match pos.next() {
+                Some(s) => match serde_json::from_str(s) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        eprintln!("error: positional JSON arg to 'cua-driver {tool}' did not parse: {e}");
+                        eprintln!("       received: {s}");
+                        eprintln!();
+                        eprintln!("hint: PowerShell 5.1 strips quotes around JSON field names in");
+                        eprintln!("      multi-field args. Pipe the JSON via stdin instead:");
+                        eprintln!("        '{{\"pid\":1234,\"window_id\":5678}}' | cua-driver {}", tool);
+                        eprintln!();
+                        eprintln!("      Or use PowerShell 7+ (pwsh) which preserves the quotes.");
+                        process::exit(2);
+                    }
+                },
+                None => read_stdin_json(),
+            };
             Command::Call { tool, json_args, screenshot_out_file }
         }
     }

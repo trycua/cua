@@ -174,15 +174,16 @@ fn probe_install_layout() -> Probe {
     }
 }
 
-/// Probe: package-home directory (`~/.cua-driver-rs`) — counts cached
+/// Probe: package-home directory (`~/.cua-driver`) — counts cached
 /// release dirs so the user can sanity-check
-/// `CUA_DRIVER_RS_KEEP_VERSIONS` is doing the right thing.
+/// `CUA_DRIVER_RS_KEEP_VERSIONS` is doing the right thing. Renamed from
+/// `.cua-driver-rs/` in v0.2.16 to match the install-path rename (PR #1644).
 fn probe_home_dir() -> Probe {
     let home = match home_dir() {
         Some(h) => h,
         None => return Probe::warn("home dir", "neither HOME nor USERPROFILE set"),
     };
-    let cua_home = home.join(".cua-driver-rs");
+    let cua_home = home.join(".cua-driver");
     if !cua_home.exists() {
         return Probe::warn(
             "home dir",
@@ -220,7 +221,7 @@ fn probe_telemetry() -> Probe {
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
         .unwrap_or(false);
     let install_id_present = home_dir()
-        .map(|h| h.join(".cua-driver-rs").join(".telemetry_id").exists())
+        .map(|h| h.join(".cua-driver").join(".telemetry_id").exists())
         .unwrap_or(false);
     if env_disabled {
         Probe::ok(

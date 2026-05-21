@@ -1603,12 +1603,33 @@ impl Tool for HotkeyTool {
             };
         }
 
+        // Non-XAML Win32 path. Two routes available:
+        //   1. SendInput synthesized hotkey — pushes the events onto the
+        //      *system input queue*. Updates GetKeyState's modifier state, so
+        //      TranslateAccelerator-based apps (LibreOffice, FAR, classic
+        //      Notepad, etc.) see Ctrl+S as a real accelerator. Trade-off:
+        //      brief focus theft to ensure SendInput lands on the right HWND.
+        //   2. PostMessage WM_KEYDOWN/UP — no focus theft, but the
+        //      synthesized Ctrl/Shift/Alt modifier never updates
+        //      GetKeyState, so accelerators don't fire. Only useful for
+        //      non-accelerator key sequences.
+        // We pick route 1 when modifiers are present (the accelerator case),
+        // route 2 otherwise (plain non-modifier keys still post fine).
+        let has_modifiers = !mods.is_empty();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-            crate::input::post_key(hwnd, &key, &m)
+            if has_modifiers {
+                crate::input::send_key_synthesized(hwnd, &key, &m)
+            } else {
+                crate::input::post_key(hwnd, &key, &m)
+            }
         }).await;
+        let path = if has_modifiers { "SendInput" } else { "PostMessage" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Pressed {key_display} on pid {raw_pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Pressed {key_display} on pid {raw_pid} via {path} \
+                 (Win32 target)."
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

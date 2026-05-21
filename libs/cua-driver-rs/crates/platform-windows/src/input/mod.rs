@@ -15,6 +15,7 @@ pub mod keyboard;
 pub use mouse::{post_click, post_click_screen};
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,
+    send_key_synthesized,
 };
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};

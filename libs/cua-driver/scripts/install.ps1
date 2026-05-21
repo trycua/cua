@@ -14,12 +14,19 @@
 # Layout on disk (three tiers, two directory junctions):
 #
 #   <visibleBinDir>            [directory junction → currentDir]
-#     = %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin
+#     = %LOCALAPPDATA%\Programs\Cua\cua-driver\bin
 #   <currentDir>               [directory junction → release dir]
-#     = %USERPROFILE%\.cua-driver-rs\packages\current
+#     = %USERPROFILE%\.cua-driver\packages\current
 #   <release dir>              [real directory, immutable per version]
-#     = %USERPROFILE%\.cua-driver-rs\packages\releases\<version>-<target>
+#     = %USERPROFILE%\.cua-driver\packages\releases\<version>-<target>
 #         cua-driver.exe
+#
+# Path layout renamed v0.2.14: `Programs\trycua\cua-driver-rs\` →
+# `Programs\Cua\cua-driver\` and `.cua-driver-rs\` → `.cua-driver\`. The
+# Rust port IS the canonical Windows driver now (no `-rs` suffix needed),
+# and `trycua` is the GitHub org prefix that doesn't belong in
+# %LOCALAPPDATA%\Programs. Legacy installs are auto-migrated at the next
+# `irm install.ps1 | iex` run.
 #
 # PATH consumers see <visibleBinDir>; the contents are transparently
 # served from whichever release the inner junction currently points at.
@@ -34,9 +41,9 @@
 # Env overrides:
 #   $env:CUA_DRIVER_RS_VERSION       pin a specific release (e.g. "0.2.0")
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   override the visible PATH-entry dir
-#                                    (default %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin)
+#                                    (default %LOCALAPPDATA%\Programs\Cua\cua-driver\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
-#                                    (default %USERPROFILE%\.cua-driver-rs)
+#                                    (default %USERPROFILE%\.cua-driver)
 #   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
 #                                    release dirs after install; older ones
 #                                    are deleted (default 5; set 0 to
@@ -107,14 +114,32 @@ $Script:CuaDriverRsBakedVersion = "0.2.13"
 if ($env:CUA_DRIVER_RS_INSTALL_DIR) {
     $VisibleBinDir = $env:CUA_DRIVER_RS_INSTALL_DIR
 } else {
-    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+    # Path layout renamed v0.2.14: `Programs\trycua\cua-driver-rs\` →
+    # `Programs\Cua\cua-driver\`. The Rust port IS the canonical Windows
+    # driver now (no more `-rs` suffix needed in user-facing paths), and
+    # `trycua` is the GitHub org prefix that doesn't belong in
+    # %LOCALAPPDATA% — vendor folders there are conventionally PascalCase
+    # company names. The env var name keeps the `_RS_` infix so existing
+    # automation pinning a custom install dir doesn't break silently.
+    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin"
 }
+
+# Legacy install paths from v0.2.13 and earlier. The uninstall path checks
+# both; the install path nukes any legacy install before laying down the
+# new one, so v0.2.13 → v0.2.14+ is a transparent upgrade.
+$LegacyVisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+$LegacyVendorDir     = Join-Path $env:LOCALAPPDATA "Programs\trycua"
 
 if ($env:CUA_DRIVER_RS_HOME) {
     $HomeDir = $env:CUA_DRIVER_RS_HOME
 } else {
-    $HomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
+    # Same rename: `.cua-driver-rs/` → `.cua-driver/`. The `-rs` suffix
+    # was the Rust-port-vs-Swift-driver disambiguator while the Swift one
+    # still existed for Windows; it doesn't anymore.
+    $HomeDir = Join-Path $env:USERPROFILE ".cua-driver"
 }
+
+$LegacyHomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
 
 $PackagesDir = Join-Path $HomeDir   "packages"
 $ReleasesDir = Join-Path $PackagesDir "releases"
@@ -849,6 +874,99 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
 Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
+
+function Remove-LegacyInstall {
+    # Best-effort cleanup of v0.2.13-and-earlier install paths. Runs before
+    # any new install when default paths are in use (so users who override
+    # CUA_DRIVER_RS_INSTALL_DIR / CUA_DRIVER_RS_HOME aren't surprised by us
+    # touching legacy locations). Mirrors uninstall.ps1's logic so the
+    # transition is symmetric: a single `irm install.ps1 | iex` upgrades
+    # from v0.2.13 → v0.2.14+ without orphan files at the old layout.
+    if ($env:CUA_DRIVER_RS_INSTALL_DIR -or $env:CUA_DRIVER_RS_HOME) {
+        return
+    }
+    $hasLegacy = (Test-Path -LiteralPath $LegacyVisibleBinDir) -or `
+                 (Test-Path -LiteralPath $LegacyHomeDir)
+    if (-not $hasLegacy) { return }
+
+    Write-Step "detected legacy install layout (v0.2.13 or earlier); migrating to Cua\cua-driver"
+
+    # 1. Stop any cua-driver / cua-driver-uia daemon that's pinning the
+    #    legacy binary directory open. Use the regular Get-Process route —
+    #    these are user-owned processes, kill is allowed.
+    $procs = Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue
+    if ($procs) {
+        foreach ($p in $procs) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    # 2. Unregister the autostart Scheduled Task if present. Idempotent —
+    #    schtasks /Query returns non-zero when the task is absent, which we
+    #    swallow (matches uninstall.ps1's pattern for the same call).
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & schtasks.exe /Delete /TN "cua-driver-serve" /F 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+
+    # 3. Remove the visible bin junction (only when it's actually a reparse
+    #    point — refuse to clobber a real directory). Then walk up and
+    #    remove the empty `trycua` vendor dir if nothing else lives there.
+    if (Test-Path -LiteralPath $LegacyVisibleBinDir) {
+        try {
+            $item = Get-Item -LiteralPath $LegacyVisibleBinDir -Force -ErrorAction Stop
+            $isReparse = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+            if ($isReparse) {
+                # NTFS junction — delete the link, not the target.
+                [System.IO.Directory]::Delete($LegacyVisibleBinDir, $false)
+            } else {
+                Remove-Item -LiteralPath $LegacyVisibleBinDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            Write-Host "  (could not remove $LegacyVisibleBinDir : $($_.Exception.Message))" -ForegroundColor Yellow
+        }
+    }
+    # Remove the parent `cua-driver-rs` dir (now empty) and the vendor
+    # `trycua` dir if no other apps live under it.
+    $legacyParent = Split-Path -Parent $LegacyVisibleBinDir
+    if ((Test-Path -LiteralPath $legacyParent) -and -not (Get-ChildItem -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue
+    }
+    if ((Test-Path -LiteralPath $LegacyVendorDir) -and -not (Get-ChildItem -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue
+    }
+
+    # 4. Remove the legacy package home tree.
+    if (Test-Path -LiteralPath $LegacyHomeDir) {
+        try {
+            Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Host "  (could not remove $LegacyHomeDir : $($_.Exception.Message))" -ForegroundColor Yellow
+        }
+    }
+
+    # 5. Prune the legacy bin dir from User PATH. The new install will add
+    #    the new path right after this; without removing the old we'd
+    #    accumulate stale PATH entries on every upgrade.
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath) {
+        $legacyNorm = $LegacyVisibleBinDir.TrimEnd('\').ToLowerInvariant()
+        $cleaned = ($userPath -split ';' |
+            Where-Object { $_ -and $_.TrimEnd('\').ToLowerInvariant() -ne $legacyNorm }) -join ';'
+        if ($cleaned -ne $userPath) {
+            [Environment]::SetEnvironmentVariable('Path', $cleaned, 'User')
+            Write-Step "  pruned legacy $LegacyVisibleBinDir from User PATH"
+        }
+    }
+
+    Write-Step "legacy install removed"
+}
+
+Remove-LegacyInstall
 
 # Serialize concurrent installs per $HomeDir. The lock is released in
 # the finally below — covers normal exit, errors, and Ctrl-C (which

@@ -3129,18 +3129,60 @@ impl Tool for CheckPermissionsTool {
         //
         // TokenIntegrityLevel asks the kernel directly: what IL is this token
         // at? RID 0x3000 (High) or higher == elevated; anything below is not.
-        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        //
+        // #1646: PR #1641's initial implementation called
+        // `OpenProcessToken(GetCurrentProcess(), ...)` and STILL misreported
+        // High-IL daemons as Medium IL. Root cause: the named-pipe server's
+        // handler thread can be left impersonating the connecting client
+        // (cuademo's Medium-IL shell, in the failing case), and on Windows
+        // the impersonation token leaks through `GetCurrentProcess()`'s
+        // pseudo-handle in a way that returns the impersonation token's IL
+        // rather than the primary token's. Two-part fix:
+        //   1. `RevertToSelf()` at the top — drops any active impersonation
+        //      on this thread so subsequent token queries see the primary.
+        //   2. `OpenProcess(GetCurrentProcessId())` — uses an explicit
+        //      handle to the daemon's own process, mirroring the working
+        //      C# diagnostic (Win32 OpenProcess + OpenProcessToken from a
+        //      Medium-IL shell against the daemon's pid). Avoids any
+        //      pseudo-handle quirks.
+        use windows::Win32::System::Threading::{
+            GetCurrentProcessId, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
         use windows::Win32::Security::{
-            GetTokenInformation, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
-            GetSidSubAuthority, GetSidSubAuthorityCount,
+            GetTokenInformation, RevertToSelf, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL,
+            TOKEN_QUERY, GetSidSubAuthority, GetSidSubAuthorityCount,
         };
 
         const HIGH_IL_RID: u32 = 0x3000;
 
         let il_rid: Option<u32> = unsafe {
-            let proc = GetCurrentProcess();
+            // Drop any impersonation on this thread before we query. The
+            // call returns BOOL — if there's nothing to revert it returns
+            // FALSE with ERROR_NO_TOKEN, which is fine and not an error.
+            let _ = RevertToSelf();
+
+            let proc_handle = match OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                GetCurrentProcessId(),
+            ) {
+                Ok(h) => h,
+                Err(_) => {
+                    // Should never happen — we always have rights to query
+                    // our own process. Bail and report Unavailable.
+                    return ToolResult::text("Process integrity level: Unavailable (OpenProcess on self failed)")
+                        .with_structured(json!({
+                            "elevated": false,
+                            "integrity_level": "Unavailable",
+                            "integrity_level_rid": serde_json::Value::Null,
+                            "uia": true,
+                            "post_message": true,
+                        }));
+                }
+            };
             let mut token = windows::Win32::Foundation::HANDLE::default();
-            if OpenProcessToken(proc, TOKEN_QUERY, &mut token).is_err() {
+            if OpenProcessToken(proc_handle, TOKEN_QUERY, &mut token).is_err() {
+                let _ = windows::Win32::Foundation::CloseHandle(proc_handle);
                 None
             } else {
                 let mut needed: u32 = 0;
@@ -3188,6 +3230,7 @@ impl Tool for CheckPermissionsTool {
                     }
                 };
                 let _ = windows::Win32::Foundation::CloseHandle(token);
+                let _ = windows::Win32::Foundation::CloseHandle(proc_handle);
                 rid
             }
         };

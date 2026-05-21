@@ -1109,6 +1109,17 @@ function Add-UserPathEntry([string]$dir) {
         $newValue = $dir
     }
     [Environment]::SetEnvironmentVariable("Path", $newValue, "User")
+
+    # Also update the CURRENT process's $env:Path so `cua-driver` resolves
+    # immediately in the same shell — the SetEnvironmentVariable('User') call
+    # above only writes to the registry; existing processes have their
+    # $env:Path cached at launch time and don't see the update otherwise.
+    # The install.ps1 body runs in the caller's shell via iex (per the
+    # `irm install.ps1 | iex` one-liner), so writing $env:Path here mutates
+    # exactly the shell the user is typing into. See #1651.
+    if (-not (($env:Path -split ';') -contains $dir)) {
+        $env:Path = "$dir;$env:Path"
+    }
 }
 
 function Write-ManualPathInstructions([string]$dir) {
@@ -1117,7 +1128,7 @@ function Write-ManualPathInstructions([string]$dir) {
     Write-Host ""
     Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$dir`", 'User')"
     Write-Host ""
-    Write-Host "Then open a new PowerShell window. To use it in the current session:"
+    Write-Host "To use it in the current session immediately:"
     Write-Host ""
     Write-Host "  `$env:Path += `";$dir`""
     Write-Host ""
@@ -1143,8 +1154,7 @@ else {
     try {
         Add-UserPathEntry $VisibleBinDir
         Write-Host "Added $VisibleBinDir to your User PATH." -ForegroundColor Green
-        Write-Host '  cua-driver will resolve in any NEW PowerShell window.'
-        Write-Host '  In THIS shell, invoke via the full Binary path printed below.'
+        Write-Host '  cua-driver resolves immediately in THIS shell and in any new shell.'
         Write-Host '  Opt out next time with: install.ps1 -NoPathUpdate'
         Write-Host ""
     }

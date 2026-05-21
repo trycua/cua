@@ -70,6 +70,23 @@ irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/in
 
 The legacy `libs/cua-driver-rs/scripts/install.{sh,ps1}` URLs continue to work via backward-compat shims that redirect to the canonical installers — Hermes and any other integration that hardcodes the old URLs keep working unchanged.
 
+<Callout type="warn">
+  **Known issue on Windows PowerShell 5.1**: `install.ps1` currently fails to parse on stock Windows PowerShell 5.1 (the version shipped with Windows 10 / Server 2019 / Server 2025) due to backtick + ampersand escaping in the post-install hint block — see [#1626](https://github.com/trycua/cua/issues/1626). Workaround until that lands: manual zip install:
+
+  ```powershell
+  $version = "0.2.9"
+  $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x86_64' }
+  $url = "https://github.com/trycua/cua/releases/download/cua-driver-rs-v$version/cua-driver-rs-$version-windows-$arch-binary.zip"
+  iwr $url -OutFile $env:TEMP\cua.zip -UseBasicParsing
+  $dest = "$env:LOCALAPPDATA\Programs\trycua\cua-driver-rs\bin"
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  Expand-Archive -Force -Path $env:TEMP\cua.zip -DestinationPath $dest
+  [Environment]::SetEnvironmentVariable('Path', "$dest;" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')
+  ```
+
+  PowerShell 7+ (`pwsh`) parses `install.ps1` correctly, so the one-liner works there.
+</Callout>
+
 The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
 
 It runs **without admin** and **without Developer Mode**.

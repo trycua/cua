@@ -304,8 +304,38 @@ fn scan_uwp_packages() -> Vec<InstalledApp> {
     });
 
     match result {
-        Ok(Ok(v)) => v,
-        _ => Vec::new(),
+        Ok(Ok(v)) => {
+            // #1636: when scan_uwp_packages returns 0 packages, log a warning
+            // so users hitting the "Calculator isn't in list_apps" gap see a
+            // hint immediately instead of silently empty output. The Windows
+            // packaging stack reliably has Microsoft.WindowsCalculator and
+            // similar OS-bundled UWP apps registered for every user that's
+            // logged in interactively at least once, so a zero result usually
+            // means PackageManager.FindPackagesWithPackageTypes failed
+            // silently (rare COM hiccup, locale issue, etc.) rather than a
+            // truly empty package set. Surfacing this in tracing lets users
+            // and triage agents (#1636) diagnose without an extra Win32 round-
+            // trip. Set RUST_LOG=installed_apps=warn to see the message.
+            if v.is_empty() {
+                tracing::warn!(
+                    target: "installed_apps",
+                    "scan_uwp_packages: WinRT PackageManager.FindPackagesWithPackageTypes(Main) \
+                     returned 0 UWP packages. Expected at least the OS-bundled apps \
+                     (Calculator, modern Settings, Photos, ...). See #1636 — usually means \
+                     either a COM activation hiccup or a per-user package context the daemon \
+                     can't see. Cross-check with PowerShell `Get-AppxPackage`."
+                );
+            }
+            v
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(target: "installed_apps", "scan_uwp_packages: WinRT error: {e}");
+            Vec::new()
+        }
+        Err(_) => {
+            tracing::warn!(target: "installed_apps", "scan_uwp_packages: panicked (very old Windows?)");
+            Vec::new()
+        }
     }
 }
 

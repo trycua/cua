@@ -26,8 +26,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetWindowThreadProcessId, IsChild,
     PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{AttachThreadInput, GetFocus};
-use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 
 // ── XAML / UWP host detection ────────────────────────────────────────────────
 //

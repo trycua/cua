@@ -843,8 +843,15 @@ impl Tool for LaunchAppTool {
         }
 
         if target.is_none() && urls.is_empty() {
-            // Match Swift's wording verbatim.
-            return ToolResult::error("Provide either bundle_id or name to identify the app to launch.");
+            // Error message lists every field the resolver actually accepts.
+            // The Swift-original "bundle_id or name" message predated the Windows
+            // additions (aumid, path, launch_path, urls) and made #1635 look like
+            // an aumid-specific bug. The actual cause of #1635 was the upstream
+            // PS argv quote-stripping bug fixed in #1637; this message just stops
+            // misleading anyone who hits the error for unrelated reasons.
+            return ToolResult::error(
+                "Provide one of: bundle_id, name, aumid, path, launch_path, or urls to identify the app to launch.",
+            );
         }
 
         // ── Packaged-app (UWP / MSIX) routing decision ──────────────────────

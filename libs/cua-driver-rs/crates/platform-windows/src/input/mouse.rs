@@ -4,14 +4,21 @@
 //! (via ChildWindowFromPointEx), so the message never reaches the top-level
 //! chrome that would call SetForegroundWindow in response to WM_LBUTTONDOWN.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use std::thread::sleep;
 use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
+    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
-    PostMessageW, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    GetCursorPos, GetForegroundWindow, GetSystemMetrics, PostMessageW, SetCursorPos,
+    SetForegroundWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
 };
 
@@ -162,4 +169,192 @@ pub fn post_drag(
 /// Pack two 16-bit integers into a LPARAM (low word = x, high word = y).
 fn make_lparam(x: i32, y: i32) -> LPARAM {
     LPARAM((((y as u16 as u32) << 16) | (x as u16 as u32)) as isize)
+}
+
+/// Returns `true` when `hwnd` is a top-level frame of a Chromium-based browser
+/// — Edge, Chrome, Brave, Vivaldi, Opera, Chromium, Arc, Thorium, Iridium,
+/// Yandex, or any other Chromium-derivative. Matches by window class name,
+/// which is stable across versions and consistent across Chromium forks.
+///
+/// Chromium uses the window class `Chrome_WidgetWin_1` (or `Chrome_WidgetWin_0`
+/// for in-process child frames; both should be treated the same way). Electron
+/// apps that embed Chromium also use this class, so Electron app coord clicks
+/// will route through the SendInput path too — that's intentional, same root
+/// cause (#1623).
+///
+/// Cheap call: one `GetClassNameW` to a 32-char buffer + a `matches!` against
+/// the known prefixes. Suitable to call inline in the click dispatch hot path.
+pub fn is_chromium_target_window(hwnd: u64) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    if hwnd == 0 {
+        tracing::debug!(target: "click", "is_chromium_target_window: hwnd=0 short-circuit");
+        return false;
+    }
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(HWND(hwnd as *mut _), &mut buf) };
+    if n <= 0 {
+        tracing::debug!(
+            target: "click",
+            "is_chromium_target_window: GetClassNameW returned {n} for hwnd=0x{hwnd:x}"
+        );
+        return false;
+    }
+    let class_name = String::from_utf16_lossy(&buf[..n as usize]);
+    // Chromium-family classes. Match by prefix because Chromium suffixes a
+    // 0/1 digit; future Chromium forks may use other suffixes.
+    let is_chromium = class_name.starts_with("Chrome_WidgetWin_")
+        // Electron sometimes uses CefBrowserWindow or similar — be permissive.
+        || class_name.starts_with("CefBrowser");
+    tracing::debug!(
+        target: "click",
+        "is_chromium_target_window: hwnd=0x{hwnd:x} class={class_name:?} → {is_chromium}"
+    );
+    is_chromium
+}
+
+/// Click at **screen** coordinates `(sx, sy)` via `SendInput` against the
+/// system input queue, briefly focusing `target` so the click lands there.
+///
+/// Why this exists alongside `post_click_screen`: PostMessage(WM_LBUTTONDOWN)
+/// to Chromium-based browsers' top-level frame HWND (or Chrome_RenderWidgetHostHWND
+/// descendant) doesn't fire DOM `onclick` / `mousedown` handlers. Chromium's
+/// input thread architecture requires events with `SendInput`-queue origin —
+/// the same constraint that broke modifier-state hotkey delivery (#1614/#1618)
+/// applies to coord clicks on Chromium content (#1623).
+///
+/// `SendInput` puts the synthetic mouse events on the **system input queue**,
+/// where Chromium's input filter accepts them. The trade-off is a brief
+/// foreground swap + visible cursor jump (mitigated by saving/restoring the
+/// previous foreground HWND and previous cursor position after the click).
+///
+/// UIAccess constraint: `SetForegroundWindow` is restricted from non-UIAccess
+/// processes when not driven by user input. The `cua-driver-uia` worker runs
+/// at UIAccess integrity precisely so this restriction is lifted; outside the
+/// worker, the foreground swap may silently fail and SendInput land on the
+/// wrong window. Callers should funnel Chromium coord clicks through the
+/// uia worker (the MCP proxy already prefers the uia pipe over the regular
+/// pipe when both are running).
+pub fn send_click_synthesized(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+) -> Result<()> {
+    let target = HWND(target as *mut _);
+    if target.0.is_null() {
+        bail!("invalid target hwnd");
+    }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
+        // Same UIPI defense as PostMessage path — SendInput from non-UIAccess
+        // would fail just as silently as PostMessage when target is at higher
+        // integrity. Surface the diagnostic early.
+        bail!(msg);
+    }
+
+    let (down_flag, up_flag) = match button {
+        "right"  => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        _        => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+    };
+
+    // Convert screen pixel coords to normalized absolute coords spanning the
+    // virtual desktop (0..65535 across the union of all monitors). This is
+    // what `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` expects.
+    //
+    // Without VIRTUALDESK the coords are relative to the primary monitor only;
+    // multi-monitor setups would misroute. Better to always use VIRTUALDESK.
+    let (vd_x, vd_y) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        )
+    };
+    let (vd_w, vd_h) = unsafe {
+        (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
+        )
+    };
+    let norm_x = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
+    let norm_y = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
+
+    let move_input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: norm_x,
+                dy: norm_y,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let down_input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: norm_x, dy: norm_y, mouseData: 0,
+                dwFlags: down_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                time: 0, dwExtraInfo: 0,
+            },
+        },
+    };
+    let up_input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: norm_x, dy: norm_y, mouseData: 0,
+                dwFlags: up_flag | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                time: 0, dwExtraInfo: 0,
+            },
+        },
+    };
+
+    unsafe {
+        // Save previous foreground + cursor position so we can restore.
+        let prev_fg = GetForegroundWindow();
+        let mut prev_cursor = POINT::default();
+        let _ = GetCursorPos(&mut prev_cursor);
+
+        // Focus the target so the click lands there (mirrors send_key_synthesized).
+        let _ = SetForegroundWindow(target);
+        sleep(Duration::from_millis(8));
+
+        // Move the cursor first so the OS hover state matches before the click.
+        // `SetCursorPos` is the visible cursor move; the MOUSEEVENTF_MOVE input
+        // ensures Chromium's input filter sees a coordinated move event.
+        let _ = SetCursorPos(sx, sy);
+
+        let count = count.max(1);
+        for i in 0..count {
+            let events = [move_input, down_input, up_input];
+            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+            if sent as usize != events.len() {
+                // Partial insertion — restore foreground+cursor and bail with
+                // the standard "needs UIAccess worker" diagnostic.
+                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+                let _ = SetForegroundWindow(prev_fg);
+                bail!(
+                    "SendInput inserted only {sent} of {} mouse events. Likely cause: \
+                     the daemon is not at UIAccess integrity, so SetForegroundWindow was \
+                     rejected and the events landed on the wrong window. Route Chromium \
+                     coord clicks through the cua-driver-uia worker.",
+                    events.len()
+                );
+            }
+            if i + 1 < count {
+                sleep(Duration::from_millis(80));
+            }
+        }
+
+        // Brief settle so the target processes the click before we restore.
+        sleep(Duration::from_millis(40));
+        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+        let _ = SetForegroundWindow(prev_fg);
+    }
+
+    Ok(())
 }

@@ -115,6 +115,15 @@ mod platform {
     /// install.ps1 surfaces any divergence; the moment install.ps1 changes
     /// shape, this script needs the same edit.
     ///
+    /// **Hidden-console launch (issue #1645):** the task action wraps
+    /// `cua-driver.exe serve` in `powershell -WindowStyle Hidden` +
+    /// `Start-Process -WindowStyle Hidden`. Without this, Task Scheduler
+    /// allocates a new CUI console window (because `cua-driver.exe` is a
+    /// console-subsystem binary) that stays visible on the user's desktop
+    /// for the lifetime of the daemon. The PowerShell wrapper exits
+    /// immediately after spawning the child, leaving only `cua-driver.exe`
+    /// in the process tree.
+    ///
     /// **RunLevel = Highest** (since 2026-05-21): the daemon is registered to
     /// run at the user's elevated/admin token rather than the filtered
     /// standard-user token. This is what lets the daemon drive UWP /
@@ -145,7 +154,18 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
     $domain = $env:COMPUTERNAME
 }
 $user = "$domain\$env:USERNAME"
-$action = New-ScheduledTaskAction -Execute $env:CUA_DRIVER_AS_EXE -Argument 'serve' -WorkingDirectory $env:USERPROFILE
+# Use a hidden PowerShell wrapper as the task action so Windows never
+# allocates a visible console window when the daemon is launched at
+# logon. cua-driver.exe is a CUI (console-subsystem) binary: without
+# this wrapper, Task Scheduler allocates a new console and the window
+# stays on the user's desktop for the lifetime of the daemon (issue #1645).
+# Start-Process -WindowStyle Hidden spawns the child fully detached;
+# the powershell.exe wrapper exits immediately after, leaving only the
+# cua-driver.exe daemon in the process tree.
+$action = New-ScheduledTaskAction `
+    -Execute 'powershell.exe' `
+    -Argument "-NoProfile -WindowStyle Hidden -NonInteractive -Command `"Start-Process -FilePath '$env:CUA_DRIVER_AS_EXE' -ArgumentList 'serve' -WindowStyle Hidden -WorkingDirectory '$env:USERPROFILE'`"" `
+    -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)

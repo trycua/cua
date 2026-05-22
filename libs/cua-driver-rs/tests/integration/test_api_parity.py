@@ -1032,6 +1032,32 @@ class _ParityMixin:
             "launch_app", {"bundle_id": "com.example.no_such_app_xyzzy"}
         )
 
+    def test_mcp_launch_app_by_name_accepts_bundle_id(self) -> None:
+        """name='com.apple.calculator' must resolve via Pass 2 (LaunchServices)."""
+        subprocess.run(["pkill", "-x", "Calculator"], check=False)
+        time.sleep(0.3)
+        with self._mcp() as c:
+            result = c.call_tool("launch_app", {"name": "com.apple.calculator"})
+        sc = result.get("structuredContent", result)
+        self.assertIn("pid", sc)
+        self.assertGreater(sc["pid"], 0, "bundle-id-as-name should resolve")
+
+    def test_mcp_launch_app_by_name_case_insensitive(self) -> None:
+        """name='CALCULATOR' must resolve via Pass 3 (case-insensitive scan)."""
+        subprocess.run(["pkill", "-x", "Calculator"], check=False)
+        time.sleep(0.3)
+        with self._mcp() as c:
+            result = c.call_tool("launch_app", {"name": "CALCULATOR"})
+        sc = result.get("structuredContent", result)
+        self.assertIn("pid", sc)
+        self.assertGreater(sc["pid"], 0, "case-insensitive name should resolve")
+
+    def test_mcp_launch_app_by_name_unknown_raises_error(self) -> None:
+        """Unresolvable name must return an MCP error, not crash."""
+        self._assert_tool_raises_mcp_error(
+            "launch_app", {"name": "no_such_app_xyzzy_12345"}
+        )
+
     # ── stdio MCP: set_agent_cursor_motion ────────────────────────────────────
 
     def test_mcp_set_agent_cursor_motion_spring(self) -> None:

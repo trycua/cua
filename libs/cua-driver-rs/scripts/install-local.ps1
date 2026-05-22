@@ -1,15 +1,22 @@
-# cua-driver-rs local/debug installer (Windows). Builds from the current
-# source tree and drops the resulting cua-driver.exe into the same
-# install layout that scripts/install.ps1 produces — so a local build
-# and a release install can coexist + the `current` junction can flip
-# between them.
+# cua-driver-rs local installer (Windows). Builds release-mode from the
+# current source tree and drops the resulting cua-driver.exe into the same
+# install layout that scripts/install.ps1 produces — so a local build and
+# a release install can coexist + the `current` junction can flip between
+# them.
 #
-# Mirrors libs/cua-driver/scripts/install-local.sh (Swift) in shape:
-#   -Release    build the release configuration (default: debug)
-#   -AutoStart  register the cua-driver-serve Scheduled Task at logon
-#               (Windows-native equivalent of macOS LaunchAgent). Default
-#               off; the post-install message prints the registration
-#               recipe so you can opt in later.
+# Params mirror scripts/install.ps1 so the developer loop matches what
+# end users experience:
+#   -AutoStart      register the cua-driver-serve Scheduled Task at logon
+#                   (Windows-native equivalent of macOS LaunchAgent).
+#                   Default off; the post-install message prints the
+#                   registration recipe so you can opt in later.
+#   -NoPathUpdate   skip the auto-append of the bin dir to the User PATH.
+#                   Mirrors install.ps1's flag.
+#
+# Always builds in `release` configuration to match what install.ps1
+# hands users (the prebuilt zip from GitHub Releases is `--release`).
+# Use `cargo build -p cua-driver` directly + invoke target\debug\cua-driver.exe
+# if you specifically want a faster-to-compile debug binary.
 #
 # Not for end-users — `irm https://.../install.ps1 | iex` fetches a
 # signed/built release from GitHub. This script is for the developer
@@ -20,15 +27,15 @@
 #   <visibleBinDir>            [junction → currentDir]
 #   <currentDir>               [junction → release dir, retargeted here]
 #   <release dir>              [real dir, this script's output]
-#     <version>-local-<config>-<target>\cua-driver.exe
+#     0.0.0-local-release-<target>\cua-driver.exe
 #
-# The version-string carries `-local-debug` / `-local-release` so it
-# never collides with a real release dir and is trivial to garbage-collect.
+# The version-string carries `-local-release` so it never collides with
+# a real release dir and is trivial to garbage-collect.
 
 [CmdletBinding()]
 param(
-    [switch]$Release,
-    [switch]$AutoStart
+    [switch]$AutoStart,
+    [switch]$NoPathUpdate
 )
 
 Set-StrictMode -Version Latest
@@ -45,7 +52,8 @@ $ProgressPreference = "SilentlyContinue"
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot    = (Resolve-Path "$ScriptDir\..").Path
 $BinaryName  = "cua-driver.exe"
-$Config      = if ($Release) { "release" } else { "debug" }
+# Always release-config — matches the binary install.ps1 hands end users.
+$Config      = "release"
 $Target      = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') {
     "aarch64-pc-windows-msvc"
 } else {
@@ -57,12 +65,14 @@ $Target      = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchit
 if ($env:CUA_DRIVER_RS_INSTALL_DIR) {
     $VisibleBinDir = $env:CUA_DRIVER_RS_INSTALL_DIR
 } else {
-    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+    # Path layout matches install.ps1's v0.2.14+ rename
+    # (trycua\cua-driver-rs → Cua\cua-driver). See PR #1644.
+    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin"
 }
 if ($env:CUA_DRIVER_RS_HOME) {
     $PackageHome = $env:CUA_DRIVER_RS_HOME
 } else {
-    $PackageHome = Join-Path $env:USERPROFILE ".cua-driver-rs"
+    $PackageHome = Join-Path $env:USERPROFILE ".cua-driver"
 }
 $CurrentDir  = Join-Path $PackageHome "packages\current"
 $ReleasesDir = Join-Path $PackageHome "packages\releases"
@@ -123,14 +133,10 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 # ---------- Build ----------------------------------------------------------
 
-Write-Step "cargo build ($Config) -p cua-driver"
+Write-Step "cargo build --release -p cua-driver"
 Push-Location $RepoRoot
 try {
-    if ($Release) {
-        & cargo build --release -p cua-driver
-    } else {
-        & cargo build -p cua-driver
-    }
+    & cargo build --release -p cua-driver
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: cargo build failed." -ForegroundColor Red
         exit $LASTEXITCODE
@@ -183,6 +189,28 @@ if (Test-Path -LiteralPath $VisibleBinDir) {
     }
 }
 Ensure-Junction -linkPath $VisibleBinDir -targetPath $CurrentDir
+
+# ---------- User PATH update (matches install.ps1) ------------------------
+
+if (-not $NoPathUpdate) {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $alreadyOnPath = $userPath -and (($userPath -split ';') -contains $VisibleBinDir)
+    if (-not $alreadyOnPath) {
+        $newValue = if ($userPath) { ($userPath.TrimEnd(';')) + ';' + $VisibleBinDir } else { $VisibleBinDir }
+        [Environment]::SetEnvironmentVariable('Path', $newValue, 'User')
+        # Also update the current process's $env:Path so subsequent
+        # commands in THIS shell see cua-driver immediately. install.ps1
+        # does the same — see #1651.
+        if (-not (($env:Path -split ';') -contains $VisibleBinDir)) {
+            $env:Path = "$VisibleBinDir;$env:Path"
+        }
+        Write-Step "added $VisibleBinDir to User PATH"
+    } else {
+        Write-Step "$VisibleBinDir already on User PATH"
+    }
+} else {
+    Write-Step "skipping User PATH update (-NoPathUpdate)"
+}
 
 # Agent skill pack symlinks: NOT auto-created. Run
 # `cua-driver skills install --local` to symlink agent dirs to the

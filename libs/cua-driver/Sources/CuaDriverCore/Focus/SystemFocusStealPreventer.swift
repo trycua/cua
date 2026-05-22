@@ -247,15 +247,31 @@ public actor SystemFocusStealPreventer {
     /// This is the strongest available API: the language enforces the
     /// lifetime. Use it whenever the suppression fits inside a single
     /// async function.
+    ///
+    /// - Parameters:
+    ///   - targetPid: pid to suppress (`0` = wildcard).
+    ///   - restoreTo: app to re-activate when a matching activation fires.
+    ///   - origin: caller-supplied tag (typically `#function`).
+    ///   - maxLifetimeOverrideNs: per-entry override of the dispatcher's
+    ///     5 s default deadline. Pass an explicit value when `body` is
+    ///     legitimately longer than 5 s — without an override, the
+    ///     deadline reaper would evict the entry mid-flight. `nil` =
+    ///     default. The override should still be tight: it's the leak
+    ///     bound, not the expected runtime.
+    ///   - body: code to run while the suppression is active.
     @discardableResult
     public func withSuppression<T: Sendable>(
         targetPid: pid_t,
         restoreTo: NSRunningApplication,
         origin: StaticString = #function,
+        maxLifetimeOverrideNs: UInt64? = nil,
         body: @Sendable () async throws -> T
     ) async rethrows -> T {
         let handle = dispatcher.add(
-            targetPid: targetPid, restoreTo: restoreTo, origin: "\(origin)"
+            targetPid: targetPid,
+            restoreTo: restoreTo,
+            origin: "\(origin)",
+            maxLifetimeOverrideNs: maxLifetimeOverrideNs
         )
         startJanitorIfNeeded()
         do {
@@ -278,13 +294,21 @@ public actor SystemFocusStealPreventer {
     /// The caller can call ``SuppressionLease/release()`` to await pending
     /// reactivation tasks; if the caller simply drops the lease, ARC fires
     /// a fire-and-forget cleanup. Either way the entry is released.
+    ///
+    /// - Parameter maxLifetimeOverrideNs: see ``withSuppression`` for the
+    ///   contract — same per-entry override of the dispatcher's default
+    ///   deadline. `nil` = use default.
     public func leaseSuppression(
         targetPid: pid_t,
         restoreTo: NSRunningApplication,
-        origin: StaticString = #function
+        origin: StaticString = #function,
+        maxLifetimeOverrideNs: UInt64? = nil
     ) -> SuppressionLease {
         let handle = dispatcher.add(
-            targetPid: targetPid, restoreTo: restoreTo, origin: "\(origin)"
+            targetPid: targetPid,
+            restoreTo: restoreTo,
+            origin: "\(origin)",
+            maxLifetimeOverrideNs: maxLifetimeOverrideNs
         )
         startJanitorIfNeeded()
         return SuppressionLease(preventer: self, handle: handle)
@@ -309,10 +333,14 @@ public actor SystemFocusStealPreventer {
     public func beginSuppression(
         targetPid: pid_t,
         restoreTo: NSRunningApplication,
-        origin: StaticString = #function
+        origin: StaticString = #function,
+        maxLifetimeOverrideNs: UInt64? = nil
     ) async -> SuppressionHandle {
         let handle = dispatcher.add(
-            targetPid: targetPid, restoreTo: restoreTo, origin: "\(origin)"
+            targetPid: targetPid,
+            restoreTo: restoreTo,
+            origin: "\(origin)",
+            maxLifetimeOverrideNs: maxLifetimeOverrideNs
         )
         startJanitorIfNeeded()
         return handle
@@ -342,6 +370,34 @@ public actor SystemFocusStealPreventer {
 
     // MARK: - Janitor
 
+    /// Lazily start the background reaper task. Idempotent — repeated
+    /// calls are no-ops while the task is alive.
+    ///
+    /// **Race note (#8):** there is a small window between the janitor
+    /// observing `activeCount == 0` and a concurrent `add()` storing a
+    /// new entry where `janitorTask == nil` while `activeCount > 0`. This
+    /// is self-healing on three layers:
+    ///
+    /// 1. The `add()` path always calls `startJanitorIfNeeded()` after
+    ///    storing the entry, so the next `add()` after janitor exit
+    ///    immediately respawns it.
+    /// 2. Even with no janitor, the activation observer's
+    ///    `reapExpired()` call still evicts expired entries on every OS
+    ///    focus change — the only case this misses is "no focus changes
+    ///    happen for `maxLifetimeNs`", in which case the leaked entry
+    ///    is harmless because no notification fires to act on it.
+    /// 3. Layer 3's deadline is the floor: even in the worst case
+    ///    (janitor exited, no activation events), the entry is dead
+    ///    (deadline passed) and inert until the next observer fire or
+    ///    `add()` causes a respawn-and-reap.
+    ///
+    /// The race is therefore correctness-neutral: the worst observable
+    /// behaviour is a leaked entry that is dead-on-arrival until any of
+    /// (next add, next OS focus change) wakes the eviction path. We
+    /// chose this over keeping a permanent background task because the
+    /// permanent-task variant runs forever even when the cua-driver is
+    /// idle — wasted CPU + battery on a daemon that mostly sits between
+    /// MCP requests.
     private func startJanitorIfNeeded() {
         if janitorTask != nil { return }
         let dispatcher = self.dispatcher
@@ -361,11 +417,41 @@ public actor SystemFocusStealPreventer {
 
     /// Test-only: force a reap pass without waiting for the janitor or
     /// an `NSWorkspace` activation. Production code should never call
-    /// this — eviction is automatic. Exposed for unit tests so the
-    /// layer-3 deadline contract can be verified deterministically.
-    public func _forceReapForTesting() async {
+    /// this — eviction is automatic. Internal-visibility (with
+    /// `@testable import CuaDriverCore` in the test target) so this
+    /// seam can't be reached from production callers; the leading
+    /// underscore is a convention reminder, the access modifier is the
+    /// actual wall.
+    internal func _forceReapForTesting() async {
         let pending = dispatcher.reapExpired()
         for task in pending { _ = await task.value }
+    }
+
+    /// Test-only: run the dispatcher's match-and-pick logic against a
+    /// hypothetical activation pid and return the entry that would win
+    /// (or `nil` if no entry matches). Production code never calls
+    /// this — `handleActivation` is wired to the real
+    /// `NSWorkspace.didActivateApplicationNotification` observer.
+    /// Exposed so unit tests can verify the LIFO tiebreak contract
+    /// directly: register entries with distinguishable `restoreTo`
+    /// apps, then assert the winner's identity.
+    ///
+    /// Mirrors `Dispatcher.handleActivation`'s selection logic exactly:
+    ///
+    /// 1. Match entries where `targetPid == activatedPid` (specific
+    ///    target) OR `targetPid == 0` AND `activatedPid !=
+    ///    restoreTo.processIdentifier` (wildcard, but never restore to
+    ///    the activated app itself — that would be a no-op).
+    /// 2. Among matches, pick the one with the highest `sequence` (the
+    ///    most-recently-registered intent — LIFO tiebreak).
+    ///
+    /// Returns the winning entry's `restoreTo`, or `nil` if no entry
+    /// matched. Lock-free from the caller's POV — the dispatcher
+    /// guards its internal state.
+    internal func _winnerForActivationTesting(
+        activatedPid: pid_t
+    ) -> NSRunningApplication? {
+        return dispatcher.winnerForActivation(activatedPid: activatedPid)
     }
 
     private func shouldStopJanitor() -> Bool {
@@ -394,6 +480,22 @@ private final class Dispatcher: @unchecked Sendable {
         /// Layer-3 safety net: when the observer fires or the janitor
         /// runs, any entry with `now > deadline` is force-evicted.
         let deadline: UInt64
+        /// Monotonic insertion order, used as the LIFO tiebreaker when
+        /// multiple entries match a single activation notification (the
+        /// wildcard-vs-wildcard / pid-vs-pid case). The latest-registered
+        /// `restoreTo` wins — this matches the conceptual "stack of
+        /// suppression intentions" model: caller B registering a new
+        /// suppression on top of caller A's expresses a more recent
+        /// intent and should override. Without this, `entries.values`
+        /// iteration order is dictionary-order (undefined for `[UUID:T]`)
+        /// and the chosen `restoreTo` would be effectively random.
+        let sequence: UInt64
+        /// Per-entry override of the dispatcher's default
+        /// `maxLifetimeNs`. `nil` means "use the default". Set by callers
+        /// who know their suppression window is legitimately longer than
+        /// 5 s (e.g. a long-running launch handoff) — without an
+        /// override, the layer-3 reaper would evict the entry mid-flight.
+        let maxLifetimeOverrideNs: UInt64?
     }
 
     private let suppressionDelayNs: UInt64
@@ -402,6 +504,10 @@ private final class Dispatcher: @unchecked Sendable {
 
     private let lock = NSLock()
     private var entries: [UUID: Entry] = [:]
+    /// Monotonic counter for assigning `Entry.sequence`. Wrapping is
+    /// fine — collisions would require ~5×10¹¹ years of continuous
+    /// `add()` calls at one per ns.
+    private var sequenceCounter: UInt64 = 0
     private var pendingRestoreTasks: [Task<Void, Never>] = []
     private var observer: NSObjectProtocol?
 
@@ -430,18 +536,37 @@ private final class Dispatcher: @unchecked Sendable {
     /// if the active count crosses the leak-suspicion threshold so future
     /// regressions surface in the unified log instead of silently
     /// stealing focus.
+    ///
+    /// - Parameters:
+    ///   - targetPid: pid to suppress (`0` = wildcard, see ``handleActivation``).
+    ///   - restoreTo: app to re-activate when a matching activation fires.
+    ///   - origin: caller-supplied tag (typically `#function`) included in
+    ///     leak-suspicion warnings so operators can trace the call site.
+    ///   - maxLifetimeOverrideNs: per-entry override of the default 5 s
+    ///     deadline. `nil` uses the default. Pass an explicit value when
+    ///     the caller knows its suppression window legitimately exceeds
+    ///     5 s (e.g. multi-second launch handoff) — without an override
+    ///     the deadline reaper would evict the entry mid-flight.
     func add(
-        targetPid: pid_t, restoreTo: NSRunningApplication, origin: String
+        targetPid: pid_t,
+        restoreTo: NSRunningApplication,
+        origin: String,
+        maxLifetimeOverrideNs: UInt64? = nil
     ) -> SuppressionHandle {
         let handle = SuppressionHandle()
-        let deadline = monotonicNow() &+ maxLifetimeNs
+        let lifetime = maxLifetimeOverrideNs ?? maxLifetimeNs
+        let deadline = monotonicNow() &+ lifetime
 
         lock.lock()
+        sequenceCounter &+= 1
+        let seq = sequenceCounter
         entries[handle.id] = Entry(
             targetPid: targetPid,
             restoreTo: restoreTo,
             origin: origin,
-            deadline: deadline
+            deadline: deadline,
+            sequence: seq,
+            maxLifetimeOverrideNs: maxLifetimeOverrideNs
         )
         let count = entries.count
         let needsObserver = (observer == nil)
@@ -576,6 +701,44 @@ private final class Dispatcher: @unchecked Sendable {
         }
     }
 
+    /// Pure selection logic: given a hypothetical activation pid,
+    /// return the `restoreTo` of the entry that would win, or `nil`.
+    /// Factored out of ``handleActivation`` so unit tests can reach it
+    /// without firing a real `NSWorkspace` notification.
+    ///
+    /// **Matching rules:**
+    /// - `targetPid == activatedPid` — specific target suppression. The
+    ///   target was caught self-activating; restore the registered
+    ///   `restoreTo`.
+    /// - `targetPid == 0` AND `activatedPid != restoreTo.pid` — wildcard
+    ///   suppression catches any activation that isn't `restoreTo` itself
+    ///   (the second clause prevents restore→restore no-op loops). Used
+    ///   by the side-effect guard in `WindowChangeDetector` so that a
+    ///   background click opening a new app (e.g. UTM Gallery → Safari)
+    ///   is suppressed even when we didn't know Safari's pid ahead of
+    ///   time.
+    ///
+    /// **LIFO tiebreak**: when multiple entries match — two overlapping
+    /// wildcards from different callers, or a wildcard plus a pid-specific
+    /// entry during the LaunchAppTool crossfade — the highest-`sequence`
+    /// (most-recently-registered) entry wins. This expresses the "stack of
+    /// suppression intentions" model: caller B's newer intent overrides
+    /// caller A's older intent for the duration of their overlap. Without
+    /// this, `entries.values` iteration order would be dictionary-order
+    /// (undefined for `[UUID: T]`) and the chosen `restoreTo` would be
+    /// effectively random — the bug class this method closes.
+    func winnerForActivation(activatedPid: pid_t) -> NSRunningApplication? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.values
+            .filter {
+                $0.targetPid == activatedPid ||
+                ($0.targetPid == 0 && activatedPid != $0.restoreTo.processIdentifier)
+            }
+            .max(by: { $0.sequence < $1.sequence })?
+            .restoreTo
+    }
+
     private func handleActivation(note: Notification) {
         guard
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
@@ -590,25 +753,12 @@ private final class Dispatcher: @unchecked Sendable {
         // restore task.
         reapExpired()
 
-        lock.lock()
-        // Match entries where:
-        //   - targetPid == activatedPid  (specific target suppression), OR
-        //   - targetPid == 0             (wildcard: suppress any activation that
-        //                                 isn't restoreTo — used by the side-effect
-        //                                 guard in WindowChangeDetector so that a
-        //                                 background click opening a new app, e.g.
-        //                                 UTM Gallery → Safari, is suppressed even
-        //                                 though we didn't know Safari's pid ahead
-        //                                 of time.)
-        let restoreCandidates = entries.values
-            .filter {
-                $0.targetPid == activatedPid ||
-                ($0.targetPid == 0 && activatedPid != $0.restoreTo.processIdentifier)
-            }
-            .map { $0.restoreTo }
-        lock.unlock()
-
-        guard let restoreTo = restoreCandidates.first else { return }
+        // Selection logic factored into `winnerForActivation` so unit
+        // tests can verify it directly. Both call sites must stay in
+        // sync — see `winnerForActivation` for the matching rules and
+        // tiebreak contract.
+        guard let restoreTo = winnerForActivation(activatedPid: activatedPid)
+        else { return }
 
         // Schedule the reactivation after a short delay — see the
         // `suppressionDelayNs` comment on SystemFocusStealPreventer for

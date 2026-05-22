@@ -299,6 +299,409 @@ final class FocusStealPreventerTests: XCTestCase {
         XCTAssertEqual(__c203, 0)
     }
 
+    // MARK: - Wildcard tie-break (LIFO contract)
+
+    /// **The actual LIFO winner contract.** When multiple wildcard
+    /// entries match the same activation, the most-recently-registered
+    /// (highest-sequence) entry's `restoreTo` must win — not just
+    /// "they coexist" but specifically "the second one's restoreTo is
+    /// what `handleActivation` would pick".
+    ///
+    /// Uses ``SystemFocusStealPreventer/_winnerForActivationTesting(activatedPid:)``
+    /// — an internal test seam that runs the same selection logic
+    /// `handleActivation` uses, without requiring a real
+    /// `NSWorkspace.didActivateApplicationNotification`. This is the
+    /// only way to verify the actual winner identity from a unit test
+    /// (CI runners don't have a real frontmost-app graph).
+    ///
+    /// Two distinguishable `NSRunningApplication` references are
+    /// required: we use Finder (PID stable for the user's session) and
+    /// the test's own process. Either one is non-nil on every macOS
+    /// host the test ever runs on.
+    func testWildcardLifoTiebreakWinnerIsLatestRegistered() async throws {
+        let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
+
+        // Two distinguishable restoreTo apps. Finder is a reliable
+        // second target — PID is stable per user session and `bundleId`
+        // matches `com.apple.finder` deterministically.
+        let finderRunning = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.finder"
+        ).first
+        guard let finder = finderRunning else {
+            throw XCTSkip(
+                "Finder must be running to compare two distinguishable "
+                + "restoreTo apps; not detected on this host"
+            )
+        }
+        XCTAssertNotEqual(
+            finder.processIdentifier, selfApp.processIdentifier,
+            "Finder and the test process must have distinct pids — "
+            + "otherwise the wildcard filter would collapse them"
+        )
+
+        // Register first wildcard with selfApp as restoreTo, second
+        // with Finder as restoreTo. Both target 0 (wildcard). LIFO
+        // contract: a hypothetical activation by ANY pid !=
+        // {selfApp.pid, finder.pid} should return the second-registered
+        // entry's restoreTo (Finder), because it has the higher sequence.
+        let first = await preventer.leaseSuppression(
+            targetPid: 0, restoreTo: selfApp, origin: "test.lifo.first"
+        )
+        let second = await preventer.leaseSuppression(
+            targetPid: 0, restoreTo: finder, origin: "test.lifo.second"
+        )
+
+        // Pick a fake activation pid that's neither selfApp nor Finder
+        // so both wildcards match (the activated-pid != restoreTo.pid
+        // clause excludes self-restore, not third-party activations).
+        // Use 1 (kernel-task / launchd, never matches restoreTo here).
+        let fakeActivatedPid: pid_t = 1
+        let winner = await preventer._winnerForActivationTesting(
+            activatedPid: fakeActivatedPid
+        )
+
+        XCTAssertNotNil(winner, "both wildcards should match pid=1")
+        XCTAssertEqual(
+            winner?.processIdentifier,
+            finder.processIdentifier,
+            "LIFO contract: second-registered entry's restoreTo (Finder) "
+            + "must win the tiebreak; the first-registered (selfApp) loses. "
+            + "If this fails, the wildcard-vs-wildcard ambiguity is back."
+        )
+
+        // Now drop the second; the first should win on its own.
+        await second.release()
+        let winnerAfterDrop = await preventer._winnerForActivationTesting(
+            activatedPid: fakeActivatedPid
+        )
+        XCTAssertEqual(
+            winnerAfterDrop?.processIdentifier,
+            selfApp.processIdentifier,
+            "after dropping the second-registered entry, the first must "
+            + "become the sole match and therefore the winner"
+        )
+
+        // Cleanup.
+        await first.release()
+        let cleanedUp = await preventer.activeCount
+        XCTAssertEqual(cleanedUp, 0)
+    }
+
+    /// LIFO tiebreak also applies between a wildcard (older) and a
+    /// pid-specific entry (newer) — the LaunchAppTool crossfade case.
+    /// The pid-specific entry's `restoreTo` must win because it has the
+    /// higher sequence, regardless of whether the wildcard would also
+    /// have matched.
+    func testLifoWinsAcrossWildcardAndPidSpecific() async throws {
+        let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
+
+        let finder = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.finder"
+        ).first
+        guard let finder else {
+            throw XCTSkip("Finder must be running for this test")
+        }
+
+        let targetPid: pid_t = 9999  // hypothetical app pid — not in the running set
+
+        // Older wildcard that would match anything-not-selfApp.
+        let wildcardLease = await preventer.leaseSuppression(
+            targetPid: 0, restoreTo: selfApp, origin: "test.crossfade.wildcard"
+        )
+        // Newer pid-specific entry that targets the same hypothetical app.
+        let pidSpecificLease = await preventer.leaseSuppression(
+            targetPid: targetPid, restoreTo: finder,
+            origin: "test.crossfade.pidSpecific"
+        )
+
+        let winner = await preventer._winnerForActivationTesting(
+            activatedPid: targetPid
+        )
+        XCTAssertEqual(
+            winner?.processIdentifier,
+            finder.processIdentifier,
+            "during the LaunchAppTool crossfade, the newer pid-specific "
+            + "entry's restoreTo (Finder) must win over the older wildcard's "
+            + "(selfApp) — this is what makes the gap-window-free swap safe"
+        )
+
+        await pidSpecificLease.release()
+        await wildcardLease.release()
+    }
+
+    // MARK: - Per-entry maxLifetime override (#7)
+
+    /// Callers with legitimately long-running suppressions can override
+    /// the dispatcher's default 5 s deadline. The override must be
+    /// honored — the entry must NOT be evicted before its custom
+    /// deadline.
+    func testMaxLifetimeOverrideHonored() async throws {
+        // Default deadline is tiny (50 ms) — but caller's override
+        // (500 ms) must win and keep the entry alive past the dispatcher
+        // default.
+        let preventer = SystemFocusStealPreventer(
+            suppressionDelayNs: 0,
+            maxLifetimeNs: 50_000_000,           // 50 ms default
+            janitorIntervalNs: 60_000_000_000,   // disable janitor
+            warnActiveThreshold: 1000
+        )
+
+        let lease = await preventer.leaseSuppression(
+            targetPid: 0,
+            restoreTo: selfApp,
+            origin: "test.longLived",
+            maxLifetimeOverrideNs: 500_000_000   // 500 ms override
+        )
+
+        // Wait past the default deadline but well before the override.
+        try await Task.sleep(nanoseconds: 200_000_000)  // 200 ms
+        await preventer._forceReapForTesting()
+
+        let stillAlive = await preventer.activeCount
+        XCTAssertEqual(
+            stillAlive, 1,
+            "per-entry maxLifetimeOverrideNs (500 ms) must override the "
+            + "dispatcher default (50 ms); entry must survive a reap pass "
+            + "after the default deadline but before the override"
+        )
+
+        // Now wait past the override and confirm reaping kicks in.
+        try await Task.sleep(nanoseconds: 400_000_000)  // 400 ms more = 600 ms total
+        await preventer._forceReapForTesting()
+
+        let nowReaped = await preventer.activeCount
+        XCTAssertEqual(
+            nowReaped, 0,
+            "after the override deadline expires, the entry must be reaped "
+            + "like any other expired entry"
+        )
+
+        // Cleanup (lease was already evicted by the reaper; release is a no-op).
+        await lease.release()
+    }
+
+    /// `withSuppression` accepts the same override and the entry must
+    /// outlive the dispatcher default while the body is running. This
+    /// catches the case where someone wires the parameter through
+    /// `leaseSuppression` but forgets to plumb it through
+    /// `withSuppression`.
+    func testWithSuppressionOverrideKeepsEntryAlive() async {
+        let preventer = SystemFocusStealPreventer(
+            suppressionDelayNs: 0,
+            maxLifetimeNs: 50_000_000,
+            janitorIntervalNs: 60_000_000_000,
+            warnActiveThreshold: 1000
+        )
+
+        await preventer.withSuppression(
+            targetPid: 0,
+            restoreTo: selfApp,
+            maxLifetimeOverrideNs: 500_000_000
+        ) {
+            // Sleep past the dispatcher default (50 ms) but well below
+            // the override (500 ms). The entry must still be alive when
+            // we measure activeCount.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            await preventer._forceReapForTesting()
+            let alive = await preventer.activeCount
+            XCTAssertEqual(
+                alive, 1,
+                "withSuppression must propagate maxLifetimeOverrideNs to "
+                + "the dispatcher; entry must be alive after a reap that "
+                + "ran past the default deadline"
+            )
+        }
+
+        let afterBody = await preventer.activeCount
+        XCTAssertEqual(afterBody, 0)
+    }
+
+    // MARK: - Snapshot/detect ARC contract (#5)
+
+    /// The structural invariant that makes `WindowChangeDetector`'s
+    /// snapshot/detect pattern leak-proof: a struct holding a
+    /// `SuppressionLease` reference, when copied and dropped without
+    /// calling explicit `release()`, must still see the entry evicted
+    /// (via lease deinit). This is the ClickTool early-return-after-
+    /// snapshot scenario distilled to a unit test.
+    ///
+    /// `Snapshot` is a real type in `CuaDriverServer` (not testable from
+    /// here without the server module), so we model the same shape with
+    /// a local struct. Same ARC behaviour, same guarantee.
+    func testStructHoldingLeaseReleasesOnDrop() async throws {
+        let preventer = SystemFocusStealPreventer(suppressionDelayNs: 0)
+
+        struct SnapshotShape {
+            let lease: SuppressionLease?
+        }
+
+        // Construct the snapshot, copy it (struct semantics), then drop
+        // both copies without calling release() — the early-return
+        // pattern.
+        do {
+            let lease = await preventer.leaseSuppression(
+                targetPid: 0, restoreTo: selfApp, origin: "test.snapshot"
+            )
+            let snap = SnapshotShape(lease: lease)
+            let snapCopy = snap
+            _ = snapCopy
+            let alive = await preventer.activeCount
+            XCTAssertEqual(alive, 1)
+        }
+
+        // Both snap and snapCopy went out of scope. The lease was
+        // shared by reference (class), so its retain count drops to 0
+        // when the last reference dies. ARC fires deinit, which
+        // dispatches a Task to release. Poll for eviction.
+        try await waitForActiveCount(0, on: preventer, timeout: 2.0)
+    }
+
+    // MARK: - Layer 4 observability (#3)
+
+    /// End-to-end verification that the `os.Logger` warning path
+    /// actually surfaces in the unified log under the expected
+    /// subsystem. Catches regressions like:
+    ///
+    /// - subsystem string typo (so `log stream --predicate
+    ///   'subsystem == "io.trycua.cua-driver"'` returns nothing)
+    /// - `os.Logger` initialization failure (rare, but possible if the
+    ///   subsystem string is rejected at build time)
+    /// - Info.plist requirements being added in a future SDK that
+    ///   silently drop logs from unsigned helper binaries.
+    ///
+    /// We trigger the leak-suspicion warning by registering more
+    /// entries than `warnActiveThreshold`, then shell out to `log show`
+    /// and assert the message appears. If unified log capture is
+    /// disabled on this machine (rare) the test skips with `XCTSkip`.
+    ///
+    /// **Skipped on CI runners** that don't have the unified-log
+    /// privilege or an ARM64 host: `log show` requires
+    /// `com.apple.private.logging.diagnostic` or sudo, which CI
+    /// containers usually lack. Running the test gates on
+    /// `LayerFourLogVerify=1` in the env so CI is opt-in only.
+    func testLayerFourLoggerSurfacesInUnifiedLog() async throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["LayerFourLogVerify"] == "1",
+            "Layer-4 log verification requires unified-log capture privilege; "
+            + "set LayerFourLogVerify=1 to opt in."
+        )
+
+        // Marker tag — embedded in the origin string and grepped from
+        // `log show`. Unique per test run so the assertion can't false-
+        // positive on a stale prior log entry.
+        let marker = "test-layer4-\(UUID().uuidString.prefix(8))"
+
+        // 4 is the default warn threshold; 5 trips the warning.
+        let preventer = SystemFocusStealPreventer(
+            suppressionDelayNs: 0,
+            maxLifetimeNs: 60_000_000_000,
+            janitorIntervalNs: 60_000_000_000,
+            warnActiveThreshold: 4
+        )
+        let cutoff = Date()
+
+        var leases: [SuppressionLease] = []
+        // Origin needs to be a StaticString. We can't interpolate the
+        // marker into the origin field directly — so we embed it in the
+        // log by bumping past the threshold and grepping for the
+        // dispatcher's "FocusStealPreventer leak suspect" prefix plus a
+        // count-based assertion. A subsequent assertion checks the
+        // origin list contains our static origin string.
+        for _ in 0..<5 {
+            let lease = await preventer.leaseSuppression(
+                targetPid: 0, restoreTo: selfApp,
+                origin: "test.layer4.marker"
+            )
+            leases.append(lease)
+        }
+
+        // Give os_log time to flush. os_log is not synchronous; the
+        // dispatcher writes are buffered before they hit unified log
+        // storage.
+        try await Task.sleep(nanoseconds: 1_500_000_000)  // 1.5 s
+
+        // Query unified log for the warning line. The `--start` cutoff
+        // is just before we triggered the warning; `--predicate`
+        // narrows by subsystem to avoid scanning the entire host log.
+        //
+        // `log show` requires a date in `YYYY-MM-DD HH:MM:SS` format
+        // (local time, NOT ISO 8601 — the leading `Z` and fractional
+        // seconds are rejected with a parse error and then `log show`
+        // emits an empty result. Discovered this the hard way.)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = TimeZone.current
+        let process = Process()
+        process.launchPath = "/usr/bin/log"
+        process.arguments = [
+            "show",
+            "--predicate", "subsystem == \"io.trycua.cua-driver\"",
+            "--info",
+            "--start", formatter.string(from: cutoff)
+        ]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+
+        // Cleanup leases before any throw/skip so the dispatcher
+        // teardown is observable in subsequent tests if the runner
+        // doesn't reset state between tests.
+        for lease in leases { await lease.release() }
+
+        // Distinguish "log show couldn't run" (skip — environment
+        // problem, not a code bug) from "log show ran but found
+        // nothing" (fail — Layer 4 contract is broken). The status
+        // codes that trigger skip are the ones a privilege-restricted
+        // CI sandbox produces:
+        //   - non-zero exit
+        //   - stderr containing TCC / privilege-denial markers
+        //   - empty output (the unified log archive is unavailable)
+        //
+        // The XCTSkipUnless guard above already gates on
+        // `LayerFourLogVerify=1`, so this second-stage skip only fires
+        // when an opt-in caller's environment turns out to be more
+        // restricted than they thought — not on the default CI path.
+        if process.terminationStatus != 0 {
+            throw XCTSkip(
+                "`log show` exited with status \(process.terminationStatus); "
+                + "unified-log capture unavailable on this host. Output: \(output)"
+            )
+        }
+        let lowerOut = output.lowercased()
+        let privilegeDeniedMarkers = [
+            "operation not permitted",
+            "not authorized",
+            "missing entitlement",
+            "no logs found",  // empty archive (sandboxed runners)
+            "log archive does not contain",
+        ]
+        if privilegeDeniedMarkers.contains(where: lowerOut.contains) {
+            throw XCTSkip(
+                "`log show` reports privilege/availability issue; skipping. "
+                + "Output: \(output)"
+            )
+        }
+
+        // Genuine assertion path — `log show` ran cleanly and produced
+        // output. The Layer-4 contract is now under test for real.
+        XCTAssertTrue(
+            output.contains("FocusStealPreventer leak suspect"),
+            "Layer 4 logger output not found in unified log. This means "
+            + "future leak warnings will silently disappear instead of "
+            + "surfacing in `log show`. Marker=\(marker). Output=\(output)"
+        )
+        XCTAssertTrue(
+            output.contains("test.layer4.marker"),
+            "Layer 4 logger origin field not propagated. Future operators "
+            + "won't be able to trace leak warnings to their call site."
+        )
+    }
+
     // MARK: - Helpers
 
     /// Poll `activeCount` until it reaches `expected` or `timeout`

@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "CuaDriver",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v13)
     ],
     products: [
         .executable(name: "cua-driver", targets: ["CuaDriverCLI"]),

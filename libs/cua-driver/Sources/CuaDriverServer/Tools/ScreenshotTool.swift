@@ -10,8 +10,8 @@ public enum ScreenshotTool {
         tool: Tool(
             name: "screenshot",
             description: """
-                Capture a screenshot using ScreenCaptureKit. Returns base64-encoded
-                image data for a single window in the requested format (default png).
+                Capture a screenshot of a single window. Returns base64-encoded
+                image data in the requested format (default png).
 
 
                                 `window_id` is required. Get window ids from `list_windows`.
@@ -19,13 +19,9 @@ public enum ScreenshotTool {
                 Requires the Screen Recording TCC grant — call `check_permissions`
                 first if unsure.
 
-                On macOS 26.4.x, ScreenCaptureKit can refuse specific windows on
-                physical Macs (SCStreamError -3801, "Could not start streaming").
-                The driver retries once and falls back to the legacy
-                CGWindowList path before failing; if both refuse, the error
-                response includes a hint to try a different `window_id` or
-                switch to `capture_mode: ax` for `get_window_state` (the
-                element-indexed flow doesn't need pixels).
+                On macOS builds where pixel capture refuses a specific window,
+                try a different `window_id` or switch to `capture_mode: ax` for
+                `get_window_state` (the element-indexed flow doesn't need pixels).
                 """,
             inputSchema: [
                 "type": "object",
@@ -121,21 +117,17 @@ public enum ScreenshotTool {
                     isError: true
                 )
             } catch CaptureError.streamingFailed(let msg) {
-                // SCK streaming-start regression on macOS 26.4.x — the
-                // legacy CGWindowList fallback also refused this specific
-                // window. There's nothing we can do at the pixel layer;
-                // surface an actionable hint pointing at `get_window_state`
-                // (which can fall back to AX-only via `capture_mode: ax`)
-                // or trying a different window.
+                // Pixel capture refused this specific window. There's nothing
+                // else to do at this layer; surface an actionable hint pointing
+                // at AX-only `get_window_state` or trying a different window.
                 return CallTool.Result(
                     content: [
                         .text(
                             text: """
-                                ScreenCaptureKit refused this window: \(msg)
+                                Pixel capture refused this window: \(msg)
 
-                                This is a known macOS 26.4.x SCK regression that hits \
-                                specific windows on physical Macs. The legacy \
-                                CGWindowList fallback also returned no image.
+                                Some macOS builds refuse specific windows even when \
+                                Screen Recording is granted.
 
                                 Workarounds:
                                   • Try a different `window_id` on the same app — \

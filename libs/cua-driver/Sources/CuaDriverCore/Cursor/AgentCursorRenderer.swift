@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import Observation
 
 // MARK: - Public API --------------------------------------------------------
 
@@ -13,7 +12,6 @@ import Observation
 /// `AgentCursor` is the public facade; this type owns the math and
 /// per-frame state. Call `AgentCursor.shared.animate(to:)` from tool
 /// invocation sites — do not call `AgentCursorRenderer.shared` directly.
-@Observable
 @MainActor
 public final class AgentCursorRenderer {
     public static let shared = AgentCursorRenderer()
@@ -57,8 +55,9 @@ public final class AgentCursorRenderer {
     public var focusRect: CGRect? = nil
 
     /// Visual style applied to the cursor overlay. Changing this property
-    /// takes effect on the next rendered frame — `AgentCursorView` reads
-    /// it via `@Observable`. Set via `AgentCursor.shared.setStyle(_:)`.
+    /// takes effect on the next rendered frame. `AgentCursorView` is driven
+    /// by `TimelineView`, so it samples renderer state every frame without
+    /// requiring the macOS 14 Observation framework.
     public var style: AgentCursorStyle = .default
 
     // -------- Internal state ---------------------------------------------

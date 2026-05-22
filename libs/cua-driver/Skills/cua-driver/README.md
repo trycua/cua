@@ -26,8 +26,9 @@ See `SKILL.md` for the main body.
 
 ## Prerequisites
 
-1. **macOS 14 or newer** — the driver depends on SkyLight private SPIs
-   that were stabilized in Sonoma.
+1. **macOS 13 or newer** — the driver depends on Accessibility,
+   ScreenCaptureKit, and SkyLight private SPIs available on Ventura
+   or later.
 2. **`cua-driver` CLI + `CuaDriver.app`** — installable one-liner:
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"

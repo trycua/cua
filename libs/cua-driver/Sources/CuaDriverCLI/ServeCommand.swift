@@ -33,8 +33,8 @@ struct ServeCommand: ParsableCommand {
             macOS attributes the serve process to the parent shell/IDE, not to
             CuaDriver.app. AX probes no-op silently and the daemon never becomes
             useful. To sidestep, `serve` detects that context and re-execs itself
-            via `open -n -g -a CuaDriver --args serve`, which relaunches under
-            LaunchServices so TCC attributes the process to com.trycua.driver.
+            via the installed CuaDriver.app executable so TCC attributes the
+            process to com.trycua.driver.
             Pass `--no-relaunch` (or set `CUA_DRIVER_NO_RELAUNCH=1`) to opt out
             and stay in the current process — useful when you know the caller
             already has the right TCC context or you're deliberately testing the
@@ -103,19 +103,30 @@ struct ServeCommand: ParsableCommand {
         let useDefaultSocket = (socket == nil)
 
         AppKitBootstrap.runBlockingAppKitWith {
+            // Warm config before the TCC preflight: AX-only mode does not
+            // need Screen Recording, which matters on Ventura-compatible
+            // builds where pixel capture may be intentionally unavailable.
+            let config = await ConfigStore.shared.load()
+
             // Preflight TCC grants BEFORE we acquire the daemon lock —
             // otherwise a first-run user who needs to grant perms would
             // be blocked by "another daemon starting" if they ran
             // `serve` once, saw the permissions panel, and triggered
             // any sibling probe. Panel flow is idempotent and cheap
             // (<50ms) when grants are already live.
-            let granted = await MainActor.run {
-                PermissionsGate.shared
-            }.ensureGranted()
+            let granted: Bool
+            if config.captureMode == .ax {
+                let status = await Permissions.currentStatus()
+                granted = status.accessibility
+            } else {
+                granted = await MainActor.run {
+                    PermissionsGate.shared
+                }.ensureGranted()
+            }
             if !granted {
                 FileHandle.standardError.write(
                     Data(
-                        "cua-driver: required permissions (Accessibility + Screen Recording) not granted; daemon exiting.\n"
+                        "cua-driver: required permissions not granted; daemon exiting.\n"
                             .utf8))
                 throw AppKitBootstrapError.permissionsDenied
             }
@@ -136,12 +147,6 @@ struct ServeCommand: ParsableCommand {
                 _lockFD = nil
             }
             _ = _lockFD  // silence "variable never used" in release
-
-            // Warm the persistent config so any decode warnings surface
-            // in the daemon's stderr at startup rather than on the first
-            // tool call. A missing or malformed file falls through to
-            // defaults inside `ConfigStore.load()` — no failure here.
-            let config = await ConfigStore.shared.load()
 
             // Non-blocking version hint — prints to stderr if a newer release
             // exists on GitHub. Fails silently when offline.
@@ -165,7 +170,7 @@ struct ServeCommand: ParsableCommand {
 
 extension ServeCommand {
     /// Decide whether the current `serve` invocation should re-exec itself
-    /// via `/usr/bin/open -n -g -a CuaDriver --args serve`. True when all of
+    /// through the installed CuaDriver.app executable. True when all of
     /// the following hold:
     ///
     ///   - `--no-relaunch` is NOT set and `CUA_DRIVER_NO_RELAUNCH` is not
@@ -174,10 +179,10 @@ extension ServeCommand {
     ///     signal we were invoked as a bare binary — almost always the
     ///     `~/.local/bin/cua-driver` symlink from a shell — rather
     ///     than as the main executable of a loaded `.app` bundle. The
-    ///     `open -n -g -a` path always lands in the second form
-    ///     (bundlePath ends in `/CuaDriver.app`), so checking for its
-    ///     absence distinguishes "shell-spawned via symlink" from
-    ///     "already relaunched by LaunchServices" without a loop risk.
+    ///     direct app-executable path lands in the second form (bundlePath
+    ///     ends in `/CuaDriver.app`), so checking for its absence
+    ///     distinguishes "shell-spawned via symlink" from "already running
+    ///     inside the app bundle" without a loop risk.
     ///   - The symlink / argv path resolves (via `realpath`) to a file
     ///     living inside some `CuaDriver.app/Contents/MacOS/`. This
     ///     rules out raw `swift run cua-driver serve` dev invocations,
@@ -185,17 +190,15 @@ extension ServeCommand {
     ///     no `.app` to relaunch into.
     ///   - `getppid() != 1`: we were spawned by a regular process
     ///     (shell, IDE, another daemon), not by `launchd` / LaunchServices.
-    ///     `open -n -g -a` always reparents the launched app to launchd,
-    ///     so a process with ppid == 1 already came in through the
-    ///     LaunchServices path. This is a belt-and-suspenders check on
-    ///     top of the bundlePath heuristic.
+    ///     This is a belt-and-suspenders check on top of the bundlePath
+    ///     heuristic.
     ///
     /// The point: shell-spawned subprocesses inherit the parent shell /
     /// IDE's TCC responsibility chain, which means AX + Screen Recording
     /// checks are evaluated against the IDE's bundle id — not
     /// com.trycua.driver — and the daemon's AppKitBootstrap silently
-    /// no-ops. Bouncing through `open` relaunches under LaunchServices so
-    /// TCC attributes the fresh process to CuaDriver.app.
+    /// no-ops. Re-executing the resolved app-bundle executable gives the
+    /// fresh process the CuaDriver.app bundle context.
     fileprivate func shouldRelaunchViaOpen() -> Bool {
         if noRelaunch { return false }
         if isEnvTruthy(ProcessInfo.processInfo.environment["CUA_DRIVER_NO_RELAUNCH"]) {
@@ -220,11 +223,9 @@ extension ServeCommand {
         return true
     }
 
-    /// Spawn `/usr/bin/open -n -g -a CuaDriver --args serve [--socket …]`,
+    /// Spawn the installed CuaDriver.app executable with `serve --no-relaunch`,
     /// then wait (up to 5s) for the canonical daemon socket to accept a
-    /// protocol-speaking probe. The `open` CLI returns immediately once
-    /// LaunchServices accepts the request, which is well before the
-    /// daemon has bound its socket — hence the poll.
+    /// protocol-speaking probe.
     ///
     /// On success: prints a confirmation to stdout and returns so the
     /// CLI exits 0. On failure: writes a diagnostic and throws
@@ -233,7 +234,7 @@ extension ServeCommand {
     fileprivate func relaunchViaOpen(socketPath: String) throws {
         FileHandle.standardError.write(
             Data(
-                "cua-driver: relaunching via `open -n -g -a CuaDriver --args serve` for correct TCC context. Pass --no-relaunch to stay in this process.\n"
+                    "cua-driver: relaunching through CuaDriver.app for correct TCC context. Pass --no-relaunch to stay in this process.\n"
                     .utf8))
 
         // If --socket was ever passed through to `serve`, forward it to
@@ -246,19 +247,17 @@ extension ServeCommand {
             extraArgs += ["--socket", socket]
         }
 
+        guard let executablePath = resolvedCuaDriverAppExecutablePath() else {
+            FileHandle.standardError.write(
+                Data("cua-driver: installed CuaDriver.app executable not found.\n".utf8))
+            throw ExitCode(1)
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        // -n: force a new instance. Critical — `open -a CuaDriver`
-        //     against an already-running CuaDriver process (e.g. a
-        //     `cua-driver mcp` started by an MCP client) would re-use
-        //     that instance and drop our `--args serve`, leaving us
-        //     with "launched something but no serve daemon appeared".
-        // -g: keep the new instance in the background. CuaDriver.app is
-        //     LSUIElement=true so it wouldn't take focus anyway, but this
-        //     makes that explicit.
-        process.arguments = ["-n", "-g", "-a", "CuaDriver", "--args", "serve"] + extraArgs
-        // Discard `open`'s own stdout/stderr — on success it's silent,
-        // on failure the exit code is what we care about.
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = ["serve", "--no-relaunch"] + extraArgs
+        // Discard the child daemon's stdout/stderr; readiness is verified
+        // by polling the socket below.
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
@@ -267,19 +266,10 @@ extension ServeCommand {
         } catch {
             FileHandle.standardError.write(
                 Data(
-                    "cua-driver: failed to exec `/usr/bin/open`: \(error)\n"
+                    "cua-driver: failed to exec CuaDriver.app daemon: \(error)\n"
                         .utf8))
             throw ExitCode(1)
         }
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            FileHandle.standardError.write(
-                Data(
-                    "cua-driver: `open -n -g -a CuaDriver --args serve` exited \(process.terminationStatus). Check that `/Applications/CuaDriver.app` is installed, or pass --no-relaunch to bypass.\n"
-                        .utf8))
-            throw ExitCode(1)
-        }
-
         // Poll for the daemon to come up. 5s covers a cold launch
         // including the first-run PermissionsGate preflight; on a warm
         // machine the socket usually appears in <500ms.
@@ -295,15 +285,13 @@ extension ServeCommand {
 
         if probeReachable {
             FileHandle.standardOutput.write(
-                Data(
-                    "cua-driver daemon is running (relaunched via CuaDriver.app)\n  socket: \(socketPath)\n"
-                        .utf8))
+                Data("cua-driver daemon is running\n  socket: \(socketPath)\n".utf8))
             return
         }
 
         FileHandle.standardError.write(
             Data(
-                "cua-driver: relaunched CuaDriver.app but no daemon appeared on \(socketPath) within 5s. Check Accessibility + Screen Recording grants for CuaDriver.app, or re-run with --no-relaunch to see in-process errors.\n"
+                "cua-driver: launched CuaDriver.app daemon but no socket appeared on \(socketPath) within 5s. Check Accessibility grants for CuaDriver.app, or re-run with --no-relaunch to see in-process errors.\n"
                     .utf8))
         throw ExitCode(1)
     }

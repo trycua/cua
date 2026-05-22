@@ -58,7 +58,7 @@ Keyboard is simpler. Every key goes through `CGEvent.postToPid` scoped to the na
 
 ## What it doesn't do
 
-- Requires macOS 14 (Sonoma) or later. Works on Apple Silicon and Intel.
+- Requires macOS 13 (Ventura) or later. Works on Apple Silicon and Intel.
 - Not a VM. Cua Driver operates the real host, so grant Accessibility and Screen Recording with intent.
 - No right-click on Chromium web content through pixel synthesis: the renderer-IPC filter drops right-click subtype on non-HID-tap paths. Use `right_click({pid, element_index})` on AX-addressable targets. See [Limits](/cua-driver/reference/limits).
 - Canvas apps (Blender, Unity, games) need a brief frontmost activation because their event loops filter per-pid-routed events. Everything else stays backgrounded.

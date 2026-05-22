@@ -1200,9 +1200,9 @@ else {
     Write-Host ""                                                                          -ForegroundColor Cyan
     Write-Host "  Or re-run this installer with -AutoStart for the same result."           -ForegroundColor Cyan
     Write-Host ""                                                                          -ForegroundColor Cyan
-    Write-Host "  Without auto-start, the daemon runs at the user's default token IL."     -ForegroundColor Cyan
-    Write-Host "  That's fine for Win32 + Chromium apps. UWP / AppContainer apps"          -ForegroundColor Cyan
-    Write-Host "  (Calculator, modern Settings, Photos) need the elevated autostart task." -ForegroundColor Cyan
+    Write-Host "  Without auto-start, you'll need to run 'cua-driver serve' manually."     -ForegroundColor Cyan
+    Write-Host "  Auto-start spawns the daemon at logon at RunLevel=Highest, which is"     -ForegroundColor Cyan
+    Write-Host "  needed for some elevated operations (registry, services, ACLs)."         -ForegroundColor Cyan
 }
 
 

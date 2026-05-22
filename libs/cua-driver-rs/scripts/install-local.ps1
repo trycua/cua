@@ -54,10 +54,13 @@ $RepoRoot    = (Resolve-Path "$ScriptDir\..").Path
 $BinaryName  = "cua-driver.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
-$Target      = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') {
-    "aarch64-pc-windows-msvc"
-} else {
-    "x86_64-pc-windows-msvc"
+# Arch detection — use $env:PROCESSOR_ARCHITECTURE rather than
+# RuntimeInformation::OSArchitecture so this works under
+# Set-StrictMode -Version Latest (same fix as install.ps1 PR #1631).
+$archEnv = $env:PROCESSOR_ARCHITECTURE
+$Target = switch -Regex ($archEnv) {
+    '^ARM64$' { "aarch64-pc-windows-msvc"; break }
+    default   { "x86_64-pc-windows-msvc" }
 }
 
 # ---------- Paths (must match install.ps1's defaults) ----------------------

@@ -5,6 +5,10 @@
 # the Rust port on non-macOS hosts (same as install.sh).
 #
 # Swift uninstall removes:
+#   - any running cua-driver daemon (clean shutdown via `cua-driver stop`,
+#     then `pkill` survivors — Unix keeps mmap'd binary pages alive in
+#     open processes, so removing the .app while the daemon is running
+#     leaves a zombie executing from a deleted path until next launch)
 #   - ~/.local/bin/cua-driver symlink
 #   - /Applications/CuaDriver.app bundle
 #   - ~/.cua-driver/ (telemetry id + install marker)
@@ -13,7 +17,7 @@
 #
 # Rust uninstall (--experimental-rust / --backend=rust / non-macOS) delegates
 # to a colocated private helper, _uninstall-rust.sh — see that script for
-# the full list of paths it removes.
+# the full list of paths it removes. Same daemon-kill step runs there.
 #
 # Does NOT revoke TCC grants (Accessibility + Screen Recording) on macOS.
 #
@@ -142,6 +146,36 @@ LEGACY_UPDATE_SCRIPT="/usr/local/bin/cua-driver-update"
 LEGACY_UPDATER_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
 
 log() { printf '==> %s\n' "$*"; }
+
+# --- Stop running daemon ------------------------------------------------
+#
+# Unix keeps mmap'd binary pages alive in open processes, so `rm -rf
+# /Applications/CuaDriver.app` while the daemon is running leaves a
+# zombie executing from a now-deleted binary path. The next `cua-driver`
+# CLI command (or any AX request the still-running daemon makes) cites
+# the deleted path, which surfaces as confusing TCC dialogs and stale
+# state. Stop the daemon first, then belt-and-suspenders `pkill` any
+# survivors before we touch the .app bundle.
+#
+# Best-effort: missing daemon / missing CLI is a no-op. Mirrors the
+# Windows Stop-Process block in uninstall.ps1.
+if command -v cua-driver >/dev/null 2>&1; then
+    if cua-driver stop >/dev/null 2>&1; then
+        log "stopped running cua-driver daemon via 'cua-driver stop'"
+    fi
+fi
+if command -v pkill >/dev/null 2>&1; then
+    # Two separate matchers — `cua-driver mcp` (foreground MCP server
+    # spawned by an editor / agent) and `cua-driver serve` (background
+    # daemon). pkill -f matches the full command line, so e.g. a shell
+    # cd'd into a "cua-driver" directory isn't caught.
+    if pkill -f "cua-driver mcp" >/dev/null 2>&1; then
+        log "killed surviving 'cua-driver mcp' process(es)"
+    fi
+    if pkill -f "cua-driver serve" >/dev/null 2>&1; then
+        log "killed surviving 'cua-driver serve' process(es)"
+    fi
+fi
 
 # CLI symlinks. Try the user-bin first (no sudo), then the legacy
 # /usr/local/bin path (needs sudo on default macOS).

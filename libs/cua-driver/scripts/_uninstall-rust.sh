@@ -8,6 +8,16 @@
 # Mirrors _install-rust.sh's on-disk knowledge — removes everything the
 # install script laid down:
 #
+# Daemon-kill step (both platforms, runs first):
+#   - `cua-driver stop` to ask the daemon to shut down cleanly via its
+#     Unix-domain socket, then `pkill -f "cua-driver mcp"` and
+#     `pkill -f "cua-driver serve"` as a belt-and-suspenders cleanup.
+#     Required because Unix keeps mmap'd binary pages alive in open
+#     processes: removing the .app / packages dir while the daemon is
+#     running leaves a zombie executing from a deleted path until next
+#     launch, which surfaces as confusing TCC dialogs ("authorize the
+#     app at <deleted-path>") on the next CLI invocation.
+#
 # Linux:
 #   - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #     cua-driver-rs path — a Swift-driver symlink is left in place)
@@ -76,6 +86,36 @@ resolve_link() {
         *)  printf '%s/%s' "$(cd -- "$(dirname -- "$link")" && pwd)" "$target" ;;
     esac
 }
+
+# --- Stop running daemon ------------------------------------------------
+#
+# Unix keeps mmap'd binary pages alive in open processes, so removing
+# /Applications/CuaDriver.app (macOS) or $HOME_DIR/packages/... (Linux)
+# while the daemon is running leaves a zombie executing from a now-
+# deleted binary path. The next AX/CGS call from the still-running
+# daemon then cites the deleted path in macOS authorization dialogs
+# (observed live with cua-driver-rs 0.2.3 → 0.2.4 upgrade). Stop the
+# daemon first, then belt-and-suspenders `pkill` any survivors.
+#
+# Best-effort: missing daemon / missing CLI is a no-op. Mirrors the
+# Windows Stop-Process block in uninstall.ps1 and the Swift uninstall.sh.
+if command -v cua-driver >/dev/null 2>&1; then
+    if cua-driver stop >/dev/null 2>&1; then
+        log "stopped running cua-driver daemon via 'cua-driver stop'"
+    fi
+fi
+if command -v pkill >/dev/null 2>&1; then
+    # Match the full command line (`-f`) so a shell cd'd into a directory
+    # named "cua-driver" isn't caught. `cua-driver mcp` covers the
+    # foreground MCP server (spawned by an editor / agent); `cua-driver
+    # serve` covers the background daemon.
+    if pkill -f "cua-driver mcp" >/dev/null 2>&1; then
+        log "killed surviving 'cua-driver mcp' process(es)"
+    fi
+    if pkill -f "cua-driver serve" >/dev/null 2>&1; then
+        log "killed surviving 'cua-driver serve' process(es)"
+    fi
+fi
 
 # --- CLI symlink ---------------------------------------------------------
 #

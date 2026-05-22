@@ -648,6 +648,96 @@ fn split_launchable_target(s: &str) -> (String, String) {
     (trimmed.to_owned(), String::new())
 }
 
+/// Returns `true` when the launch target names a Chromium-based browser
+/// — i.e. one whose hidden launch under `SW_SHOWNOACTIVATE` will trigger
+/// renderer-occlusion throttling unless we inject the anti-throttling flags
+/// below. See #1620.
+///
+/// Matches the executable basename (case-insensitive, with or without
+/// `.exe`). Accepts bare names (the App Paths shortcut, e.g. `"msedge"`),
+/// full paths (`"C:\...\msedge.exe"`), and round-tripped launch paths with
+/// trailing arguments (`"\"C:\...\chrome.exe\" --foo"` — the first token is
+/// matched via `split_launchable_target`).
+fn is_chromium_browser_target(target: &str) -> bool {
+    let (file, _) = split_launchable_target(target);
+    let candidate = if file.is_empty() { target } else { file.as_str() };
+    let lower = candidate.to_ascii_lowercase();
+    let basename = lower
+        .rsplit_once('\\')
+        .map(|(_, b)| b)
+        .or_else(|| lower.rsplit_once('/').map(|(_, b)| b))
+        .unwrap_or(lower.as_str());
+    let stem = basename.strip_suffix(".exe").unwrap_or(basename);
+    matches!(
+        stem,
+        "msedge"
+            | "chrome"
+            | "brave"
+            | "opera"
+            | "vivaldi"
+            | "chromium"
+            | "thorium"
+            | "iridium"
+            | "browser" // Yandex Browser's exe is browser.exe
+            | "arc"
+    )
+}
+
+/// Anti-throttling flags injected on hidden Chromium launches (#1620).
+///
+/// `launch_app` uses `SW_SHOWNOACTIVATE` so the launched window is
+/// non-foreground from birth. Chromium's `CalculateNativeWinOcclusion`
+/// feature treats that as occluded and suspends the renderer process for
+/// the tab's entire lifetime — UIA tree exposes only browser chrome, no
+/// page DOM, and `PrintWindow` returns a blank body.
+///
+/// `CalculateNativeWinOcclusion` is the root cause; the two
+/// `--disable-backgrounding-*` flags backstop the same effect through the
+/// process-priority and renderer-throttling layers (Chromium suspends
+/// renderers on multiple signals).
+const CHROMIUM_ANTI_THROTTLING_FLAGS: &[&str] = &[
+    "--disable-features=CalculateNativeWinOcclusion",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+];
+
+/// Prepend the Chromium anti-throttling flags to `extra_args` unless the
+/// caller already has each one. Merges into an existing `--disable-features=`
+/// list rather than appending a second `--disable-features=` entry (Chromium
+/// has subtle merging rules across duplicate flags).
+fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
+    const OCCLUSION_FEATURE: &str = "CalculateNativeWinOcclusion";
+
+    // Merge `CalculateNativeWinOcclusion` into any existing
+    // `--disable-features=` entry, or insert a fresh one at the front.
+    let has_occlusion = extra_args.iter().any(|a| {
+        a.strip_prefix("--disable-features=")
+            .map(|v| v.split(',').any(|f| f.trim() == OCCLUSION_FEATURE))
+            .unwrap_or(false)
+    });
+    if !has_occlusion {
+        if let Some(idx) = extra_args
+            .iter()
+            .position(|a| a.starts_with("--disable-features="))
+        {
+            extra_args[idx] = format!("{},{OCCLUSION_FEATURE}", extra_args[idx]);
+        } else {
+            extra_args.insert(
+                0,
+                format!("--disable-features={OCCLUSION_FEATURE}"),
+            );
+        }
+    }
+
+    // Boolean toggles — insert at front only when not already present.
+    for flag in &["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] {
+        if !extra_args.iter().any(|a| a == flag) {
+            extra_args.insert(0, (*flag).to_string());
+        }
+    }
+    let _ = CHROMIUM_ANTI_THROTTLING_FLAGS; // referenced for docs alignment
+}
+
 // ── launch_app ───────────────────────────────────────────────────────────────
 
 pub struct LaunchAppTool;
@@ -718,7 +808,7 @@ impl Tool for LaunchAppTool {
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
-        let extra_args: Vec<String> = args.get("additional_arguments").and_then(|v| v.as_array())
+        let mut extra_args: Vec<String> = args.get("additional_arguments").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
 
@@ -732,9 +822,36 @@ impl Tool for LaunchAppTool {
             .or(name_opt.clone())
             .or(bundle_id_opt.clone());
 
+        // #1620: auto-inject Chromium anti-throttling flags when the resolved
+        // target names a Chromium-based browser (Edge / Chrome / Brave /
+        // Vivaldi / Opera / Chromium / Arc / Thorium / Iridium / Yandex).
+        // launch_app hides the window via SW_SHOWNOACTIVATE; Chromium's
+        // occlusion logic suspends the renderer in that case, leaving the
+        // UIA tree empty and PrintWindow capturing a blank body. The three
+        // flags below defeat that for the lifetime of the launched process
+        // without affecting normal interactive use.
+        //
+        // Skipped when `aumid` or `bundle_id` route through the UWP path
+        // (packaged Edge is the exception; the desktop Edge channel is what
+        // ships now and that goes through the ShellExecuteEx path below).
+        if launch_path_opt.is_some() || path_opt.is_some() || name_opt.is_some() {
+            if let Some(t) = target.as_deref() {
+                if is_chromium_browser_target(t) {
+                    inject_chromium_anti_throttling_flags(&mut extra_args);
+                }
+            }
+        }
+
         if target.is_none() && urls.is_empty() {
-            // Match Swift's wording verbatim.
-            return ToolResult::error("Provide either bundle_id or name to identify the app to launch.");
+            // Error message lists every field the resolver actually accepts.
+            // The Swift-original "bundle_id or name" message predated the Windows
+            // additions (aumid, path, launch_path, urls) and made #1635 look like
+            // an aumid-specific bug. The actual cause of #1635 was the upstream
+            // PS argv quote-stripping bug fixed in #1637; this message just stops
+            // misleading anyone who hits the error for unrelated reasons.
+            return ToolResult::error(
+                "Provide one of: bundle_id, name, aumid, path, launch_path, or urls to identify the app to launch.",
+            );
         }
 
         // ── Packaged-app (UWP / MSIX) routing decision ──────────────────────
@@ -929,9 +1046,19 @@ impl Tool for LaunchAppTool {
         }
 
         // Resolve the pid's windows so the caller can skip a list_windows
-        // round-trip — same approach as Swift's `resolveWindows`.  Retry
+        // round-trip — same approach as Swift's `resolveWindows`. Retry
         // 5×200ms; Win32 window registration can lag the launch.
+        //
+        // Launcher-stub fallback: when the launched binary is a wrapper that
+        // re-execs and exits (GIMP's `gimp-3.exe` → `gimp-3.2.exe`; LO's
+        // `swriter.exe` → `soffice.bin`), the launched pid never gets a
+        // window — list_windows(Some(pid)) stays empty forever. After the
+        // primary retry budget we fall back to scanning the launched pid's
+        // descendant + name-related processes and pick the first one with a
+        // window. The resolved pid is reflected in the response's `pid` field
+        // so callers can target it with subsequent calls. See #1615.
         let mut windows_json: Vec<serde_json::Value> = Vec::new();
+        let mut resolved_pid: u32 = pid;
         for _ in 0..5 {
             let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                 .await.unwrap_or_default();
@@ -947,6 +1074,90 @@ impl Tool for LaunchAppTool {
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
+        if windows_json.is_empty() {
+            // Launcher-stub fallback. Compute the exe basename from the
+            // launchable target so name-based matching has something to work
+            // with (e.g. "gimp-3.exe" → prefix "gimp" matches "gimp-3.2.exe").
+            let basename_for_match = target_file_opt
+                .as_deref()
+                .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
+                .unwrap_or("")
+                .to_owned();
+            // Known-slow launchers get an extended retry budget. GIMP 3.x in
+            // particular spends 10-20s on its first launch (font cache rebuild,
+            // plugin scan, etc.) before the main window registers. We don't
+            // want to wait 20s for every launcher — gate on basename prefix
+            // matching known-slow apps. Add to this list as encountered.
+            let bn_lower = basename_for_match.to_ascii_lowercase();
+            let is_slow_launcher = bn_lower.starts_with("gimp")
+                || bn_lower.starts_with("blender")          // OpenGL init can stall
+                || bn_lower.starts_with("inkscape")         // similar GTK pattern
+                || bn_lower.starts_with("krita")
+                || bn_lower.starts_with("freecad");
+            let max_candidate_attempts: usize = if is_slow_launcher { 30 } else { 3 };
+
+            let basename_clone = basename_for_match.clone();
+            let candidates_initial = tokio::task::spawn_blocking(move || {
+                crate::win32::related_processes(pid, &basename_clone)
+            })
+            .await
+            .unwrap_or_default();
+
+            // For slow launchers we may also need to RE-SCAN candidates over
+            // time, because the wrapper may not have spawned its child yet
+            // when we first scanned. Cap total wait at ~12s (slow) / 0.6s (fast).
+            let mut tried: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            tried.insert(pid); // already tried in the primary loop
+            let mut candidate_queue: Vec<u32> = candidates_initial
+                .into_iter()
+                .filter(|p| tried.insert(*p))
+                .collect();
+            let mut total_attempts: usize = 0;
+            'outer: loop {
+                while let Some(candidate_pid) = candidate_queue.pop() {
+                    for _ in 0..max_candidate_attempts {
+                        total_attempts += 1;
+                        let wins = tokio::task::spawn_blocking(move || {
+                            crate::win32::list_windows(Some(candidate_pid))
+                        })
+                        .await
+                        .unwrap_or_default();
+                        if !wins.is_empty() {
+                            windows_json = wins.iter().map(|w| json!({
+                                "window_id": w.hwnd, "title": w.title,
+                                "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                                "layer": 0,
+                                "z_index": 0,
+                                "is_on_screen": true,
+                            })).collect();
+                            resolved_pid = candidate_pid;
+                            break 'outer;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+                // For slow launchers, keep re-scanning descendants — the
+                // wrapper may not have spawned its child yet. Cap total
+                // wait at ~12s (60 × 200ms) for the slow path.
+                if !is_slow_launcher || total_attempts > 60 { break; }
+                // Give the wrapper a moment to spawn before re-scanning.
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                total_attempts += 3; // count the 500ms wait as 3 attempts
+                let basename_rescan = basename_for_match.clone();
+                let fresh = tokio::task::spawn_blocking(move || {
+                    crate::win32::related_processes(pid, &basename_rescan)
+                })
+                .await
+                .unwrap_or_default();
+                let new_ones: Vec<u32> = fresh.into_iter().filter(|p| tried.insert(*p)).collect();
+                candidate_queue = new_ones;
+                // Continue the outer loop regardless — even with empty
+                // new_ones we want another iteration that hits the
+                // total_attempts cap. The loop body handles the empty queue
+                // by falling through to the re-scan again.
+            }
+        }
+        let pid = resolved_pid;
 
         // Match Swift text format 1:1.
         let mut summary = format!("✅ Launched {display} (pid {pid}) in background.");
@@ -1198,6 +1409,55 @@ impl Tool for ClickTool {
                     ));
                 }
             }
+
+            // #1623: PostMessage(WM_LBUTTONDOWN) to Chromium frame HWNDs doesn't
+            // reach the DOM input pipeline — Chromium's input thread only accepts
+            // events with SendInput-queue origin. For Chromium targets, take the
+            // SendInput path; for everything else, take the existing PostMessage
+            // path (the path was added as a no-focus-steal click delivery, which
+            // PostMessage uniquely provides). The Chromium path moves the cursor
+            // visibly and briefly steals foreground — there's no Chromium-native
+            // alternative that gets DOM events to fire without these tradeoffs.
+            //
+            // SendInput on Chromium requires the daemon to have UIAccess integrity
+            // (otherwise SetForegroundWindow is rejected and the events land on the
+            // wrong window). The MCP proxy auto-prefers the cua-driver-uia worker
+            // when both pipes are up, so this path runs with UIAccess in the
+            // common case. When UIAccess is missing, send_click_synthesized
+            // surfaces an actionable error and we fall through to PostMessage —
+            // PostMessage won't fire DOM events on Chromium either, but the user
+            // gets a meaningful diagnostic instead of silent no-op.
+            let chromium = tokio::task::spawn_blocking(move || {
+                crate::input::is_chromium_target_window(hwnd)
+            })
+            .await
+            .unwrap_or(false);
+            if chromium {
+                let send_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, count, &btn)
+                })
+                .await;
+                match send_result {
+                    Ok(Ok(())) => {
+                        let click_word = match count {
+                            2 => "double-click",
+                            3 => "triple-click",
+                            _ => "click",
+                        };
+                        return ToolResult::text(format!(
+                            "✅ Sent {click_word} via SendInput to pid {pid} (Chromium target)."
+                        ));
+                    }
+                    Ok(Err(e)) => {
+                        // Bubble the actionable diagnostic ("Run through uia worker") up
+                        // to the caller rather than silently falling to PostMessage,
+                        // which we know doesn't work for Chromium.
+                        return ToolResult::error(e.to_string());
+                    }
+                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                }
+            }
+
             let result = tokio::task::spawn_blocking(move || {
                 crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
             }).await;
@@ -1470,15 +1730,31 @@ impl Tool for HotkeyTool {
     fn def(&self) -> &ToolDef {
         HOTKEY_DEF.get_or_init(|| ToolDef {
             name: "hotkey".into(),
-            // Description ported from Swift `HotkeyTool.swift` (omitting macOS-
-            // specific FocusWithoutRaise/SLEventPostToPid mechanics — Windows
-            // uses PostMessage which doesn't need a NSMenu-activation dance).
+            // Description ported from Swift `HotkeyTool.swift` with the
+            // Windows-specific dispatch (UIA accelerator for XAML; SendInput
+            // for legacy Win32 with modifiers per #1614 / #1618; PostMessage
+            // for modifier-less keys).
             description: "Press a combination of keys simultaneously — e.g. `[\"ctrl\", \"c\"]` \
-                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. Legacy Win32 \
-                targets receive the combo directly via PostMessage(WM_KEYDOWN/UP); modern \
-                XAML / WinUI / UWP targets route through UI Automation by finding a descendant \
-                whose AcceleratorKey matches the combo and invoking it. The target does NOT \
-                need to be frontmost.\n\n\
+                for Copy, `[\"ctrl\", \"shift\", \"t\"]` for reopen-closed-tab. Dispatch is \
+                target-aware:\n\n\
+                - **Modern XAML / WinUI / UWP targets** route through UI Automation: the driver \
+                walks the target's accessibility subtree, finds a descendant whose AcceleratorKey \
+                matches the combo, and invokes it. No focus steal, no system-queue input.\n\n\
+                - **Legacy Win32 targets with modifiers** (Ctrl+S, Alt+Tab, etc.) route through \
+                `SendInput` against the system input queue, with a brief `SetForegroundWindow` \
+                swap so the events land on the target. This path is necessary because \
+                PostMessage(WM_KEYDOWN, VK_CONTROL) does NOT update the OS-wide modifier state \
+                visible to `GetKeyState` / `TranslateAccelerator`, so Win32 apps that bind \
+                accelerators via `TranslateAccelerator` (LibreOffice, FAR, classic Notepad, etc.) \
+                never see the combo as a real accelerator on the PostMessage-only path. \
+                Trade-off: brief foreground swap (mitigated by restoring the previous foreground \
+                after the keystrokes flush). Requires the daemon to have UIAccess integrity so \
+                `SetForegroundWindow` is permitted — the MCP proxy auto-prefers the \
+                `cua-driver-uia.exe` worker pipe when both daemons are running.\n\n\
+                - **Legacy Win32 targets without modifiers** (plain `enter`, `tab`, `f5`, etc.) \
+                route through `PostMessage(WM_KEYDOWN/UP)` — no focus steal, no need to update \
+                modifier state.\n\n\
+                The target does NOT need to be frontmost in any branch.\n\n\
                 **`window_id`** (optional): explicit HWND when the pid owns more than one \
                 window; otherwise the pid's first visible window is used.\n\n\
                 Recognized modifiers: ctrl/control, shift, alt, win/windows. Non-modifier \
@@ -1603,12 +1879,33 @@ impl Tool for HotkeyTool {
             };
         }
 
+        // Non-XAML Win32 path. Two routes available:
+        //   1. SendInput synthesized hotkey — pushes the events onto the
+        //      *system input queue*. Updates GetKeyState's modifier state, so
+        //      TranslateAccelerator-based apps (LibreOffice, FAR, classic
+        //      Notepad, etc.) see Ctrl+S as a real accelerator. Trade-off:
+        //      brief focus theft to ensure SendInput lands on the right HWND.
+        //   2. PostMessage WM_KEYDOWN/UP — no focus theft, but the
+        //      synthesized Ctrl/Shift/Alt modifier never updates
+        //      GetKeyState, so accelerators don't fire. Only useful for
+        //      non-accelerator key sequences.
+        // We pick route 1 when modifiers are present (the accelerator case),
+        // route 2 otherwise (plain non-modifier keys still post fine).
+        let has_modifiers = !mods.is_empty();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-            crate::input::post_key(hwnd, &key, &m)
+            if has_modifiers {
+                crate::input::send_key_synthesized(hwnd, &key, &m)
+            } else {
+                crate::input::post_key(hwnd, &key, &m)
+            }
         }).await;
+        let path = if has_modifiers { "SendInput" } else { "PostMessage" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Pressed {key_display} on pid {raw_pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Pressed {key_display} on pid {raw_pid} via {path} \
+                 (Win32 target)."
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2811,36 +3108,141 @@ impl Tool for CheckPermissionsTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // On Windows, background PostMessage access doesn't require elevated permissions.
-        // UIA works for most apps without elevation; some system apps require elevation.
-        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-        use windows::Win32::Security::{TOKEN_QUERY, GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
-        let is_elevated = unsafe {
-            let proc = GetCurrentProcess();
-            let mut token = windows::Win32::Foundation::HANDLE::default();
-            if OpenProcessToken(proc, TOKEN_QUERY, &mut token).is_ok() {
-                let mut elevation = TOKEN_ELEVATION::default();
-                let mut ret_len = 0u32;
-                let ok = GetTokenInformation(
-                    token,
-                    TokenElevation,
-                    Some(&mut elevation as *mut _ as *mut _),
-                    std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-                    &mut ret_len,
-                ).is_ok();
-                let _ = windows::Win32::Foundation::CloseHandle(token);
-                ok && elevation.TokenIsElevated != 0
-            } else {
-                false
-            }
+        // `elevated` reports the daemon's actual token integrity level, NOT the
+        // legacy `TokenIsElevated` UAC-elevation flag. The two diverge in two
+        // important cases that matter to cua-driver:
+        //
+        //   1. RID-500 built-in Administrator — runs at High IL all the time
+        //      because RID 500 has no UAC split token (FilterAdministratorToken=0
+        //      default). `TokenIsElevated` returns false (never UAC-prompted)
+        //      but the IL is High and admin-level access works fine.
+        //
+        //   2. Task-Scheduler-spawned processes registered at RunLevel=Highest
+        //      and triggered by AtLogon — Task Scheduler hands out the user's
+        //      full admin token without going through the UAC prompt path, so
+        //      `TokenIsElevated` returns false while IL is High. This is the
+        //      common case for cua-driver's autostart task on non-RID-500
+        //      admin users — the daemon IS at High IL (cross-AppContainer UIA
+        //      works, Calculator-class UWP apps drive cleanly) but the legacy
+        //      flag reports it as a "standard user", which confused everyone
+        //      tracking #1602 / #1601. See issue #1640.
+        //
+        // #1646 / dogfood-iteration-3: PR #1647's in-process windows-rs
+        // implementation of TokenIntegrityLevel STILL misreported the IL.
+        // Verified externally on the cuademo dogfood VM: a daemon at
+        // demonstrably High IL (RID 0x3000 by direct PowerShell-C# Win32
+        // read against the daemon's pid) was reported by the daemon's own
+        // check_permissions as Medium IL (RID 0x2000). Both code paths used
+        // identical Win32 APIs (OpenProcess + OpenProcessToken +
+        // GetTokenInformation(TokenIntegrityLevel=25)), yet they disagreed.
+        // Root cause unclear — possibly a subtle interaction between the
+        // windows-rs crate's bindings and the named-pipe server's thread
+        // security context, possibly a Vec-buffer alignment issue that
+        // doesn't reproduce in standalone testing. RevertToSelf +
+        // OpenProcess(GetCurrentProcessId()) didn't help.
+        //
+        // Pragmatic workaround: shell out to PowerShell and run the same
+        // C# Win32 helper that's verified to return the correct IL. Cost
+        // is one PowerShell spawn (~100-200ms) per check_permissions call,
+        // which is acceptable — check_permissions is a low-frequency,
+        // user-initiated diagnostic, not a hot path.
+        const HIGH_IL_RID: u32 = 0x3000;
+
+        let il_rid: Option<u32> = read_self_integrity_level_via_powershell();
+
+        let is_elevated = il_rid.map(|r| r >= HIGH_IL_RID).unwrap_or(false);
+        let il_name = match il_rid {
+            Some(0x0000) => "Untrusted",
+            Some(0x1000) => "Low",
+            Some(0x2000) => "Medium",
+            Some(0x2100) => "Medium+",
+            Some(0x3000) => "High",
+            Some(0x4000) => "System",
+            Some(_) => "Unknown",
+            None => "Unavailable",
         };
-        let status_text = format!(
-            "Process elevation: {}\nUIA accessibility: available (no special permission needed)\nPostMessage injection: available",
-            if is_elevated { "✅ elevated (administrator)" } else { "ℹ️ standard user" }
-        );
+        // Distinguish the unavailable case from a real measurement — don't
+        // render a fake RID 0x0000 or a fake elevation status when the lookup
+        // failed. See CodeRabbit review on PR #1641.
+        let status_text = match il_rid {
+            Some(rid) => format!(
+                "Process integrity level: {il_name} (RID 0x{rid:04X}, {})\n\
+                 UIA accessibility: available (no special permission needed)\n\
+                 PostMessage injection: available",
+                if is_elevated { "elevated" } else { "non-elevated" }
+            ),
+            None => format!(
+                "Process integrity level: {il_name} (token query failed)\n\
+                 UIA accessibility: available (no special permission needed)\n\
+                 PostMessage injection: available"
+            ),
+        };
         ToolResult::text(status_text)
-            .with_structured(json!({ "elevated": is_elevated, "uia": true, "post_message": true }))
+            .with_structured(json!({
+                "elevated": is_elevated,
+                "integrity_level": il_name,
+                "integrity_level_rid": il_rid,
+                "uia": true,
+                "post_message": true
+            }))
     }
+}
+
+/// Read the current process's token integrity level (RID) by shelling out
+/// to PowerShell and running a P/Invoke-based C# helper. See the long
+/// comment in `CheckPermissionsTool::invoke` for why the in-process
+/// windows-rs approach was abandoned (issue #1646 / dogfood iteration 3).
+///
+/// Returns `Some(rid)` on success (e.g. `0x3000` for High), `None` if
+/// PowerShell exits non-zero or stdout isn't a u32. Spawns one short-lived
+/// `powershell.exe` process per call; only used from `check_permissions`,
+/// which is a low-frequency, user-initiated diagnostic.
+fn read_self_integrity_level_via_powershell() -> Option<u32> {
+    let pid = std::process::id();
+    // Inline the same C# helper we verified externally on the dogfood VM.
+    // Heredoc-wrap (`@" ... "@`) avoids shell-escape acrobatics around the
+    // C# braces / double-quotes. The `Write-Output` at the end is parsed
+    // as a plain integer.
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class IL {{
+    [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(int a, bool i, int p);
+    [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+    [DllImport("advapi32.dll")] public static extern bool OpenProcessToken(IntPtr p, int a, out IntPtr t);
+    [DllImport("advapi32.dll")] public static extern bool GetTokenInformation(IntPtr t, int c, IntPtr i, int l, out int n);
+    [DllImport("advapi32.dll")] public static extern IntPtr GetSidSubAuthority(IntPtr s, int i);
+    [DllImport("advapi32.dll")] public static extern IntPtr GetSidSubAuthorityCount(IntPtr s);
+    public static uint? Rid(int pid) {{
+        var h = OpenProcess(0x1000, false, pid); if (h == IntPtr.Zero) return null;
+        try {{ IntPtr t; if (!OpenProcessToken(h, 0x8, out t)) return null;
+            try {{ int n; GetTokenInformation(t, 25, IntPtr.Zero, 0, out n); if (n == 0) return null;
+                var b = Marshal.AllocHGlobal(n); try {{ if (!GetTokenInformation(t, 25, b, n, out n)) return null;
+                    var s = Marshal.ReadIntPtr(b); var c = Marshal.ReadByte(GetSidSubAuthorityCount(s));
+                    return (uint)Marshal.ReadInt32(GetSidSubAuthority(s, c - 1)); }}
+                finally {{ Marshal.FreeHGlobal(b); }} }}
+            finally {{ CloseHandle(t); }} }}
+        finally {{ CloseHandle(h); }}
+    }}
+}}
+"@
+$rid = [IL]::Rid({pid})
+if ($null -ne $rid) {{ Write-Output ([int]$rid) }}
+"#,
+        pid = pid
+    );
+    let out = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.trim().parse::<u32>().ok()
 }
 
 // ── get_config ────────────────────────────────────────────────────────────────
@@ -3594,4 +3996,100 @@ pub fn build_registry() -> ToolRegistry {
     let _: &TypeTextCharsTool = &TypeTextCharsTool { state: state.clone() }; // touch struct so it stays in this crate for now
     r.register_recording_tools();
     r
+}
+
+#[cfg(test)]
+mod chromium_flag_injection_tests {
+    use super::{inject_chromium_anti_throttling_flags, is_chromium_browser_target};
+
+    #[test]
+    fn detects_bare_browser_names() {
+        for name in [
+            "msedge", "chrome", "brave", "opera", "vivaldi",
+            "chromium", "thorium", "iridium", "browser", "arc",
+        ] {
+            assert!(is_chromium_browser_target(name), "{name} should match");
+            assert!(is_chromium_browser_target(&format!("{name}.exe")), "{name}.exe should match");
+            // Case-insensitive.
+            assert!(is_chromium_browser_target(&name.to_uppercase()), "uppercase {name} should match");
+        }
+    }
+
+    #[test]
+    fn detects_full_paths() {
+        assert!(is_chromium_browser_target(
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        ));
+        assert!(is_chromium_browser_target(
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        ));
+        // Forward slashes too (some shells write paths that way).
+        assert!(is_chromium_browser_target(
+            r"C:/Program Files/Google/Chrome/Application/chrome.exe"
+        ));
+    }
+
+    #[test]
+    fn detects_launch_path_with_trailing_args() {
+        // Round-tripped launch_path from list_apps with shortcut arguments.
+        assert!(is_chromium_browser_target(
+            r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Profile 2""#
+        ));
+    }
+
+    #[test]
+    fn does_not_match_non_chromium_apps() {
+        for name in ["firefox", "notepad", "explorer", "code", "soffice"] {
+            assert!(!is_chromium_browser_target(name), "{name} should NOT match");
+            assert!(!is_chromium_browser_target(&format!("{name}.exe")), "{name}.exe should NOT match");
+        }
+        // Empty target.
+        assert!(!is_chromium_browser_target(""));
+    }
+
+    #[test]
+    fn injects_three_flags_into_empty_args() {
+        let mut args: Vec<String> = vec![];
+        inject_chromium_anti_throttling_flags(&mut args);
+        assert!(args.contains(&"--disable-features=CalculateNativeWinOcclusion".to_string()));
+        assert!(args.contains(&"--disable-backgrounding-occluded-windows".to_string()));
+        assert!(args.contains(&"--disable-renderer-backgrounding".to_string()));
+        assert_eq!(args.len(), 3);
+    }
+
+    #[test]
+    fn merges_into_existing_disable_features_list() {
+        let mut args = vec!["--disable-features=Foo,Bar".to_string()];
+        inject_chromium_anti_throttling_flags(&mut args);
+        // Should NOT have two --disable-features= entries.
+        let dfe: Vec<_> = args.iter().filter(|a| a.starts_with("--disable-features=")).collect();
+        assert_eq!(dfe.len(), 1);
+        assert!(dfe[0].contains("CalculateNativeWinOcclusion"));
+        assert!(dfe[0].contains("Foo"));
+        assert!(dfe[0].contains("Bar"));
+    }
+
+    #[test]
+    fn idempotent_when_all_flags_already_present() {
+        let mut args = vec![
+            "--disable-features=CalculateNativeWinOcclusion".to_string(),
+            "--disable-backgrounding-occluded-windows".to_string(),
+            "--disable-renderer-backgrounding".to_string(),
+        ];
+        let before = args.clone();
+        inject_chromium_anti_throttling_flags(&mut args);
+        assert_eq!(args, before, "must not duplicate flags");
+    }
+
+    #[test]
+    fn preserves_user_url_argument_after_flags() {
+        let mut args = vec!["file:///C:/test_page.html".to_string()];
+        inject_chromium_anti_throttling_flags(&mut args);
+        // URL must still be present.
+        assert!(args.iter().any(|a| a == "file:///C:/test_page.html"));
+        // All three flags now in args.
+        assert!(args.iter().any(|a| a == "--disable-features=CalculateNativeWinOcclusion"));
+        assert!(args.iter().any(|a| a == "--disable-backgrounding-occluded-windows"));
+        assert!(args.iter().any(|a| a == "--disable-renderer-backgrounding"));
+    }
 }

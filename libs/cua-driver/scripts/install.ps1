@@ -14,12 +14,19 @@
 # Layout on disk (three tiers, two directory junctions):
 #
 #   <visibleBinDir>            [directory junction → currentDir]
-#     = %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin
+#     = %LOCALAPPDATA%\Programs\Cua\cua-driver\bin
 #   <currentDir>               [directory junction → release dir]
-#     = %USERPROFILE%\.cua-driver-rs\packages\current
+#     = %USERPROFILE%\.cua-driver\packages\current
 #   <release dir>              [real directory, immutable per version]
-#     = %USERPROFILE%\.cua-driver-rs\packages\releases\<version>-<target>
+#     = %USERPROFILE%\.cua-driver\packages\releases\<version>-<target>
 #         cua-driver.exe
+#
+# Path layout renamed v0.2.14: `Programs\trycua\cua-driver-rs\` →
+# `Programs\Cua\cua-driver\` and `.cua-driver-rs\` → `.cua-driver\`. The
+# Rust port IS the canonical Windows driver now (no `-rs` suffix needed),
+# and `trycua` is the GitHub org prefix that doesn't belong in
+# %LOCALAPPDATA%\Programs. Legacy installs are auto-migrated at the next
+# `irm install.ps1 | iex` run.
 #
 # PATH consumers see <visibleBinDir>; the contents are transparently
 # served from whichever release the inner junction currently points at.
@@ -34,9 +41,9 @@
 # Env overrides:
 #   $env:CUA_DRIVER_RS_VERSION       pin a specific release (e.g. "0.2.0")
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   override the visible PATH-entry dir
-#                                    (default %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin)
+#                                    (default %LOCALAPPDATA%\Programs\Cua\cua-driver\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
-#                                    (default %USERPROFILE%\.cua-driver-rs)
+#                                    (default %USERPROFILE%\.cua-driver)
 #   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
 #                                    release dirs after install; older ones
 #                                    are deleted (default 5; set 0 to
@@ -99,7 +106,7 @@ $BinaryName = "cua-driver.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.2.8"
+$Script:CuaDriverRsBakedVersion = "0.2.18"
 # ~~~ END_BAKED_VERSION ~~~
 
 # ---------- Path resolution ------------------------------------------------
@@ -107,14 +114,32 @@ $Script:CuaDriverRsBakedVersion = "0.2.8"
 if ($env:CUA_DRIVER_RS_INSTALL_DIR) {
     $VisibleBinDir = $env:CUA_DRIVER_RS_INSTALL_DIR
 } else {
-    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+    # Path layout renamed v0.2.14: `Programs\trycua\cua-driver-rs\` →
+    # `Programs\Cua\cua-driver\`. The Rust port IS the canonical Windows
+    # driver now (no more `-rs` suffix needed in user-facing paths), and
+    # `trycua` is the GitHub org prefix that doesn't belong in
+    # %LOCALAPPDATA% — vendor folders there are conventionally PascalCase
+    # company names. The env var name keeps the `_RS_` infix so existing
+    # automation pinning a custom install dir doesn't break silently.
+    $VisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin"
 }
+
+# Legacy install paths from v0.2.13 and earlier. The uninstall path checks
+# both; the install path nukes any legacy install before laying down the
+# new one, so v0.2.13 → v0.2.14+ is a transparent upgrade.
+$LegacyVisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\trycua\cua-driver-rs\bin"
+$LegacyVendorDir     = Join-Path $env:LOCALAPPDATA "Programs\trycua"
 
 if ($env:CUA_DRIVER_RS_HOME) {
     $HomeDir = $env:CUA_DRIVER_RS_HOME
 } else {
-    $HomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
+    # Same rename: `.cua-driver-rs/` → `.cua-driver/`. The `-rs` suffix
+    # was the Rust-port-vs-Swift-driver disambiguator while the Swift one
+    # still existed for Windows; it doesn't anymore.
+    $HomeDir = Join-Path $env:USERPROFILE ".cua-driver"
 }
+
+$LegacyHomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
 
 $PackagesDir = Join-Path $HomeDir   "packages"
 $ReleasesDir = Join-Path $PackagesDir "releases"
@@ -156,15 +181,32 @@ function Write-ErrorStep($message) {
 # shell happens to be running under WOW64.
 
 function Get-TargetTriple {
-    $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($osArch) {
+    # Primary source: $env:PROCESSOR_ARCHITECTURE — always set on Windows,
+    # never trips StrictMode property introspection, no .NET version dependency.
+    # Fallback: [RuntimeInformation]::OSArchitecture — present since .NET 4.7.1
+    # but raises 'property cannot be found on this object' under StrictMode
+    # Latest on some PowerShell 5.1 setups (observed on Windows 11 24H2 with a
+    # fresh user account, see issue tracker).
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if (-not $arch) {
+        try {
+            $arch = ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture).ToString()
+        } catch {
+            $arch = "unknown"
+        }
+    }
+    switch ($arch) {
+        # $env:PROCESSOR_ARCHITECTURE values
+        "AMD64" { return "x86_64-pc-windows-msvc" }
+        "ARM64" { return "aarch64-pc-windows-msvc" }
+        # RuntimeInformation.OSArchitecture .ToString() values (fallback path)
         "X64"   { return "x86_64-pc-windows-msvc" }
         "Arm64" { return "aarch64-pc-windows-msvc" }
         default {
-            Write-ErrorStep "unsupported Windows architecture: $osArch"
-            Write-ErrorStep "  cua-driver-rs ships prebuilts for: x86_64 (X64) and arm64 (Arm64)."
+            Write-ErrorStep "unsupported Windows architecture: $arch"
+            Write-ErrorStep "  cua-driver-rs ships prebuilts for: x86_64 (AMD64) and arm64 (ARM64)."
             Write-ErrorStep "  Please file an issue at https://github.com/trycua/cua/issues with the output of"
-            Write-ErrorStep "  '[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture'."
+            Write-ErrorStep "  'echo `$env:PROCESSOR_ARCHITECTURE'."
             exit 1
         }
     }
@@ -478,15 +520,53 @@ function Ensure-Junction([string]$linkPath, [string]$targetPath) {
 # itself owns the platform-specific registration logic so the install
 # scripts and the runtime stay in lock-step — when the verb's behavior
 # changes, this script picks it up automatically with no edit needed.
+function Test-IsElevated {
+    # Returns $true if the current process is running at High IL (admin token).
+    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($id)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 function Register-CuaDriverAutostart {
     param([Parameter(Mandatory = $true)][string]$InstalledBinary)
 
     if (-not (Test-Path -LiteralPath $InstalledBinary)) {
         throw "binary not found at $InstalledBinary"
     }
-    & $InstalledBinary autostart enable
-    if ($LASTEXITCODE -ne 0) {
-        throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+
+    # The autostart task is registered with RunLevel=Highest so the daemon runs
+    # at the user's elevated/admin token. This is what lets cua-driver drive
+    # UWP / AppContainer apps (Calculator, modern Settings, Photos) — at the
+    # default Medium IL token, the cross-AppContainer UIA RPC truncates the
+    # tree to ~1 element (see issue 1602 / 1601). Registering a RunLevel=Highest
+    # task itself requires admin, so we self-elevate if needed and run only
+    # the registration step in an elevated PowerShell window. The rest of the
+    # install (file extraction, junction creation, User PATH update) stays
+    # unelevated as before.
+    if (Test-IsElevated) {
+        & $InstalledBinary autostart enable
+        if ($LASTEXITCODE -ne 0) {
+            throw "cua-driver autostart enable failed (exit $LASTEXITCODE)"
+        }
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Auto-start at logon needs admin one time to register the" -ForegroundColor Yellow
+    Write-Host "Scheduled Task with RunLevel=Highest. A UAC prompt will appear." -ForegroundColor Yellow
+    Write-Host "The task itself runs silently at every logon afterwards." -ForegroundColor Yellow
+    Write-Host ""
+
+    $elevCmd = "& `"$InstalledBinary`" autostart enable; `$ec = `$LASTEXITCODE; if (`$ec -ne 0) { Read-Host 'cua-driver autostart enable failed; press Enter to close' }; exit `$ec"
+    try {
+        $proc = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",$elevCmd `
+            -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        if ($proc.ExitCode -ne 0) {
+            throw "cua-driver autostart enable failed in elevated session (exit $($proc.ExitCode))"
+        }
+    } catch {
+        throw "elevation cancelled or failed: $($_.Exception.Message). Re-run install.ps1 -AutoStart from an elevated PowerShell to retry."
     }
 }
 
@@ -795,6 +875,127 @@ Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
 
+function Remove-LegacyInstall {
+    # Best-effort cleanup of v0.2.13-and-earlier install paths. Runs before
+    # any new install when default paths are in use (so users who override
+    # CUA_DRIVER_RS_INSTALL_DIR / CUA_DRIVER_RS_HOME aren't surprised by us
+    # touching legacy locations). Mirrors uninstall.ps1's logic so the
+    # transition is symmetric: a single `irm install.ps1 | iex` upgrades
+    # from v0.2.13 → v0.2.14+ without orphan files at the old layout.
+    if ($env:CUA_DRIVER_RS_INSTALL_DIR -or $env:CUA_DRIVER_RS_HOME) {
+        return
+    }
+    $hasLegacy = (Test-Path -LiteralPath $LegacyVisibleBinDir) -or `
+                 (Test-Path -LiteralPath $LegacyHomeDir)
+    if (-not $hasLegacy) { return }
+
+    Write-Step "detected legacy install layout (v0.2.13 or earlier); migrating to Cua\cua-driver"
+
+    # 1. End the running daemon. Order matters:
+    #
+    #    a. `schtasks /End` first — Task Scheduler runs as SYSTEM and can
+    #       terminate elevated (RunLevel=Highest, High IL) processes that a
+    #       Medium-IL Stop-Process from the user's shell cannot. This is
+    #       the case any time the legacy daemon was spawned via the
+    #       AtLogon trigger of the v0.2.13 autostart task on a non-RID-500
+    #       admin account (e.g. cuademo). Without this, Step 4 below fails
+    #       with "Access to the path 'cua-driver.exe' is denied" because
+    #       the legacy binary is held open by an unkillable elevated
+    #       process. Discovered during the cuademo v0.2.13 → v0.2.14
+    #       migration dogfood.
+    #    b. taskkill /F /IM as a backstop for any cua-driver process that
+    #       wasn't task-attached (manual `cua-driver serve`, legacy uia
+    #       worker, etc.). taskkill is more permissive than Stop-Process
+    #       for cross-IL termination.
+    #    c. Stop-Process last — catches anything taskkill missed.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # Ends the running task instance. Returns non-zero when the task
+        # isn't running or doesn't exist, both of which we swallow.
+        & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
+        Start-Sleep -Milliseconds 250
+        # Force-kill via taskkill — handles High-IL processes that
+        # Stop-Process can't touch from a Medium-IL caller.
+        & taskkill.exe /F /IM "cua-driver.exe" /T 2>$null | Out-Null
+        & taskkill.exe /F /IM "cua-driver-uia.exe" /T 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    $procs = Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue
+    if ($procs) {
+        foreach ($p in $procs) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    Start-Sleep -Milliseconds 500
+
+    # 2. Unregister the autostart Scheduled Task if present. Idempotent —
+    #    schtasks /Delete returns non-zero when the task is absent, which
+    #    we swallow.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & schtasks.exe /Delete /TN "cua-driver-serve" /F 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+
+    # 3. Remove the visible bin junction (only when it's actually a reparse
+    #    point — refuse to clobber a real directory). Then walk up and
+    #    remove the empty `trycua` vendor dir if nothing else lives there.
+    if (Test-Path -LiteralPath $LegacyVisibleBinDir) {
+        try {
+            $item = Get-Item -LiteralPath $LegacyVisibleBinDir -Force -ErrorAction Stop
+            $isReparse = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+            if ($isReparse) {
+                # NTFS junction — delete the link, not the target.
+                [System.IO.Directory]::Delete($LegacyVisibleBinDir, $false)
+            } else {
+                Remove-Item -LiteralPath $LegacyVisibleBinDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            Write-Host "  (could not remove $LegacyVisibleBinDir : $($_.Exception.Message))" -ForegroundColor Yellow
+        }
+    }
+    # Remove the parent `cua-driver-rs` dir (now empty) and the vendor
+    # `trycua` dir if no other apps live under it.
+    $legacyParent = Split-Path -Parent $LegacyVisibleBinDir
+    if ((Test-Path -LiteralPath $legacyParent) -and -not (Get-ChildItem -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue
+    }
+    if ((Test-Path -LiteralPath $LegacyVendorDir) -and -not (Get-ChildItem -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $LegacyVendorDir -Force -ErrorAction SilentlyContinue
+    }
+
+    # 4. Remove the legacy package home tree.
+    if (Test-Path -LiteralPath $LegacyHomeDir) {
+        try {
+            Remove-Item -LiteralPath $LegacyHomeDir -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Host "  (could not remove $LegacyHomeDir : $($_.Exception.Message))" -ForegroundColor Yellow
+        }
+    }
+
+    # 5. Prune the legacy bin dir from User PATH. The new install will add
+    #    the new path right after this; without removing the old we'd
+    #    accumulate stale PATH entries on every upgrade.
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath) {
+        $legacyNorm = $LegacyVisibleBinDir.TrimEnd('\').ToLowerInvariant()
+        $cleaned = ($userPath -split ';' |
+            Where-Object { $_ -and $_.TrimEnd('\').ToLowerInvariant() -ne $legacyNorm }) -join ';'
+        if ($cleaned -ne $userPath) {
+            [Environment]::SetEnvironmentVariable('Path', $cleaned, 'User')
+            Write-Step "  pruned legacy $LegacyVisibleBinDir from User PATH"
+        }
+    }
+
+    Write-Step "legacy install removed"
+}
+
+Remove-LegacyInstall
+
 # Serialize concurrent installs per $HomeDir. The lock is released in
 # the finally below — covers normal exit, errors, and Ctrl-C (which
 # triggers PowerShell's pipeline-stop = finally still runs).
@@ -908,6 +1109,17 @@ function Add-UserPathEntry([string]$dir) {
         $newValue = $dir
     }
     [Environment]::SetEnvironmentVariable("Path", $newValue, "User")
+
+    # Also update the CURRENT process's $env:Path so `cua-driver` resolves
+    # immediately in the same shell — the SetEnvironmentVariable('User') call
+    # above only writes to the registry; existing processes have their
+    # $env:Path cached at launch time and don't see the update otherwise.
+    # The install.ps1 body runs in the caller's shell via iex (per the
+    # `irm install.ps1 | iex` one-liner), so writing $env:Path here mutates
+    # exactly the shell the user is typing into. See #1651.
+    if (-not (($env:Path -split ';') -contains $dir)) {
+        $env:Path = "$dir;$env:Path"
+    }
 }
 
 function Write-ManualPathInstructions([string]$dir) {
@@ -916,7 +1128,7 @@ function Write-ManualPathInstructions([string]$dir) {
     Write-Host ""
     Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"`$([Environment]::GetEnvironmentVariable('Path','User'));$dir`", 'User')"
     Write-Host ""
-    Write-Host "Then open a new PowerShell window. To use it in the current session:"
+    Write-Host "To use it in the current session immediately:"
     Write-Host ""
     Write-Host "  `$env:Path += `";$dir`""
     Write-Host ""
@@ -931,7 +1143,7 @@ Write-Host ""
 
 $onPath = Test-OnUserPath $VisibleBinDir
 if ($onPath) {
-    Write-Host "$VisibleBinDir is on your user PATH — cua-driver should resolve in any new shell."
+    Write-Host "$VisibleBinDir is on your user PATH -- cua-driver should resolve in any new shell."
     Write-Host ""
 }
 elseif ($NoPathUpdate) {
@@ -942,9 +1154,8 @@ else {
     try {
         Add-UserPathEntry $VisibleBinDir
         Write-Host "Added $VisibleBinDir to your User PATH." -ForegroundColor Green
-        Write-Host '  Open a new PowerShell window for cua-driver to resolve.'
-        Write-Host "  Use in the current session:  `$env:Path += `";$VisibleBinDir`""
-        Write-Host '  Opt out next time with:      install.ps1 -NoPathUpdate'
+        Write-Host '  cua-driver resolves immediately in THIS shell and in any new shell.'
+        Write-Host '  Opt out next time with: install.ps1 -NoPathUpdate'
         Write-Host ""
     }
     catch {
@@ -958,38 +1169,46 @@ if ($AutoStart) {
     Write-Host "Registering auto-start (cua-driver autostart enable)..." -ForegroundColor Cyan
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
-        Write-Host "  cua-driver serve will auto-start at every interactive logon." -ForegroundColor Green
-        Write-Host "  Run now without re-logging:  & `"$installedBinary`" autostart kick"
-        Write-Host "  Inspect:                     & `"$installedBinary`" autostart status"
-        Write-Host "  Remove:                      & `"$installedBinary`" autostart disable"
+        Write-Host "  cua-driver serve will auto-start at every interactive logon (RunLevel=Highest)." -ForegroundColor Green
+        Write-Host '  In a new PowerShell window, manage with:'
+        Write-Host '    cua-driver autostart kick     (run now without re-logging)'
+        Write-Host '    cua-driver autostart status   (inspect the task)'
+        Write-Host '    cua-driver autostart disable  (remove)'
+        Write-Host "  In THIS shell, use the full path: $installedBinary"
         Write-Host ""
     }
     catch {
         Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "  Install otherwise succeeded; re-run with -AutoStart or invoke '& `"$installedBinary`" autostart enable' manually."
+        Write-Host '  Install otherwise succeeded; from an elevated shell run: cua-driver autostart enable'
+        Write-Host "  In THIS shell (if already elevated), use: $installedBinary autostart enable"
         Write-Host ""
     }
 }
 else {
-    $autostartHint = @"
-
-Auto-start at logon (Windows equivalent of macOS LaunchAgent):
-  Run cua-driver serve automatically every time you sign in (RDP, console, etc.)
-
-  Enable:   & "$installedBinary" autostart enable
-  Run now:  & "$installedBinary" autostart kick
-  Status:   & "$installedBinary" autostart status
-  Remove:   & "$installedBinary" autostart disable
-
-  Or re-run this installer with -AutoStart for the same result.
-"@
-    Write-Host $autostartHint -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "Auto-start at logon (Windows equivalent of macOS LaunchAgent):"            -ForegroundColor Cyan
+    Write-Host "  Run cua-driver serve automatically every time you sign in."              -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  In a new PowerShell window (will prompt for admin once to register):"    -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart enable    (register the task at RunLevel=Highest)" -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart kick      (start now without re-logging)"         -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart status    (inspect)"                              -ForegroundColor Cyan
+    Write-Host "    cua-driver autostart disable   (remove)"                               -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  In THIS shell, prefix with the full Binary path:"                        -ForegroundColor Cyan
+    Write-Host "    $installedBinary"                                                      -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  Or re-run this installer with -AutoStart for the same result."           -ForegroundColor Cyan
+    Write-Host ""                                                                          -ForegroundColor Cyan
+    Write-Host "  Without auto-start, the daemon runs at the user's default token IL."     -ForegroundColor Cyan
+    Write-Host "  That's fine for Win32 + Chromium apps. UWP / AppContainer apps"          -ForegroundColor Cyan
+    Write-Host "  (Calculator, modern Settings, Photos) need the elevated autostart task." -ForegroundColor Cyan
 }
 
 
 Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
 Write-Host ""
-Write-Host "WARNING — BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
+Write-Host "WARNING -- BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
 Write-Host "          cua-driver. Windows and Linux support is feature-complete; macOS" -ForegroundColor Yellow
 Write-Host "          parity is in progress." -ForegroundColor Yellow
 

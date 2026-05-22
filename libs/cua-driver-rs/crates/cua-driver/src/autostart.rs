@@ -115,6 +115,19 @@ mod platform {
     /// install.ps1 surfaces any divergence; the moment install.ps1 changes
     /// shape, this script needs the same edit.
     ///
+    /// **RunLevel = Highest** (since 2026-05-21): the daemon is registered to
+    /// run at the user's elevated/admin token rather than the filtered
+    /// standard-user token. This is what lets the daemon drive UWP /
+    /// AppContainer apps (Calculator, modern Settings, Photos, …) — at
+    /// Medium IL the cross-AppContainer UIA RPC returns a stub (~1 element
+    /// instead of the full tree, see #1602 / #1601). High IL crosses that
+    /// boundary cleanly. Trade-off: `Register-ScheduledTask -RunLevel
+    /// Highest` requires the caller to already be at High IL, so this
+    /// function emits an actionable error when invoked from a non-elevated
+    /// shell. Users opt into autostart via the installer's `-AutoStart`
+    /// flag or `cua-driver autostart enable`, both of which prompt for
+    /// elevation when needed.
+    ///
     /// **Account-name format**: on domain-joined machines USERDOMAIN holds the
     /// AD domain name (e.g. CORP) and the principal must be `CORP\username`.
     /// On workgroup machines USERDOMAIN holds either the literal string
@@ -134,10 +147,10 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
 $user = "$domain\$env:USERNAME"
 $action = New-ScheduledTaskAction -Execute $env:CUA_DRIVER_AS_EXE -Argument 'serve' -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
 Unregister-ScheduledTask -TaskName 'cua-driver-serve' -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon' | Out-Null
+Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'cua-driver-rs: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support' | Out-Null
 
 # Note: the uiAccess'd worker (`cua-driver-uia.exe`) does NOT get its own
 # scheduled task. uiAccess PEs can only be launched via ShellExecute, and
@@ -149,22 +162,84 @@ Register-ScheduledTask -TaskName 'cua-driver-serve' -Action $action -Trigger $tr
 "#;
 
     pub fn enable(exe: &str) -> Result<()> {
-        // Pass the binary path via env var so the script doesn't need
-        // shell-quoting acrobatics for paths with spaces or odd chars.
+        // First attempt: register directly. Works when called from an
+        // already-elevated context (install.ps1's self-elevated child shell,
+        // or a user running cua-driver autostart enable from an admin
+        // PowerShell). Pass the binary path via env var so the script
+        // doesn't need shell-quoting acrobatics for paths with spaces.
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", REGISTER_PS])
             .env("CUA_DRIVER_AS_EXE", exe)
             .output()
             .map_err(|e| anyhow!("failed to invoke powershell: {e}"))?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
+        if out.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr_lower = stderr.to_lowercase();
+        let looks_like_access_denied = stderr_lower.contains("access is denied")
+            || stderr_lower.contains("0x80070005")
+            || stderr_lower.contains("permission")
+            || stderr_lower.contains("requires elevation");
+
+        if !looks_like_access_denied {
             return Err(anyhow!(
                 "PowerShell Register-ScheduledTask failed (exit {}): {}",
                 out.status.code().unwrap_or(-1),
                 stderr.trim()
             ));
         }
-        Ok(())
+
+        // Access-denied — caller is at Medium IL but the task wants Highest.
+        // Self-elevate via ShellExecute "runas" verb, which fires the UAC
+        // prompt. The elevated child runs the same registration via
+        // powershell -Command, with the registered binary path injected as
+        // an env var (durable across the elevation boundary).
+        eprintln!("cua-driver: registering autostart at RunLevel=Highest needs admin.");
+        eprintln!("cua-driver: triggering UAC prompt — accept it to register the task.");
+
+        let elevated_status = {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW = 0x08000000 — keep the elevated child's
+            // console out of the foreground; PowerShell already runs hidden
+            // via Start-Process -Verb RunAs's WindowStyle Hidden.
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+            // PowerShell incantation: Start-Process -Verb RunAs to elevate,
+            // run our own exe with `autostart enable` so the registration
+            // happens INSIDE the elevated process (where it'll succeed on
+            // the first attempt and not re-enter this branch). -Wait so we
+            // can capture the child's exit code.
+            let inner = format!(
+                "& \"{}\" autostart enable",
+                exe.replace('"', "`\"")
+            );
+            let outer = format!(
+                "$p = Start-Process -FilePath '{}' -ArgumentList @('-NoProfile','-NonInteractive','-Command',{}) -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
+                "powershell.exe",
+                // Embed the inner command as a single-quoted PowerShell string
+                // (PS escapes ' as '' inside ''-strings).
+                format!("'{}'", inner.replace('\'', "''"))
+            );
+            Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &outer])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status()
+                .map_err(|e| anyhow!("failed to spawn elevation helper: {e}"))?
+        };
+
+        if elevated_status.success() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "self-elevation for autostart registration failed (exit {}). The UAC \
+                 prompt was probably dismissed. Re-run `cua-driver autostart enable` \
+                 and accept the prompt, or run install.ps1 -AutoStart which has the \
+                 same self-elevation flow. See https://github.com/trycua/cua/issues/1602.",
+                elevated_status.code().unwrap_or(-1)
+            ))
+        }
     }
 
     pub fn disable() -> Result<()> {

@@ -72,6 +72,14 @@ cache lookup). `action` is only valid with
 `element_index`; `count` and `modifier` are ignored in
 the AX path.
 
+**Windows note:** the `x, y` path layers in a control-type
+whitelist for the UIA Invoke pre-check (canvases / images
+/ custom surfaces fall through to PostMessage to preserve
+pixel precision) and routes through `SendInput` with a
+brief foreground swap when the target HWND is a Chromium
+frame. See [Windows behavior notes](#windows-behavior-notes)
+below.
+
 **Arguments:**
 
 - `action` (string, optional): AX action name (element_index path only). Default: press.
@@ -375,6 +383,11 @@ up/down/left/right, space, delete, home, end, pageup,
 pagedown, f1-f12, letters, digits). Order: modifiers
 first, one non-modifier last.
 
+**Windows note:** uses `SendInput` (not PostMessage) so
+the OS modifier state is correctly updated for accelerator
+dispatch. See [Windows behavior notes](#windows-behavior-notes)
+below.
+
 **Arguments:**
 
 - `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"].
@@ -432,6 +445,11 @@ found." Use `urls=["about:blank"]` for a blank window.
 Example: `{"bundle_id": "com.apple.Safari", "urls":
 ["about:blank"]}`. Electron apps also follow this contract
 when their entry point depends on a URL argument.
+
+**Windows note:** when launching a Chromium-based browser,
+the driver auto-injects three anti-throttling flags so the
+hidden renderer doesn't suspend itself. See
+[Windows behavior notes](#windows-behavior-notes) below.
 
 Optional `electron_debugging_port` launches an Electron app
 with `--remote-debugging-port=<N>`, activating its Chrome
@@ -1124,3 +1142,49 @@ session so the resize ratio is known.
 ```json
 {"pid":844,"x1":100,"x2":100,"y1":200,"y2":200}
 ```
+
+---
+
+## Windows behavior notes
+
+The tool reference above is written against the macOS reference impl. cua-driver-rs (`v0.2.9+`) layers in several Windows-only behaviors that callers need to know about to drive Chromium-based browsers and custom-drawn canvases correctly.
+
+### `launch_app` — Chromium anti-throttling flags auto-injected
+
+When `path` / `name` / `launch_path` resolves to a Chromium-based browser (`msedge`, `chrome`, `brave`, `vivaldi`, `opera`, `chromium`, `arc`, `thorium`, `iridium`, `browser` (Yandex), or a `Chrome_WidgetWin_*` / `CefBrowser*`-class Electron app), the daemon transparently prepends these three flags to `additional_arguments`:
+
+```
+--disable-features=CalculateNativeWinOcclusion
+--disable-backgrounding-occluded-windows
+--disable-renderer-backgrounding
+```
+
+Without them, Chromium's occlusion logic suspends the renderer process because the window is launched non-foreground via `SW_SHOWNOACTIVATE` — the UIA tree returns only browser chrome (no page DOM) and `PrintWindow` returns a blank body. With them, the page renders + exposes its DOM via UIA while the window stays hidden.
+
+If you already pass `--disable-features=...`, the driver merges `CalculateNativeWinOcclusion` into your existing list instead of duplicating the flag.
+
+**Also worth knowing**: Chromium auto-disables page-level accessibility unless an AT-grade client probes the renderer. For UIA-based callers that want the rendered DOM in `get_window_state`, additionally pass `--force-renderer-accessibility` yourself — that's a page-level concern the driver doesn't auto-inject.
+
+### `click` — control-type whitelist for the UIA Invoke pre-check (`x, y` path)
+
+The `x, y` dispatch tries UIA Invoke first (no focus steal), then falls through to PostMessage / SendInput. The UIA Invoke step only fires for elements with a **coord-independent primary action**:
+
+`Button` · `MenuItem` · `Hyperlink` · `TabItem` · `ListItem` · `CheckBox` · `RadioButton` · `SplitButton` · `TreeItem`
+
+For canvases, paint surfaces, image maps, and custom widgets (control types `Image` / `Pane` / `Custom` / `Document` / `Group`), `click(x, y)` skips UIA Invoke even when the element advertises `InvokePattern` — invoking those fires the element's default action at the geometric centre, ignoring the requested coords. The click falls through to PostMessage or (for Chromium targets) SendInput, preserving pixel precision.
+
+### `click(x, y)` on Chromium — SendInput with brief foreground swap
+
+`PostMessage(WM_LBUTTONDOWN/UP)` on a Chromium HWND doesn't reach the DOM input pipeline (Chromium's input thread requires SendInput-queue origin). When the target HWND class is `Chrome_WidgetWin_*` or `CefBrowser*`, `click(x, y)` routes through `SendInput` with a brief `SetForegroundWindow(target)` + `SetCursorPos(x, y)` + restore-previous-foreground dance.
+
+Trade-off: **the cursor visibly moves to the click point and the target briefly becomes foreground**. There's no Chromium-native path that delivers coord clicks to the DOM without these side effects short of launching with `--remote-debugging-port` and dispatching via the `page` tool (CDP).
+
+UIAccess requirement: `SetForegroundWindow` from a non-UIAccess daemon is rejected by Win32, in which case the tool returns the diagnostic `"SendInput inserted only 0 of 3 mouse events..."` and recommends running through the `cua-driver-uia.exe` worker. The MCP proxy auto-prefers the UIA worker's pipe when both daemons are running, so the SendInput path works out-of-the-box on a normal install.
+
+**When SendInput is unwanted** (zero focus steal required): use `element_index` clicks where the page exposes the target via UIA. Buttons / links / menu items in Chromium pages take the UIA Invoke path and don't incur the focus swap.
+
+### `hotkey` — SendInput-routed for OS modifier-state propagation
+
+The hotkey tool synthesises keystrokes via `SendInput` with a brief foreground swap (same mechanism as the Chromium `click`), so the OS modifier state visible to `GetKeyState` / `GetAsyncKeyState` is correctly updated for the duration of the keystroke. PostMessage-based paths put `WM_KEYDOWN(VK_CONTROL)` in the target's message queue but **don't** update the system modifier state — `TranslateAccelerator` then fails to recognise Ctrl+S as a Save accelerator and the `s` arrives as plain text.
+
+Same UIAccess constraint as Chromium clicks: `SetForegroundWindow` is restricted from non-UIAccess processes, so callers should funnel hotkey calls through the `cua-driver-uia.exe` worker. The MCP proxy already does this when both pipes are up.

@@ -23,8 +23,11 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
-    UIA_AcceleratorKeyPropertyId, UIA_InvokePatternId, UIA_PROPERTY_ID,
-    UIA_TogglePatternId,
+    UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    UIA_CONTROLTYPE_ID, UIA_HyperlinkControlTypeId, UIA_InvokePatternId,
+    UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PROPERTY_ID,
+    UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId, UIA_TabItemControlTypeId,
+    UIA_TogglePatternId, UIA_TreeItemControlTypeId,
 };
 use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -176,6 +179,35 @@ pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
 /// `CurrentBoundingRectangle` contains the point AND which exposes
 /// `InvokePattern`. Smallest-area approximates "deepest" without
 /// having to track tree depth explicitly.
+/// Returns `true` when the element's control type has a *coord-independent*
+/// primary action — i.e. a UIA `Invoke()` on it does something semantically
+/// equivalent to "click the element" regardless of where inside its bounding
+/// rectangle the click was requested.
+///
+/// Used by the `x, y` click path to decide whether to take the UIA Invoke
+/// route or fall through to PostMessage with the literal coords. The split
+/// matters for canvases, panes, and custom-drawn surfaces where Invoke would
+/// fire `mousedown` at the element centre — losing the caller's pixel
+/// precision (see #1621).
+fn is_coord_independent_action(elem: &IUIAutomationElement) -> bool {
+    let ct: UIA_CONTROLTYPE_ID = match unsafe { elem.CurrentControlType() } {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    matches!(
+        ct,
+        UIA_ButtonControlTypeId
+            | UIA_MenuItemControlTypeId
+            | UIA_HyperlinkControlTypeId
+            | UIA_TabItemControlTypeId
+            | UIA_ListItemControlTypeId
+            | UIA_CheckBoxControlTypeId
+            | UIA_RadioButtonControlTypeId
+            | UIA_SplitButtonControlTypeId
+            | UIA_TreeItemControlTypeId
+    )
+}
+
 pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
     if hwnd == 0 {
         return false;
@@ -220,7 +252,34 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             if sx < rect.left || sx > rect.right || sy < rect.top || sy > rect.bottom {
                 continue;
             }
-            if elem.GetCurrentPattern(UIA_InvokePatternId).is_err() {
+            // Accept elements that support EITHER InvokePattern OR
+            // ExpandCollapsePattern. Qt menu-bar items advertise both —
+            // Invoke does nothing on them, only Expand opens the submenu.
+            // (See FreeCAD finding 2026-05-21: clicking File menu via Invoke
+            // returned ✅ but the menu never opened.)
+            let has_invoke = elem.GetCurrentPattern(UIA_InvokePatternId).is_ok();
+            let has_expand = elem
+                .GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                )
+                .is_ok();
+            if !has_invoke && !has_expand {
+                continue;
+            }
+            // For coordinate-addressed clicks, only accept elements whose
+            // control type has a *coord-independent* primary action. UIA
+            // `Invoke()` fires the element's default action at its centre,
+            // ignoring the requested (sx, sy). For container surfaces
+            // (Pane, Image, Custom, Document, Group, etc.) that means the
+            // caller's pixel precision is silently lost — see #1621, where
+            // `click(canvas, x=110, y=677)` reported success but actually
+            // fired the canvas's `mousedown` at its centre (152, 77).
+            // Buttons / MenuItems / Hyperlinks / TabItems / ListItems /
+            // CheckBoxes / RadioButtons / SplitButtons / TreeItems all
+            // have a single primary action whose location is the element
+            // itself — Invoke is the right path for those. Everything
+            // else falls through to PostMessage with the literal coords.
+            if !is_coord_independent_action(&elem) {
                 continue;
             }
             let w = (rect.right - rect.left).max(0) as i64;
@@ -237,11 +296,49 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             None => {
                 tracing::debug!(
                     target: "click",
-                    "no InvokePattern descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
+                    "no Invoke/ExpandCollapse descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
                 );
                 return false;
             }
         };
+        // Pattern preference for menu items: when both Invoke AND
+        // ExpandCollapse are advertised, the element is almost always a
+        // top-level MenuItem whose intended click behaviour is "open the
+        // submenu" — Invoke would be a no-op. Prefer ExpandCollapse.Expand
+        // in that case. Pure-Invoke leaves (buttons, links, etc.) go
+        // through Invoke as before.
+        let winner_has_expand = winner
+            .GetCurrentPattern(
+                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+            )
+            .is_ok();
+        let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
+        if winner_has_expand && winner_has_invoke {
+            // Try Expand first, fall back to Invoke if Expand fails.
+            if let Ok(pat) = winner.GetCurrentPattern(
+                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+            ) {
+                if let Ok(ec) = pat
+                    .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                {
+                    if ec.Expand().is_ok() {
+                        return true;
+                    }
+                }
+            }
+            // Expand failed — fall through to Invoke as best-effort.
+        } else if winner_has_expand && !winner_has_invoke {
+            if let Ok(pat) = winner.GetCurrentPattern(
+                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+            ) {
+                if let Ok(ec) = pat
+                    .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                {
+                    return ec.Expand().is_ok();
+                }
+            }
+            return false;
+        }
         let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
             Ok(p) => p,
             Err(_) => return false,

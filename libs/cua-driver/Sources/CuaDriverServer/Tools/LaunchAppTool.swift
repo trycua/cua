@@ -364,26 +364,10 @@ public enum LaunchAppTool {
     /// Resolve a caller-supplied url string into a `URL` suitable for
     /// `NSWorkspace.open(_:withApplicationAt:configuration:)`.
     ///
-    /// - `http://` / `https://` / `file://` passthrough as-is.
-    /// - Tilde-prefixed paths (`~/Downloads`) expand against the current
-    ///   user's home.
-    /// - Other strings are treated as file paths — absolute paths become
-    ///   `file://` URLs; relative paths resolve against the launcher's
-    ///   cwd, which is almost never meaningful for a GUI app, so in
-    ///   practice callers should always pass absolute or ~-prefixed
-    ///   paths.
-    ///
-    /// Returns `nil` only when the string can't be parsed into any URL
-    /// at all — realistically that's the empty string (handled upstream).
+    /// Delegates to `CuaDriverCore.resolveLaunchURL(_:)` — see that
+    /// function for the full encoding contract and CJK-safety rationale.
     private static func resolveLaunchURL(_ raw: String) -> URL? {
-        if let url = URL(string: raw),
-           let scheme = url.scheme?.lowercased(),
-           scheme == "http" || scheme == "https" || scheme == "file"
-        {
-            return url
-        }
-        let expanded = (raw as NSString).expandingTildeInPath
-        return URL(fileURLWithPath: expanded)
+        CuaDriverCore.resolveLaunchURL(raw)
     }
 
     private static func errorResult(_ message: String) -> CallTool.Result {

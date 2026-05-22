@@ -43,5 +43,9 @@ let package = Package(
             name: "FocusStealPreventerTests",
             dependencies: ["CuaDriverCore"]
         ),
+        .testTarget(
+            name: "URLResolverTests",
+            dependencies: ["CuaDriverCore"]
+        ),
     ]
 )

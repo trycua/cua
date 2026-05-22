@@ -501,9 +501,14 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
         }
     }
 
-    // Register window class.
-    let class_name_w: Vec<u16> = "TropeCUA.AgentCursorOverlay\0".encode_utf16().collect();
-    let title_w: Vec<u16> = format!("TropeCUA.AgentCursorOverlay.{}\0", cfg.cursor_id)
+    // Register window class. Class + title use the `Cua.` namespace
+    // (PascalCase Windows-class convention, matches the `Programs\Cua\`
+    // install-path namespace). Prior versions used `TropeCUA.` — a leaked
+    // codename from an early C# reference impl. The string is observable
+    // via Win32 EnumWindows; renaming gives users a recognisable namespace
+    // (and the `trycua/` org branding) instead of "what's a TropeCUA?".
+    let class_name_w: Vec<u16> = "Cua.AgentCursorOverlay\0".encode_utf16().collect();
+    let title_w: Vec<u16> = format!("Cua.AgentCursorOverlay.{}\0", cfg.cursor_id)
         .encode_utf16().collect();
 
     let hinstance = unsafe { GetModuleHandleW(PCWSTR::null()).unwrap_or_default() };

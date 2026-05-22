@@ -5,7 +5,7 @@ dependencies = [
     "anthropic>=0.67.0",
 ]
 description = "Cua (Computer Use Agent) mono-repo"
-license = "MIT"
+license = { text = "MIT" }
 name = "cua-workspace"
 readme = "README.md"
 requires-python = "<3.14,>=3.12"
@@ -50,7 +50,6 @@ docs-scripts = [
     "markitdown>=0.0.1",
     "modal>=0.63.0",
     "gitpython>=3.1.43",
-    "griffe>=2.0.0",
 ]
 test = [
     "aioresponses>=0.7.4",

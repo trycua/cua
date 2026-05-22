@@ -788,6 +788,38 @@ pub fn run_call(
         process::exit(64);
     }
 
+    // `check_permissions` in-process is ONLY correct when the process is
+    // running from CuaDriver.app (the daemon). Any one-shot CLI spawned by
+    // an IDE terminal (VS Code, Cursor, Claude Code, etc.) inherits the
+    // IDE's TCC responsibility chain, so AXIsProcessTrusted() reads against
+    // the IDE's bundle — not com.trycua.driver — and may report stale or
+    // wrong results after `tccutil reset Accessibility com.trycua.driver`.
+    //
+    // If the daemon were up we would already have forwarded above; reaching
+    // this branch means no daemon is listening. Warn the user and force
+    // `prompt: false` — the tool's default would otherwise raise a TCC
+    // dialog attributed to the calling shell/IDE bundle, not CuaDriver.app,
+    // so the user would grant the wrong identity.
+    //
+    // Mirrors Swift CallCommand.swift lines 148-171.
+    let json_args = if tool == "check_permissions" {
+        eprintln!(
+            "⚠️  Not running inside the cua-driver daemon process. \
+Results may be inaccurate — TCC checks the calling process, not CuaDriver.app, \
+so permissions granted to CuaDriver.app may read as \"NOT granted\" here.\n\
+For authoritative results, start the daemon first: `cua-driver serve`, \
+then re-run this check."
+        );
+        let mut map = match json_args {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        map.insert("prompt".into(), serde_json::Value::Bool(false));
+        Some(serde_json::Value::Object(map))
+    } else {
+        json_args
+    };
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

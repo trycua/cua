@@ -41,6 +41,21 @@ pub fn current_status() -> PermissionsStatus {
 }
 
 /// Live AX trust state — `AXIsProcessTrusted()`.
+///
+/// ⚠️ Attribution caveat: when called from a CLI process spawned by a
+/// terminal application (Terminal.app, VS Code, Cursor, etc.), macOS
+/// attributes the calling process to the *responsible* parent application
+/// rather than to the codesigned CuaDriver.app bundle. This means
+/// `AXIsProcessTrusted()` reflects the parent's Accessibility grant, not
+/// CuaDriver.app's — so results can be stale or misleading after
+/// `tccutil reset Accessibility com.trycua.driver`.
+///
+/// This is only a concern for in-process CLI calls without a running daemon.
+/// When the daemon is up, `run_call` forwards through the Unix socket and
+/// the check runs inside the daemon process (CuaDriver.app), where the
+/// attribution is correct.
+///
+/// See: https://github.com/trycua/cua/issues/1561
 pub fn accessibility_granted() -> bool {
     unsafe { crate::ax::bindings::AXIsProcessTrusted() }
 }

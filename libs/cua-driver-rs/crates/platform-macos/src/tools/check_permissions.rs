@@ -19,7 +19,15 @@ fn def() -> &'static ToolDef {
             By default also raises the system permission dialogs for any missing grants — \
             Apple's request APIs are no-ops when the grant is already active, so this is \
             safe to call repeatedly. Pass {\"prompt\": false} for a purely read-only \
-            status check.".into(),
+            status check.\n\n\
+            ⚠️ CLI caveat: when called from a shell or IDE terminal without a running \
+            cua-driver daemon, macOS attributes the calling process to the parent \
+            application (Terminal.app, VS Code, Cursor, etc.) rather than to \
+            CuaDriver.app. AXIsProcessTrusted() therefore reflects the parent's \
+            Accessibility grant, not CuaDriver.app's — so the result can be stale or \
+            misleading after `tccutil reset Accessibility com.trycua.driver`. \
+            For authoritative results, start the daemon first \
+            (`cua-driver serve` or open CuaDriver.app), then re-run this check.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {

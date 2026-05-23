@@ -771,8 +771,14 @@ pub fn run_call(
                                         if let Some(ref path) = screenshot_out_file {
                                             use base64::Engine as _;
                                             match base64::engine::general_purpose::STANDARD.decode(&b64) {
-                                                Ok(bytes) => { let _ = std::fs::write(path, &bytes); }
-                                                Err(e) => eprintln!("--screenshot-out-file: {e}"),
+                                                Ok(bytes) => {
+                                                    if let Err(e) = std::fs::write(path, &bytes) {
+                                                        eprintln!("--screenshot-out-file: failed to write {path}: {e}");
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("--screenshot-out-file: base64 decode failed: {e}");
+                                                }
                                             }
                                         } else {
                                             // Stash for the structuredContent merge below.

@@ -982,7 +982,7 @@ fn test_browser_eval_no_cdp_error() {
 #[test]
 #[cfg(target_os = "macos")]
 fn test_screenshot_no_window_id() {
-    //! Call screenshot without window_id — should capture the full display and return a PNG.
+    //! Call screenshot without window_id — should capture the full display and return image content.
     let binary = binary_path();
     if !binary.exists() { return; }
 

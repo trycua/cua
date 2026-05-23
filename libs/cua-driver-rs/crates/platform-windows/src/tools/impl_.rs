@@ -43,7 +43,7 @@ pub struct DriverConfig {
 }
 
 impl Default for DriverConfig {
-    fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 0 } }
+    fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 1568 } }
 }
 
 pub struct ResizeRegistry {
@@ -2141,7 +2141,7 @@ impl Tool for ScreenshotTool {
             // ScreenCaptureKit).
             description: "Capture a screenshot of a single window via BitBlt + PrintWindow \
                 (no focus change). Returns base64-encoded image data in the requested format \
-                (default png).\n\n\
+                (default jpeg, quality 85).\n\n\
                 `window_id` is recommended (use `list_windows` to find it). When omitted, \
                 captures the full primary display — a Windows-only convenience for whole-\
                 screen snapshots without a per-window target.\n\n\
@@ -2149,9 +2149,9 @@ impl Tool for ScreenshotTool {
             input_schema: json!({
                 "type":"object","properties":{
                     "window_id":{"type":"integer","description":"HWND of the window to capture. When omitted, captures the full primary display (Windows-only)."},
-                    "format":{"type":"string","enum":["png","jpeg"],"description":"Image format. Default: png."},
+                    "format":{"type":"string","enum":["png","jpeg"],"description":"Image format. Default: jpeg."},
                     "quality":{"type":"integer","minimum":1,"maximum":95,
-                        "description":"JPEG quality 1-95; ignored for png."}
+                        "description":"JPEG quality 1-95; ignored for png. Default: 85."}
                 },"additionalProperties":false
             }),
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -2160,8 +2160,8 @@ impl Tool for ScreenshotTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("png").to_owned();
-        let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(95) as u8;
+        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg").to_owned();
+        let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
         let is_jpeg = format == "jpeg";
         let max_dim = self.state.config.read().unwrap().max_image_dimension;
 

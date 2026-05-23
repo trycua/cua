@@ -11,6 +11,8 @@
 //! - Notifications (no `id`) are silently ignored
 
 pub mod browser_eval;
+pub mod cdp;
+pub mod page;
 pub mod protocol;
 pub mod recording;
 pub mod recording_tools;

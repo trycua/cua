@@ -816,13 +816,26 @@ async fn restore_foreground_polling_best_effort(
         OpenProcess, WaitForInputIdle, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, IsWindow, SetForegroundWindow,
+        GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
     };
 
     if prior_foreground_addr == 0 {
         tracing::trace!(
             target: "launch_app.focus_restore",
             "no prior foreground HWND to restore — skipping"
+        );
+        return;
+    }
+
+    // Without a captured spawned pid we have no ownership signal — any
+    // foreground change during the 3 s window might be the user
+    // legitimately Alt-Tabbing, and we shouldn't yank focus back. Skip
+    // the entire guard. This is the launcher-stub fallback case
+    // (rare for fresh launches).
+    if spawned_pid == 0 {
+        tracing::trace!(
+            target: "launch_app.focus_restore",
+            "no spawned pid captured — skipping focus-restore guard (no ownership signal)"
         );
         return;
     }
@@ -871,14 +884,28 @@ async fn restore_foreground_polling_best_effort(
             );
             return;
         }
+        // Only restore when the current foreground window is owned by
+        // the spawned pid — otherwise the user may have legitimately
+        // Alt-Tabbed during the polling window and we'd be yanking
+        // focus away from them. Resolves fg_now's owning PID via
+        // GetWindowThreadProcessId and compares against spawned_pid.
         let activated_then_restored: Option<bool> = {
             let prior = HWND(prior_foreground_addr as *mut _);
             let fg_now = unsafe { GetForegroundWindow() };
-            if fg_now != prior {
-                if !unsafe { IsWindow(prior) }.as_bool() {
+            if fg_now == prior {
+                None
+            } else {
+                let mut fg_pid: u32 = 0;
+                let _ = unsafe { GetWindowThreadProcessId(fg_now, Some(&mut fg_pid)) };
+                if fg_pid != spawned_pid {
+                    // Foreground changed but to something we didn't
+                    // spawn (e.g. user Alt-Tabbed). Don't touch it.
+                    None
+                } else if !unsafe { IsWindow(prior) }.as_bool() {
                     tracing::trace!(
                         target: "launch_app.focus_restore",
-                        "prior foreground HWND no longer valid — skipping restore"
+                        "prior foreground HWND no longer valid — skipping restore (spawned pid {} owns fg)",
+                        spawned_pid
                     );
                     Some(true)
                 } else {
@@ -901,8 +928,6 @@ async fn restore_foreground_polling_best_effort(
                     }
                     Some(ok)
                 }
-            } else {
-                None
             }
         };
         if activated_then_restored.is_some() {

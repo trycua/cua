@@ -571,10 +571,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   - windows: VERIFIED for Win32 path; UWP path requires interactive session
     (returns descriptive error in Session 0 — never hangs). Win32 launches
     use `ShellExecuteExW` + `SW_SHOWNOACTIVATE` (no focus steal, matches
-    macOS oapp). UWP launches use `IApplicationActivationManager` +
-    best-effort `GetForegroundWindow` snapshot/restore (best-effort
-    because `SetForegroundWindow` is subject to Windows' foreground-lock
-    restrictions — visual confirmation in Session 1+ recommended).
+    macOS oapp) AND now schedule a best-effort polling
+    `GetForegroundWindow`/`SetForegroundWindow` restore (≤3s, 100ms cadence)
+    that flips the user's prior foreground back if the spawned app
+    activates. URLs-only invocations skip the restore (the user explicitly
+    asked the default browser to come up with that page). UWP launches use
+    `IApplicationActivationManager` + best-effort `GetForegroundWindow`
+    snapshot/restore (best-effort because `SetForegroundWindow` is subject
+    to Windows' foreground-lock restrictions — visual confirmation in
+    Session 1+ recommended).
   - macOS: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
 - Tests:
@@ -627,6 +632,25 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    Windows-equivalent of Swift's background-launch invariant.
 9. **Description** — multi-paragraph port from Swift with explicit
    Windows-specific notes (path takes precedence; bundle_id alias).
+10. **Polling foreground-restore for the Win32 path** — mirrors the macOS
+    `FocusRestoreGuard`. `LaunchAppTool::invoke` captures
+    `GetForegroundWindow()` before the launch dispatch and, for the
+    `ShellExecuteExW` branch, spawns a tokio task that polls every 100ms
+    (up to 3s) for "the spawned app actually grabbed foreground" and then
+    flips the prior HWND back via `SetForegroundWindow`. The UWP/AUMID
+    branch keeps its existing synchronous restore in
+    `launch_uwp::restore_foreground_best_effort` — the polling task is
+    gated on the Win32 branch to avoid double-restoring.
+
+    URLs-only invocations (`{urls: [...]}` with no app-identifying field)
+    skip the restore: the user asked for that page to come up in the
+    default browser, restoring would hide it. The decision is a pure
+    function (`should_restore_foreground_after_launch`) with unit
+    coverage in `launch_focus_restore_decision_tests`.
+
+    `SetForegroundWindow` from non-UIAccess processes is restricted by
+    Windows' foreground-lock; failures are logged at `tracing::trace!`
+    and not surfaced — the launch itself already succeeded.
 
 ### Intentional Rust-only fields accepted (no-op)
 

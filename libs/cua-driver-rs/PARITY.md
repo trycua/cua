@@ -855,11 +855,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    Swift verbatim: `"✅ Window screenshot — WxH png [window_id: ID]"`
    (em-dash, checkmark, window-id suffix). Display fallback uses
    `"✅ Display screenshot — WxH png"` (Rust-only, see intentional below).
-2. **Default JPEG quality** — was 85, Swift defaults 95. Now 95.
-3. **Description** — multi-paragraph port from Swift adapted to Windows
+2. **Description** — multi-paragraph port from Swift adapted to Windows
    (BitBlt + PrintWindow transport; no permission gate needed).
-4. **`idempotent`** — was `true`; Swift uses `false` (a fresh pixel grab
+3. **`idempotent`** — was `true`; Swift uses `false` (a fresh pixel grab
    every call). Now matches Swift.
+4. **`max_image_dimension` default** — was 0 (no cap), Swift uses 1568.
+   Now 1568 on all 3 Rust platforms (matches
+   `CuaDriverConfig.defaultMaxImageDimension`). The 0 default was
+   producing 10MB screenshots on the Windows VM; 1568 caps the long
+   edge before encoding.
 
 ### Intentional Rust-only
 
@@ -868,6 +872,16 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   Windows-only convenience that Swift can't easily provide because
   macOS Screen Recording requires per-window grants.  Schema accepts
   both shapes; description explains.
+- **Default `format`** — Swift defaults `png`; all 3 Rust platforms now
+  default `jpeg`. Rationale: agents typically want compact images for
+  vision-model context windows; PNG is lossless but multi-MB on screen
+  content. Schema still accepts both; callers wanting PNG pass
+  `{"format":"png"}`. Swift may follow; tracked as a follow-up parity
+  question.
+- **Default JPEG `quality`** — Swift defaults 95; Rust defaults 85
+  (already Linux's default and the macOS Claude-Code-compat tool's
+  default). 85 is the typical sweet spot for screen content. Diverges
+  from Swift only when both sides actually emit JPEG.
 
 ### Verified on Windows
 

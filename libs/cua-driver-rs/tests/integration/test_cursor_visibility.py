@@ -255,8 +255,10 @@ class TestCursorVisibility(unittest.TestCase):
         # 7. Wait for cursor animation + render loop to settle.
         time.sleep(0.5)
 
-        # 8. Take a full-screen screenshot.
-        scr = client.call_tool("screenshot", {})
+        # 8. Take a full-screen screenshot. Force PNG so the per-pixel decode
+        # below works — the screenshot tool defaults to JPEG, which would be
+        # lossy and skew the cursor-colour search.
+        scr = client.call_tool("screenshot", {"format": "png"})
         b64 = scr.get("content", [{}])[0].get("data", "")
         self.assertTrue(b64, "screenshot returned no data")
         png_bytes = base64.b64decode(b64)

@@ -109,6 +109,8 @@ pub struct DriverConfig {
     /// Default capture_mode for get_window_state when not specified per-call.
     pub capture_mode: String,
     /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
+    /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
+    /// the long edge is downscaled to this before encoding.
     pub max_image_dimension: u32,
 }
 
@@ -116,7 +118,7 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             capture_mode: "som".to_owned(),
-            max_image_dimension: 0,
+            max_image_dimension: 1568,
         }
     }
 }

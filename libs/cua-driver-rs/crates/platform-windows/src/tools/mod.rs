@@ -7,6 +7,8 @@ use mcp_server::tool::ToolRegistry;
 
 #[cfg(target_os = "windows")]
 mod impl_;
+#[cfg(target_os = "windows")]
+pub(crate) mod page;
 
 #[cfg(not(target_os = "windows"))]
 mod stubs;

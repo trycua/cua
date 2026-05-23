@@ -4010,6 +4010,11 @@ pub fn build_registry() -> ToolRegistry {
     // means it doesn't show up in `tools/list` either, matching Swift's
     // ToolRegistry.swift (`type_text_chars` not in `handlers`).
     let _: &TypeTextCharsTool = &TypeTextCharsTool { _state: state.clone() }; // touch struct so it stays in this crate for now
+    // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
+    // in its UIA TextPattern + FindAll backend (CDP for execute_javascript).
+    r.register(Box::new(mcp_server::page::PageTool::new(
+        std::sync::Arc::new(super::page::WindowsPageBackend::new()),
+    )));
     r.register_recording_tools();
     r
 }

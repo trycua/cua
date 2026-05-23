@@ -335,3 +335,16 @@ If you wake up and decide to push:
 1. cua-driver-rs: `set_agent_cursor_motion` + `get_agent_cursor_state` are stubs on Linux (no motion config fields, no live state queries) → either fully implement or document as known limitation in PARITY.md.
 2. cua-driver-rs: tree_markdown emission may include unescaped control chars when target windows contain them (e.g. Notepad++ with `→` styled characters). Validate with a UIA-tree test that round-trips through JSON parse.
 
+
+## 04:17 — VS Code + Notepad++ investigation aborted
+
+- **VS Code (#1616)**: Code.exe not installed in cuademo's profile (or anywhere we can quickly find). Skipping — install would take 5+ min via winget and the issue is reproducible by anyone with VS Code already there.
+- **Notepad++ tree_markdown control chars**: app not currently running, would need to re-launch + re-test. The matrix output earlier showed `_text` fallback in my harness with `\x1a` chars visible. Either cua-driver is hand-emitting JSON without escape (unlikely — uses serde_json) OR notepad++'s UIA tree contains literal control chars from the rendered document content (e.g. Scintilla's representation of certain styled chars). The former is a cua-driver bug; the latter is a UIA quirk and cua-driver is innocent.
+
+Both are flagged for follow-up not blocked tonight.
+
+### Final state at handoff
+
+- Local branch `overnight/cursor-overlay-shared-util` has **7 commits ahead of main** — all local, nothing pushed.
+- VM has: cuademo session 9 with cua-driver daemon + cua-computer-server running (handy for manual testing in the morning), fbonacci profile has the cua repo + my dev edits + the rebuilt binary at `target/release/cua-driver.exe`.
+- No GitHub PRs opened or issues filed tonight. All work in branch + journal.

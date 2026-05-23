@@ -11,3 +11,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = "0.1"
+# Used by the shared `image_utils` module — pure PNG/JPEG/resize/crosshair
+# helpers extracted from `platform-{macos,windows,linux}/src/capture.rs` so
+# all three platforms call the same code path.
+image = { workspace = true }

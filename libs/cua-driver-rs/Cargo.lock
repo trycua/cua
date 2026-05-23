@@ -869,6 +869,7 @@ version = "0.2.18"
 dependencies = [
  "anyhow",
  "async-trait",
+ "image",
  "serde",
  "serde_json",
  "thiserror",

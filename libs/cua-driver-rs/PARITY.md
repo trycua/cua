@@ -20,10 +20,9 @@ cd libs/cua-driver-rs/tests/integration
 | Gap | Rust | Swift |
 |-----|------|-------|
 | `type_text_chars` | ✅ | missing |
-| `browser_eval` | ✅ | missing |
 | `get_accessibility_tree` | ✅ | missing |
-| `page` tool | ✅ (registered as of this commit) | ✅ |
-| `--version` flag | ✅ (fixed in this commit) | ✅ |
+| `page` tool | ✅ (cross-platform: Apple-Events on macOS, UIA+CDP on Windows, AT-SPI+CDP on Linux) | ✅ (macOS only) |
+| `--version` flag | ✅ | ✅ |
 | `call check_permissions` JSON | ✅ JSON | human-readable text |
 | `call screenshot` (no window_id) | ✅ full-display default | error (requires window_id) |
 
@@ -1370,7 +1369,6 @@ older clients that only read name/description still work.
      "id": 1,
      "result": {
        "tools": [
-         { "name": "browser_eval",            "description": "…", "inputSchema": {…}, "annotations": {…} },
          { "name": "check_permissions",       "description": "…", "inputSchema": {…}, "annotations": {…} },
          { "name": "click",                   "description": "…", "inputSchema": {…}, "annotations": {…} },
          { "name": "double_click",            "…": "…" },

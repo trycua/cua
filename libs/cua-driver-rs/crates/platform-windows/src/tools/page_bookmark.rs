@@ -32,6 +32,27 @@
 //! cursor and so depend on z-order. Every failure here is logged and
 //! returns `Err`, which the caller treats as "try CDP next". No path in
 //! this module is allowed to panic.
+//!
+//! No-foreground contract
+//! ----------------------
+//! Earlier revisions of this module would synthesize `Ctrl+Shift+B` to
+//! summon the favorites bar when it was hidden. That keystroke is routed
+//! via [`crate::input::keyboard::send_key_synthesized`], which does a
+//! transient `SetForegroundWindow(target) → SendInput →
+//! SetForegroundWindow(prev_fg)` swap; the swap is visible to the user
+//! and the restore can fail silently under UIPI / UIAccess constraints.
+//! That violates the cua-driver no-foreground contract. The current code
+//! therefore *requires* the user to have shown the favorites bar once
+//! (the setting persists across sessions); if it's hidden we bail out and
+//! let `execute_javascript` fall through to the CDP path.
+//!
+//! One residual foreground-activation source remains and is documented as
+//! a known limitation: invoking the bookmark via UIA
+//! `InvokePattern::Invoke` causes Chromium to briefly raise the browser
+//! window because clicking a bookmark is a user-initiated navigation in
+//! Chromium's input model. This activation is Chromium-side and not
+//! something we can suppress from the UIA caller; see `WINDOWS.md` for
+//! the user-facing note.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -68,8 +89,6 @@ const BOOKMARK_NAME: &str = "cua-driver-eval";
 /// Per-call timeouts.
 mod budget {
     use std::time::Duration;
-    /// How long we wait for the favorites bar to appear after Ctrl+Shift+B.
-    pub const FAV_BAR_APPEAR: Duration = Duration::from_millis(800);
     /// How long we wait for a freshly opened dialog to appear in the tree.
     pub const DIALOG_APPEAR: Duration = Duration::from_millis(2500);
     /// How long we wait for the page's title to start with our marker.
@@ -169,30 +188,29 @@ unsafe fn try_bookmark_exec_blocking(
     let edge_window = root_for_window(&automation, hwnd_raw, pid)
         .context("could not resolve Edge top-level window for (pid, window_id)")?;
 
-    // 2) Ensure the favorites bar is visible. If not, we don't get any
-    //    UIA-Invokable surface for the bookmark — even a created bookmark
-    //    isn't reachable. Send Ctrl+Shift+B to the Edge HWND and re-walk.
-    let mut fav_bar = find_favorites_bar(&automation, &edge_window);
-    if fav_bar.is_none() {
-        tracing::debug!(
-            target: "page.bookmark_exec",
-            "favorites bar not present; sending Ctrl+Shift+B to hwnd 0x{hwnd_raw:x}"
-        );
-        toggle_favorites_bar(hwnd_raw)?;
-        // The bar may take a beat to layout itself in.
-        let deadline = Instant::now() + budget::FAV_BAR_APPEAR;
-        while Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(60));
-            fav_bar = find_favorites_bar(&automation, &edge_window);
-            if fav_bar.is_some() {
-                break;
-            }
-        }
-    }
-    let fav_bar = fav_bar.ok_or_else(|| {
+    // 2) Ensure the favorites bar is visible. If not, we bail.
+    //
+    // Historical note: we used to synthesize Ctrl+Shift+B here via
+    // `send_key_synthesized`, which does a transient
+    // `SetForegroundWindow(target) → SendInput → SetForegroundWindow(prev_fg)`
+    // dance. That dance is visible to the user (foreground flicker) and the
+    // restore can fail silently under UIPI / UIAccess constraints, both of
+    // which violate the cua-driver no-foreground contract. Every
+    // `page.execute_javascript` call where the user hadn't already shown
+    // the favorites bar would trigger this — unacceptable.
+    //
+    // The favorites-bar setting persists across browser sessions, so the
+    // one-time setup cost (Ctrl+Shift+B in the browser) is borne by the
+    // user once, never by the agent.
+    let fav_bar = find_favorites_bar(&automation, &edge_window).ok_or_else(|| {
         anyhow!(
-            "favorites bar is not present and Ctrl+Shift+B did not bring it up — \
-             cannot reach the bookmark UI"
+            "Favorites bar not visible — cua-driver-rs's bookmark-URL JS \
+             exec needs an always-on favorites bar so we can invoke the \
+             `cua-driver-eval` bookmark without stealing the foreground. \
+             Show the bar once via Ctrl+Shift+B and the setting persists \
+             across sessions. The bookmark-exec path is now disabled for \
+             this call; `execute_javascript` will fall through to the CDP \
+             fallback if it's configured."
         )
     })?;
 
@@ -323,14 +341,6 @@ unsafe fn find_favorites_bar(
         }
     }
     None
-}
-
-/// Send Ctrl+Shift+B to the Edge top-level HWND using the existing
-/// `send_key_synthesized` helper. This is the Edge AccelKey for
-/// "Show/Hide favorites bar".
-unsafe fn toggle_favorites_bar(hwnd_raw: u64) -> Result<()> {
-    crate::input::keyboard::send_key_synthesized(hwnd_raw, "b", &["ctrl", "shift"])
-        .context("send_key_synthesized for Ctrl+Shift+B failed")
 }
 
 unsafe fn find_bookmark(

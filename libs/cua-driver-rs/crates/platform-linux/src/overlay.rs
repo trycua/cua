@@ -87,8 +87,9 @@ struct RenderState {
     scr_h: u32,
 }
 
-#[derive(Clone, Copy)]
-struct Spring { ox: f64, oy: f64, vx: f64, vy: f64 }
+// Spring physics state — moved to `cursor_overlay::Spring` in the
+// 2026-05 dedup audit (was duplicated 3× across the platform crates).
+use cursor_overlay::Spring;
 
 impl RenderState {
     fn new(cfg: CursorConfig) -> Self {

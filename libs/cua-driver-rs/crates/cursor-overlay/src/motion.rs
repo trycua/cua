@@ -82,3 +82,20 @@ impl MotionConfig {
         }
     }
 }
+
+/// Post-arrival spring physics state.
+///
+/// When the cursor reaches the end of a planned path the engine
+/// hands control to a spring-damper that overshoots a touch and
+/// settles to the target. This struct holds the spring's mutable
+/// state across ticks. Identical across all platform crates — was
+/// duplicated 3× before the 2026-05 dedup audit.
+///
+/// `(ox, oy)` = offset from the spring target; `(vx, vy)` = velocity.
+#[derive(Clone, Copy, Default)]
+pub struct Spring {
+    pub ox: f64,
+    pub oy: f64,
+    pub vx: f64,
+    pub vy: f64,
+}

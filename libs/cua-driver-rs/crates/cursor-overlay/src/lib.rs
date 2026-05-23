@@ -17,7 +17,7 @@ pub mod capture_utils;
 pub mod util;
 
 pub use palette::Palette;
-pub use motion::MotionConfig;
+pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
 pub use shape::CursorShape;

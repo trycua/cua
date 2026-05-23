@@ -111,7 +111,7 @@ Tool names are `snake_case`, management subcommands are
 Canonical multi-step workflow (example shape — platform-specific
 launch idioms in the per-OS companion file):
 
-```
+```bash
 cua-driver serve
 cua-driver launch_app '{"bundle_id":"..."}'
 # → {pid: 844, windows: [{window_id: 10725, ...}]}

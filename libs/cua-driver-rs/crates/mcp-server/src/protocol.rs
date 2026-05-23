@@ -186,11 +186,9 @@ fn agent_instructions() -> String {
     };
 
     format!(
-"cua-driver-rs: cross-platform background computer-use automation.
+        r#"cua-driver-rs: cross-platform background computer-use automation.
 
-Tools let you interact with any app without stealing keyboard focus or moving \
-the visible cursor. Prefer element_index ({tree_kind}) paths over pixel \
-coordinates — they work on backgrounded/hidden windows.
+Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
 
 Workflow per turn:
 1. launch_app  → idempotent, returns pid + windows array in one call
@@ -199,11 +197,8 @@ Workflow per turn:
 4. click/type_text/press_key using element_index from step 3
 5. get_window_state(pid, window_id) again → verify the action landed
 
-Agent cursor: set_agent_cursor_* tools visualise where the agent is acting \
-without affecting the real mouse pointer.
+Agent cursor: set_agent_cursor_* tools visualise where the agent is acting without affecting the real mouse pointer.
 
-If a `cua-driver-rs` skill is loaded in your harness (Claude Code / Codex / \
-OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus \
-{platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."
+If a `cua-driver-rs` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
 }

@@ -370,7 +370,7 @@ When both checks pass, the driver has no `activate` tool
 (deliberately — the whole point is backgroundable control), so
 this is the one legitimate `osascript` fallback:
 
-```
+```bash
 osascript -e 'tell application "<App Name>" to activate'
 ```
 
@@ -411,7 +411,7 @@ Apple Events" to be enabled — see `WEB_APPS.md` for the setup path.
 
 **Co-located read — `get_window_state` with `javascript`:**
 
-```
+```bash
 get_window_state({pid, window_id, javascript: "document.title"})
 ```
 

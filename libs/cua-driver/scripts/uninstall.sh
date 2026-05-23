@@ -68,6 +68,11 @@ set -euo pipefail
 # flag flows through without edits.
 # ----------------------------------------------------------------------
 USE_RUST_BACKEND=0
+# Tracks whether the user explicitly named a backend. Needed so that
+# `--backend=swift` on Linux suppresses the auto-Rust dispatch below
+# (the doc says `--backend=swift` is an "explicit no-op default" —
+# without this flag the auto-Rust branch silently overrode it).
+BACKEND_EXPLICIT=0
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -75,9 +80,9 @@ while [[ $# -gt 0 ]]; do
         FORWARDED_ARGS+=("$1"); shift; continue
     fi
     case "$1" in
-        --experimental-rust) USE_RUST_BACKEND=1; shift ;;
-        --backend=rust)      USE_RUST_BACKEND=1; shift ;;
-        --backend=swift)     shift ;;                 # explicit default — no-op
+        --experimental-rust) USE_RUST_BACKEND=1; BACKEND_EXPLICIT=1; shift ;;
+        --backend=rust)      USE_RUST_BACKEND=1; BACKEND_EXPLICIT=1; shift ;;
+        --backend=swift)     BACKEND_EXPLICIT=1; shift ;;  # explicit default — no-op
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -87,12 +92,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Auto-select Rust on non-macOS. The Swift binary is macOS-only — there's
-# nothing for the Swift uninstall path to remove on Linux. Same logic as
-# install.sh so a single canonical URL works on every platform.
+# Auto-select Rust on non-macOS — but only when the user didn't pin a
+# backend. The Swift binary is macOS-only, so `--backend=swift` on
+# Linux is a deliberate no-op (the script reaches the Swift branch
+# below, finds nothing, exits clean). Same logic as install.sh so a
+# single canonical URL works on every platform.
 OS="$(uname -s 2>/dev/null || echo unknown)"
 AUTO_RUST=0
-if [[ "$USE_RUST_BACKEND" == "0" && "$OS" != "Darwin" ]]; then
+if [[ "$BACKEND_EXPLICIT" == "0" && "$USE_RUST_BACKEND" == "0" && "$OS" != "Darwin" ]]; then
     USE_RUST_BACKEND=1
     AUTO_RUST=1
     printf 'note: detected non-macOS host (%s); auto-selecting the cua-driver-rs Rust uninstall.\n' "$OS" >&2
@@ -148,22 +155,47 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver-rs.service"
     SKILL_PACK_NAME="cua-driver-rs"
 
+    # Rust-install marker. The post-rename Rust bundle path
+    # `/Applications/CuaDriver.app` is shared with the Swift driver
+    # (same bundle id `com.trycua.driver`), so we can't use that path
+    # alone as a Rust-install discriminator — a Swift-only Mac that
+    # runs `uninstall.sh --experimental-rust` by mistake would lose
+    # its Swift bundle, symlink, and Claude MCP registrations. This
+    # marker says "there's at least one unambiguously-Rust artifact
+    # on disk." We gate every shared-path removal below on it.
+    #
+    # Markers (any one suffices):
+    #   - $HOME_DIR exists (~/.cua-driver-rs/ — Rust-only state dir)
+    #   - /Applications/CuaDriverRs.app exists (legacy, pre-rename)
+    #   - LaunchAgent plist exists (autostart was used)
+    RUST_INSTALL_PRESENT=0
+    if [[ -d "$HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" ]]; then
+        RUST_INSTALL_PRESENT=1
+    fi
+
     # --- CLI symlink ---
     # Only remove ~/.local/bin/cua-driver when it resolves into a
-    # cua-driver-rs install. Post-rename, the Rust install lives at
-    # /Applications/CuaDriver.app — the SAME path the Swift driver uses,
-    # with the same bundle id `com.trycua.driver`. Path-based detection
-    # alone can't distinguish them. We rely on the presence of $HOME_DIR
-    # (~/.cua-driver-rs/) — the Rust-specific state dir — as the marker
-    # that this is a Rust install. Pre-rename installs at
-    # /Applications/CuaDriverRs.app are still cleaned up unambiguously
-    # by path.
+    # cua-driver-rs install. Pre-rename installs at
+    # /Applications/CuaDriverRs.app are unambiguously Rust and always
+    # removed. Post-rename, the Rust install lives at
+    # /Applications/CuaDriver.app — the SAME path the Swift driver
+    # uses — so we only remove that link when $RUST_INSTALL_PRESENT.
     if [[ -L "$USER_BIN_LINK" ]]; then
         RESOLVED="$(resolve_link "$USER_BIN_LINK")"
         case "$RESOLVED" in
-            *"CuaDriverRs.app"*|*"/Applications/CuaDriver.app"*|*"$HOME_DIR"*|*".cua-driver-rs"*)
+            *"CuaDriverRs.app"*|*"$HOME_DIR"*|*".cua-driver-rs"*)
+                # Unambiguous Rust paths.
                 rm -f "$USER_BIN_LINK"
                 log "removed $USER_BIN_LINK -> $RESOLVED"
+                ;;
+            *"/Applications/CuaDriver.app"*)
+                # Shared with the Swift driver — require a Rust marker.
+                if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+                    rm -f "$USER_BIN_LINK"
+                    log "removed $USER_BIN_LINK -> $RESOLVED"
+                else
+                    log "$USER_BIN_LINK -> $RESOLVED (shared with Swift driver and no Rust marker on disk; skipping)"
+                fi
                 ;;
             *)
                 log "$USER_BIN_LINK resolves to $RESOLVED (not a cua-driver-rs path; skipping)"
@@ -208,27 +240,38 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- .app bundle (macOS only) ---
-    # Removes /Applications/CuaDriver.app (current canonical Rust path,
-    # shared with the Swift driver via bundle id `com.trycua.driver`)
-    # AND /Applications/CuaDriverRs.app (legacy, pre-rename releases).
-    # Removing the shared `.app` path is correct here: a user who runs
-    # `uninstall.sh --experimental-rust` wants the binary on disk gone;
-    # if they previously had the Swift binary at the same path, they've
-    # already overwritten it with Rust on install. Re-installing the
-    # Swift driver afterward is a re-run of the canonical install.sh.
+    # Legacy /Applications/CuaDriverRs.app is unambiguously Rust and
+    # always removed when present. /Applications/CuaDriver.app is the
+    # current canonical Rust path BUT also where the Swift driver
+    # lives (same bundle id `com.trycua.driver`), so we only remove
+    # it when $RUST_INSTALL_PRESENT — protects a Swift-only Mac from
+    # losing its bundle if `uninstall.sh --experimental-rust` is run
+    # by mistake.
     if [[ "$OS" == "Darwin" ]]; then
-        for bundle_path in "$APP_BUNDLE" "$LEGACY_APP_BUNDLE"; do
-            if [[ -d "$bundle_path" ]]; then
+        if [[ -d "$LEGACY_APP_BUNDLE" ]]; then
+            SUDO=""
+            if [[ ! -w "$(dirname "$LEGACY_APP_BUNDLE")" ]]; then
+                SUDO="sudo"
+            fi
+            $SUDO rm -rf "$LEGACY_APP_BUNDLE"
+            log "removed $LEGACY_APP_BUNDLE"
+        else
+            log "no app bundle at $LEGACY_APP_BUNDLE (skipping)"
+        fi
+        if [[ -d "$APP_BUNDLE" ]]; then
+            if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
                 SUDO=""
-                if [[ ! -w "$(dirname "$bundle_path")" ]]; then
+                if [[ ! -w "$(dirname "$APP_BUNDLE")" ]]; then
                     SUDO="sudo"
                 fi
-                $SUDO rm -rf "$bundle_path"
-                log "removed $bundle_path"
+                $SUDO rm -rf "$APP_BUNDLE"
+                log "removed $APP_BUNDLE"
             else
-                log "no app bundle at $bundle_path (skipping)"
+                log "$APP_BUNDLE exists but no Rust marker on disk (~/.cua-driver-rs/, CuaDriverRs.app, LaunchAgent, systemd unit); leaving it (looks like a Swift-only install)"
             fi
-        done
+        else
+            log "no app bundle at $APP_BUNDLE (skipping)"
+        fi
     fi
 
     # --- Package home ---
@@ -271,7 +314,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     CLAUDE_JSON="$HOME/.claude.json"
     if [[ -f "$CLAUDE_JSON" ]] && command -v python3 >/dev/null 2>&1; then
         PY_OUTPUT="$(
-            CLAUDE_JSON="$CLAUDE_JSON" HOME_DIR="$HOME_DIR" python3 <<'PY'
+            CLAUDE_JSON="$CLAUDE_JSON" HOME_DIR="$HOME_DIR" RUST_INSTALL_PRESENT="$RUST_INSTALL_PRESENT" python3 <<'PY'
 import json
 import os
 import shutil
@@ -281,6 +324,7 @@ import time
 
 path = os.environ["CLAUDE_JSON"]
 home_dir = os.environ.get("HOME_DIR", "")
+rust_install_present = os.environ.get("RUST_INSTALL_PRESENT", "0") == "1"
 
 try:
     with open(path, "r", encoding="utf-8") as f:
@@ -307,16 +351,18 @@ def invokes_cua_driver_rs(server):
     joined = " ".join(parts)
     # Match the Rust-port-specific anchors: bundle name, package home,
     # explicit ".cua-driver-rs" segment. Plain "cua-driver" alone is
-    # ambiguous (the Swift binary uses the same filename), so we key on
-    # the Rust-specific paths here. The user can run the Swift
-    # uninstall.sh path (the same script with no flag on macOS)
-    # separately if they have both.
+    # ambiguous (the Swift binary uses the same filename). The shared
+    # /Applications/CuaDriver.app path is ALSO ambiguous (Rust took
+    # over Swift's bundle id) — only count it as Rust when a Rust
+    # install marker is on disk; otherwise it's almost certainly a
+    # Swift registration we shouldn't scrub.
     if home_dir and home_dir in joined:
         return True
-    return ("CuaDriverRs.app" in joined
-            or "/Applications/CuaDriver.app" in joined
-            or ".cua-driver-rs" in joined
-            or "cua-driver-rs" in joined)
+    if "CuaDriverRs.app" in joined or ".cua-driver-rs" in joined or "cua-driver-rs" in joined:
+        return True
+    if rust_install_present and "/Applications/CuaDriver.app" in joined:
+        return True
+    return False
 
 def should_remove(name, server):
     return name in {"cua-driver-rs"} or invokes_cua_driver_rs(server)

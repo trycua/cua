@@ -16,7 +16,15 @@ fn def() -> &'static ToolDef {
         name: "screenshot".into(),
         description:
             "Capture a screenshot. Returns base64-encoded image data in the requested format \
-             (default jpeg, quality 85).\n\n\
+             (default `jpeg`, quality `85`). The long edge is downscaled to fit the \
+             `max_image_dimension` config (default `1568` px — matches Anthropic's \
+             multimodal-vision input size, so a click-coord picked off this PNG addresses the \
+             same pixels the model reasoned over).\n\n\
+             **Prefer `get_window_state` for UI work** — it returns the AX tree alongside the \
+             same screenshot in one call, populates the element_index cache the click / \
+             type_text / scroll tools resolve against, and is the only path to backgrounded \
+             accessibility actions. `screenshot` is for when you just need pixels (vision \
+             grounding, debugging, attaching to a report).\n\n\
              Without `window_id`, captures the full main display. With `window_id`, captures \
              just that window (pair with `list_windows` or `get_accessibility_tree` which return \
              window IDs).\n\n\

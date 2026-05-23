@@ -152,22 +152,53 @@ pub fn initialize_result() -> Value {
         "protocolVersion": "2025-06-18",
         "capabilities": { "tools": {} },
         "serverInfo": { "name": "cua-driver-rs", "version": env!("CARGO_PKG_VERSION") },
-        "instructions": AGENT_INSTRUCTIONS
+        "instructions": agent_instructions()
     })
 }
 
-const AGENT_INSTRUCTIONS: &str = "\
-cua-driver-rs: cross-platform background computer-use automation.
+/// MCP `instructions` (`InitializeResult.instructions`) sent to every
+/// connecting client. The spec frames this as a "hint... MAY be added
+/// to the system prompt" — eager, every-turn cost. We keep it under
+/// the community-recommended ~200-word ceiling and host the long-form
+/// workflow in `Skills/cua-driver-rs/SKILL.md`.
+///
+/// Templated per-host: the accessibility-tree provider name (AX on
+/// macOS, UIA on Windows, AT-SPI on Linux) is injected so a connecting
+/// agent only sees the path that applies, not all three. Same pattern
+/// Goose uses in its `ComputerController` extension and Open
+/// Interpreter uses for its system message.
+fn agent_instructions() -> String {
+    let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
+        (
+            "AX (Accessibility)",
+            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch)",
+        )
+    } else if cfg!(target_os = "windows") {
+        (
+            "UIA (UI Automation)",
+            "WINDOWS.md (UIA tree, UWP / ApplicationFrameHost hosting, Session 0 isolation)",
+        )
+    } else {
+        (
+            "AT-SPI",
+            "LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
+        )
+    };
 
-Tools let you interact with any app without stealing keyboard focus or \
-moving the visible cursor. Prefer element_index (AX/UIA) paths over pixel \
-coordinates — they work on backgrounded/hidden windows.
+    format!(
+        r#"cua-driver-rs: cross-platform background computer-use automation.
+
+Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
 
 Workflow per turn:
-1. list_apps  → confirm the target is running, get pid
-2. list_windows → pick a window_id on the current Space
-3. get_window_state(pid, window_id) → refresh AX/UIA snapshot, get element indices
+1. launch_app  → idempotent, returns pid + windows array in one call
+2. (skip list_windows when launch_app already returned a single window)
+3. get_window_state(pid, window_id) → refresh the {tree_kind} snapshot, get element indices
 4. click/type_text/press_key using element_index from step 3
+5. get_window_state(pid, window_id) again → verify the action landed
 
-Agent cursor: set_agent_cursor_* tools visualise where the agent is acting \
-without affecting the real mouse pointer.";
+Agent cursor: set_agent_cursor_* tools visualise where the agent is acting without affecting the real mouse pointer.
+
+If a `cua-driver-rs` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+    )
+}

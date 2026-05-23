@@ -246,7 +246,13 @@ if ($AutoStart) {
 $installedBinary = Join-Path $VisibleBinDir $BinaryName
 $HintsTxt = Join-Path $RepoRoot "..\cua-driver\scripts\post-install-hints.txt"
 if (Test-Path -LiteralPath $HintsTxt) {
-    $hintsRaw = Get-Content -Raw -LiteralPath $HintsTxt
+    # Read explicitly as UTF-8. PowerShell 5.1's Get-Content -Raw falls
+    # back to Windows-1252 when the source file has no BOM, which turns
+    # the .txt's `•` / `—` into mojibake (`â€¢` / `â€"`) in the rendered
+    # block. The other 3 installers don't hit this: install.ps1 reads
+    # the URL response via Invoke-WebRequest (HTTP charset decoding);
+    # _install-rust.sh / install-local.sh stream raw bytes through sed.
+    $hintsRaw = [System.IO.File]::ReadAllText($HintsTxt, [System.Text.Encoding]::UTF8)
     Write-Host ($hintsRaw -replace '\{\{BINARY\}\}', $installedBinary)
 } else {
     # Repo layout changed or .txt missing — fall back to one-line

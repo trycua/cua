@@ -533,10 +533,17 @@ impl Tool for ClickTool {
     fn def(&self) -> &ToolDef {
         CLICK_DEF.get_or_init(|| ToolDef {
             name: "click".into(),
-            description: "Click at (x,y) coordinates or an element_index (AT-SPI) in a window via \
-                XSendEvent. No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
-                After a zoom call, pass from_zoom=true to auto-translate zoom-image coords back to \
-                full-window space.".into(),
+            description: "Click against a target pid. **Prefer `element_index` over pixel \
+                coordinates** — element_index works on backgrounded / hidden windows, surfaces \
+                a stable handle, and tells you what you're clicking via the cached AT-SPI \
+                element's role + label. Reach for `x, y` only when the target is a canvas / \
+                custom-drawn surface that doesn't appear in the AT-SPI tree.\n\n\
+                Provide either (window_id + x/y) or (pid + element_index). Routes via \
+                XSendEvent (no focus steal). element_index cache is scoped per (pid, \
+                window_id) and is replaced by the next get_window_state of the same window — \
+                re-snapshot every turn before clicking.\n\n\
+                After a zoom call, pass from_zoom=true to auto-translate zoom-image coords \
+                back to full-window space.".into(),
             input_schema: json!({
                 "type":"object","required":["pid"],"properties":{
                     "pid":{"type":"integer"},
@@ -953,8 +960,17 @@ impl Tool for ScreenshotTool {
         SS_DEF.get_or_init(|| ToolDef {
             name: "screenshot".into(),
             description: "Capture a screenshot via XGetImage or `import` (ImageMagick). \
-                Without window_id captures the full primary display. Supports png and jpeg formats \
-                (default jpeg, quality 85).".into(),
+                Returns base64-encoded image data in the requested format (default `jpeg`, \
+                quality `85`). The long edge is downscaled to fit the `max_image_dimension` \
+                config (default `1568` px — matches Anthropic's multimodal-vision input size, \
+                so a click-coord picked off this PNG addresses the same pixels the model \
+                reasoned over).\n\n\
+                **Prefer `get_window_state` for UI work** — it returns the AT-SPI tree \
+                alongside the same screenshot in one call, populates the element_index cache \
+                the click / type_text / scroll tools resolve against, and is the only path to \
+                backgrounded accessibility actions. `screenshot` is for when you just need \
+                pixels (vision grounding, debugging, attaching to a report).\n\n\
+                Without window_id captures the full primary display.".into(),
             input_schema: json!({
                 "type":"object","properties":{
                     "window_id":{"type":"integer"},

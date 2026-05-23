@@ -43,12 +43,21 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
         description:
-            "Left-click against a target pid. Two addressing modes:\n\n\
+            "Left-click against a target pid. **Prefer `element_index` over pixel \
+             coordinates** — element_index works on backgrounded / minimized / hidden / \
+             off-Space windows, surfaces a stable handle that survives rebuilds, and tells \
+             you what you're clicking via the cached element's role + label. Reach for \
+             `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
+             that doesn't appear in the AX tree.\n\n\
+             Two addressing modes:\n\n\
              - element_index + window_id (from last get_window_state): AX action path. \
                Works on backgrounded/hidden windows. No cursor move, no focus steal. \
-               Preferred path.\n\n\
-             - x, y (window-local screenshot pixels): CGEvent path. Synthesizes mouse \
-               events and posts to pid. Use modifier for cmd/shift/option/ctrl.\n\n\
+               element_index cache is scoped per (pid, window_id) and is replaced by the \
+               next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
+             - x, y (window-local screenshot pixels, top-left origin of the PNG returned \
+               by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
+               pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen \
+               window to anchor the conversion.\n\n\
              action: press (default), show_menu, pick, confirm, cancel, open.\n\
              from_zoom: set true after a zoom call to auto-translate zoom-image pixel \
              coordinates to full-window space."

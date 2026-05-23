@@ -12,6 +12,12 @@
 //! UIA element's `NativeWindowHandle` — i.e. an honest Win32 HWND that downstream
 //! code can pass to `GetWindowRect`, `PostMessage`, etc.
 
+// We pattern-match against `UIA_*ControlTypeId` constants from the `windows`
+// crate, which use mixed case we can't rename. The lint's suggested rewrite
+// (UIA_BUTTON_CONTROL_TYPE_ID) would silently shadow the external constant
+// with a fresh local binding and break the match. Mirrors overlay.rs:12.
+#![allow(non_upper_case_globals)]
+
 use std::cell::RefCell;
 
 use anyhow::{bail, Context};

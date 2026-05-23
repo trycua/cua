@@ -1111,11 +1111,6 @@ pub fn run_update_cmd(apply: bool) {
     }
 }
 
-/// `cua-driver dump-docs [--pretty]` — output all MCP tool schemas as JSON.
-pub fn run_dump_docs(registry: &ToolRegistry, pretty: bool) {
-    run_dump_docs_with_type(registry, pretty, "all")
-}
-
 /// Output documentation as JSON.  `doc_type` is one of:
 /// - `"mcp"` — only MCP tool docs (`{version, tools: [...]}`)
 /// - `"cli"` — CLI docs (stub on Rust — Swift extracts via swift-argument-parser

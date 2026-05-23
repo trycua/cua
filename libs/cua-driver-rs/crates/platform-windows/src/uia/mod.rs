@@ -170,8 +170,9 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
             if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
                 nodes = fallback_nodes;
                 lines = fallback_lines;
-                counter = fallback_counter;
-                total = fallback_total;
+                // counter/total aren't read after this point — they're
+                // only used by walk_cached's &mut params for element
+                // indexing inside that call.
             }
         }
     }

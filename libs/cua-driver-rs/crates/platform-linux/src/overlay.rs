@@ -441,7 +441,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     ).ok();
 
     // Set window title (identifies our overlay, matches Windows convention).
-    let title = format!("TropeCUA.AgentCursorOverlay.{}", cfg.cursor_id);
+    // `Cua.` namespace mirrors the Windows class-name + install-path
+    // convention; was `TropeCUA.` (leaked codename from an early C# ref).
+    let title = format!("Cua.AgentCursorOverlay.{}", cfg.cursor_id);
     conn.change_property8(
         PropMode::REPLACE, win,
         AtomEnum::WM_NAME,

@@ -37,8 +37,8 @@ fn main() {
 
     std::thread::sleep(Duration::from_millis(1500));
 
-    // Find overlay HWND.
-    let class_name: Vec<u16> = OsStr::new("TropeCUA.AgentCursorOverlay\0")
+    // Find overlay HWND (class name matches what overlay.rs registers).
+    let class_name: Vec<u16> = OsStr::new("Cua.AgentCursorOverlay\0")
         .encode_wide().collect();
     let hwnd = unsafe { FindWindowW(
         windows::core::PCWSTR(class_name.as_ptr()),

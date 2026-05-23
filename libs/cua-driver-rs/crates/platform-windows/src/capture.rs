@@ -160,7 +160,7 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     if crate::input::is_xaml_host_hwnd(hwnd_raw) {
         match screenshot_via_screen_region(hwnd) {
             Ok((pixels, w, h)) => {
-                return encode_bgra_to_png(&pixels, w as u32, h as u32);
+                return mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32);
             }
             Err(e) => {
                 // Screen-region failed — fall through and try PrintWindow as a
@@ -223,7 +223,7 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     if is_mostly_black_bgra(&pixels) {
         match screenshot_via_screen_region(hwnd) {
             Ok((alt_pixels, alt_w, alt_h)) => {
-                return encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32);
+                return mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32);
             }
             Err(e) => {
                 // Screen-region path failed too — return the (black) PrintWindow
@@ -239,114 +239,27 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
         }
     }
 
-    encode_bgra_to_png(&pixels, w as u32, h as u32)
+    // BGRA → PNG via the shared `image_utils::encode_bgra_to_png`
+    // helper (extracted from this file 2026-05; was a hand-rolled
+    // uncompressed-PNG path that produced ~5x larger output. The
+    // `image` crate's encoder is already a workspace dep so the
+    // smaller output is free).
+    mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
 }
 
-
-/// Minimal BGRA→PNG encoder (no external dependency on image/lodepng).
-fn encode_bgra_to_png(bgra: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
-    // Convert BGRA to RGBA.
-    let mut rgba = bgra.to_vec();
-    for px in rgba.chunks_exact_mut(4) {
-        px.swap(0, 2); // B↔R
-    }
-
-    // Build PNG in-memory using the flate2 + adler32 approach manually,
-    // or simply call out to a temp file via GDI+ / stb_image_write.
-    // For simplicity, use the `image` crate if available, otherwise write raw
-    // uncompressed PNG (which most tools accept).
-    write_uncompressed_png(&rgba, w, h)
-}
-
-/// Write a minimal uncompressed PNG (IDAT with zlib level 0 = store).
-fn write_uncompressed_png(rgba: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(rgba.len() + 4096);
-
-    // PNG signature.
-    out.extend_from_slice(b"\x89PNG\r\n\x1a\n");
-
-    // IHDR.
-    let mut ihdr = Vec::with_capacity(13);
-    ihdr.extend_from_slice(&w.to_be_bytes());
-    ihdr.extend_from_slice(&h.to_be_bytes());
-    ihdr.push(8); // bit depth
-    ihdr.push(2); // color type: RGB (we'll drop alpha for simplicity) — actually use 6 for RGBA
-    ihdr[9] = 6;  // RGBA
-    ihdr.push(0); // compression
-    ihdr.push(0); // filter
-    ihdr.push(0); // interlace
-    // Rewrite properly.
-    let ihdr: [u8; 13] = [
-        (w >> 24) as u8, (w >> 16) as u8, (w >> 8) as u8, w as u8,
-        (h >> 24) as u8, (h >> 16) as u8, (h >> 8) as u8, h as u8,
-        8,   // bit depth
-        6,   // RGBA
-        0,   // deflate
-        0,   // adaptive filter
-        0,   // no interlace
-    ];
-    write_png_chunk(&mut out, b"IHDR", &ihdr);
-
-    // IDAT: zlib-wrap with store (DEFLATE BTYPE=00).
-    // Build raw scanlines: [filter_byte(0), row_pixels...]
-    let row_bytes = (w * 4) as usize;
-    let mut raw = Vec::with_capacity((row_bytes + 1) * h as usize);
-    for row in 0..h as usize {
-        raw.push(0u8); // filter = None
-        raw.extend_from_slice(&rgba[row * row_bytes..(row + 1) * row_bytes]);
-    }
-    let zlib_data = zlib_store(&raw);
-    write_png_chunk(&mut out, b"IDAT", &zlib_data);
-
-    // IEND.
-    write_png_chunk(&mut out, b"IEND", &[]);
-
-    Ok(out)
-}
-
-fn write_png_chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
-    let len = data.len() as u32;
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(name);
-    out.extend_from_slice(data);
-    let crc = crc32_ieee(name, data);
-    out.extend_from_slice(&crc.to_be_bytes());
-}
-
-/// zlib store wrapper (BTYPE=00 non-compressed blocks, max 65535 bytes/block).
-fn zlib_store(data: &[u8]) -> Vec<u8> {
-    let adler = adler32(data);
-    let mut out = Vec::new();
-    // zlib header: CMF=0x78, FLG=0x01 (no dict, check bits).
-    out.push(0x78);
-    out.push(0x01);
-    // DEFLATE non-compressed blocks.
-    let mut pos = 0;
-    while pos < data.len() || data.is_empty() {
-        let end = (pos + 65535).min(data.len());
-        let is_last = end == data.len();
-        let blen = (end - pos) as u16;
-        out.push(if is_last { 1 } else { 0 }); // BFINAL | BTYPE=00
-        out.extend_from_slice(&blen.to_le_bytes());
-        out.extend_from_slice(&(!blen).to_le_bytes());
-        out.extend_from_slice(&data[pos..end]);
-        pos = end;
-        if data.is_empty() { break; }
-    }
-    // Adler-32 checksum (big-endian).
-    out.extend_from_slice(&adler.to_be_bytes());
-    out
-}
-
-fn adler32(data: &[u8]) -> u32 {
-    let mut s1: u32 = 1;
-    let mut s2: u32 = 0;
-    for &b in data {
-        s1 = (s1 + b as u32) % 65521;
-        s2 = (s2 + s1) % 65521;
-    }
-    (s2 << 16) | s1
-}
+// NOTE: previously this module carried a hand-rolled
+// `write_uncompressed_png` + `write_png_chunk` + `zlib_store` +
+// `adler32` + `crc32_ieee` (~110 lines) plus a local
+// `encode_bgra_to_png` that used them. All of that is replaced by
+// `mcp_server::image_utils::encode_bgra_to_png` which goes through
+// the `image` crate's PNG encoder — already a workspace dep,
+// produces ~5x smaller files than the uncompressed-store path.
+//
+// Same extraction applies to the four pub helpers below
+// (`png_bytes_to_jpeg`, `resize_png_if_needed`, `crosshair_png_bytes`,
+// `png_dimensions_pub`). They're now thin re-exports of the shared
+// `mcp_server::image_utils::*` so all three platform crates call the
+// same code. See `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the full audit.
 
 /// Capture the primary display (full screen), returning raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
@@ -376,116 +289,46 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
         if ok == 0 { bail!("GetDIBits returned 0"); }
-        encode_bgra_to_png(&pixels, w as u32, h as u32)
+        mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
     }
 }
 
 /// Capture primary display, returning (base64_png, width, height).
 pub fn screenshot_display() -> Result<(String, u32, u32)> {
     let png_bytes = screenshot_display_bytes()?;
-    if png_bytes.len() < 24 { bail!("PNG too small"); }
-    let w = u32::from_be_bytes([png_bytes[16], png_bytes[17], png_bytes[18], png_bytes[19]]);
-    let h = u32::from_be_bytes([png_bytes[20], png_bytes[21], png_bytes[22], png_bytes[23]]);
+    let (w, h) = mcp_server::image_utils::png_dimensions(&png_bytes)?;
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
+// PNG/JPEG/resize/crosshair helpers — re-exports of the shared
+// `mcp_server::image_utils` module. The previous file-local copies were
+// near-identical to the macOS and Linux versions; the dedup-audit
+// (2026-05) moved them all to one place.
+
 /// Convert PNG bytes to JPEG at the given quality (1–95).
 pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
-    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?;
-    let mut buf = Vec::new();
-    {
-        let mut cursor = std::io::Cursor::new(&mut buf);
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
-        img.write_with_encoder(encoder)?;
-    }
-    Ok(buf)
+    mcp_server::image_utils::png_bytes_to_jpeg(png_bytes, quality)
 }
 
 /// Downscale `png_bytes` so neither dimension exceeds `max_dim`.
-/// If `max_dim == 0` or the image already fits, returns a copy of the original bytes unchanged.
+/// If `max_dim == 0` or the image already fits, returns a copy of the
+/// original bytes unchanged.
 pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
-    if max_dim == 0 {
-        return Ok(png_bytes.to_vec());
-    }
-    if png_bytes.len() < 24 { bail!("PNG too small"); }
-    let w = u32::from_be_bytes([png_bytes[16], png_bytes[17], png_bytes[18], png_bytes[19]]);
-    let h = u32::from_be_bytes([png_bytes[20], png_bytes[21], png_bytes[22], png_bytes[23]]);
-    if w <= max_dim && h <= max_dim {
-        return Ok(png_bytes.to_vec());
-    }
-    let scale = max_dim as f64 / w.max(h) as f64;
-    let new_w = (w as f64 * scale).round() as u32;
-    let new_h = (h as f64 * scale).round() as u32;
-    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?;
-    let resized = img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3);
-    let mut out = Vec::new();
-    resized.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
-    Ok(out)
+    mcp_server::image_utils::resize_png_if_needed(png_bytes, max_dim)
 }
 
-/// Draw a red crosshair at pixel (cx, cy) on a PNG image and return modified PNG bytes.
-/// Used by recording's click-marker callback to produce click.png.
+/// Draw a red crosshair at pixel (cx, cy) on a PNG image and return
+/// modified PNG bytes. Used by recording's click-marker callback to
+/// produce click.png.
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
-    let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?;
-    let (w, h) = (img.width(), img.height());
-    let mut img = img.to_rgba8();
-
-    let arm_len = (w as f64 / 40.0).max(12.0) as i32;
-    let line_w  = ((w as f64 / 400.0).max(1.5)) as i32;
-    let red     = image::Rgba([255u8, 26, 26, 242]);
-    let cx = cx as i32;
-    let cy = cy as i32;
-
-    for lw in 0..=line_w {
-        let off = lw - line_w / 2;
-        for dx in -arm_len..=arm_len {
-            if let Some(p) = img.get_pixel_mut_checked(
-                (cx + dx).clamp(0, w as i32 - 1) as u32,
-                (cy + off).clamp(0, h as i32 - 1) as u32,
-            ) { *p = red; }
-        }
-        for dy in -arm_len..=arm_len {
-            if let Some(p) = img.get_pixel_mut_checked(
-                (cx + off).clamp(0, w as i32 - 1) as u32,
-                (cy + dy).clamp(0, h as i32 - 1) as u32,
-            ) { *p = red; }
-        }
-    }
-
-    let mut out = Vec::new();
-    image::DynamicImage::ImageRgba8(img)
-        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
-    Ok(out)
+    mcp_server::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
 
 /// Parse width and height from a PNG IHDR chunk.
+///
+/// Suffixed `_pub` because an older private `png_dimensions` predated
+/// the `_pub` export; the public alias is what callers use today.
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
-    if data.len() < 24 { bail!("PNG data too small"); }
-    if &data[0..8] != b"\x89PNG\r\n\x1a\n" { bail!("Not a PNG"); }
-    let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
-    let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
-    Ok((w, h))
+    mcp_server::image_utils::png_dimensions(data)
 }
 
-fn crc32_ieee(name: &[u8], data: &[u8]) -> u32 {
-    const TABLE: [u32; 256] = {
-        let mut t = [0u32; 256];
-        let mut i = 0usize;
-        while i < 256 {
-            let mut c = i as u32;
-            let mut j = 0;
-            while j < 8 {
-                c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
-                j += 1;
-            }
-            t[i] = c;
-            i += 1;
-        }
-        t
-    };
-    let mut crc: u32 = !0u32;
-    for &b in name.iter().chain(data.iter()) {
-        crc = TABLE[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    !crc
-}

@@ -126,16 +126,24 @@ pub async fn try_bookmark_exec(
 /// the bookmark; the JS captures it via the IIFE argument so the restore
 /// is robust against re-renders that change the title mid-flight.
 pub fn wrap_javascript(user_js: &str) -> String {
-    // We deliberately escape \r and \n in the user JS so that the
-    // bookmark URL stays one line — Edge's URL field strips line
-    // breaks, but stripping them silently can break user expressions
-    // that span lines. Replacing with spaces is safer: JS lexer treats
-    // newlines as whitespace except in the rare ASI-relevant cases.
+    // Lex-normalise the user JS:
+    //   - Replace \r / \n with spaces so the bookmark URL stays one line
+    //     (Edge's URL field strips line breaks silently otherwise; the
+    //     replacement keeps statements parseable since JS lexer treats
+    //     newlines as whitespace outside ASI-relevant cases).
+    //   - Embed as a JS string literal that `eval` consumes — match CDP
+    //     `Runtime.evaluate` semantics: the user passes an expression
+    //     (e.g. `document.title`), gets its value, no `return` keyword
+    //     needed. (Previously the wrapper used `(function(){ ... })()`
+    //     which silently returned undefined for any caller that didn't
+    //     write `return X` themselves — wrong for CDP-style callers.)
     let safe_user_js = user_js.replace('\r', " ").replace('\n', " ");
+    // Escape for inclusion inside a single-quoted JS string literal.
+    let escaped = safe_user_js.replace('\\', "\\\\").replace('\'', "\\'");
     format!(
         "javascript:(function(_orig){{\
 try {{\
-var __r = (function(){{ {user_js} }})();\
+var __r = eval('{escaped}');\
 try {{ __r = JSON.stringify(__r); }} catch(e) {{ __r = String(__r); }}\
 document.title = 'CUA:' + (__r === undefined ? '' : __r);\
 setTimeout(function(){{ document.title = _orig; }}, 500);\
@@ -143,8 +151,7 @@ setTimeout(function(){{ document.title = _orig; }}, 500);\
 document.title = 'CUA_ERR:' + (e && e.message ? e.message : String(e));\
 setTimeout(function(){{ document.title = _orig; }}, 500);\
 }}\
-}})(document.title);",
-        user_js = safe_user_js
+}})(document.title);"
     )
 }
 
@@ -725,15 +732,32 @@ unsafe fn poll_for_marker(
     ))
 }
 
-/// Split `s` at the first occurrence of `prefix` and trim everything
-/// after the result payload at the first ' - ' (Chromium's title
-/// separator between page title and app name).
+/// Split `s` at the prefix and strip Chromium's trailing
+/// ` - <browser name>` only — must not corrupt payloads that
+/// legitimately contain ` - ` in their JSON content (e.g.
+/// `CUA:"a - b"`).
+///
+/// We rsplit from the END (so only the last `" - "` is a candidate
+/// separator) and only strip the suffix when it looks like one of the
+/// known Chromium-family browser names. Anything else stays in the
+/// payload verbatim.
 fn extract_marker(s: &str, prefix: &str) -> String {
     let start = s.find(prefix).unwrap_or(0);
     let after = &s[start..];
-    // Trim trailing " - <browser>" if Chromium appended it.
-    let payload_end = after.find(" - ").unwrap_or(after.len());
-    after[..payload_end].to_owned()
+    if let Some((left, right)) = after.rsplit_once(" - ") {
+        let right_lc = right.to_ascii_lowercase();
+        let looks_like_browser = right_lc.contains("edge")
+            || right_lc.contains("chrome")
+            || right_lc.contains("chromium")
+            || right_lc.contains("brave")
+            || right_lc.contains("arc")
+            || right_lc.contains("vivaldi")
+            || right_lc.contains("opera");
+        if looks_like_browser {
+            return left.to_owned();
+        }
+    }
+    after.to_owned()
 }
 
 #[cfg(test)]
@@ -742,7 +766,9 @@ mod tests {
 
     #[test]
     fn wrap_javascript_emits_expected_shape() {
-        let js = "return 1 + 1;";
+        // CDP-style: caller passes an expression, NOT a function body
+        // with `return`. The eval-based wrapper returns its value.
+        let js = "document.title";
         let wrapped = wrap_javascript(js);
         assert!(wrapped.starts_with("javascript:"));
         assert!(wrapped.contains("try"));
@@ -750,28 +776,55 @@ mod tests {
         assert!(wrapped.contains("setTimeout"));
         assert!(wrapped.contains("CUA:"));
         assert!(wrapped.contains("CUA_ERR:"));
-        // The user expression must be embedded inside an IIFE.
-        assert!(wrapped.contains("return 1 + 1;"));
+        // The user expression is embedded as a single-quoted string
+        // literal passed to eval — that's the CDP-compatible semantics.
+        assert!(wrapped.contains("eval('document.title')"));
         // Original-title capture argument should be present.
         assert!(wrapped.contains("_orig"));
         assert!(wrapped.contains("document.title"));
     }
 
     #[test]
-    fn wrap_javascript_strips_newlines() {
-        let js = "var x = 1;\nvar y = 2;\r\nreturn x + y;";
+    fn wrap_javascript_escapes_single_quotes() {
+        // Single quotes in the user JS must be escaped so they don't
+        // close the eval string literal early.
+        let js = "var x = 'hi'; x";
         let wrapped = wrap_javascript(js);
-        assert!(!wrapped.contains('\n'));
-        assert!(!wrapped.contains('\r'));
-        // Replacement keeps the statements parseable as ASI-friendly JS.
-        assert!(wrapped.contains("var x = 1; var y = 2;"));
+        assert!(wrapped.contains(r"eval('var x = \'hi\'; x')"));
     }
 
     #[test]
-    fn extract_marker_handles_chromium_title_suffix() {
+    fn wrap_javascript_escapes_backslashes() {
+        // Backslashes inside the user JS must be doubled so the literal
+        // survives eval-string-literal decoding.
+        let js = r"'a\nb'";
+        let wrapped = wrap_javascript(js);
+        // The user JS already contains the literal sequence `'a\nb'`;
+        // after escaping, single quotes become \' and the `\n` becomes
+        // `\\n` (literal backslash + n).
+        assert!(wrapped.contains(r"eval('\'a\\nb\'')"));
+    }
+
+    #[test]
+    fn wrap_javascript_strips_newlines() {
+        let js = "var x = 1;\nvar y = 2;\r\nx + y";
+        let wrapped = wrap_javascript(js);
+        // Bookmark URL must stay one line.
+        assert!(!wrapped.contains('\n'));
+        assert!(!wrapped.contains('\r'));
+        // Replacement keeps the statements parseable as ASI-friendly JS.
+        assert!(wrapped.contains("eval('var x = 1; var y = 2;  x + y')"));
+    }
+
+    #[test]
+    fn extract_marker_strips_chromium_suffix() {
         assert_eq!(extract_marker("CUA:42", "CUA:"), "CUA:42");
         assert_eq!(
             extract_marker("CUA:42 - Microsoft Edge", "CUA:"),
+            "CUA:42"
+        );
+        assert_eq!(
+            extract_marker("CUA:42 - Google Chrome", "CUA:"),
             "CUA:42"
         );
         assert_eq!(
@@ -781,6 +834,29 @@ mod tests {
         assert_eq!(
             extract_marker("CUA_ERR:not defined - Edge", "CUA_ERR:"),
             "CUA_ERR:not defined"
+        );
+    }
+
+    #[test]
+    fn extract_marker_preserves_dash_in_payload() {
+        // Payload "a - b" must NOT be truncated at the embedded " - ".
+        // (The previous `find(" - ")` implementation would return
+        // `CUA:"a` here — wrong.)
+        assert_eq!(
+            extract_marker("CUA:\"a - b\" - Microsoft Edge", "CUA:"),
+            "CUA:\"a - b\""
+        );
+        // No browser suffix present → keep the whole payload, even with
+        // a stray " - " in the middle.
+        assert_eq!(
+            extract_marker("CUA:\"foo - bar\"", "CUA:"),
+            "CUA:\"foo - bar\""
+        );
+        // The suffix must look like a known browser to be stripped —
+        // an arbitrary trailing " - X" stays in the payload.
+        assert_eq!(
+            extract_marker("CUA:result - notabrowser", "CUA:"),
+            "CUA:result - notabrowser"
         );
     }
 }

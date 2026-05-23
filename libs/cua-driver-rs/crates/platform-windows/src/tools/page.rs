@@ -36,6 +36,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
+    UIA_ComboBoxControlTypeId,
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
     TreeScope_Subtree, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID, UIA_ControlTypePropertyId,
     UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_HeaderControlTypeId,
@@ -486,6 +487,7 @@ fn control_type_for_tag(tag: &str) -> Option<UIA_CONTROLTYPE_ID> {
         "a" => UIA_HyperlinkControlTypeId,
         "button" => UIA_ButtonControlTypeId,
         "input" | "textarea" => UIA_EditControlTypeId,
+        "select" => UIA_ComboBoxControlTypeId,
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => UIA_HeaderControlTypeId,
         "img" => UIA_ImageControlTypeId,
         "li" => UIA_ListItemControlTypeId,

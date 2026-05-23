@@ -1692,6 +1692,48 @@ arrays.
 
 ---
 
+## Installer post-install hints
+
+Not an MCP tool — an installer-text contract. The hint text printed at
+the end of every cua-driver-rs install (Try-it / agent skill pack / MCP
+setup per client / docs link) is sourced from a single shared file:
+
+- **Shared text**: `libs/cua-driver/scripts/post-install-hints.txt`
+  with `{{BINARY}}` placeholder.
+- **Renderers**: each of the 4 Rust installers reads the .txt, swaps
+  `{{BINARY}}` for the installed binary path, prints it, then appends
+  an OS-specific autostart hint inline:
+    - `libs/cua-driver/scripts/_install-rust.sh` — `curl` from
+      raw.githubusercontent.com (remote install path) + bash `sed`.
+    - `libs/cua-driver/scripts/install.ps1` — `Invoke-WebRequest` from
+      raw.githubusercontent.com + PowerShell `-replace`.
+    - `libs/cua-driver-rs/scripts/install-local.sh` — direct disk read
+      from `../cua-driver/scripts/post-install-hints.txt` + `sed`.
+    - `libs/cua-driver-rs/scripts/install-local.ps1` — direct disk read
+      from `..\cua-driver\scripts\post-install-hints.txt` + `-replace`.
+
+If the .txt is unreachable (network failure on remote installs, repo
+layout change on local), each installer falls back to a one-line
+essentials string so the user always gets enough to recover.
+
+**Why not a CLI subcommand**: an earlier draft of this work added
+`cua-driver post-install` to the Rust binary and had all 4 installers
+delegate via `& $installedBinary post-install`. Reverted — the
+chicken-and-egg risk (failed binary install = no hints either) made
+the .txt approach the safer choice. The .txt has no runtime
+dependency; even a totally broken binary install still prints hints.
+
+**Why OS-specific hints stay inline**: each script targets one OS
+(install.ps1 = Windows; install-local.sh on macOS vs Linux is the
+only branching case). The OS-specific block is 4-6 lines, naturally
+fits in the script that targets that OS, and is the only part that
+would need conditional rendering in a single-file design.
+
+**Status**: VERIFIED on macOS via `bash libs/cua-driver-rs/scripts/install-local.sh`
+end-to-end. Windows VM verification pending.
+
+---
+
 ## Focus-steal prevention
 
 Cross-cutting infrastructure (not an MCP tool) used by `launch_app` and

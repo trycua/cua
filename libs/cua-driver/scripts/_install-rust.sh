@@ -666,16 +666,38 @@ if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
     echo ""
 fi
 
-echo "Try it:"
-echo "  $BIN_LINK list-tools"
-echo "  $BIN_LINK list_apps"
-echo ""
-echo "Agent skill pack (optional):"
-echo "  $BIN_LINK skills install    # fetch + link the cua-driver-rs skill pack"
-echo "                              # into Claude Code / Codex / OpenClaw / OpenCode."
-echo "                              # The install never touches your agent dirs."
-echo ""
-echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+# Unified post-install hints come from a single shared text file so the
+# 4 Rust installers (this script + install.ps1 + install-local.sh +
+# install-local.ps1) never drift. The .txt holds the OS-agnostic bulk
+# (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
+# placeholders; OS-specific bits (autostart / TCC) stay inline below
+# in each installer where they're per-shell natural.
+HINTS_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/post-install-hints.txt"
+HINTS_TXT="$TMP_DIR/post-install-hints.txt"
+if curl -fsSL "$HINTS_URL" -o "$HINTS_TXT" 2>/dev/null && [ -s "$HINTS_TXT" ]; then
+    sed "s|{{BINARY}}|$BIN_LINK|g" "$HINTS_TXT"
+else
+    # Network fetch failed — print a one-line essentials fallback so the
+    # user always gets enough to recover, even if hint-text fetching is
+    # blocked. Skip everything else.
+    echo "Next steps: $BIN_LINK --version  |  $BIN_LINK mcp-config  |  $BIN_LINK skills install"
+    echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+fi
+
+case "$(uname -s)" in
+    Darwin)
+        echo ""
+        echo "macOS TCC: grant Accessibility + Screen Recording on first run:"
+        echo "  open -n -g -a CuaDriver --args serve"
+        echo "  $BIN_LINK check_permissions"
+        ;;
+    Linux)
+        echo ""
+        echo "Auto-start at logon (optional):"
+        echo "  Re-run the local installer with --autostart to register a systemd user unit."
+        ;;
+esac
+
 echo ""
 echo "⚠️  BETA: cua-driver-rs is a cross-platform Rust port of the Swift"
 echo "    cua-driver. Windows and Linux support is feature-complete; macOS"

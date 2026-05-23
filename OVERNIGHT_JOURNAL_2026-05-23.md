@@ -183,3 +183,97 @@ The 30-min investigation yielded one solid datapoint though: in **the SSH-contex
 
 Will open an issue with the empirical evidence trail. Not fixing tonight to preserve time-budget for app-coverage testing.
 
+
+## 03:40 — SCREENSHOT BUG ROOT-CAUSED + FIXED
+
+After ~1.5h of misdirection, found the actual cause and shipped a fix.
+
+### The bug
+
+`cua-driver call screenshot` over a running daemon socket dropped the
+image bytes. Output looked like:
+
+```
+$ cua-driver call screenshot
+{"format": "png", "height": 949, "width": 1512}
+```
+
+Image (7.4 MB base64) was silently thrown away.
+
+### Why I missed it for so long
+
+My matrix-v3 + harness debug runs ran against cuademo's session 9 where
+`cua-driver serve` was running on `\\.\pipe\cua-driver`. So every
+`cua-driver call X` invocation went through the daemon-forwarding path,
+not the in-process path. The integration test `test_cli.py` line 125
+asserts `screenshot_png_b64` exists — but that test must run WITHOUT a
+daemon listening, so it takes the in-process branch and passes.
+
+The bug is invisible to the integration test suite because the suite
+doesn't have a daemon up when it runs.
+
+### Code paths
+
+`cua-driver/src/cli.rs::run_call` branches at `is_daemon_listening`:
+
+- **Daemon path** (~line 724-784): forwards to daemon socket, parses
+  the response, prints structuredContent. Looped `content` only for
+  image-write-to-file when `--screenshot-out-file` was set. Otherwise
+  the image was dropped.
+
+- **In-process path** (~line 791+): runs the tool directly, loops
+  `result.content`, captures Image into `image_b64`, merges into
+  `structured_content` before printing.
+
+### Fix
+
+In the daemon path, stash any image into `image_b64` during the content
+walk (when no `--screenshot-out-file` is set), then merge into the
+structuredContent object before pretty-print — identical to the
+in-process path.
+
+### Verification
+
+```
+before: cua-driver call screenshot | out-string  →  61 chars
+after:  cua-driver call screenshot | out-string  →  7,654,802 chars
+```
+
+Committed locally as `fix(cua-driver-rs): merge image into structuredContent in daemon-forwarding path`.
+
+### What this also explains
+
+The `test_call_screenshot_returns_b64_image` integration test passes in
+CI but the field was missing in real usage with the autostart-spawned
+daemon. **Add a daemon-on-pipe variant of the test** to catch this class
+of bug going forward.
+
+
+## 04:05 — gesture coverage validation on LibreOffice
+
+Drove every cua-driver input primitive against the running LibreOffice Writer window (pid 9436):
+
+| Suite | OK / total | Notes |
+|---|---|---|
+| `type_text` | 5/5 | ascii, unicode (`café ☕ 你好`), emoji (`🎉🚀`), multiline, special chars. All reported via PostMessage. |
+| `hotkey` | 13/13 | `ctrl+a/c/v/z/y/home/end`, `home`, `end`, `enter`, `tab`, `escape`, `f5`. All via PostMessage. |
+| `scroll` | 16/16 | All 4 directions × {line, page} × {1, 5} amounts. WM_VSCROLL / WM_HSCROLL. |
+| `press_key` | 5/5 | `space`, `backspace`, `delete`, `tab`, `enter`. |
+| `drag` | 1/1 | Window-pixel coords → screen coords translated. |
+| `screenshot` | 1/1 | 1512×878 PNG, 7.1MB b64 — confirms the daemon-forwarding fix lands end-to-end. |
+
+### Harness bugs found during gesture work (not cua-driver bugs)
+
+| Bug | Fix |
+|---|---|
+| Harness called `mouse_down`/`mouse_up` tools that don't exist on Windows/Linux/macOS Rust port (Swift doesn't have them either) | Removed from suite; replaced with `press_key` which is the actual cross-platform single-key primitive |
+| Harness sent `dx`/`dy` to `scroll`; schema requires `direction` + `by` + `amount` | Rewrote suite to enumerate 4 × 2 × 2 = 16 valid combinations |
+
+Neither was a cua-driver gap — both were my misuse of the API surface.
+
+### Notable cua-driver behaviors observed
+
+- **UWP-app hotkey/type_text correctly surface actionable errors** for non-bound combos: `"hotkey on a modern XAML / UWP target (pid X, hwnd Y) could not find a UIA AcceleratorKey matching `ctrl+s` ... Common cause: the action is nested behind a closed menu — its element isn't in the visible subtree until the menu is opened. Call get_window_state(...) to inspect..."`. Great agent UX.
+- **type_text via PostMessage works for Unicode/emoji** — char counts match (9 for "café ☕ 你好" = 9 code points; 2 for "🎉🚀" = 2 code points). Did not visually verify Unicode landing — text count is the only assertion.
+- **drag** correctly translates window-pixel coordinates to screen coordinates for SendInput.
+

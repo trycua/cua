@@ -89,19 +89,23 @@ def test_drags(w: dict) -> dict:
 
 
 def test_scrolls(w: dict) -> dict:
-    """scroll up/down/horizontal at various positions."""
+    """scroll up/down/horizontal — Windows uses WM_VSCROLL/WM_HSCROLL.
+
+    Schema (per platform-windows scroll tool): {pid, direction, by?, amount?,
+    window_id?, element_index?}. No dx/dy — those don't exist in cua-driver.
+    """
     results = {}
-    cx, cy = w["bounds"]["x"] + 400, w["bounds"]["y"] + 400
-
-    for dy, label in [(-3, "scroll_down_3"), (3, "scroll_up_3"), (10, "scroll_up_10"), (-10, "scroll_down_10")]:
-        r = cua_call("scroll", json.dumps({"pid": w["pid"], "x": cx, "y": cy, "dy": dy}), timeout=15)
-        results[label] = r
-
-    # Horizontal
-    r = cua_call("scroll", json.dumps({"pid": w["pid"], "x": cx, "y": cy, "dx": 5}), timeout=15)
-    results["scroll_right_5"] = r
-    r = cua_call("scroll", json.dumps({"pid": w["pid"], "x": cx, "y": cy, "dx": -5}), timeout=15)
-    results["scroll_left_5"] = r
+    for direction in ["up", "down", "left", "right"]:
+        for by in ["line", "page"]:
+            for amount in [1, 5]:
+                r = cua_call("scroll", json.dumps({
+                    "pid": w["pid"],
+                    "window_id": w["window_id"],
+                    "direction": direction,
+                    "by": by,
+                    "amount": amount,
+                }), timeout=15)
+                results[f"scroll_{direction}_{by}_{amount}"] = r
 
     return results
 
@@ -160,16 +164,18 @@ def test_type_text(w: dict) -> dict:
     return results
 
 
-def test_mouse_press_release(w: dict) -> dict:
-    """mouse_down + mouse_up for press-and-hold gestures."""
+def test_press_key(w: dict) -> dict:
+    """press_key — Swift/Linux equivalent of cross-platform single-key press.
+
+    On Windows there's no separate mouse_down/mouse_up tool exposed via MCP
+    (per cua-driver-rs/crates/platform-windows/src/tools/impl_.rs). Tested
+    other primitives via hotkey above; press_key is the explicit
+    single-press primitive on macOS+Linux.
+    """
     results = {}
-    cx, cy = w["bounds"]["x"] + 400, w["bounds"]["y"] + 400
-
-    r1 = cua_call("mouse_down", json.dumps({"pid": w["pid"], "x": cx, "y": cy, "button": "left"}), timeout=10)
-    time.sleep(0.2)
-    r2 = cua_call("mouse_up", json.dumps({"pid": w["pid"], "x": cx, "y": cy, "button": "left"}), timeout=10)
-    results["press_release_left"] = {"down": r1, "up": r2}
-
+    for key in ["space", "backspace", "delete", "tab", "enter"]:
+        r = cua_call("press_key", json.dumps({"pid": w["pid"], "key": key}), timeout=10)
+        results[f"press_{key}"] = r
     return results
 
 
@@ -191,7 +197,7 @@ def main():
         "scrolls": test_scrolls,
         "hotkeys": test_hotkeys,
         "type_text": test_type_text,
-        "mouse": test_mouse_press_release,
+        "press_key": test_press_key,
     }
     suites = args.test if args.test else list(SUITES.keys())
 

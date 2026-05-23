@@ -303,12 +303,9 @@ impl RenderState {
     }
 }
 
-fn rotate_toward(current: f64, desired: f64, max_step: f64) -> f64 {
-    let mut diff = desired - current;
-    while diff >  std::f64::consts::PI { diff -= 2.0 * std::f64::consts::PI; }
-    while diff < -std::f64::consts::PI { diff += 2.0 * std::f64::consts::PI; }
-    current + diff.clamp(-max_step, max_step)
-}
+// Shared with platform-linux — pulled into `cursor_overlay::util` so both
+// per-OS render loops use the exact same easing primitive.
+use cursor_overlay::util::rotate_toward;
 
 // ── tiny-skia render (shared logic) ──────────────────────────────────────
 

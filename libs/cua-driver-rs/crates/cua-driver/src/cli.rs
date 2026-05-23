@@ -733,26 +733,49 @@ pub fn run_call(
             Ok(resp) => {
                 if resp.ok {
                     if let Some(result) = resp.result {
-                        // Handle image write if --screenshot-out-file was given.
+                        // Walk the content array once: pick up any Image
+                        // payloads (either to write to --screenshot-out-file
+                        // or to merge into structuredContent below).
                         let mut printed = false;
+                        let mut image_b64: Option<(String, String)> = None;
                         if let Some(content) = result.get("content").and_then(|v| v.as_array()) {
                             for item in content {
                                 if item.get("type").and_then(|v| v.as_str()) == Some("image") {
-                                    if let Some(ref path) = screenshot_out_file {
-                                        if let Some(b64) = item.get("data").and_then(|v| v.as_str()) {
+                                    let b64 = item.get("data").and_then(|v| v.as_str()).map(str::to_owned);
+                                    let mime = item.get("mimeType").and_then(|v| v.as_str())
+                                        .unwrap_or("image/png").to_owned();
+                                    if let Some(b64) = b64 {
+                                        if let Some(ref path) = screenshot_out_file {
                                             use base64::Engine as _;
-                                            match base64::engine::general_purpose::STANDARD.decode(b64) {
+                                            match base64::engine::general_purpose::STANDARD.decode(&b64) {
                                                 Ok(bytes) => { let _ = std::fs::write(path, &bytes); }
                                                 Err(e) => eprintln!("--screenshot-out-file: {e}"),
                                             }
+                                        } else {
+                                            // Stash for the structuredContent merge below.
+                                            image_b64 = Some((b64, mime));
                                         }
                                     }
                                 }
                             }
                         }
                         if let Some(sc) = result.get("structuredContent") {
-                            let pretty = serde_json::to_string_pretty(sc)
-                                .unwrap_or_else(|_| sc.to_string());
+                            // Merge image data into the structured payload
+                            // (matches in-process behaviour at the bottom of
+                            // this fn) so `cua-driver call screenshot` over
+                            // the daemon socket still emits
+                            // `screenshot_png_b64`. Previously this path
+                            // dropped the image entirely when no
+                            // --screenshot-out-file was given.
+                            let mut obj = sc.clone();
+                            if let Some((b64, mime)) = image_b64 {
+                                if let serde_json::Value::Object(ref mut map) = obj {
+                                    map.insert("screenshot_png_b64".into(), serde_json::Value::String(b64));
+                                    map.insert("screenshot_mime_type".into(), serde_json::Value::String(mime));
+                                }
+                            }
+                            let pretty = serde_json::to_string_pretty(&obj)
+                                .unwrap_or_else(|_| obj.to_string());
                             println!("{pretty}");
                             printed = true;
                         }

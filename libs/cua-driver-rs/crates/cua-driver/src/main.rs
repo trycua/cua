@@ -97,7 +97,7 @@ fn main() {
             cli::run_mcp_config(client.as_deref());
             return;
         }
-        cli::Command::Call { tool, json_args, screenshot_out_file } => {
+        cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             // Register callbacks (needed if the tool does screenshots/recording).
             mcp_server::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
@@ -114,7 +114,7 @@ fn main() {
             });
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
-            cli::run_call(reg, &tool, json_args, screenshot_out_file);
+            cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             return;
         }
         cli::Command::Serve { socket, no_permissions_gate } => {
@@ -345,12 +345,12 @@ fn main() -> anyhow::Result<()> {
             cli::run_mcp_config(client.as_deref());
             return Ok(());
         }
-        cli::Command::Call { tool, json_args, screenshot_out_file } => {
+        cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             let reg = Arc::new(build_registry_no_cursor());
             reg.init_self_weak();
             // run_call builds its own tokio runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                cli::run_call(reg, &tool, json_args, screenshot_out_file);
+                cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             }).join().ok();
             return Ok(());
         }

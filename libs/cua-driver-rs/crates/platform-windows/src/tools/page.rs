@@ -13,9 +13,19 @@
 //!   element's `AutomationId` / IA2 attributes.  `[data-*]` is not
 //!   reachable via UIA/IA2 — that path errors with a pointer at
 //!   `execute_javascript`.
-//! - `execute_javascript` — uses the shared `mcp_server::cdp` helper.  When
-//!   the browser was not launched with `--remote-debugging-port=N`, returns
-//!   an actionable error.
+//! - `execute_javascript` — two-tier:
+//!     1. **Bookmark-URL bypass** ([`super::page_bookmark::try_bookmark_exec`])
+//!        — uses UIA `ValuePattern::SetValue` on the Edit-favorite dialog's
+//!        URL field to install a `javascript:` bookmark, then UIA
+//!        `InvokePattern::Invoke` on the favorites-bar item to run it.
+//!        Result is read back from `document.title`.  Requires the
+//!        favorites bar to be visible (sent Ctrl+Shift+B if not) and a
+//!        pre-existing `cua-driver-eval` bookmark (creation flow is
+//!        described in the docs; not yet automated end-to-end).  Zero
+//!        config, no launch flag.
+//!     2. **CDP fallback** — uses the shared `mcp_server::cdp` helper.
+//!        Requires `--remote-debugging-port=N` and `CUA_DRIVER_CDP_PORT=N`.
+//!        Returns an actionable error if neither path works.
 
 use async_trait::async_trait;
 use mcp_server::page::PageBackend;
@@ -74,25 +84,44 @@ impl PageBackend for WindowsPageBackend {
 
     async fn execute_javascript(
         &self,
-        _pid: i32,
-        _window_id: u32,
+        pid: i32,
+        window_id: u32,
         javascript: &str,
     ) -> anyhow::Result<String> {
-        // Discover CDP port from env. The "right" approach (extracting the
-        // --remote-debugging-port from the process's command line) requires
-        // reading PEB; for now we accept the conventional env var and fail
-        // with an actionable message if it isn't set.
+        // 1) Bookmark-based UIA exec — zero config, no launch flag needed.
+        //    Requires that a `cua-driver-eval` bookmark exists in the
+        //    Favorites bar (or that we can summon the bar and one already
+        //    sits there).  Any failure (favorites bar hidden + Ctrl+Shift+B
+        //    fails to summon, dialog drift, title-poll timeout) is logged
+        //    and falls through to the CDP path.
+        match super::page_bookmark::try_bookmark_exec(pid, window_id, javascript).await {
+            Ok(v) => {
+                return Ok(format!("uia.bookmark_exec: {v}"));
+            }
+            Err(e) => tracing::debug!(
+                target: "page.execute_javascript",
+                "bookmark exec path failed: {e:?}; falling back to CDP"
+            ),
+        }
+
+        // 2) CDP fallback.  Discover CDP port from env.  Extracting
+        //    `--remote-debugging-port` from the process's command line is
+        //    PEB-reading territory; the conventional env var is good
+        //    enough for now and fails with an actionable message if
+        //    neither path applies.
         let port: u16 = match std::env::var("CUA_DRIVER_CDP_PORT")
             .ok()
             .and_then(|s| s.parse::<u16>().ok())
         {
             Some(p) => p,
             None => anyhow::bail!(
-                "Chromium's `execute_javascript` on Windows requires the browser launched \
-                 with `--remote-debugging-port=N`. cua-driver doesn't yet ship a companion \
-                 extension; relaunch the browser with the flag and export \
-                 CUA_DRIVER_CDP_PORT=N before starting cua-driver, or use `get_text` / \
-                 `query_dom` for read-only access."
+                "Chromium's `execute_javascript` on Windows tried the bookmark-URL UIA \
+                 bypass and the CDP fallback. The bookmark path failed (see debug logs); \
+                 for the CDP path, relaunch the browser with `--remote-debugging-port=N` \
+                 and export CUA_DRIVER_CDP_PORT=N before starting cua-driver. \
+                 Alternatively, create a bookmark named `cua-driver-eval` (any URL — the \
+                 driver overwrites it on first use) in the Favorites bar to enable the \
+                 bookmark-URL bypass.  Or use `get_text` / `query_dom` for read-only access."
             ),
         };
         let result = mcp_server::cdp::evaluate(port, javascript, true).await?;

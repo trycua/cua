@@ -188,31 +188,37 @@ unsafe fn try_bookmark_exec_blocking(
     let edge_window = root_for_window(&automation, hwnd_raw, pid)
         .context("could not resolve Edge top-level window for (pid, window_id)")?;
 
-    // 2) Ensure the favorites bar is visible. If not, we bail.
+    // 2) Ensure the favorites bar is visible. If not, send Ctrl+Shift+B
+    //    via PostMessage (no foreground swap — Chromium's
+    //    Browser::HandleKeyboardEvent dispatches accelerators from
+    //    WM_KEYDOWN LPARAM modifier bits without consulting GetKeyState).
     //
-    // Historical note: we used to synthesize Ctrl+Shift+B here via
-    // `send_key_synthesized`, which does a transient
-    // `SetForegroundWindow(target) → SendInput → SetForegroundWindow(prev_fg)`
-    // dance. That dance is visible to the user (foreground flicker) and the
-    // restore can fail silently under UIPI / UIAccess constraints, both of
-    // which violate the cua-driver no-foreground contract. Every
-    // `page.execute_javascript` call where the user hadn't already shown
-    // the favorites bar would trigger this — unacceptable.
-    //
-    // The favorites-bar setting persists across browser sessions, so the
-    // one-time setup cost (Ctrl+Shift+B in the browser) is borne by the
-    // user once, never by the agent.
-    let fav_bar = find_favorites_bar(&automation, &edge_window).ok_or_else(|| {
-        anyhow!(
-            "Favorites bar not visible — cua-driver-rs's bookmark-URL JS \
-             exec needs an always-on favorites bar so we can invoke the \
-             `cua-driver-eval` bookmark without stealing the foreground. \
-             Show the bar once via Ctrl+Shift+B and the setting persists \
-             across sessions. The bookmark-exec path is now disabled for \
-             this call; `execute_javascript` will fall through to the CDP \
-             fallback if it's configured."
-        )
-    })?;
+    // Historical note: PR #1668 removed the auto-toggle here because it
+    // used `send_key_synthesized` (SendInput + SetForegroundWindow swap)
+    // which violated the no-foreground contract. With `post_key`
+    // (PostMessage) routing — verified safe on every Chromium browser +
+    // Electron app — the auto-toggle is restored. If the bar STILL isn't
+    // visible after a brief settle, we bail with the same actionable
+    // error (covers locked-down browser policies / classic Edge profiles).
+    let fav_bar = if let Some(bar) = find_favorites_bar(&automation, &edge_window) {
+        bar
+    } else {
+        // No SendInput, no SetForegroundWindow, no UIPI risk.
+        let _ = crate::input::post_key(hwnd_raw, "b", &["ctrl", "shift"]);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        find_favorites_bar(&automation, &edge_window).ok_or_else(|| {
+            anyhow!(
+                "Favorites bar not visible after Ctrl+Shift+B PostMessage \
+                 — cua-driver-rs's bookmark-URL JS exec needs the bar so \
+                 we can invoke the `cua-driver-eval` bookmark. The toggle \
+                 keystroke didn't take (browser policy override, locked-down \
+                 profile, or non-Chromium target). Show the bar manually via \
+                 Ctrl+Shift+B in the browser — the setting persists across \
+                 sessions. `execute_javascript` will fall through to the \
+                 CDP fallback if it's configured."
+            )
+        })?
+    };
 
     // 3) Find or create the cua-driver-eval bookmark.
     let bookmark = find_bookmark(&automation, &fav_bar, BOOKMARK_NAME);
@@ -247,8 +253,40 @@ unsafe fn try_bookmark_exec_blocking(
         "captured original tab title: {:?}", original_title
     );
 
-    // 6) Invoke the bookmark.
+    // 6) Invoke the bookmark with a no-foreground guard around it.
+    //
+    // Chromium activates the browser window when a bookmark is clicked
+    // because `WebContents::OpenURL` treats it as user-initiated
+    // navigation (the activation lives in Chromium's window-aura layer,
+    // not in our UIA call). Two-layer mitigation:
+    //
+    //   (a) Capture `GetForegroundWindow()` immediately before the Invoke.
+    //   (b) After the Invoke, briefly poll for "Chromium activated the
+    //       browser" and `SetForegroundWindow(prev)` the user's window
+    //       back. Same pattern `launch_app`'s `FocusRestoreGuard`
+    //       successfully uses; the restore is gated on the new
+    //       foreground being owned by Chromium so we never yank focus
+    //       from a window the user legitimately tabbed to.
+    //
+    // Without UIAccess (the daemon's normal integrity), the restore
+    // SetForegroundWindow may be blocked by the system foreground lock;
+    // we log at trace level and continue — the brief activation is
+    // unavoidable without forking Chromium, but the dwell time on the
+    // browser is < ~150 ms instead of "until next user action".
+    let prev_fg_for_invoke = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow()
+    };
     invoke_element(&bookmark).context("InvokePattern.Invoke on bookmark failed")?;
+    // Restore in a tight loop — at this point the bookmark URL is firing
+    // and Chromium is about to activate. Poll for ~600 ms; once we see
+    // Chromium grab foreground, swap back. We do this synchronously
+    // (not via tokio::spawn) because we WANT to block the poll-marker
+    // step below until the foreground is restored — otherwise a slow
+    // restore leaves the browser frontmost while we read the title.
+    restore_foreground_after_browser_activation(
+        prev_fg_for_invoke,
+        pid as u32,
+    );
 
     // 7) Poll the active tab's title until it starts with CUA: / CUA_ERR:
     let result = poll_for_marker(&automation, &edge_window, &original_title)?;
@@ -664,6 +702,104 @@ unsafe fn invoke_element(elem: &IUIAutomationElement) -> Result<()> {
     inv.Invoke()
         .map_err(|e| anyhow!("InvokePattern.Invoke failed: {e}"))?;
     Ok(())
+}
+
+/// Belt-and-suspenders foreground restore after the bookmark Invoke.
+///
+/// Chromium's bookmark click triggers `WebContents::OpenURL` →
+/// `Browser::ActivateContents` → `SetForegroundWindow` on the browser
+/// frame. This happens whether we like it or not, in Chromium-side code
+/// we don't control. The mitigation: capture `prev_fg` immediately
+/// before our `InvokePattern.Invoke` (the caller does this), then poll
+/// for "the browser pid grabbed foreground" and call `SetForegroundWindow(prev_fg)`
+/// the user's window back. Mirrors `launch_app`'s `FocusRestoreGuard`
+/// (PR #1668, fixed by CodeRabbit feedback on PR #1668 to gate on PID
+/// ownership rather than any foreground change).
+///
+/// Synchronous (not tokio::spawn) because the caller's next step is
+/// `poll_for_marker`, which reads the active tab's title via UIA — that
+/// must happen against the now-restored foreground state so we don't
+/// see transient state.
+///
+/// Best-effort: when Windows' foreground-lock denies the restore (we're
+/// not at UIAccess), the dwell time on the browser is still bounded to
+/// the ~600 ms poll budget. Without this guard the browser stays
+/// frontmost until the next user action.
+unsafe fn restore_foreground_after_browser_activation(
+    prev_fg: windows::Win32::Foundation::HWND,
+    browser_pid: u32,
+) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+    };
+
+    if prev_fg.0.is_null() {
+        tracing::trace!(
+            target: "page.bookmark_exec.focus_restore",
+            "no prior foreground to restore — skipping"
+        );
+        return;
+    }
+    if browser_pid == 0 {
+        tracing::trace!(
+            target: "page.bookmark_exec.focus_restore",
+            "no browser pid — skipping restore (no ownership signal)"
+        );
+        return;
+    }
+
+    // Poll for ~600 ms in 50 ms steps. Chromium's activation typically
+    // lands within ~150 ms but the URL-load can stretch the window.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    while std::time::Instant::now() < deadline {
+        let fg_now = GetForegroundWindow();
+        if fg_now == prev_fg {
+            // Chromium didn't (yet) grab foreground — keep polling
+            // briefly; if it never does we just exit cleanly.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
+        }
+        let mut fg_pid: u32 = 0;
+        let _ = GetWindowThreadProcessId(fg_now, Some(&mut fg_pid));
+        if fg_pid != browser_pid {
+            // Foreground changed but to something we didn't expect
+            // (user Alt-Tabbed mid-eval). Leave it alone.
+            tracing::trace!(
+                target: "page.bookmark_exec.focus_restore",
+                "foreground changed to non-browser pid {fg_pid} (expected {browser_pid}) — leaving as-is"
+            );
+            return;
+        }
+        // Chromium grabbed foreground — restore the user's window.
+        if !IsWindow(prev_fg).as_bool() {
+            tracing::trace!(
+                target: "page.bookmark_exec.focus_restore",
+                "prev foreground HWND no longer valid — skipping restore"
+            );
+            return;
+        }
+        let ok = SetForegroundWindow(prev_fg).as_bool();
+        if ok {
+            tracing::debug!(
+                target: "page.bookmark_exec.focus_restore",
+                "restored foreground to HWND 0x{:x} after browser pid {browser_pid} activation",
+                prev_fg.0 as usize
+            );
+        } else {
+            tracing::trace!(
+                target: "page.bookmark_exec.focus_restore",
+                "SetForegroundWindow returned FALSE (foreground-lock denial; need UIAccess) — \
+                 browser will keep focus until next user action"
+            );
+        }
+        return;
+    }
+    tracing::trace!(
+        target: "page.bookmark_exec.focus_restore",
+        "browser pid {browser_pid} did not steal foreground within 600ms — no restore needed"
+    );
+    let _ = HWND::default(); // silence "unused import" possibility on cfg
 }
 
 /// Find the TabItem that's currently selected — Chromium exposes the

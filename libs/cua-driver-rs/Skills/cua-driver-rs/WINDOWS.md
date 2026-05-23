@@ -608,6 +608,79 @@ Tab-title enumeration (read-only) IS safe — walk a window's tab strip
 in the UIA tree for `TabItem` elements and read their names. Tab
 switching (activating one) is not.
 
+### `page` tool — JS execution, text extraction, DOM query
+
+The cross-platform `page` tool exposes four actions against the
+browser instance identified by `(pid, window_id)`:
+
+- **`get_text`** — `document.body.innerText` equivalent, sourced from
+  the web `Document`'s UIA `TextPattern`.
+- **`query_dom`** — CSS-selector → UIA `ControlType` match.  Supports
+  simple tag selectors (`a`, `button`, `input`, `h1`-`h6`, `img`,
+  `li`, `p`, `span`, `select`), `tag#id`, `[role=…]`.  **Does not**
+  support `.class` or `[data-*]` (UIA has no class-list and no
+  data-attribute exposure).
+- **`execute_javascript`** — runs arbitrary JS in the active tab.
+  Two-tier dispatch (see below).
+- **`enable_javascript_apple_events`** — macOS-only; errors here.
+
+#### `execute_javascript` dispatch
+
+1. **Bookmark-URL UIA bypass (default)** — `cua-driver` looks for a
+   bookmark named `cua-driver-eval` on the Favorites bar, edits its
+   URL to the user's expression wrapped in a `try/catch` IIFE,
+   invokes the bookmark via UIA `InvokePattern`, and reads the
+   result back from `document.title` (the wrapper writes
+   `CUA:<JSON>` or `CUA_ERR:<message>`).  Zero config required —
+   no `--remote-debugging-port` flag, no companion extension.
+
+   **Requirements:**
+   - The `cua-driver-eval` bookmark **must exist** on the Favorites
+     bar.  Any URL is fine; the driver overwrites it on first use.
+     Automatic creation (drive the omnibox to `edge://favorites`,
+     click "Add favorite", fill the dialog) is not yet wired up —
+     create it manually.
+   - The Favorites bar must be reachable.  If hidden, the driver
+     sends Ctrl+Shift+B to the Edge HWND and re-walks; if that
+     still doesn't summon it (custom keyboard remap, group
+     policy), bookmark exec fails and we fall through to CDP.
+   - The user's expression should be a single statement or block;
+     `return` inside the IIFE is honored.  Bookmarks strip line
+     breaks, so multi-line expressions are joined with spaces.
+
+2. **CDP fallback** — `Runtime.evaluate` via raw WebSocket against
+   `--remote-debugging-port=N`.  Requires the browser launched with
+   that flag and `CUA_DRIVER_CDP_PORT=N` exported before the daemon
+   starts.
+
+   Use this when the bookmark path can't be made to work (locked-
+   down GPO disables Ctrl+Shift+B, user explicitly hides the
+   Favorites bar in a fresh profile and won't summon it, etc.).
+
+3. **Either succeeds** → the result is returned to the caller with a
+   prefix indicating which path ran: `uia.bookmark_exec: <result>` or
+   `cdp.runtime.evaluate.user_gesture: <result>`.
+
+#### Why bookmark exec exists
+
+Chromium's omnibox aggressively strips `javascript:` schemes when
+the URL is pasted or `SetValue`-d via UIA, so the "omnibox
+`javascript:` then Enter" trick is dead in modern Chrome / Edge.
+The bookmark URL field doesn't apply the same scrub because
+bookmarklets are a documented Web-platform feature dating back to
+the late '90s — closing that path would break a long tail of
+existing user data.  Empirically validated on Edge 148.0.3967.70
+(see PR description for the commit landing this).
+
+#### Concurrency
+
+The bookmark-exec primitive holds a process-wide mutex.  Calls
+serialise — concurrent invocations would race on the single
+`cua-driver-eval` URL field and one caller would invoke another's
+JS.  If you need parallel JS execution against multiple browser
+instances, fall through to CDP (each browser instance gets its
+own port, no shared state).
+
 ### WebView2 in non-browser hosts (Teams, VS Code, Outlook desktop)
 
 These embed a WebView2 control inside a Win32 host. The HWND

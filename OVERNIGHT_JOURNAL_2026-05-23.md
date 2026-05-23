@@ -348,3 +348,52 @@ Both are flagged for follow-up not blocked tonight.
 - Local branch `overnight/cursor-overlay-shared-util` has **7 commits ahead of main** — all local, nothing pushed.
 - VM has: cuademo session 9 with cua-driver daemon + cua-computer-server running (handy for manual testing in the morning), fbonacci profile has the cua repo + my dev edits + the rebuilt binary at `target/release/cua-driver.exe`.
 - No GitHub PRs opened or issues filed tonight. All work in branch + journal.
+
+## 04:30 — Notepad++ control char "bug" → confirmed harness-only
+
+Reproduced + traced. The Notepad++ matrix entry that previously surfaced with `_text: '{...\x1a...}'` looking like cua-driver was emitting unescaped control chars in JSON is actually **not a cua-driver bug**. Direct PowerShell test:
+
+```powershell
+$payload = '{"pid":3496,"window_id":1311010}'
+[System.IO.File]::WriteAllText($tmpIn, $payload, (New-Object System.Text.UTF8Encoding $false))
+& cua-driver.exe call get_window_state -RedirectStandardInput $tmpIn -RedirectStandardOutput $tmpOut ...
+
+# Output length: 3,454,890 bytes
+# Output is valid JSON with element_count=55 + screenshot_png_b64 (3.3 MB b64)
+# No control chars; contains_STDERR_lit=False (no false-delimiter collision)
+```
+
+cua-driver's output is clean valid JSON. My **harness** is choking on very-large responses (>~2-3 MB) — somewhere between the SSE stream from ccs and my section-based parser. Specifically the previous repro showed `_text` content with literal `\x1a` characters — those are the raw bytes that my truncation happens to land on inside the base64 string. Not a control character in the JSON, just a byte at the truncation boundary that looks scary in Python repr.
+
+Documented as a harness limitation. No cua-driver fix needed.
+
+## Final state — wrapping at 04:30
+
+### Branch + commits
+
+`overnight/cursor-overlay-shared-util`, 8 commits ahead of `main`, **nothing pushed**:
+
+1. `refactor(cursor-overlay): extract rotate_toward into shared util crate` — cleanup
+2. `fix(cua-driver-rs): strip UTF-8 BOM from cua-driver call stdin payload` — **real bug**
+3. `chore(overnight): journal + harness scripts for 2026-05-23 dogfood`
+4. `fix(cua-driver-rs): merge image into structuredContent in daemon-forwarding path` — **real bug**
+5. `chore(overnight): gesture-harness fixes + LO validation results`
+6. `feat(cua-driver-rs): plumb --socket flag through cua-driver call + regression test`
+7. `chore(overnight): final summary entry — wrap-up at ~04:10`
+8. `chore(overnight): final entry — VS Code/Notepad++ deferred, handoff state`
+
+### VM handoff state
+
+- cuademo Session 9 RDP active. daemon (cua-driver pid in 9), cua-computer-server (pid 16876) listening on 127.0.0.1:8000.
+- fbonacci profile: cua repo at `C:\Users\fbonacci\cua` checked out at `main`. The dev edits are NOT in fbonacci's checkout — they live in MY working tree on the Mac at `overnight/cursor-overlay-shared-util` branch. The Mac repo is what should drive any further dev.
+- The compiled binary `C:\Users\fbonacci\cua\libs\cua-driver-rs\target\release\cua-driver.exe` HAS my fixes baked in (from the iterative rebuilds tonight). The copy at `C:\Users\cuademo\.cua-driver\packages\releases\0.0.0-local-release-x86_64-pc-windows-msvc\cua-driver.exe` is also my fixed build.
+
+### Suggested morning actions (in order)
+
+1. **Read this journal top-to-bottom** (esp. "FOUND IT" sections at 03:40 + 02:35).
+2. **Review the 8 local commits** — `git log --oneline main..overnight/cursor-overlay-shared-util` then `git show <hash>` on each.
+3. **Decide what to push**:
+   - High confidence: commits 2 + 4 + 6 (BOM strip + image merge + --socket plumbing). All real bugs + a regression test + an architectural improvement. ~150 LOC, all tested.
+   - Medium confidence: commit 1 (rotate_toward refactor). Clean cleanup with unit tests, no behavior change.
+   - Internal: commits 3 + 5 + 7 + 8 (journal + harness scripts). Optionally keep on a long-lived branch.
+4. **If pushing**: I'd suggest 3 small PRs not one giant one — one per fix — so each is independently reviewable + revertable.

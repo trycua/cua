@@ -418,8 +418,12 @@ silently no-ops — symptom is a system bell; use `set_value` or click
 a clickable equivalent), scrolling via synthetic PageUp/Down
 keystrokes, in-page clicks, and typing into web inputs.
 
-Browser JS primitives (the `page` tool, `get_window_state(javascript=)`)
-are macOS-only today — see `MACOS.md` for the Apple-Events backend.
+Browser JS primitives are now **cross-platform** via the `page` tool —
+macOS uses Apple Events for Chrome/Brave/Edge/Safari + CDP for Electron
+(see `MACOS.md`); Windows + Linux use UIA / AT-SPI for `get_text` /
+`query_dom` and the shared CDP client for `execute_javascript` (browser
+must be launched with `--remote-debugging-port=N` and the port exported
+as `CUA_DRIVER_CDP_PORT`).
 
 ## Re-snapshot and verify — mandatory
 

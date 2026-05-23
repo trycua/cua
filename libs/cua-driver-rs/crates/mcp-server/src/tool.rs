@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
-    browser_eval::BrowserEvalTool,
     protocol::{Content, ToolResult},
     recording::{now_ms, RecordingSession},
     recording_tools::{
@@ -82,7 +81,6 @@ impl ToolRegistry {
         self.register(Box::new(SetRecordingTool::new(session.clone())));
         self.register(Box::new(GetRecordingStateTool::new(session)));
         self.register(Box::new(ReplayTrajectoryTool));
-        self.register(Box::new(BrowserEvalTool));
     }
 
     /// Wire up the replay tool's weak self-reference.

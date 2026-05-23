@@ -74,9 +74,9 @@ test (May 2026) showed need explicit harness coverage:
 
 Like `test_page.html`, each panel exposes a global accessor:
 `window.getGesturePanelState()` returns a JSON snapshot of all four
-panels' state. Tests can poll it via `browser_eval` (when running with
-Chromium's `--remote-debugging-port`) or read the visible status divs
-via UIA / OCR.
+panels' state. Tests can poll it via `page` with
+`action: "execute_javascript"` (when running with Chromium's
+`--remote-debugging-port`) or read the visible status divs via UIA / OCR.
 
 ### Known browser-coverage gaps (May 2026)
 
@@ -86,7 +86,7 @@ Windows, the integration tests should be aware of:
 - **GPU-composited content blanks PrintWindow.** `cua-driver screenshot`
   captures the browser chrome + a white body. Workaround: launch the
   target browser with `--remote-debugging-port=<port>` and use
-  `browser_eval` for both inputs and verification.
+  `page` (`action: "execute_javascript"`) for both inputs and verification.
 - **Chromium auto-disables full a11y** unless an AT-grade client is
   detected. UIA on the rendered DOM returns empty until the page is
   flagged accessibility-active. Workaround: enable Chromium's

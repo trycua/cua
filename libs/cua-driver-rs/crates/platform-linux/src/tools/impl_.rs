@@ -2026,6 +2026,11 @@ pub fn build_registry() -> ToolRegistry {
     r.register(Box::new(GetAccessibilityTreeTool));
     r.register(Box::new(ZoomTool { state: state.clone() }));
     r.register(Box::new(TypeTextCharsTool));
+    // Cross-platform `page` tool definition lives in mcp-server; Linux plugs
+    // in its AT-SPI + CDP backend here.
+    r.register(Box::new(mcp_server::page::PageTool::new(
+        Arc::new(super::page::LinuxPageBackend::new()),
+    )));
     r.register_recording_tools();
     r
 }

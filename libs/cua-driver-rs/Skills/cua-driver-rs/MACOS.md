@@ -387,6 +387,10 @@ they can cmd-tab back.
 
 ## Browser JS primitives — Apple Events backend
 
+The `page` tool is **cross-platform** — Windows uses UIA + CDP,
+Linux uses AT-SPI + CDP, and macOS (this section) uses the
+Apple-Events / CDP / AX-tree routing described below.
+
 When the AX tree doesn't expose the data you need (common in
 Chromium/Electron — the tree is sparse for web content), use the
 `page` tool or the `javascript` param on `get_window_state` to query

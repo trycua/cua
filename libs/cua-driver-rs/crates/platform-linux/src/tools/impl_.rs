@@ -17,7 +17,7 @@ pub struct DriverConfig {
 }
 
 impl Default for DriverConfig {
-    fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 0 } }
+    fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 1568 } }
 }
 
 pub struct ResizeRegistry {
@@ -953,12 +953,13 @@ impl Tool for ScreenshotTool {
         SS_DEF.get_or_init(|| ToolDef {
             name: "screenshot".into(),
             description: "Capture a screenshot via XGetImage or `import` (ImageMagick). \
-                Without window_id captures the full primary display. Supports png and jpeg formats.".into(),
+                Without window_id captures the full primary display. Supports png and jpeg formats \
+                (default jpeg, quality 85).".into(),
             input_schema: json!({
                 "type":"object","properties":{
                     "window_id":{"type":"integer"},
-                    "format":{"type":"string","enum":["png","jpeg"]},
-                    "quality":{"type":"integer","minimum":1,"maximum":95}
+                    "format":{"type":"string","enum":["png","jpeg"],"description":"Image format. Default: jpeg."},
+                    "quality":{"type":"integer","minimum":1,"maximum":95,"description":"JPEG quality 1-95; ignored for png. Default: 85."}
                 },"additionalProperties":false
             }),
             read_only: true, destructive: false, idempotent: true, open_world: false,
@@ -967,7 +968,7 @@ impl Tool for ScreenshotTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("png").to_owned();
+        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg").to_owned();
         let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
         let is_jpeg = format == "jpeg";
         let max_dim = self.state.config.read().unwrap().max_image_dimension;

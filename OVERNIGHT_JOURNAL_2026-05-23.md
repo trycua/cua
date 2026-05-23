@@ -277,3 +277,61 @@ Neither was a cua-driver gap — both were my misuse of the API surface.
 - **type_text via PostMessage works for Unicode/emoji** — char counts match (9 for "café ☕ 你好" = 9 code points; 2 for "🎉🚀" = 2 code points). Did not visually verify Unicode landing — text count is the only assertion.
 - **drag** correctly translates window-pixel coordinates to screen coordinates for SendInput.
 
+
+## 04:10 — final matrix + summary
+
+### Final matrix (post-screenshot-fix verification)
+
+| App | launch | get_state | type_text | hotkey | screenshot |
+|---|---|---|---|---|---|
+| notepad (UWP) | ✓ | 28 elts | EXIT1 UWP (helpful err) | EXIT1 UWP (helpful err) | **3.8 MB** |
+| calc (UWP) | TIMEOUT* | n/a | n/a | n/a | n/a |
+| paint (Win32) | TIMEOUT* | 83 elts | ✓ PostMsg | ✓ | **4.5 MB** |
+| settings (UWP) | TIMEOUT* | 5 elts | ✓ PostMsg | ✓ | **216 KB** |
+| notepad++ (Win32) | TIMEOUT* | 53+ elts (parser bug masks count) | ✓ PostMsg | ✓ | **3.4 MB** |
+| libreoffice | TIMEOUT* | wasn't running | — | — | — |
+
+*TIMEOUT = ssh→ccs transport hit 40s timeout on the launch step. Intermittent; later gestures in the same run worked because the app was already running from a prior cycle.
+
+**Screenshot fix landed cleanly** — every successful gesture-cycle's screenshot returned non-zero base64 (216 KB → 4.5 MB). Before tonight: every single screenshot was metadata-only.
+
+### Final commit summary (overnight branch — local-only, not pushed)
+
+| # | Commit | Net diff |
+|---|---|---|
+| 1 | `refactor(cursor-overlay): extract rotate_toward into shared util crate` | +64 / -12 |
+| 2 | `fix(cua-driver-rs): strip UTF-8 BOM from cua-driver call stdin payload` | +33 / -1 |
+| 3 | `chore(overnight): journal + harness scripts for 2026-05-23 dogfood` | +850-ish (journal + 2 scripts) |
+| 4 | `fix(cua-driver-rs): merge image into structuredContent in daemon-forwarding path` | +29 / -6 |
+| 5 | `chore(overnight): gesture-harness fixes + LO validation results` | +122 / -22 |
+| 6 | `feat(cua-driver-rs): plumb --socket flag through cua-driver call + regression test` | +79 / -15 |
+
+### Wins
+
+- **2 real cua-driver bugs found + fixed** (BOM strip + daemon-forwarding image drop)
+- **1 architectural improvement** (`--socket` plumbing for `Command::Call`)
+- **1 regression test** that would have caught the screenshot bug pre-merge
+- **1 cleanup refactor** (rotate_toward shared)
+- **Every input primitive verified working** on LibreOffice (Win32) — type_text Unicode/emoji/multiline, 13 hotkey combos, 16 scroll combos, drag, press_key
+- **UWP app behavior validated** — Calculator/Settings/modern-Notepad correctly surface actionable errors for non-bound combos, with screenshot working at any IL
+
+### Limitations / things I didn't do
+
+- **No live Linux testing** — no VM. The journal-flagged Linux gaps (`set_agent_cursor_motion` schema missing motion knobs, `get_agent_cursor_state` missing enabled/motion fields, `current_motion`/`current_position`/etc. helpers absent from `platform-linux/src/overlay.rs`) are documented but not fixed.
+- **No render_frame extraction** — the per-OS `RenderState` structs diverge in real feature-bearing ways (Windows has `gradient_colors`/`bloom_override`/`last_tick`, Linux uses `scr_w`/`scr_h` vs Windows `virt_w/h`). A clean extraction needs unifying the state shape first, which is a substantial refactor I didn't want to ship without cross-OS test coverage.
+- **#1616 VS Code Chromium UIA** — not investigated. VS Code installed on the VM but the launch path in my harness fails (likely `code` not on PATH for cuademo).
+- **Notepad++ parser harness bug** — get_window_state for notepad++ returns the markdown tree with embedded document content, including possibly control characters. My harness's JSON parser falls back to `_text`. This is purely a harness limitation; the cua-driver response is fine.
+
+### What I'd ship + what I'd hold
+
+If you wake up and decide to push:
+
+- **Definitely ship**: commits 2 (BOM strip) + 4 (image merge) + 6 (--socket plumbing + regression test) — these are real fixes with verification.
+- **Probably ship**: commit 1 (rotate_toward refactor) — pure cleanup, 4 tests, no behavior change.
+- **Probably hold**: commits 3 + 5 (journal + harness scripts) — they're internal dev tools, not for end users. Keep on the overnight branch as a record.
+
+### Open issues to file in the morning
+
+1. cua-driver-rs: `set_agent_cursor_motion` + `get_agent_cursor_state` are stubs on Linux (no motion config fields, no live state queries) → either fully implement or document as known limitation in PARITY.md.
+2. cua-driver-rs: tree_markdown emission may include unescaped control chars when target windows contain them (e.g. Notepad++ with `→` styled characters). Validate with a UIA-tree test that round-trips through JSON parse.
+

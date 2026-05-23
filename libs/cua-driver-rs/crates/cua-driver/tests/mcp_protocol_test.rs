@@ -325,7 +325,7 @@ fn test_all_expected_tools_registered() {
         "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
         "get_accessibility_tree",
         "set_recording", "get_recording_state", "replay_trajectory",
-        "browser_eval",
+        "page",
     ];
     for name in &expected {
         assert!(names.contains(name), "Missing tool: {name}  (registered: {names:?})");
@@ -940,9 +940,9 @@ fn test_replay_trajectory() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn test_browser_eval_no_cdp_error() {
-    //! Verify browser_eval is registered and returns a meaningful error when
-    //! no Chromium process is listening on the given cdp_port.
+fn test_page_unknown_action_error() {
+    //! Verify the cross-platform `page` tool is registered and rejects an
+    //! unknown action with a meaningful error.
     let binary = binary_path();
     if !binary.exists() { return; }
 
@@ -955,25 +955,24 @@ fn test_browser_eval_no_cdp_error() {
     send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     read_response(&mut stdout);
 
-    // Use a port that is almost certainly not listening.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"browser_eval","arguments":{
-            "expression": "1+1",
-            "cdp_port": 19722
+        "params":{"name":"page","arguments":{
+            "pid": 1,
+            "window_id": 0,
+            "action": "definitely_not_a_real_action"
         }}
     }));
     let resp = read_response(&mut stdout);
 
-    // The tool should return isError=true with a connection-refused message.
     assert!(
         resp["result"]["isError"].as_bool().unwrap_or(false),
-        "expected isError=true when CDP port is not listening: {resp:?}"
+        "expected isError=true for unknown action: {resp:?}"
     );
     let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
     assert!(
-        text.contains("browser_eval"),
-        "error text should mention browser_eval: {text}"
+        text.to_ascii_lowercase().contains("unknown action"),
+        "error text should mention 'Unknown action': {text}"
     );
 
     child.kill().ok();
@@ -2128,7 +2127,7 @@ fn test_all_expected_tools_registered_windows() {
         "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
         "get_accessibility_tree",
         "set_recording", "get_recording_state", "replay_trajectory",
-        "browser_eval",
+        "page",
     ];
     for name in &expected {
         assert!(names.contains(name), "Missing tool: {name}  (registered: {names:?})");
@@ -3009,7 +3008,9 @@ fn test_replay_trajectory_windows() {
 
 #[test]
 #[cfg(target_os = "windows")]
-fn test_browser_eval_no_cdp_error_windows() {
+fn test_page_unknown_action_error_windows() {
+    //! Verify the cross-platform `page` tool is registered on Windows and
+    //! rejects an unknown action with a meaningful error.
     let binary = binary_path_windows();
     if !binary.exists() { return; }
 
@@ -3024,15 +3025,20 @@ fn test_browser_eval_no_cdp_error_windows() {
 
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"browser_eval","arguments":{"expression":"1+1","cdp_port":19722}}
+        "params":{"name":"page","arguments":{
+            "pid":1,"window_id":0,"action":"definitely_not_a_real_action"
+        }}
     }));
     let resp = read_response(&mut stdout);
     assert!(
         resp["result"]["isError"].as_bool().unwrap_or(false),
-        "expected isError=true when CDP port not listening: {resp:?}"
+        "expected isError=true for unknown action: {resp:?}"
     );
     let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-    assert!(text.contains("browser_eval"), "error text should mention browser_eval: {text}");
+    assert!(
+        text.to_ascii_lowercase().contains("unknown action"),
+        "error text should mention 'Unknown action': {text}"
+    );
 
     child.kill().ok();
 }

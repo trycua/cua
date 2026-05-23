@@ -10,7 +10,6 @@
 //! - Each request has `jsonrpc: "2.0"`, `id` (any), `method`, optional `params`
 //! - Notifications (no `id`) are silently ignored
 
-pub mod browser_eval;
 pub mod cdp;
 pub mod page;
 pub mod protocol;

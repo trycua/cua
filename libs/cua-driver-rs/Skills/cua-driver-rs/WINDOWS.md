@@ -157,6 +157,32 @@ best-effort: `SetForegroundWindow` from non-UIAccess processes is subject
 to Windows' foreground-lock and may silently no-op — failures are logged
 at `tracing::trace!` and not surfaced as errors.
 
+**`hotkey` modifier dispatch on Chromium/Electron (Windows).** When
+the target is detected as a Chromium-family window (`Chrome_WidgetWin_*`
+class — covers every Chromium browser AND every Electron app: Chrome,
+Edge, Brave, Arc, Vivaldi, Slack, VS Code, Discord, Teams, Notion),
+`hotkey` with modifiers routes through `PostMessage(WM_KEYDOWN/UP)`
+instead of `SendInput` — no foreground swap. Chromium's
+`Browser::HandleKeyboardEvent` reads modifier state from the WM_KEYDOWN
+LPARAM bits, NOT from `GetKeyState`, so PostMessage delivery works for
+real accelerators (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Shift+B, etc.). The
+SendInput-swap path (`send_key_synthesized`) remains the dispatch for
+**non-Chromium Win32 + modifiers** — classic apps (LibreOffice, FAR,
+classic Notepad) use `TranslateAccelerator` which requires the system
+modifier state updated, and PostMessage can't do that.
+
+**Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
+on a Chromium target falls through to `send_click_synthesized` (SendInput
++ brief foreground swap) because Chromium's input thread filters by
+queue-origin and PostMessage-delivered clicks don't fire DOM events. The
+synchronous restore inside `send_click_synthesized` covers the
+immediate swap; an additional polling guard (same shape as `launch_app`'s
+`FocusRestoreGuard`) catches the **asynchronous** Chromium re-activation
+that can happen as the renderer's input handler processes the click
+(focus().activate() / WebContents::Activate() — 100-500 ms later). The
+guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
+Alt-Tabs are respected.
+
 ## Defaults — always prefer cua-driver over shell shims
 
 **Default transport is the `cua-driver` CLI** — `Bash` shelling out
@@ -654,28 +680,39 @@ browser instance identified by `(pid, window_id)`:
      create it manually.
    - **The Favorites bar must already be visible.** This is a
      one-time setup: press `Ctrl+Shift+B` once inside the browser
-     and the setting persists across sessions. cua-driver does
-     **not** synthesize Ctrl+Shift+B for you any more, because the
-     synthesizer routed via `SetForegroundWindow(target) →
-     SendInput → SetForegroundWindow(prev_fg)` produces a visible
-     foreground flicker and the restore can fail silently under
-     UIPI / UIAccess constraints — both violations of the
-     no-foreground contract. If the bar is hidden when
-     `execute_javascript` is called, the bookmark path bails with a
-     clear error and falls through to the CDP path (if configured).
+     and the setting persists across sessions. **If the bar is
+     hidden, cua-driver now synthesizes `Ctrl+Shift+B` via
+     `PostMessage(WM_KEYDOWN/UP)` with no foreground swap** —
+     Chromium's `Browser::HandleKeyboardEvent` dispatches
+     accelerators from the WM_KEYDOWN LPARAM bits without
+     consulting `GetKeyState`, so PostMessage works without the
+     `SetForegroundWindow` dance that previously violated the
+     no-foreground contract. After a brief settle the path
+     re-checks for the bar; if it's still hidden (locked-down
+     browser policy / non-Chromium target) the call bails with a
+     clear error and falls through to the CDP path.
    - The user's expression should be a single statement or block;
      `return` inside the IIFE is honored.  Bookmarks strip line
      breaks, so multi-line expressions are joined with spaces.
 
-   **Known limitation — transient browser activation on Invoke.**
+   **Known limitation — Chromium's window activation on Invoke.**
    When the bookmark is invoked via UIA `InvokePattern::Invoke`,
-   Chromium briefly raises the browser window because clicking a
+   Chromium activates the browser window because clicking a
    bookmark is a user-initiated navigation in Chromium's input
-   model. This is a Chromium-side activation we cannot suppress
-   from the UIA caller. We document it rather than mask it; the
-   rest of the page-tool actions (`get_text`, `query_dom`) remain
-   no-foreground. If this matters for your flow, use the CDP path
-   instead — `Runtime.evaluate` does not trigger window activation.
+   model. The activation happens inside Chromium's window-aura
+   layer, not in our UIA call. **Mitigation in place**: a polling
+   foreground-restore guard runs immediately after the Invoke —
+   same pattern `launch_app` uses (PR #1668) — capturing the
+   user's foreground HWND beforehand and calling
+   `SetForegroundWindow(prev)` once Chromium grabs foreground.
+   The restore is gated on `GetWindowThreadProcessId(fg_now) ==
+   browser_pid` so we never yank focus from a window the user
+   legitimately Alt-Tabbed to. Without UIAccess (the daemon's
+   normal integrity) Windows' foreground lock may deny the
+   restore — in that case the browser dwell time is bounded to
+   the ~600 ms poll budget instead of "until next user action".
+   The `get_text` and `query_dom` actions don't share this issue
+   (no Invoke → no activation).
 
 2. **CDP fallback** — `Runtime.evaluate` via raw WebSocket against
    `--remote-debugging-port=N`.  Requires the browser launched with

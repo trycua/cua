@@ -1,4 +1,4 @@
-# cua-driver-rs uninstaller (Windows) — removes everything install.ps1
+﻿# cua-driver-rs uninstaller (Windows) — removes everything install.ps1
 # laid down: the Scheduled Task autostart entry, running daemon
 # processes, the directory junctions wiring the visible bin dir back to
 # a per-version release dir, the entire package home tree, and any skill
@@ -51,6 +51,18 @@
 #               each major delete. The one-liner is interactive by
 #               default so a stray paste doesn't accidentally wipe a
 #               working install.
+#
+# Elevation:
+#   `install.ps1 -AutoStart` (and `cua-driver autostart enable`) register
+#   the `cua-driver-serve` Scheduled Task at RunLevel=Highest — the
+#   daemon spawned by it then runs at High IL so it can drive UWP /
+#   AppContainer apps (Calculator, Settings, Photos — see
+#   autostart.rs:127). Side-effect: a non-elevated process (even the same
+#   user that installed it) can NOT terminate the daemon or delete the
+#   task — both fail with Access Denied, and the binary stays locked
+#   under ~\.cua-driver\... . If we detect either condition at startup
+#   we self-elevate via UAC; otherwise we run in-place. Mirrors the
+#   install side's elevation pattern in autostart.rs:215-223.
 
 [CmdletBinding()]
 param(
@@ -60,6 +72,65 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# ---------- Elevation pre-check -------------------------------------------
+
+$AutoStartTask = "cua-driver-serve"
+
+function Test-IsElevated {
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-NeedsElevation {
+    # Either the autostart task exists (RunLevel=Highest, so deleting it
+    # needs admin) or a cua-driver.exe is running (its parent was the
+    # elevated task, so terminating it needs admin too). Detecting either
+    # upfront lets us self-elevate before we start tearing things down
+    # — otherwise the non-elevated path silently swallows access-denied
+    # from schtasks /Delete + Stop-Process and leaves a dangling install.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & schtasks.exe /Query /TN $AutoStartTask 2>$null | Out-Null
+        $hasTask = ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    $hasDaemon = @(Get-Process -Name "cua-driver" -ErrorAction SilentlyContinue).Count -gt 0
+    return ($hasTask -or $hasDaemon)
+}
+
+if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
+    Write-Host "==> cua-driver-rs uninstaller: detected -AutoStart install state" -ForegroundColor Cyan
+    Write-Host "    (the 'cua-driver-serve' task is RunLevel=Highest and/or a daemon is"
+    Write-Host "    running at High IL). Removing them needs admin — triggering UAC prompt."
+
+    # Re-exec self elevated. $MyInvocation.MyCommand.Path is set when invoked
+    # from a file on disk; empty when piped through `irm ... | iex` (the
+    # canonical one-liner). For the iex case we materialize the script body
+    # to a tempfile and re-exec from there — RunAs needs a file path.
+    $forwarded = @()
+    if ($Force) { $forwarded += '-Force' }
+
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not $scriptPath) {
+        $tmp = Join-Path $env:TEMP ("cua-driver-uninstall-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+        $body = $MyInvocation.MyCommand.Definition
+        Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+        $scriptPath = $tmp
+    }
+
+    $argList = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $scriptPath) + $forwarded
+    try {
+        $proc = Start-Process -FilePath powershell.exe -ArgumentList $argList -Verb RunAs -PassThru -Wait -ErrorAction Stop
+        exit $proc.ExitCode
+    } catch {
+        Write-Host "error: failed to elevate ($($_.Exception.Message))" -ForegroundColor Red
+        Write-Host "  Re-run this script from an elevated PowerShell instead:" -ForegroundColor Yellow
+        Write-Host "  Right-click PowerShell → Run as Administrator, then re-run the uninstall." -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 # ---------- Path resolution (mirrors install.ps1) -------------------------
 
@@ -87,7 +158,7 @@ $LegacyHomeDir = Join-Path $env:USERPROFILE ".cua-driver-rs"
 
 $PackagesDir  = Join-Path $HomeDir   "packages"
 $CurrentDir   = Join-Path $PackagesDir "current"
-$AutoStartTask = "cua-driver-serve"
+# $AutoStartTask hoisted to the elevation pre-check block above.
 
 # Skill junctions — mirrors the AGENTS list in
 # libs/cua-driver-rs/crates/cua-driver/src/skills.rs (the verb that

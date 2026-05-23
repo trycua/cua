@@ -36,7 +36,16 @@ async fn cdp_evaluate(
     expression: &str,
     await_promise: bool,
 ) -> anyhow::Result<Value> {
-    let pages = cdp_list_pages(port).await?;
+    // Wrap the /json discovery in its own timeout — `cdp_list_pages` does an
+    // unbounded `read_to_end`, and a half-open localhost socket (browser
+    // mid-shutdown, firewall mismatch, port stolen by another process) would
+    // otherwise hang us forever. 10 s is generous for a localhost HTTP roundtrip.
+    let pages = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        cdp_list_pages(port),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("CDP /json discovery on port {port} timed out after 10 s"))??;
     if pages.is_empty() {
         anyhow::bail!("No CDP page tabs found on port {port}");
     }

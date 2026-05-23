@@ -377,7 +377,16 @@ struct ParsedSelector {
 fn parse_selector(sel: &str) -> anyhow::Result<ParsedSelector> {
     let s = sel.trim();
 
-    // Reject `[data-*]` immediately — not reachable.
+    // Wildcard / empty → match-all, no post-filter.
+    if s.is_empty() || s == "*" {
+        return Ok(ParsedSelector {
+            control_type: None,
+            id_filter: String::new(),
+            is_data_attr: false,
+        });
+    }
+
+    // Reject `[data-*]` immediately — not reachable via UIA.
     if s.contains("[data-") {
         return Ok(ParsedSelector {
             control_type: None,
@@ -392,7 +401,19 @@ fn parse_selector(sel: &str) -> anyhow::Result<ParsedSelector> {
         None => (s, ""),
     };
 
-    // ID/class suffix on tag (e.g. `div#foo`, `a.bar`).
+    // ID suffix on tag (e.g. `div#foo`). `.class` is NOT supported — UIA's
+    // `AutomationId` maps to HTML `id`, not to the class list. Supporting
+    // class selectors would need an IA2 `attributes`-string parse (tracked
+    // as a follow-up in the PR description).
+    if tag.contains('.') {
+        anyhow::bail!(
+            "`.class` selectors are not supported by the Windows UIA backend. \
+             Use a simple tag (a, button, input, textarea, h1-h6, img, li, p, \
+             span, select), a `tag#id` selector, an `[attr=value]` selector \
+             including `[role=…]`, or `execute_javascript` for full DOM access \
+             (requires the browser launched with `--remote-debugging-port`)."
+        );
+    }
     let (tag_clean, id_filter) = match tag.find('#') {
         Some(i) => (&tag[..i], tag[i + 1..].to_owned()),
         None => (tag, String::new()),
@@ -410,6 +431,19 @@ fn parse_selector(sel: &str) -> anyhow::Result<ParsedSelector> {
     } else {
         ct
     };
+
+    // After mapping, if we have neither a control_type nor an id_filter, the
+    // selector wasn't understood — refuse so we don't dump the entire subtree
+    // as a false-positive match.
+    if ct.is_none() && id_filter.is_empty() && tag_clean != "*" && !tag_clean.is_empty() {
+        anyhow::bail!(
+            "Selector '{sel}' is not supported by the Windows UIA backend. \
+             Use a simple tag (a, button, input, textarea, h1-h6, img, li, p, \
+             span, select), a `tag#id` selector, `[role=…]`, or \
+             `execute_javascript` for full DOM access (requires the browser \
+             launched with `--remote-debugging-port`)."
+        );
+    }
 
     Ok(ParsedSelector {
         control_type: ct,

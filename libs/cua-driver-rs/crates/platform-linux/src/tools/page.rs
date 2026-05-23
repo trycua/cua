@@ -60,12 +60,29 @@ impl PageBackend for LinuxPageBackend {
         }
 
         let role = role_for_selector(&selector);
+        let selector_is_wildcard = {
+            let s = selector.trim();
+            s.is_empty() || s == "*"
+        };
+        // `role_for_selector` collapses both "wildcard / match-all" AND
+        // "unrecognised" into `None`. The first should keep every node; the
+        // second should fail loudly so an agent doesn't get a misleading
+        // dump of every element on the page when its `.foo` / `#bar` query
+        // wasn't actually understood.
+        if role.is_none() && !selector_is_wildcard {
+            anyhow::bail!(
+                "Selector '{selector}' is not supported by Linux AT-SPI role mapping. \
+                 Use a simple tag selector (a, button, input, textarea, h1-h6, img, li, \
+                 p, select, *), or `execute_javascript` for full DOM access (requires the \
+                 browser launched with `--remote-debugging-port`)."
+            );
+        }
         let lines: Vec<String> = result
             .nodes
             .iter()
             .filter(|n| match role.as_deref() {
                 Some(r) => n.role.eq_ignore_ascii_case(r),
-                None => true,
+                None => true, // safe now — only reached when selector is wildcard
             })
             .map(|n| {
                 let name = n.name.as_deref().unwrap_or("");

@@ -100,7 +100,12 @@ fn def() -> &'static ToolDef {
               confirmation and a browser restart).".into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "window_id", "action"],
+            // `pid` and `window_id` are required for every action except
+            // `enable_javascript_apple_events` (which targets a browser by
+            // bundle id, not a running process). Enforced per-action in
+            // `invoke` rather than via the schema so the JSON-Schema-only
+            // path still validates the common case.
+            "required": ["action"],
             "properties": {
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
@@ -148,17 +153,45 @@ impl Tool for PageTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let window_id = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
         let action = match args.get("action").and_then(|v| v.as_str()) {
             Some(v) => v.to_owned(),
             None => return ToolResult::error("Missing required parameter: action"),
+        };
+
+        // `pid` / `window_id` are resolved per-action: every action except
+        // `enable_javascript_apple_events` needs both. We resolve once here
+        // so each arm can `?` on the Result and we get matching error text.
+        // Narrowing casts use `TryFrom` so out-of-range JSON numbers fail
+        // with an actionable error instead of silently truncating to the
+        // wrong process / window.
+        let resolve_pid = |args: &Value| -> Result<i32, String> {
+            let raw = args
+                .get("pid")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| "Missing required parameter: pid".to_owned())?;
+            i32::try_from(raw).map_err(|_| format!("Invalid parameter: pid {raw} out of i32 range"))
+        };
+        let resolve_window_id = |args: &Value| -> Result<u32, String> {
+            let raw = args
+                .get("window_id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing required parameter: window_id".to_owned())?;
+            u32::try_from(raw)
+                .map_err(|_| format!("Invalid parameter: window_id {raw} out of u32 range"))
+        };
+
+        let (pid, window_id) = if action == "enable_javascript_apple_events" {
+            (0i32, 0u32) // unused
+        } else {
+            let pid = match resolve_pid(&args) {
+                Ok(v) => v,
+                Err(e) => return ToolResult::error(e),
+            };
+            let window_id = match resolve_window_id(&args) {
+                Ok(v) => v,
+                Err(e) => return ToolResult::error(e),
+            };
+            (pid, window_id)
         };
 
         match action.as_str() {

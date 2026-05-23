@@ -1209,17 +1209,25 @@ impl Tool for ClickTool {
             // window-local pixel coords via PostMessage).  Windows-only schema
             // extras (`button`, no `modifier`/`action`/`debug_image_out`) are
             // documented in PARITY.md.
-            description: "Left-click against a target pid. Two addressing modes:\n\n\
+            description: "Left-click against a target pid. **Prefer `element_index` over \
+                pixel coordinates** — element_index works on backgrounded / minimized / \
+                hidden / off-desktop windows, surfaces a stable handle that survives \
+                rebuilds, and tells you what you're clicking via the cached element's \
+                role + label. Reach for `x, y` only when the target is a canvas / video / \
+                WebGL / custom-drawn surface that doesn't appear in the UIA tree.\n\n\
+                Two addressing modes:\n\n\
                 - `element_index` + `window_id` (from the last `get_window_state` snapshot \
                 of that window) — performs the UIA Invoke pattern on the cached element via \
                 PostMessage. No cursor move, no focus steal. Requires a prior \
                 `get_window_state(pid, window_id)` in this turn; the element_index cache \
-                is scoped per (pid, window_id).\n\n\
+                is scoped per (pid, window_id) and is replaced by the next snapshot of the \
+                same window.\n\n\
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
                 returned by `get_window_state`) — synthesizes mouse events via \
                 PostMessage(WM_LBUTTONDOWN/UP) and delivers them to the deepest child \
                 window under that point. `count: 2` posts two down/up pairs for a \
-                double-click.\n\n\
+                double-click. Pixel clicks need a visible on-screen window to anchor the \
+                coordinate conversion (errors with `pid X has no on-screen window` otherwise).\n\n\
                 Exactly one of `element_index` or (`x` AND `y`) must be provided. \
                 `pid` is required in both modes. `window_id` is required when \
                 `element_index` is used (scopes the cache lookup). After a `zoom` call, \
@@ -2141,7 +2149,15 @@ impl Tool for ScreenshotTool {
             // ScreenCaptureKit).
             description: "Capture a screenshot of a single window via BitBlt + PrintWindow \
                 (no focus change). Returns base64-encoded image data in the requested format \
-                (default jpeg, quality 85).\n\n\
+                (default `jpeg`, quality `85`). The long edge is downscaled to fit the \
+                `max_image_dimension` config (default `1568` px — matches Anthropic's \
+                multimodal-vision input size, so a click-coord picked off this PNG addresses \
+                the same pixels the model reasoned over).\n\n\
+                **Prefer `get_window_state` for UI work** — it returns the UIA tree alongside \
+                the same screenshot in one call, populates the element_index cache the click / \
+                type_text / scroll tools resolve against, and is the only path to backgrounded \
+                accessibility actions. `screenshot` is for when you just need pixels (vision \
+                grounding, debugging, attaching to a report).\n\n\
                 `window_id` is recommended (use `list_windows` to find it). When omitted, \
                 captures the full primary display — a Windows-only convenience for whole-\
                 screen snapshots without a per-window target.\n\n\
@@ -3545,7 +3561,7 @@ impl Tool for ZoomTool {
 
 // ── type_text_chars ───────────────────────────────────────────────────────────
 
-pub struct TypeTextCharsTool { state: Arc<ToolState> }
+pub struct TypeTextCharsTool { _state: Arc<ToolState> }
 static TYPE_CHARS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -3993,7 +4009,7 @@ pub fn build_registry() -> ToolRegistry {
     // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
     // means it doesn't show up in `tools/list` either, matching Swift's
     // ToolRegistry.swift (`type_text_chars` not in `handlers`).
-    let _: &TypeTextCharsTool = &TypeTextCharsTool { state: state.clone() }; // touch struct so it stays in this crate for now
+    let _: &TypeTextCharsTool = &TypeTextCharsTool { _state: state.clone() }; // touch struct so it stays in this crate for now
     r.register_recording_tools();
     r
 }

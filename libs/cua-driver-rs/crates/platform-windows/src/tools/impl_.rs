@@ -740,6 +740,178 @@ fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
 
 // ── launch_app ───────────────────────────────────────────────────────────────
 
+/// Shape of the resolved launch-target params, used to decide whether the
+/// best-effort foreground-restore guard should fire.
+///
+/// The decision is intentionally a pure function of the params (not of any
+/// HWND state) so it can be unit-tested. See
+/// [`should_restore_foreground_after_launch`].
+#[derive(Clone, Copy, Debug)]
+struct LaunchTargetShape {
+    has_aumid: bool,
+    has_bundle_id: bool,
+    has_name: bool,
+    has_path: bool,
+    has_launch_path: bool,
+    has_urls: bool,
+}
+
+/// True iff the launch is "open an app in the background" (so we want to
+/// restore the user's foreground after the spawn activates the new window)
+/// rather than "open a URL in the default browser" (where the user
+/// explicitly asked for that page to come up).
+///
+/// Rule, matching the audit spec:
+/// - URLs-only call (no app-identifying field set) → SKIP restore. The
+///   user asked for `https://…` to be openable in their default browser;
+///   a browser instance freshly launched for that URL is the legitimate
+///   foreground.
+/// - Any app-identifying field present (`aumid` / `bundle_id` / `name` /
+///   `path` / `launch_path`) → RESTORE. The intent is hidden-launch +
+///   background drive; the no-foreground contract applies.
+fn should_restore_foreground_after_launch(shape: LaunchTargetShape) -> bool {
+    let has_app_identifier = shape.has_aumid
+        || shape.has_bundle_id
+        || shape.has_name
+        || shape.has_path
+        || shape.has_launch_path;
+    // URLs-only carve-out: when the caller passed urls AND no
+    // app-identifying field, skip the restore.
+    if shape.has_urls && !has_app_identifier {
+        return false;
+    }
+    has_app_identifier
+}
+
+/// Async polling restore of the prior foreground window, used by
+/// `LaunchAppTool` to mirror the macOS `FocusRestoreGuard` for the legacy
+/// `ShellExecuteExW` launch path. The UWP/AUMID branch has its own
+/// synchronous restoration in `launch_uwp::restore_foreground_best_effort`
+/// and is NOT routed through here.
+///
+/// Approach:
+/// 1. Try a short `WaitForInputIdle` on the spawned pid (if the handle
+///    is openable) — this gets us past the worst of the new app's
+///    window-creation window before we start sampling foreground state.
+/// 2. Poll every 100ms for up to ~3s; when `GetForegroundWindow()` is no
+///    longer the prior foreground (i.e. the spawned app actually grabbed
+///    focus), call `SetForegroundWindow(prior)`. We avoid restoring
+///    eagerly so we don't race the new app's own activation and lose.
+///
+/// `SetForegroundWindow` from non-UIAccess processes is restricted by
+/// Windows' foreground-lock; the call may silently fail. We log the
+/// failure at trace level and proceed — no error is surfaced, the launch
+/// itself already succeeded.
+///
+/// Note: `prior_foreground_addr` is the raw HWND value as `usize` (rather
+/// than `HWND` directly) because `HWND` wraps `*mut c_void` which is
+/// `!Send` and would prevent this future from being scheduled on the
+/// multi-threaded tokio runtime.
+async fn restore_foreground_polling_best_effort(
+    prior_foreground_addr: usize,
+    spawned_pid: u32,
+) {
+    use windows::Win32::Foundation::{CloseHandle, HWND};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForInputIdle, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, IsWindow, SetForegroundWindow,
+    };
+
+    if prior_foreground_addr == 0 {
+        tracing::trace!(
+            target: "launch_app.focus_restore",
+            "no prior foreground HWND to restore — skipping"
+        );
+        return;
+    }
+
+    // Phase 1: best-effort wait for the spawned process to finish initial
+    // window creation. WaitForInputIdle returns when the process pumps
+    // its first message — that's typically when the main window has
+    // registered. Capped at 1s; the polling loop below covers the rest.
+    if spawned_pid != 0 {
+        // PROCESS_SYNCHRONIZE is required by WaitForInputIdle;
+        // PROCESS_QUERY_LIMITED_INFORMATION is a no-op extra that some
+        // antivirus filters tolerate better than QUERY_INFORMATION.
+        // OpenProcess result is also `!Send` (HANDLE), so do the open +
+        // wait + close in one blocking task.
+        let _ = tokio::task::spawn_blocking(move || unsafe {
+            if let Ok(handle) = OpenProcess(
+                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                spawned_pid,
+            ) {
+                if !handle.is_invalid() {
+                    let _ = WaitForInputIdle(handle, 1000);
+                }
+                // Always close the handle, even if `is_invalid()` (cheap;
+                // matches the OpenProcess pairing convention used elsewhere
+                // in this crate).
+                let _ = CloseHandle(handle);
+            }
+            // Silently no-op if OpenProcess failed (target may have already
+            // exited; rare for a fresh launch but not impossible for a
+            // launcher-stub).
+        })
+        .await;
+    }
+
+    // Phase 2: poll for "spawned app became foreground", then flip back.
+    // Reconstruct HWND only inside synchronous probes so the future state
+    // never holds an `!Send` value across an await point.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            tracing::trace!(
+                target: "launch_app.focus_restore",
+                "spawned pid {} did not steal foreground within deadline — no restore needed",
+                spawned_pid
+            );
+            return;
+        }
+        let activated_then_restored: Option<bool> = {
+            let prior = HWND(prior_foreground_addr as *mut _);
+            let fg_now = unsafe { GetForegroundWindow() };
+            if fg_now != prior {
+                if !unsafe { IsWindow(prior) }.as_bool() {
+                    tracing::trace!(
+                        target: "launch_app.focus_restore",
+                        "prior foreground HWND no longer valid — skipping restore"
+                    );
+                    Some(true)
+                } else {
+                    let ok = unsafe { SetForegroundWindow(prior) }.as_bool();
+                    if !ok {
+                        tracing::trace!(
+                            target: "launch_app.focus_restore",
+                            "SetForegroundWindow returned FALSE — likely foreground-lock denial; \
+                             prior HWND 0x{:x}, spawned pid {}",
+                            prior_foreground_addr,
+                            spawned_pid
+                        );
+                    } else {
+                        tracing::debug!(
+                            target: "launch_app.focus_restore",
+                            "restored prior foreground HWND 0x{:x} after spawned pid {} activated",
+                            prior_foreground_addr,
+                            spawned_pid
+                        );
+                    }
+                    Some(ok)
+                }
+            } else {
+                None
+            }
+        };
+        if activated_then_restored.is_some() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -808,6 +980,37 @@ impl Tool for LaunchAppTool {
         let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
+
+        // Capture the foreground window BEFORE any launch path runs so the
+        // post-spawn polling restore (below) has a target HWND to flip back
+        // to. Mirrors the macOS `FocusRestoreGuard` behavior. Best-effort —
+        // see `restore_foreground_polling_best_effort` for the actual
+        // restoration semantics.
+        //
+        // The UWP/AUMID path already restores foreground synchronously
+        // (see `launch_uwp::restore_foreground_best_effort`), so this only
+        // gates the legacy ShellExecuteExW path. We capture early so the
+        // value is consistent regardless of which sub-path runs.
+        //
+        // Stored as `usize` (not `HWND`) so this `invoke` future stays
+        // `Send` — `HWND` wraps `*mut c_void` and would taint the future
+        // for the multi-threaded tokio runtime if held across `.await`.
+        let foreground_before_addr: usize = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+        };
+
+        // Pure-function decision on whether to fire the post-launch
+        // restore. Shape mirrors the resolved params — see
+        // `should_restore_foreground_after_launch` for the rule.
+        let launch_shape = LaunchTargetShape {
+            has_aumid:       aumid_opt.is_some(),
+            has_bundle_id:   bundle_id_opt.is_some(),
+            has_name:        name_opt.is_some(),
+            has_path:        path_opt.is_some(),
+            has_launch_path: launch_path_opt.is_some(),
+            has_urls:        !urls.is_empty(),
+        };
+        let restore_foreground = should_restore_foreground_after_launch(launch_shape);
         let mut extra_args: Vec<String> = args.get("additional_arguments").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
             .unwrap_or_default();
@@ -1016,6 +1219,30 @@ impl Tool for LaunchAppTool {
                 Err(e)     => return ToolResult::error(format!("Task error: {e}")),
             }
         };
+
+        // Best-effort foreground-restore for the legacy ShellExecuteExW
+        // path. The UWP/AUMID branch already restores foreground
+        // synchronously inside `launch_uwp::launch_uwp`, so we only spawn
+        // the polling task when we went through the ShellExecuteExW
+        // branch. URLs-only invocations are excluded via `restore_foreground`
+        // (see `should_restore_foreground_after_launch`).
+        //
+        // `HWND` wraps a raw `*mut c_void` which is `!Send`, so we marshal
+        // the foreground handle across the spawn boundary as a `usize` and
+        // reconstruct the `HWND` only inside the synchronous probes (see
+        // `restore_foreground_polling_best_effort`). Mirrors how
+        // `launch_uwp.rs` carries its restore target.
+        if aumid_for_uwp.is_none() && restore_foreground {
+            let spawned_pid_for_restore = pid;
+            let target_foreground_addr = foreground_before_addr;
+            tokio::spawn(async move {
+                restore_foreground_polling_best_effort(
+                    target_foreground_addr,
+                    spawned_pid_for_restore,
+                )
+                .await;
+            });
+        }
 
         // When the packaged path was taken we still need to fan out any
         // extra URLs to the default browser (ShellExecuteEx — no pid
@@ -4017,6 +4244,95 @@ pub fn build_registry() -> ToolRegistry {
     )));
     r.register_recording_tools();
     r
+}
+
+#[cfg(test)]
+mod launch_focus_restore_decision_tests {
+    use super::{should_restore_foreground_after_launch, LaunchTargetShape};
+
+    fn empty() -> LaunchTargetShape {
+        LaunchTargetShape {
+            has_aumid: false,
+            has_bundle_id: false,
+            has_name: false,
+            has_path: false,
+            has_launch_path: false,
+            has_urls: false,
+        }
+    }
+
+    #[test]
+    fn urls_only_skips_restore() {
+        // `launch_app({urls: ["https://example.com"]})` — user explicitly
+        // asked for navigation in the default browser. The freshly-launched
+        // browser instance IS the legitimate foreground; restoring would
+        // hide the page the user wanted to see.
+        let shape = LaunchTargetShape { has_urls: true, ..empty() };
+        assert!(!should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn name_only_restores() {
+        let shape = LaunchTargetShape { has_name: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn path_only_restores() {
+        let shape = LaunchTargetShape { has_path: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn aumid_only_restores() {
+        // Note: AUMID path has its own synchronous restore in launch_uwp.rs,
+        // but the decision function still says "yes, this is an
+        // app-identifying launch" — the caller (`LaunchAppTool::invoke`)
+        // gates the polling spawn on `aumid_for_uwp.is_none()` so we don't
+        // double-restore.
+        let shape = LaunchTargetShape { has_aumid: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn bundle_id_only_restores() {
+        let shape = LaunchTargetShape { has_bundle_id: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn launch_path_only_restores() {
+        let shape = LaunchTargetShape { has_launch_path: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn name_with_urls_restores() {
+        // App-identifying field present alongside urls — the user wants
+        // the named app to open these URLs in the background, NOT for the
+        // urls to take over the default browser's foreground. Restore.
+        let shape = LaunchTargetShape { has_name: true, has_urls: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn path_with_urls_restores() {
+        let shape = LaunchTargetShape { has_path: true, has_urls: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn aumid_with_urls_restores() {
+        let shape = LaunchTargetShape { has_aumid: true, has_urls: true, ..empty() };
+        assert!(should_restore_foreground_after_launch(shape));
+    }
+
+    #[test]
+    fn no_target_does_not_restore() {
+        // Empty params (validated as an error before launch dispatch) — no
+        // restore needed because nothing was launched.
+        assert!(!should_restore_foreground_after_launch(empty()));
+    }
 }
 
 #[cfg(test)]

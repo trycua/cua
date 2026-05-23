@@ -1599,6 +1599,13 @@ pub fn run_doctor_cmd(json: bool) {
 /// Read JSON from stdin when stdin is a pipe (non-interactive). Returns `None`
 /// when stdin is a terminal or the input isn't valid JSON.
 /// Matches Swift's "If omitted, reads from stdin when stdin is a pipe."
+///
+/// Strips a leading UTF-8 BOM (`U+FEFF`, bytes `EF BB BF`) before parsing.
+/// Without this, payloads written via PowerShell 5.1's
+/// `Set-Content -Encoding utf8` (which silently prepends a BOM) parse as
+/// invalid JSON and the call falls through to default-args, producing
+/// confusing "Missing required integer field" errors despite the caller
+/// having sent a valid-looking payload. See the 2026-05-23 dogfood journal.
 fn read_stdin_json() -> Option<serde_json::Value> {
     use std::io::{self, IsTerminal, Read};
     let stdin = io::stdin();
@@ -1607,7 +1614,32 @@ fn read_stdin_json() -> Option<serde_json::Value> {
     }
     let mut buf = String::new();
     stdin.lock().read_to_string(&mut buf).ok()?;
-    serde_json::from_str(buf.trim()).ok()
+    let trimmed = buf.trim();
+    // U+FEFF is one character (3 bytes UTF-8) — `str::strip_prefix` matches by
+    // chars, so a single `'\u{feff}'` is the right comparand.
+    let stripped = trimmed.strip_prefix('\u{feff}').unwrap_or(trimmed);
+    serde_json::from_str(stripped).ok()
+}
+
+#[cfg(test)]
+mod stdin_bom_tests {
+    /// Manual cross-check that the BOM-stripping logic round-trips correctly
+    /// without needing a real stdin pipe.
+    #[test]
+    fn strip_prefix_handles_utf8_bom() {
+        let with_bom = "\u{feff}{\"pid\":42}";
+        let stripped = with_bom.strip_prefix('\u{feff}').unwrap_or(with_bom);
+        assert_eq!(stripped, "{\"pid\":42}");
+        let v: serde_json::Value = serde_json::from_str(stripped).unwrap();
+        assert_eq!(v["pid"], 42);
+    }
+
+    #[test]
+    fn strip_prefix_no_op_when_no_bom() {
+        let plain = "{\"pid\":7}";
+        let stripped = plain.strip_prefix('\u{feff}').unwrap_or(plain);
+        assert_eq!(stripped, plain);
+    }
 }
 
 /// Map a parsed [`Command`] to its canonical telemetry event name.

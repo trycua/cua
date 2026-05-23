@@ -32,7 +32,19 @@ pub enum Command {
     },
     ListTools,
     Describe(String),
-    Call { tool: String, json_args: Option<serde_json::Value>, screenshot_out_file: Option<String> },
+    Call {
+        tool: String,
+        json_args: Option<serde_json::Value>,
+        screenshot_out_file: Option<String>,
+        /// Override the daemon socket/pipe path used by the in-process
+        /// forwarding fallback (matches `--socket` semantics for `serve` /
+        /// `status` / `stop`). Defaults to `serve::default_socket_path()`
+        /// when None — i.e. `cua-driver call X` looks for the user's
+        /// default-path daemon. Surfaced to make integration tests able
+        /// to spin up a tempfile-socketed daemon and route calls
+        /// through it.
+        socket: Option<String>,
+    },
     McpConfig { client: Option<String> },
     Serve {
         socket: Option<String>,
@@ -234,7 +246,7 @@ pub fn parse_command() -> Command {
                 },
                 None => read_stdin_json(),
             };
-            Command::Call { tool, json_args, screenshot_out_file }
+            Command::Call { tool, json_args, screenshot_out_file, socket: socket.clone() }
         }
         Some("telemetry") => {
             // Hidden — used by install.sh. Only supports `install-event`
@@ -295,7 +307,7 @@ pub fn parse_command() -> Command {
                 },
                 None => read_stdin_json(),
             };
-            Command::Call { tool, json_args, screenshot_out_file }
+            Command::Call { tool, json_args, screenshot_out_file, socket: socket.clone() }
         }
     }
 }
@@ -701,6 +713,7 @@ pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
+    socket_override: Option<String>,
 ) {
     // Daemon forwarding: if a daemon is listening, proxy the request
     // through it so AppStateEngine's element_index cache is shared.
@@ -710,17 +723,27 @@ pub fn run_call(
     // like Calculator / modern Notepad / Settings. The regular daemon at
     // `\\.\pipe\cua-driver` is Medium integrity and gets ERROR_ACCESS_DENIED on
     // SendInput into AppContainer'd processes. See #1602.
-    #[cfg(target_os = "windows")]
-    let socket_path = {
-        let uia = crate::serve::default_uia_pipe_path();
-        if crate::serve::is_daemon_listening(&uia) {
-            uia
-        } else {
+    //
+    // When `socket_override` is Some (i.e. caller passed `--socket <path>`),
+    // route directly to that path and skip the platform default + uia worker
+    // search. Used by integration tests to drive a tempfile-socketed daemon.
+    let socket_path = if let Some(s) = socket_override {
+        s
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let uia = crate::serve::default_uia_pipe_path();
+            if crate::serve::is_daemon_listening(&uia) {
+                uia
+            } else {
+                crate::serve::default_socket_path()
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
             crate::serve::default_socket_path()
         }
     };
-    #[cfg(not(target_os = "windows"))]
-    let socket_path = crate::serve::default_socket_path();
     if crate::serve::is_daemon_listening(&socket_path) {
         let args_for_daemon = json_args.clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));

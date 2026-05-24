@@ -136,22 +136,28 @@ Each platform's tool has its own description string (already verified in PR #166
 
 ## Recommended PR sequence
 
-Three PRs, ordered by ROI / risk:
+All five candidates landed on `cross-platform-dedup-audit` (PR #1670).
 
-| PR | What | Lines saved | Risk | Effort |
+| PR | What | Estimated | Actual | Status |
 |---|---|---|---|---|
-| #A | **`mcp-server::image_utils`** — extract capture.rs PNG/JPEG/crosshair/resize helpers | ~400 | Very low | 2-3 hr |
-| #B | **`cursor-overlay::render_state`** — extract `RenderState` + `Spring` + `tick` + `apply_command` + `render_frame` + `draw_default_arrow` | ~1800 | Medium | 1-2 days |
-| #C | **`mcp-server::tool_args`** — helper trait for tool argument parsing | ~600 | Very low | half day |
+| #A | `mcp-server::image_utils` — capture.rs PNG/JPEG/crosshair/resize helpers | ~400 | **−399** | ✓ shipped (`9c998916` + `921dcdc9`) |
+| #1b | `cursor-overlay::Spring` — physics struct | small | small | ✓ shipped (`f10a3258`) |
+| #B | `cursor-overlay::render_state` — `RenderStateCore` + `tick` + `apply_command` + `render_frame` + `draw_default_arrow` | ~1800 | **−947 across overlays / −211 net** | ✓ shipped (`e0336893`) |
+| #C | `mcp-server::tool_args` — `ArgsExt` helper trait | ~600 | **−125 consumers + trait/tests** | ✓ shipped (`f1c0cca1` + `3824b0d7`) |
+| #2 | `mcp-server::element_cache` — generic `ElementCacheCore<K, S>` | ~150 | **+14 net** | ✓ shipped (`f798e3ad`) |
 
-PR #A is the right next move. PR #B is the biggest win but needs careful platform testing. PR #C is busywork but cleanup-y.
+## What the audit got wrong
+
+Worth recording for future audits — three places the original estimates were off:
+
+- **#B "byte-for-byte identical tick/apply_command" was wrong.** macOS uses Swift-reference hardcoded constants (peakSpeed=900, springK=400, springC=17, overshoot=0.8) while Windows/Linux use runtime `MotionConfig`. macOS's `MoveTo` and `ClickPulse` have sentinel-snap behaviour the others don't. The shared core resolves this with two tick variants (`tick_motion` vs `tick_swift_constants`) and a parameterised `apply_command_base(snap_mt, click_only)`. So `RenderStateCore` is real, but it's a *family* of behaviours, not one.
+- **#2 line-count estimate was optimistic.** The three caches were already terse (Linux at 45 lines); the wrapper indirection costs almost as much as the shared plumbing saves. Net is +14 lines on the cache files. The win is structural (one place to add metrics / eviction / instrumentation), not raw lines.
+- **#B `start_t: Instant`** was dead code on Windows + Linux (assigned, never read) — not a real shared field, dropped during extraction.
 
 ## What this audit did NOT cover
 
 - **Cross-os FFI bindings** — windows-rs vs core-foundation-rs vs x11rb — each platform crate's transitive deps are different; deduping is mostly about depending on the right shared crate, not refactoring code.
 - **MCP protocol layer** — already lives in `mcp-server`, no duplication.
 - **`installed_apps.rs` (Linux) / `apps/` (macOS) / `win32/apps.rs` (Windows)** — same shape but completely different impls (XDG desktop files / NSWorkspace / Start Menu shortcuts). Sharing the response struct only.
-
-## Next steps
-
-Implementing PR #A (`image_utils` extraction) on this same branch tonight. Time permitting, will sketch PR #B's `RenderStateCore` split as a follow-up doc but not actually refactor the overlay code (medium risk, wants more deliberation).
+- **#5 `list_apps` / `list_windows` response shape** — recommended skip (high risk for ~50 lines).
+- **#6 Tool description strings** — recommended skip (intentionally per-platform).

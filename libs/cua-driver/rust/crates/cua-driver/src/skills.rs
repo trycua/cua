@@ -68,6 +68,16 @@ const SKILL_FILES: &[&str] = &[
     "TESTS.md",
 ];
 
+/// Package-home subdir name (matches `telemetry::HOME_SUBDIRECTORY`).
+/// Pre-v0.2.16 this was `.cua-driver-rs`; the rename to `.cua-driver/` is
+/// the same rename the binary install path went through, kept in lock-
+/// step so all on-disk state lives under one dot-folder.
+const HOME_SUBDIRECTORY: &str = ".cua-driver";
+
+/// Legacy subdir name. `sweep_legacy_skill_pack` removes any skill-pack
+/// artifacts that landed here before the rename.
+const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
+
 /// Local install path for the skill pack: `<HomeDir>/skills/cua-driver`.
 fn local_skill_dir() -> Result<PathBuf> {
     let home = home_dir()?;
@@ -84,13 +94,32 @@ fn home_dir() -> Result<PathBuf> {
     {
         let userprofile = std::env::var("USERPROFILE")
             .map_err(|_| anyhow!("USERPROFILE not set"))?;
-        return Ok(PathBuf::from(userprofile).join(".cua-driver-rs"));
+        return Ok(PathBuf::from(userprofile).join(HOME_SUBDIRECTORY));
     }
     #[cfg(not(windows))]
     {
         let home = std::env::var("HOME")
             .map_err(|_| anyhow!("HOME not set"))?;
-        return Ok(PathBuf::from(home).join(".cua-driver-rs"));
+        return Ok(PathBuf::from(home).join(HOME_SUBDIRECTORY));
+    }
+}
+
+/// The pre-rename home (`~/.cua-driver-rs/`) if it exists on disk.
+/// `None` when CUA_DRIVER_RS_HOME is set (the env var overrides both
+/// the new and legacy defaults — caller is on their own).
+fn legacy_home_dir() -> Option<PathBuf> {
+    if std::env::var("CUA_DRIVER_RS_HOME").is_ok() {
+        return None;
+    }
+    #[cfg(windows)]
+    let base = std::env::var("USERPROFILE").ok()?;
+    #[cfg(not(windows))]
+    let base = std::env::var("HOME").ok()?;
+    let p = PathBuf::from(base).join(LEGACY_HOME_SUBDIRECTORY);
+    if p.exists() {
+        Some(p)
+    } else {
+        None
     }
 }
 
@@ -210,16 +239,26 @@ fn install(flags: &[String], force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Best-effort removal of any pre-rename skill pack — the local stage at
-/// `<HomeDir>/skills/cua-driver-rs/` and every `<agent_skills>/cua-driver-rs`
-/// symlink/junction. Runs at the start of `install` / `update` so a user
-/// who had the legacy name installed gets cleanly migrated without
-/// having to run `skills uninstall` first.
+/// Best-effort removal of any pre-rename skill pack. Three legacy
+/// locations are swept:
+///   1. `<HomeDir>/skills/cua-driver-rs/`       — old pack NAME under new home dir
+///   2. `<LegacyHomeDir>/skills/cua-driver/`    — new pack NAME under old home dir
+///   3. `<LegacyHomeDir>/skills/cua-driver-rs/` — old pack NAME under old home dir
+/// Plus every `<agent_skills>/cua-driver-rs` symlink/junction.
+///
+/// Then attempts to remove the empty `<LegacyHomeDir>/skills/` and
+/// `<LegacyHomeDir>/` themselves so the dot-folder doesn't linger.
+/// Only when those dirs are actually empty — never blows away a
+/// legacy install that still has packages/ alongside.
+///
+/// Runs at the start of `install` / `update` so a user who had any
+/// flavour of the legacy layout installed gets cleanly migrated
+/// without having to run `skills uninstall` first.
 ///
 /// Silent on failure — this is a UX nicety, not a correctness boundary.
 /// The new pack still installs even if a stale junction can't be cleaned.
 fn sweep_legacy_skill_pack() {
-    // Local stage at <HomeDir>/skills/cua-driver-rs.
+    // (1) Old pack NAME under new home dir.
     if let Ok(home) = home_dir() {
         let legacy_local = home.join("skills").join(LEGACY_SKILL_PACK_NAME);
         if legacy_local.exists() {
@@ -230,6 +269,28 @@ fn sweep_legacy_skill_pack() {
                 println!("  cleaned up legacy local pack at {}", legacy_local.display());
             }
         }
+    }
+    // (2) + (3) Any pack name under the pre-rename home dir, then try
+    // to remove the empty skills/ + home/ dirs themselves.
+    if let Some(legacy_home) = legacy_home_dir() {
+        let legacy_skills_dir = legacy_home.join("skills");
+        for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+            let dir = legacy_skills_dir.join(name);
+            if dir.exists() {
+                if let Err(e) = fs::remove_dir_all(&dir) {
+                    eprintln!("  warning: could not remove legacy pack at {}: {e}",
+                        dir.display());
+                } else {
+                    println!("  cleaned up legacy local pack at {}", dir.display());
+                }
+            }
+        }
+        // remove_dir refuses to delete non-empty dirs — safe to ignore
+        // errors here, and intentional: a legacy install that still has
+        // packages/ alongside the (now-emptied) skills/ keeps its
+        // dot-folder.
+        let _ = fs::remove_dir(&legacy_skills_dir);
+        let _ = fs::remove_dir(&legacy_home);
     }
     // Agent links named `<parent>/cua-driver-rs`.
     for agent in AGENTS {
@@ -262,9 +323,32 @@ fn link_agent(agent: Agent, local_skill_dir: &Path) -> Result<bool> {
         return Ok(false);
     }
     let link = agent.link_path()?;
-    if link.exists() || link.symlink_metadata().is_ok() {
+    // Four states for `link`:
+    //   1. doesn't exist at all                 → create
+    //   2. exists + resolves                    → already linked (skip)
+    //   3. exists as link/junction but target dangling → remove + recreate
+    //   4. exists as a real directory           → user-managed, leave alone
+    //
+    // `Path::exists()` follows symlinks, so it returns false for a
+    // dangling link even though `symlink_metadata` succeeds — that's
+    // the signature of case 3. We then check `is_symlink_or_junction`
+    // before deleting, so we never touch a real user directory.
+    let has_metadata = link.symlink_metadata().is_ok();
+    let resolves    = link.exists();
+    if has_metadata && resolves {
         println!("  {} skill link already exists at {} (skipping)", agent.label, link.display());
         return Ok(false);
+    }
+    if has_metadata && !resolves && is_symlink_or_junction(&link) {
+        // Dangling link/junction — target was removed (typical after
+        // sweep_legacy_skill_pack cleaned a pre-rename pack out from
+        // under it). Remove + recreate pointing at the new target.
+        if let Err(e) = remove_link(&link) {
+            eprintln!("  warning: could not remove stale {} link at {}: {e}",
+                agent.label, link.display());
+            return Ok(false);
+        }
+        println!("  cleaned up stale {} link at {}", agent.label, link.display());
     }
     make_dir_symlink(local_skill_dir, &link)
         .with_context(|| format!("symlink {} -> {}", link.display(), local_skill_dir.display()))?;
@@ -421,6 +505,22 @@ fn uninstall(flags: &[String]) -> Result<()> {
                     println!("  ✅ removed local skill pack at {}", local.display());
                 }
             }
+        }
+        // Also clean up any pre-rename home (`~/.cua-driver-rs/`) that
+        // might still hold a skill pack from before the
+        // `.cua-driver-rs/` → `.cua-driver/` migration. Remove the empty
+        // skills/ and home/ dirs only if nothing else lives under them.
+        if let Some(legacy_home) = legacy_home_dir() {
+            let legacy_skills_dir = legacy_home.join("skills");
+            for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+                let local = legacy_skills_dir.join(name);
+                if local.exists() {
+                    fs::remove_dir_all(&local)?;
+                    println!("  ✅ removed legacy local skill pack at {}", local.display());
+                }
+            }
+            let _ = fs::remove_dir(&legacy_skills_dir);
+            let _ = fs::remove_dir(&legacy_home);
         }
     }
     if !removed_any {

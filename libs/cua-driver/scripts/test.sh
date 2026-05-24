@@ -4,9 +4,13 @@
 # Usage: scripts/test.sh [test_*.py]
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# scripts/ is cross-cutting; Swift sources + Tests/ moved to swift/.
+# Land in swift/ so .build/CuaDriver.app and Tests/integration resolve
+# relative to the Swift port.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/../swift"
 
-scripts/build-app.sh >/dev/null
+"$SCRIPT_DIR/build-app.sh" >/dev/null
 
 export CUA_DRIVER_BINARY="$(pwd)/.build/CuaDriver.app/Contents/MacOS/cua-driver"
 

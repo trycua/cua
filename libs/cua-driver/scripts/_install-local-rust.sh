@@ -6,7 +6,12 @@
 # and a release install can coexist + the `current` symlink can flip
 # between them.
 #
-# Mirrors libs/cua-driver/scripts/install-local.sh (Swift) in shape:
+# Private helper — invoked by install-local.sh (the multi-backend
+# dispatcher) when the user picks --backend=rust / --experimental-rust
+# or runs on a non-macOS host. Do not invoke directly; flag parity with
+# the dispatcher's argv shape is maintained from there.
+#
+# Mirrors _install-local-swift.sh (the sibling Swift helper) in shape:
 #   --release    build the release configuration (default: debug)
 #   --autostart  register an auto-start daemon (macOS: LaunchAgent;
 #                Linux: systemd user unit). Default off; the post-install

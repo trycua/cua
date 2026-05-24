@@ -41,8 +41,9 @@ impl Tool for ListWindowsTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid_filter: Option<i32> = args.get("pid").and_then(|v| v.as_i64()).map(|v| v as i32);
-        let on_screen_only = args.get("on_screen_only").and_then(|v| v.as_bool()).unwrap_or(false);
+        use mcp_server::tool_args::ArgsExt;
+        let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
+        let on_screen_only = args.bool_or("on_screen_only", false);
 
         let mut windows = if on_screen_only {
             crate::windows::visible_windows()

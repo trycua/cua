@@ -60,14 +60,9 @@ impl Tool for ClaudeCodeCompatScreenshotTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let window_id = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
 
         // Validate: window must be visible and layer-0.
         let window = {

@@ -44,8 +44,9 @@ impl Tool for CheckPermissionsTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        use mcp_server::tool_args::ArgsExt;
         // Default to prompting — same default + rationale as Swift.
-        let should_prompt = args.get("prompt").and_then(|v| v.as_bool()).unwrap_or(true);
+        let should_prompt = args.bool_or("prompt", true);
         if should_prompt {
             let _ = request_accessibility();
             let _ = request_screen_recording();

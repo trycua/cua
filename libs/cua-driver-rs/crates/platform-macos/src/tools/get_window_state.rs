@@ -58,29 +58,24 @@ impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let window_id = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
-        let query = args.get("query").and_then(|v| v.as_str()).map(str::to_owned);
-        let screenshot_out_file = args.get("screenshot_out_file").and_then(|v| v.as_str()).map(|s| {
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
+        let query = args.opt_str("query");
+        let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix.
             if s.starts_with("~/") {
                 let home = std::env::var("HOME").unwrap_or_default();
                 format!("{home}/{}", &s[2..])
             } else {
-                s.to_owned()
+                s
             }
         });
         let default_mode = self.state.config.read().unwrap().capture_mode.clone();
-        let capture_mode = args.get("capture_mode").and_then(|v| v.as_str()).unwrap_or(&default_mode);
+        let capture_mode = args.opt_str("capture_mode").unwrap_or(default_mode);
 
         // Walk AX tree (unless vision-only mode). Accept "tree" as deprecated alias for "ax".
-        let capture_mode = if capture_mode == "tree" { "ax" } else { capture_mode };
+        let capture_mode = if capture_mode == "tree" { "ax".to_owned() } else { capture_mode };
         let tree_result = if capture_mode != "vision" {
             let q = query.clone();
             let result = tokio::task::spawn_blocking(move || {

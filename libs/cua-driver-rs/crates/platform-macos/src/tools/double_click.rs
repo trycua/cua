@@ -54,12 +54,10 @@ impl Tool for DoubleClickTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let element_index = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let window_id     = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let element_index = args.opt_u64("element_index").map(|v| v as usize);
+        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
 
         // ── AX element path ──────────────────────────────────────────────────
         if let (Some(idx), Some(wid)) = (element_index, window_id) {

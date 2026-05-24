@@ -46,14 +46,15 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        use mcp_server::tool_args::ArgsExt;
         let mut cfg = self.state.config.write().unwrap();
-        if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
-            cfg.capture_mode = mode.to_owned();
-            if let Err(e) = write_driver_config_key("capture_mode", &Value::String(mode.to_owned())) {
+        if let Some(mode) = args.opt_str("capture_mode") {
+            cfg.capture_mode = mode.clone();
+            if let Err(e) = write_driver_config_key("capture_mode", &Value::String(mode)) {
                 tracing::warn!("set_config: failed to persist capture_mode: {e}");
             }
         }
-        if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
+        if let Some(dim) = args.opt_u64("max_image_dimension") {
             if let Ok(dim32) = u32::try_from(dim) {
                 cfg.max_image_dimension = dim32;
                 if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(dim.into())) {

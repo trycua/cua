@@ -356,8 +356,9 @@ impl Tool for ListWindowsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let filter_pid = args.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let _on_screen_only = args.get("on_screen_only").and_then(|v| v.as_bool()).unwrap_or(false);
+        use mcp_server::tool_args::ArgsExt;
+        let filter_pid = args.opt_u64("pid").map(|v| v as u32);
+        let _on_screen_only = args.bool_or("on_screen_only", false);
         let (windows, pid_to_name) = tokio::task::spawn_blocking(move || {
             let wins = crate::win32::list_windows(filter_pid);
             let procs = crate::win32::list_processes();
@@ -532,9 +533,9 @@ impl Tool for GetWindowStateTool {
             let cfg = self.state.config.read().unwrap();
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
-        let capture_mode = args.get("capture_mode").and_then(|v| v.as_str())
-            .unwrap_or(&default_mode).to_owned();
-        let query = args.get("query").and_then(|v| v.as_str()).map(str::to_owned);
+        use mcp_server::tool_args::ArgsExt;
+        let capture_mode = args.str_or("capture_mode", &default_mode);
+        let query = args.opt_str("query");
 
         // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
         let do_tree = capture_mode != "vision";
@@ -1506,16 +1507,14 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let elem_idx = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let x = args.get("x").and_then(|v| v.as_f64());
-        let y = args.get("y").and_then(|v| v.as_f64());
-        let button = args.get("button").and_then(|v| v.as_str()).unwrap_or("left").to_owned();
-        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let hwnd_opt = args.opt_u64("window_id");
+        let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
+        let x = args.opt_f64("x");
+        let y = args.opt_f64("y");
+        let button = args.str_or("button", "left");
+        let count = args.u64_or("count", 1) as usize;
 
         // Resolve HWND: explicit, or auto from pid.
         let hwnd = match hwnd_opt {
@@ -1792,25 +1791,19 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // Swift error wording 1:1.
-        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) => p,
-            None    => return ToolResult::error("Missing required integer field pid."),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
-        let text = match args.get("text").and_then(|v| v.as_str()) {
-            Some(t) => t.to_owned(),
-            None    => return ToolResult::error("Missing required string field text."),
-        };
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let elem_idx = args.get("element_index").and_then(|v| v.as_u64());
+        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let hwnd_opt = args.opt_u64("window_id");
+        let elem_idx = args.opt_u64("element_index");
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.");
         }
-        let _delay_ms = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(30);
+        let _delay_ms = args.u64_or("delay_ms", 30);
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
@@ -1927,24 +1920,15 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // Swift error wording 1:1.
-        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) => p,
-            None    => return ToolResult::error("Missing required integer field pid."),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
-        let key = match args.get("key").and_then(|v| v.as_str()) {
-            Some(k) => k.to_owned(),
-            None    => return ToolResult::error("Missing required string field key."),
-        };
-        let mods: Vec<String> = args.get("modifiers")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
+        let key = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
+        let mods: Vec<String> = args.str_array("modifiers");
+        let hwnd_opt = args.opt_u64("window_id");
         // Swift requires window_id when element_index is supplied — ports the
         // same validation.
-        let elem_idx = args.get("element_index").and_then(|v| v.as_u64());
+        let elem_idx = args.opt_u64("element_index");
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
@@ -2034,12 +2018,9 @@ impl Tool for HotkeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        // Swift error wording 1:1.
-        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) => p,
-            None    => return ToolResult::error("Missing required integer field pid."),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let hwnd_opt = args.opt_u64("window_id");
+        let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
 
         // Parse keys array (Swift's only path).  Legacy key+modifiers shape
@@ -2303,13 +2284,13 @@ impl Tool for ScrollTool {
             Some(d) => d.to_owned(),
             None    => return ToolResult::error("Missing required string field direction."),
         };
-        let by = args.get("by").and_then(|v| v.as_str()).unwrap_or("line").to_owned();
+        use mcp_server::tool_args::ArgsExt;
+        let by = args.str_or("by", "line");
         let direction_display = direction.clone();
         let by_display = by.clone();
-        let amount = args.get("amount").and_then(|v| v.as_u64())
-            .unwrap_or(3).clamp(1, 50) as u32;
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let elem_idx = args.get("element_index").and_then(|v| v.as_u64());
+        let amount = args.u64_or("amount", 3).clamp(1, 50) as u32;
+        let hwnd_opt = args.opt_u64("window_id");
+        let elem_idx = args.opt_u64("element_index");
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
@@ -2427,9 +2408,10 @@ impl Tool for ScreenshotTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg").to_owned();
-        let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
+        use mcp_server::tool_args::ArgsExt;
+        let hwnd_opt = args.opt_u64("window_id");
+        let format = args.str_or("format", "jpeg");
+        let quality = args.u64_or("quality", 85) as u8;
         let is_jpeg = format == "jpeg";
         let max_dim = self.state.config.read().unwrap().max_image_dimension;
 
@@ -2525,10 +2507,11 @@ impl Tool for DoubleClickTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let elem_idx = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let x = args.get("x").and_then(|v| v.as_f64());
-        let y = args.get("y").and_then(|v| v.as_f64());
+        use mcp_server::tool_args::ArgsExt;
+        let hwnd_opt = args.opt_u64("window_id");
+        let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
+        let x = args.opt_f64("x");
+        let y = args.opt_f64("y");
         // Swift validates "both x and y or neither" and "no element_index without window_id".
         let has_xy        = x.is_some() && y.is_some();
         let partial_xy    = x.is_some() != y.is_some();
@@ -2668,10 +2651,11 @@ impl Tool for RightClickTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let elem_idx = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let x = args.get("x").and_then(|v| v.as_f64());
-        let y = args.get("y").and_then(|v| v.as_f64());
+        use mcp_server::tool_args::ArgsExt;
+        let hwnd_opt = args.opt_u64("window_id");
+        let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
+        let x = args.opt_f64("x");
+        let y = args.opt_f64("y");
         // Port Swift's full validation set.
         let has_xy     = x.is_some() && y.is_some();
         let partial_xy = x.is_some() != y.is_some();
@@ -2803,9 +2787,10 @@ impl Tool for DragTool {
         };
         let pid = raw_pid as u32;
 
+        use mcp_server::tool_args::ArgsExt;
+        // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
-            args.get(key).and_then(|v| v.as_f64())
-                .or_else(|| args.get(key).and_then(|v| v.as_i64()).map(|i| i as f64))
+            args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
         };
         let from_x_opt = coerce("from_x");
         let from_y_opt = coerce("from_y");
@@ -2818,11 +2803,11 @@ impl Tool for DragTool {
                     "from_x, from_y, to_x, and to_y are all required (window-local pixels)."),
             };
 
-        let hwnd_opt    = args.get("window_id").and_then(|v| v.as_u64());
-        let duration_ms = args.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(500);
-        let steps       = args.get("steps").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-        let button      = args.get("button").and_then(|v| v.as_str()).unwrap_or("left").to_owned();
-        let from_zoom   = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+        let hwnd_opt    = args.opt_u64("window_id");
+        let duration_ms = args.u64_or("duration_ms", 500);
+        let steps       = args.u64_or("steps", 20) as usize;
+        let button      = args.str_or("button", "left");
+        let from_zoom   = args.bool_or("from_zoom", false);
 
         if from_zoom {
             match self.state.zoom_registry.get(pid) {
@@ -2967,9 +2952,11 @@ impl Tool for MoveCursorTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
+        use mcp_server::tool_args::ArgsExt;
+        let x = args.f64_or("x", 0.0);
+        let y = args.f64_or("y", 0.0);
+        let cursor_id_owned = args.str_or("cursor_id", "default");
+        let cursor_id = cursor_id_owned.as_str();
         self.state.cursor_registry.update_position(cursor_id, x, y);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
@@ -3017,7 +3004,9 @@ impl Tool for SetAgentCursorEnabledTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
+        use mcp_server::tool_args::ArgsExt;
+        let cursor_id_owned = args.str_or("cursor_id", "default");
+        let cursor_id = cursor_id_owned.as_str();
         self.state.cursor_registry.set_enabled(cursor_id, enabled);
         crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
         // Match Swift text format 1:1: `"✅ Agent cursor enabled."`
@@ -3756,7 +3745,8 @@ impl Tool for ZoomTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required integer field window_id."),
         };
-        let coerce = |k: &str| args.get(k).and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)));
+        use mcp_server::tool_args::ArgsExt;
+        let coerce = |k: &str| args.opt_f64(k).or_else(|| args.opt_i64(k).map(|i| i as f64));
         let (x1, y1, x2, y2) = match (coerce("x1"), coerce("y1"), coerce("x2"), coerce("y2")) {
             (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
             _ => return ToolResult::error("Missing required region coordinates (x1, y1, x2, y2)."),
@@ -3839,12 +3829,11 @@ impl Tool for TypeTextCharsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let text = match args.get("text").and_then(|v| v.as_str()) {
-            Some(t) => t.to_owned(), None => return ToolResult::error("Missing required parameter: text"),
-        };
-        let delay_ms = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(30);
-        let hwnd_opt = args.get("window_id").and_then(|v| v.as_u64());
+        use mcp_server::tool_args::ArgsExt;
+        let pid = args.u64_or("pid", 0) as u32;
+        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let delay_ms = args.u64_or("delay_ms", 30);
+        let hwnd_opt = args.opt_u64("window_id");
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {

@@ -64,20 +64,12 @@ impl Tool for PressKeyTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let key_raw = match args.get("key").and_then(|v| v.as_str()) {
-            Some(v) => v.to_owned(),
-            None => return ToolResult::error("Missing required parameter: key"),
-        };
-        let mut modifiers: Vec<String> = args.get("modifiers")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
-        let element_index = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let window_id = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let key_raw = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
+        let mut modifiers: Vec<String> = args.str_array("modifiers");
+        let element_index = args.opt_u64("element_index").map(|v| v as usize);
+        let window_id = args.opt_u64("window_id").map(|v| v as u32);
 
         // Remap "+" / "plus" → "=" + Shift (same physical key on US layout).
         let key = if key_raw == "+" || key_raw == "plus" {

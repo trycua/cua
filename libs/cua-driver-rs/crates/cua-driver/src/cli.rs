@@ -172,7 +172,34 @@ pub fn parse_command() -> Command {
 
     let mut pos = positionals.into_iter();
     match pos.next() {
-        None | Some("mcp") => Command::Mcp {
+        None => {
+            // Bare `cua-driver` defaults to MCP, which reads JSON-RPC from
+            // stdin forever. From a terminal that looks like a hang. If
+            // stdin is a TTY (i.e. interactive shell, no client piping
+            // stdio), surface a hint and exit. Piped / redirected stdin —
+            // the normal MCP client case — falls through to MCP mode.
+            // Explicit `cua-driver mcp` bypasses the check entirely.
+            use std::io::IsTerminal as _;
+            if std::io::stdin().is_terminal() {
+                eprintln!("cua-driver: bare invocation defaults to the MCP server, which reads");
+                eprintln!("JSON-RPC from stdin. From a terminal that looks like a hang.");
+                eprintln!();
+                eprintln!("You probably meant one of:");
+                eprintln!("  cua-driver list-tools                           # available tools");
+                eprintln!("  cua-driver status                               # check the daemon");
+                eprintln!("  cua-driver mcp-config --client claude-code      # wire into a client");
+                eprintln!("  cua-driver --help                               # everything else");
+                eprintln!();
+                eprintln!("To run the MCP server explicitly (and pipe JSON-RPC by hand):");
+                eprintln!("  cua-driver mcp");
+                std::process::exit(0);
+            }
+            Command::Mcp {
+                no_daemon_relaunch,
+                socket: socket.clone(),
+            }
+        }
+        Some("mcp") => Command::Mcp {
             no_daemon_relaunch,
             socket: socket.clone(),
         },

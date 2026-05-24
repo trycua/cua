@@ -11,11 +11,14 @@
 //! - Notifications (no `id`) are silently ignored
 
 pub mod cdp;
+pub mod element_cache;
+pub mod image_utils;
 pub mod page;
 pub mod protocol;
 pub mod recording;
 pub mod recording_tools;
 pub mod server;
 pub mod tool;
+pub mod tool_args;
 
 pub use recording::RecordingSession;

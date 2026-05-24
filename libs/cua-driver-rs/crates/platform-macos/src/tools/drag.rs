@@ -99,15 +99,12 @@ impl Tool for DragTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
 
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
-            args.get(key).and_then(|v| v.as_f64())
-                .or_else(|| args.get(key).and_then(|v| v.as_i64()).map(|i| i as f64))
+            args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
         };
 
         let mut from_x = match coerce("from_x") {
@@ -127,15 +124,12 @@ impl Tool for DragTool {
             None => return ToolResult::error("Missing required parameter: to_y"),
         };
 
-        let window_id   = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let duration_ms = args.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(500);
-        let steps       = args.get("steps").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-        let from_zoom   = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
-        let button_str  = args.get("button").and_then(|v| v.as_str()).unwrap_or("left");
-        let modifiers: Vec<String> = args.get("modifier")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
+        let window_id   = args.opt_u64("window_id").map(|v| v as u32);
+        let duration_ms = args.u64_or("duration_ms", 500);
+        let steps       = args.u64_or("steps", 20) as usize;
+        let from_zoom   = args.bool_or("from_zoom", false);
+        let button_str  = args.str_or("button", "left");
+        let modifiers: Vec<String> = args.str_array("modifier");
 
         let button = match button_str.to_lowercase().as_str() {
             "left"   => DragButton::Left,

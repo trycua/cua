@@ -79,19 +79,14 @@ impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let bundle_id = args.get("bundle_id").and_then(|v| v.as_str()).map(str::to_owned);
-        let name      = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
-        let urls: Vec<String> = args.get("urls")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
-        let electron_debugging_port = args.get("electron_debugging_port").and_then(|v| v.as_u64()).map(|v| v as u16);
-        let webkit_inspector_port = args.get("webkit_inspector_port").and_then(|v| v.as_u64()).map(|v| v as u16);
-        let creates_new_instance = args.get("creates_new_application_instance").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mut additional_arguments: Vec<String> = args.get("additional_arguments")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
+        use mcp_server::tool_args::ArgsExt;
+        let bundle_id = args.opt_str("bundle_id");
+        let name      = args.opt_str("name");
+        let urls: Vec<String> = args.str_array("urls");
+        let electron_debugging_port = args.opt_u64("electron_debugging_port").map(|v| v as u16);
+        let webkit_inspector_port = args.opt_u64("webkit_inspector_port").map(|v| v as u16);
+        let creates_new_instance = args.bool_or("creates_new_application_instance", false);
+        let mut additional_arguments: Vec<String> = args.str_array("additional_arguments");
 
         if bundle_id.is_none() && name.is_none() {
             return ToolResult::error(

@@ -15,12 +15,14 @@ pub mod path_planner;
 pub mod shape;
 pub mod capture_utils;
 pub mod util;
+pub mod render_state;
 
 pub use palette::Palette;
-pub use motion::MotionConfig;
+pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
 pub use shape::CursorShape;
+pub use render_state::{RenderStateCore, FocusRect, render_frame, draw_default_arrow};
 
 /// Configuration assembled from CLI arguments and passed to every
 /// platform backend when it initialises the overlay window.

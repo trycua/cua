@@ -6,10 +6,14 @@
 //! Memory contract: UiaNode::element_ptr is a raw IUIAutomationElement vtable
 //! pointer with an extra AddRef from clone()+forget() in the walker. Drop here
 //! calls Release() to balance.
+//!
+//! The locked-HashMap plumbing lives in `mcp_server::element_cache` — see
+//! `docs/dedup-audit.md` item #3. This module owns the Windows-specific
+//! `CacheKey`, `CachedSnapshot`, and the `Drop` impl that fires COM `Release`
+//! when an entry is replaced or removed.
 
 use super::UiaNode;
-use std::collections::HashMap;
-use std::sync::Mutex;
+use mcp_server::element_cache::ElementCacheCore;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
 use windows::core::Interface;
 
@@ -41,35 +45,37 @@ impl Drop for CachedSnapshot {
 }
 
 pub struct ElementCache {
-    inner: Mutex<HashMap<CacheKey, CachedSnapshot>>,
+    core: ElementCacheCore<CacheKey, CachedSnapshot>,
 }
 
 impl ElementCache {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self { core: ElementCacheCore::new() }
     }
 
     pub fn update(&self, pid: u32, hwnd: u64, nodes: &[UiaNode]) {
         let actionable: Vec<&UiaNode> = nodes.iter().filter(|n| n.element_index.is_some()).collect();
         let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();
         let centers: Vec<(i32, i32)> = actionable.iter().map(|n| (n.center_x, n.center_y)).collect();
-        let mut inner = self.inner.lock().unwrap();
-        inner.insert(CacheKey { pid, hwnd }, CachedSnapshot { elements, centers });
+        self.core.insert(CacheKey { pid, hwnd }, CachedSnapshot { elements, centers });
     }
 
     pub fn get_element_ptr(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<usize> {
-        let inner = self.inner.lock().unwrap();
-        inner.get(&CacheKey { pid, hwnd })?.elements.get(element_index).copied()
+        self.core
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.elements.get(element_index).copied())
+            .flatten()
     }
 
     pub fn get_element_center(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<(i32, i32)> {
-        let inner = self.inner.lock().unwrap();
-        inner.get(&CacheKey { pid, hwnd })?.centers.get(element_index).copied()
+        self.core
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.centers.get(element_index).copied())
+            .flatten()
     }
 
     pub fn element_count(&self, pid: u32, hwnd: u64) -> usize {
-        let inner = self.inner.lock().unwrap();
-        inner.get(&CacheKey { pid, hwnd }).map(|s| s.elements.len()).unwrap_or(0)
+        self.core
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.elements.len())
+            .unwrap_or(0)
     }
 }
 

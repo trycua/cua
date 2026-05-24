@@ -89,17 +89,12 @@ impl Tool for TypeTextTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let text = match args.get("text").and_then(|v| v.as_str()) {
-            Some(v) => v.to_owned(),
-            None => return ToolResult::error("Missing required parameter: text"),
-        };
-        let element_index = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let window_id     = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let delay_ms      = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(30);
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let element_index = args.opt_u64("element_index").map(|v| v as usize);
+        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
+        let delay_ms      = args.u64_or("delay_ms", 30);
 
         // Validate element_index requires window_id.
         if element_index.is_some() && window_id.is_none() {

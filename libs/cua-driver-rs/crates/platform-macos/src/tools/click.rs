@@ -101,25 +101,18 @@ impl Tool for ClickTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
 
-        let element_index = args.get("element_index").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let window_id     = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let x             = args.get("x").and_then(|v| v.as_f64())
-            .or_else(|| args.get("x").and_then(|v| v.as_i64()).map(|i| i as f64));
-        let y             = args.get("y").and_then(|v| v.as_f64())
-            .or_else(|| args.get("y").and_then(|v| v.as_i64()).map(|i| i as f64));
-        let action        = args.get("action").and_then(|v| v.as_str()).unwrap_or("press").to_owned();
-        let count         = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-        let from_zoom     = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
-        let debug_image_out = args.get("debug_image_out").and_then(|v| v.as_str()).map(str::to_owned);
-        let modifiers: Vec<String> = args.get("modifier")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
+        let element_index = args.opt_u64("element_index").map(|v| v as usize);
+        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
+        let x             = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64));
+        let y             = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|i| i as f64));
+        let action        = args.str_or("action", "press");
+        let count         = args.u64_or("count", 1) as usize;
+        let from_zoom     = args.bool_or("from_zoom", false);
+        let debug_image_out = args.opt_str("debug_image_out");
+        let modifiers: Vec<String> = args.str_array("modifier");
 
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
             // ── AX element path ────────────────────────────────────────────

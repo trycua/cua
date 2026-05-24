@@ -63,9 +63,10 @@ impl Tool for ScreenshotTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let window_id = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let format    = args.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg").to_owned();
-        let quality   = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
+        use mcp_server::tool_args::ArgsExt;
+        let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        let format    = args.str_or("format", "jpeg");
+        let quality   = args.u64_or("quality", 85) as u8;
         let use_jpeg  = format == "jpeg";
         let max_dim   = self.state.config.read().unwrap().max_image_dimension;
 

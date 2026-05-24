@@ -45,27 +45,13 @@ impl Tool for ZoomTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let window_id = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
-        let pid = args.get("pid").and_then(|v| v.as_i64()).map(|v| v as i32);
-        let x1 = match args.get("x1").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: x1"),
-        };
-        let y1 = match args.get("y1").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: y1"),
-        };
-        let x2 = match args.get("x2").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: x2"),
-        };
-        let y2 = match args.get("y2").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: y2"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
+        let pid = args.opt_i64("pid").map(|v| v as i32);
+        let x1 = match args.require_f64("x1") { Ok(v) => v, Err(e) => return e };
+        let y1 = match args.require_f64("y1") { Ok(v) => v, Err(e) => return e };
+        let x2 = match args.require_f64("x2") { Ok(v) => v, Err(e) => return e };
+        let y2 = match args.require_f64("y2") { Ok(v) => v, Err(e) => return e };
 
         if x2 <= x1 || y2 <= y1 {
             return ToolResult::error("x2 must be > x1 and y2 must be > y1");

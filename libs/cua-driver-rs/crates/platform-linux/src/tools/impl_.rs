@@ -294,7 +294,8 @@ impl Tool for ListWindowsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let filter_pid = args.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32);
+        use mcp_server::tool_args::ArgsExt;
+        let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let windows = tokio::task::spawn_blocking(move || crate::x11::list_windows(filter_pid)).await.unwrap_or_default();
         let mut lines = vec![format!("Found {} windows:", windows.len())];
         for w in &windows {
@@ -338,21 +339,15 @@ impl Tool for GetWindowStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let xid = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let xid = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
         let (default_mode, max_dim) = {
             let cfg = self.state.config.read().unwrap();
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
-        let capture_mode = args.get("capture_mode").and_then(|v| v.as_str())
-            .unwrap_or(&default_mode).to_owned();
-        let query = args.get("query").and_then(|v| v.as_str()).map(str::to_owned);
+        let capture_mode = args.str_or("capture_mode", &default_mode);
+        let query = args.opt_str("query");
 
         // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
         let do_tree = capture_mode != "vision";
@@ -441,11 +436,10 @@ impl Tool for LaunchAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let launch_path_opt = args.get("launch_path").and_then(|v| v.as_str()).map(str::to_owned);
-        let name_opt = args.get("name").and_then(|v| v.as_str()).map(str::to_owned);
-        let urls: Vec<String> = args.get("urls").and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
+        use mcp_server::tool_args::ArgsExt;
+        let launch_path_opt = args.opt_str("launch_path");
+        let name_opt = args.opt_str("name");
+        let urls: Vec<String> = args.str_array("urls");
 
         if launch_path_opt.is_none() && name_opt.is_none() && urls.is_empty() {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
@@ -561,20 +555,18 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
-        let button: u8 = match args.get("button").and_then(|v| v.as_str()).unwrap_or("left") {
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let count = args.u64_or("count", 1) as usize;
+        let button: u8 = match args.str_or("button", "left").as_str() {
             "right" => 3,
             "middle" => 2,
             _ => 1,
         };
 
-        if let Some(idx) = args.get("element_index").and_then(|v| v.as_u64()) {
+        if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
-            let xid_hint = args.get("window_id").and_then(|v| v.as_u64());
+            let xid_hint = args.opt_u64("window_id");
             // For element_index: try AT-SPI perform_action first (background-safe).
             // Always get bounds to send the overlay ClickPulse at the element center.
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(f64, f64)> {
@@ -610,13 +602,13 @@ impl Tool for ClickTool {
         }
 
         // Coordinate-based path.
-        let xid = match args.get("window_id").and_then(|v| v.as_u64()) {
+        let xid = match args.opt_u64("window_id") {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
-        let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mut x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let mut y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let from_zoom = args.bool_or("from_zoom", false);
+        let mut x = args.f64_or("x", 0.0);
+        let mut y = args.f64_or("y", 0.0);
         if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
@@ -669,12 +661,10 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let text = match args.get("text").and_then(|v| v.as_str()) {
-            Some(t) => t.to_owned(),
-            None => return ToolResult::error("Missing required parameter: text"),
-        };
-        let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
+        use mcp_server::tool_args::ArgsExt;
+        let pid = args.u64_or("pid", 0) as u32;
+        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let xid_opt = args.opt_u64("window_id");
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -723,16 +713,11 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let key = match args.get("key").and_then(|v| v.as_str()) {
-            Some(k) => k.to_owned(),
-            None => return ToolResult::error("Missing required parameter: key"),
-        };
-        let mods: Vec<String> = args.get("modifiers")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
-        let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
+        use mcp_server::tool_args::ArgsExt;
+        let pid = args.u64_or("pid", 0) as u32;
+        let key = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
+        let mods: Vec<String> = args.str_array("modifiers");
+        let xid_opt = args.opt_u64("window_id");
         let xid = match xid_opt {
             Some(x) => x,
             None => {
@@ -786,8 +771,9 @@ impl Tool for HotkeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
+        use mcp_server::tool_args::ArgsExt;
+        let pid = args.u64_or("pid", 0) as u32;
+        let xid_opt = args.opt_u64("window_id");
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -810,11 +796,9 @@ impl Tool for HotkeyTool {
                 return ToolResult::error("keys must include at least one non-modifier key.");
             }
             (non_mods.last().unwrap().clone(), modifiers)
-        } else if let Some(k) = args.get("key").and_then(|v| v.as_str()) {
-            let mods: Vec<String> = args.get("modifiers").and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-                .unwrap_or_default();
-            (k.to_owned(), mods)
+        } else if let Some(k) = args.opt_str("key") {
+            let mods: Vec<String> = args.str_array("modifiers");
+            (k, mods)
         } else {
             return ToolResult::error("Provide 'keys' array (e.g. [\"ctrl\",\"c\"]) or 'key'+'modifiers' parameters.");
         };
@@ -856,18 +840,10 @@ impl Tool for SetValueTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let idx = match args.get("element_index").and_then(|v| v.as_u64()) {
-            Some(v) => v as usize,
-            None => return ToolResult::error("Missing required parameter: element_index"),
-        };
-        let value = match args.get("value").and_then(|v| v.as_str()) {
-            Some(v) => v.to_owned(),
-            None => return ToolResult::error("Missing required parameter: value"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let idx = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
+        let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
         let value_for_task = value.clone();
         let result = tokio::task::spawn_blocking(move || {
             crate::atspi::set_value(pid, idx, &value_for_task)
@@ -907,17 +883,11 @@ impl Tool for ScrollTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let direction = match args.get("direction").and_then(|v| v.as_str()) {
-            Some(d) => d.to_owned(),
-            None => return ToolResult::error("Missing required parameter: direction"),
-        };
-        let amount = args.get("amount").and_then(|v| v.as_u64())
-            .unwrap_or(3).clamp(1, 50) as usize;
-        let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
+        let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
+        let xid_opt = args.opt_u64("window_id");
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -983,9 +953,10 @@ impl Tool for ScreenshotTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
-        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg").to_owned();
-        let quality = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
+        use mcp_server::tool_args::ArgsExt;
+        let xid_opt = args.opt_u64("window_id");
+        let format = args.str_or("format", "jpeg");
+        let quality = args.u64_or("quality", 85) as u8;
         let is_jpeg = format == "jpeg";
         let max_dim = self.state.config.read().unwrap().max_image_dimension;
 
@@ -1054,13 +1025,11 @@ impl Tool for DoubleClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        if let Some(idx) = args.get("element_index").and_then(|v| v.as_u64()) {
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
-            let xid_hint = args.get("window_id").and_then(|v| v.as_u64());
+            let xid_hint = args.opt_u64("window_id");
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
                 resolve_element_local_coords(pid, idx, xid_hint)
             }).await;
@@ -1077,12 +1046,12 @@ impl Tool for DoubleClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        let xid = match args.get("window_id").and_then(|v| v.as_u64()) {
+        let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
-        let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mut x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let mut y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let from_zoom = args.bool_or("from_zoom", false);
+        let mut x = args.f64_or("x", 0.0);
+        let mut y = args.f64_or("y", 0.0);
         if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
@@ -1133,13 +1102,11 @@ impl Tool for RightClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        if let Some(idx) = args.get("element_index").and_then(|v| v.as_u64()) {
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
-            let xid_hint = args.get("window_id").and_then(|v| v.as_u64());
+            let xid_hint = args.opt_u64("window_id");
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
                 resolve_element_local_coords(pid, idx, xid_hint)
             }).await;
@@ -1156,12 +1123,12 @@ impl Tool for RightClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        let xid = match args.get("window_id").and_then(|v| v.as_u64()) {
+        let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
-        let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mut x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let mut y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let from_zoom = args.bool_or("from_zoom", false);
+        let mut x = args.f64_or("x", 0.0);
+        let mut y = args.f64_or("y", 0.0);
         if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
@@ -1216,27 +1183,25 @@ impl Tool for DragTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32, None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let xid = match args.get("window_id").and_then(|v| v.as_u64()) {
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("window_id is required on Linux."),
         };
 
         let coerce = |key: &str| -> Option<f64> {
-            args.get(key).and_then(|v| v.as_f64())
-                .or_else(|| args.get(key).and_then(|v| v.as_i64()).map(|i| i as f64))
+            args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
         };
         let mut from_x = match coerce("from_x") { Some(v) => v, None => return ToolResult::error("Missing: from_x") };
         let mut from_y = match coerce("from_y") { Some(v) => v, None => return ToolResult::error("Missing: from_y") };
         let mut to_x   = match coerce("to_x")   { Some(v) => v, None => return ToolResult::error("Missing: to_x") };
         let mut to_y   = match coerce("to_y")   { Some(v) => v, None => return ToolResult::error("Missing: to_y") };
 
-        let duration_ms = args.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(500);
-        let steps       = args.get("steps").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-        let button_str  = args.get("button").and_then(|v| v.as_str()).unwrap_or("left");
-        let button: u8  = match button_str { "right" => 3, "middle" => 2, _ => 1 };
-        let from_zoom   = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+        let duration_ms = args.u64_or("duration_ms", 500);
+        let steps       = args.u64_or("steps", 20) as usize;
+        let button_str  = args.str_or("button", "left");
+        let button: u8  = match button_str.as_str() { "right" => 3, "middle" => 2, _ => 1 };
+        let from_zoom   = args.bool_or("from_zoom", false);
 
         if from_zoom {
             match self.state.zoom_registry.get(pid) {
@@ -1373,10 +1338,11 @@ impl Tool for MoveCursorTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
-        self.state.cursor_registry.update_position(cursor_id, x, y);
+        use mcp_server::tool_args::ArgsExt;
+        let x = args.f64_or("x", 0.0);
+        let y = args.f64_or("y", 0.0);
+        let cursor_id = args.str_or("cursor_id", "default");
+        self.state.cursor_registry.update_position(&cursor_id, x, y);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
@@ -1408,11 +1374,10 @@ impl Tool for SetAgentCursorEnabledTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
-            Some(v) => v, None => return ToolResult::error("Missing required parameter: enabled"),
-        };
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
-        self.state.cursor_registry.set_enabled(cursor_id, enabled);
+        use mcp_server::tool_args::ArgsExt;
+        let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
+        let cursor_id = args.str_or("cursor_id", "default");
+        self.state.cursor_registry.set_enabled(&cursor_id, enabled);
         crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
         ToolResult::text(format!("Agent cursor '{cursor_id}' {}.", if enabled { "enabled" } else { "disabled" }))
     }
@@ -1452,13 +1417,14 @@ impl Tool for SetAgentCursorMotionTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        use mcp_server::tool_args::ArgsExt;
+        let cursor_id = args.str_or("cursor_id", "default");
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
-            if let Some(v) = args.get("cursor_icon").and_then(|v| v.as_str()) { cfg.cursor_icon = Some(v.to_owned()); }
-            if let Some(v) = args.get("cursor_color").and_then(|v| v.as_str()) { cfg.cursor_color = Some(v.to_owned()); }
-            if let Some(v) = args.get("cursor_label").and_then(|v| v.as_str()) { cfg.cursor_label = Some(v.to_owned()); }
-            if let Some(v) = args.get("cursor_size").and_then(|v| v.as_f64()) { cfg.cursor_size = Some(v); }
-            if let Some(v) = args.get("cursor_opacity").and_then(|v| v.as_f64()) { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
+            if let Some(v) = args.opt_str("cursor_icon") { cfg.cursor_icon = Some(v); }
+            if let Some(v) = args.opt_str("cursor_color") { cfg.cursor_color = Some(v); }
+            if let Some(v) = args.opt_str("cursor_label") { cfg.cursor_label = Some(v); }
+            if let Some(v) = args.opt_f64("cursor_size") { cfg.cursor_size = Some(v); }
+            if let Some(v) = args.opt_f64("cursor_opacity") { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
         });
         ToolResult::text(format!("Cursor '{cursor_id}' config updated.")).with_structured(args)
     }
@@ -1543,7 +1509,8 @@ impl Tool for SetAgentCursorStyleTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        use mcp_server::tool_args::ArgsExt;
+        let cursor_id = args.str_or("cursor_id", "default");
 
         // image_path
         let image_path = args.get("image_path").and_then(|v| v.as_str());
@@ -1741,13 +1708,14 @@ impl Tool for SetConfigTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
+        use mcp_server::tool_args::ArgsExt;
         let mut cfg = self.state.config.write().unwrap();
         let mut parts = Vec::new();
-        if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
-            cfg.capture_mode = mode.to_owned();
+        if let Some(mode) = args.opt_str("capture_mode") {
             parts.push(format!("capture_mode={mode}"));
+            cfg.capture_mode = mode;
         }
-        if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
+        if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
             parts.push(format!("max_image_dimension={dim}"));
         }
@@ -1850,14 +1818,13 @@ impl Tool for ZoomTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let xid = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v, None => return ToolResult::error("Missing required parameter: window_id"),
-        };
-        let pid = args.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let x1 = match args.get("x1").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing x1") };
-        let y1 = match args.get("y1").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing y1") };
-        let x2 = match args.get("x2").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing x2") };
-        let y2 = match args.get("y2").and_then(|v| v.as_f64()) { Some(v) => v, None => return ToolResult::error("Missing y2") };
+        use mcp_server::tool_args::ArgsExt;
+        let xid = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
+        let pid = args.opt_u64("pid").map(|v| v as u32);
+        let x1 = match args.opt_f64("x1") { Some(v) => v, None => return ToolResult::error("Missing x1") };
+        let y1 = match args.opt_f64("y1") { Some(v) => v, None => return ToolResult::error("Missing y1") };
+        let x2 = match args.opt_f64("x2") { Some(v) => v, None => return ToolResult::error("Missing x2") };
+        let y2 = match args.opt_f64("y2") { Some(v) => v, None => return ToolResult::error("Missing y2") };
         if x2 <= x1 || y2 <= y1 { return ToolResult::error("x2 must be > x1 and y2 must be > y1"); }
 
         let state = self.state.clone();
@@ -1922,12 +1889,11 @@ impl Tool for TypeTextCharsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = args.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let text = match args.get("text").and_then(|v| v.as_str()) {
-            Some(t) => t.to_owned(), None => return ToolResult::error("Missing required parameter: text"),
-        };
-        let delay_ms = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(30);
-        let xid_opt = args.get("window_id").and_then(|v| v.as_u64());
+        use mcp_server::tool_args::ArgsExt;
+        let pid = args.u64_or("pid", 0) as u32;
+        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let delay_ms = args.u64_or("delay_ms", 30);
+        let xid_opt = args.opt_u64("window_id");
         let xid = match xid_opt {
             Some(x) => x,
             None => {

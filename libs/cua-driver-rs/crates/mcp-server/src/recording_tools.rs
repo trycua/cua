@@ -93,13 +93,14 @@ impl Tool for SetRecordingTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        let output_dir = args.get("output_dir").and_then(|v| v.as_str());
-        if enabled && output_dir.map(|s| s.is_empty()).unwrap_or(true) {
+        use crate::tool_args::ArgsExt;
+        let output_dir = args.opt_str("output_dir");
+        if enabled && output_dir.as_deref().map(str::is_empty).unwrap_or(true) {
             return ToolResult::error("`output_dir` is required when enabling recording.");
         }
-        let video_experimental = args.get("video_experimental").and_then(|v| v.as_bool()).unwrap_or(false);
+        let video_experimental = args.bool_or("video_experimental", false);
 
-        match self.session.configure(enabled, output_dir) {
+        match self.session.configure(enabled, output_dir.as_deref()) {
             Ok(()) => {
                 let state = self.session.current_state();
                 let msg = if state.enabled {
@@ -223,8 +224,9 @@ impl Tool for ReplayTrajectoryTool {
             Some(v) if !v.is_empty() => v.to_owned(),
             _ => return ToolResult::error("Missing required string field `dir`."),
         };
-        let delay_ms = args.get("delay_ms").and_then(|v| v.as_u64()).unwrap_or(500).min(10_000);
-        let stop_on_error = args.get("stop_on_error").and_then(|v| v.as_bool()).unwrap_or(true);
+        use crate::tool_args::ArgsExt;
+        let delay_ms = args.u64_or("delay_ms", 500).min(10_000);
+        let stop_on_error = args.bool_or("stop_on_error", true);
 
         // Expand ~/
         let dir = {

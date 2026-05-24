@@ -84,22 +84,11 @@ impl Tool for SetValueTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(v) => v as i32,
-            None => return ToolResult::error("Missing required parameter: pid"),
-        };
-        let window_id = match args.get("window_id").and_then(|v| v.as_u64()) {
-            Some(v) => v as u32,
-            None => return ToolResult::error("Missing required parameter: window_id"),
-        };
-        let element_index = match args.get("element_index").and_then(|v| v.as_u64()) {
-            Some(v) => v as usize,
-            None => return ToolResult::error("Missing required parameter: element_index"),
-        };
-        let value = match args.get("value").and_then(|v| v.as_str()) {
-            Some(v) => v.to_owned(),
-            None => return ToolResult::error("Missing required parameter: value"),
-        };
+        use mcp_server::tool_args::ArgsExt;
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
+        let element_index = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
+        let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
 
         let element_ptr = match self.state.element_cache.get_element_ptr(pid, window_id, element_index) {
             Some(p) => p,

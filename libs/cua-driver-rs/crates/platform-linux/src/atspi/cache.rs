@@ -1,9 +1,13 @@
 //! AT-SPI element cache for Linux.
 //! Stores element keys (u64 hash) indexed by (pid, xid) → element_index.
+//!
+//! The locked-HashMap plumbing lives in `mcp_server::element_cache` — see
+//! `docs/dedup-audit.md` item #3. This module owns the Linux-specific
+//! `CacheKey` and `CachedSnapshot` (no Drop needed — `Vec<u64>` frees
+//! itself).
 
 use super::AtspiNode;
-use std::collections::HashMap;
-use std::sync::Mutex;
+use mcp_server::element_cache::ElementCacheCore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CacheKey { pub pid: u32, pub xid: u64 }
@@ -14,30 +18,29 @@ pub struct CachedSnapshot {
 }
 
 pub struct ElementCache {
-    inner: Mutex<HashMap<CacheKey, CachedSnapshot>>,
+    core: ElementCacheCore<CacheKey, CachedSnapshot>,
 }
 
 impl ElementCache {
-    pub fn new() -> Self { Self { inner: Mutex::new(HashMap::new()) } }
+    pub fn new() -> Self { Self { core: ElementCacheCore::new() } }
 
     pub fn update(&self, pid: u32, xid: u64, nodes: &[AtspiNode]) {
         let elements: Vec<u64> = nodes.iter()
             .filter(|n| n.element_index.is_some())
             .map(|n| n.element_key)
             .collect();
-        self.inner.lock().unwrap().insert(CacheKey { pid, xid }, CachedSnapshot { elements });
+        self.core.insert(CacheKey { pid, xid }, CachedSnapshot { elements });
     }
 
     pub fn get_element_key(&self, pid: u32, xid: u64, idx: usize) -> Option<u64> {
-        self.inner.lock().unwrap()
-            .get(&CacheKey { pid, xid })?
-            .elements.get(idx).copied()
+        self.core
+            .with_snapshot(&CacheKey { pid, xid }, |s| s.elements.get(idx).copied())
+            .flatten()
     }
 
     pub fn element_count(&self, pid: u32, xid: u64) -> usize {
-        self.inner.lock().unwrap()
-            .get(&CacheKey { pid, xid })
-            .map(|s| s.elements.len())
+        self.core
+            .with_snapshot(&CacheKey { pid, xid }, |s| s.elements.len())
             .unwrap_or(0)
     }
 }

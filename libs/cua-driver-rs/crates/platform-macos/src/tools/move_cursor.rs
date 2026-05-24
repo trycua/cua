@@ -43,15 +43,11 @@ impl Tool for MoveCursorTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let x = match args.get("x").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: x"),
-        };
-        let y = match args.get("y").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: y"),
-        };
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
+        use mcp_server::tool_args::ArgsExt;
+        let x = match args.require_f64("x") { Ok(v) => v, Err(e) => return e };
+        let y = match args.require_f64("y") { Ok(v) => v, Err(e) => return e };
+        let cursor_id_owned = args.str_or("cursor_id", "default");
+        let cursor_id = cursor_id_owned.as_str();
 
         self.state.cursor_registry.update_position(cursor_id, x, y);
         // Drive the visual overlay (no-op when overlay is disabled).

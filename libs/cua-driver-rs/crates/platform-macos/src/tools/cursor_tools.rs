@@ -49,11 +49,10 @@ impl Tool for SetAgentCursorEnabledTool {
     fn def(&self) -> &ToolDef { enabled_def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: enabled"),
-        };
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
+        use mcp_server::tool_args::ArgsExt;
+        let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
+        let cursor_id_owned = args.str_or("cursor_id", "default");
+        let cursor_id = cursor_id_owned.as_str();
         self.state.cursor_registry.set_enabled(cursor_id, enabled);
         // Drive the visual overlay.
         crate::cursor::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
@@ -155,26 +154,27 @@ impl Tool for SetAgentCursorMotionTool {
     fn def(&self) -> &ToolDef { motion_def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        use mcp_server::tool_args::ArgsExt;
+        let cursor_id = args.str_or("cursor_id", "default");
 
         // Start from the current state or defaults.
         let mut current = self.state.cursor_registry.get_or_create(&cursor_id);
         let config = &mut current.config;
 
         // ── Appearance fields ────────────────────────────────────────────────
-        if let Some(icon) = args.get("cursor_icon").and_then(|v| v.as_str()) {
-            config.cursor_icon = Some(icon.to_owned());
+        if let Some(icon) = args.opt_str("cursor_icon") {
+            config.cursor_icon = Some(icon);
         }
-        if let Some(color) = args.get("cursor_color").and_then(|v| v.as_str()) {
-            config.cursor_color = Some(color.to_owned());
+        if let Some(color) = args.opt_str("cursor_color") {
+            config.cursor_color = Some(color);
         }
-        if let Some(label) = args.get("cursor_label").and_then(|v| v.as_str()) {
-            config.cursor_label = Some(label.to_owned());
+        if let Some(label) = args.opt_str("cursor_label") {
+            config.cursor_label = Some(label);
         }
-        if let Some(size) = args.get("cursor_size").and_then(|v| v.as_f64()) {
+        if let Some(size) = args.opt_f64("cursor_size") {
             config.cursor_size = Some(size);
         }
-        if let Some(opacity) = args.get("cursor_opacity").and_then(|v| v.as_f64()) {
+        if let Some(opacity) = args.opt_f64("cursor_opacity") {
             config.cursor_opacity = Some(opacity.clamp(0.0, 1.0));
         }
 
@@ -290,7 +290,8 @@ impl Tool for SetAgentCursorStyleTool {
     fn def(&self) -> &ToolDef { style_def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        use mcp_server::tool_args::ArgsExt;
+        let cursor_id = args.str_or("cursor_id", "default");
 
         // ── image_path ────────────────────────────────────────────────────────
         let image_path = args.get("image_path").and_then(|v| v.as_str());

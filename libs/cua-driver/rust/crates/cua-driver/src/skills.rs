@@ -439,17 +439,30 @@ fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
 fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
     let gz = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(gz);
-    // The tarball contains a `cua-driver/` top-level dir matching the
-    // pack name. Strip it during extraction so the .md files land
-    // directly in `dest` (which is itself `<HomeDir>/skills/cua-driver`).
-    // Pre-rename tarballs had `cua-driver-rs/` — the stripping logic
-    // below is name-agnostic so both shapes extract identically.
+    // Tarball shape across versions:
+    //   v0.2.18 and earlier: cua-driver-rs-v<v>-skills/cua-driver-rs/<file>
+    //   v0.2.19 (briefly):   cua-driver-rs-v<v>-skills/cua-driver/<file>
+    //   v0.2.20+:            cua-driver-rs-v<v>-skills/<file>     (CD workflow now flattens)
+    //
+    // Strip the outer staging dir always; additionally strip a SECOND
+    // wrapping dir IF it's named `cua-driver` or `cua-driver-rs` — that
+    // covers the legacy double-wrap without losing files in the
+    // (now-canonical) single-wrap shape.
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
         let mut components = path.components();
         if components.next().is_none() {
             continue; // empty entry
+        }
+        // Peek the next component; if it's an unambiguous skill-pack
+        // wrapper, drop it too.
+        let mut peek = components.clone();
+        if let Some(next) = peek.next() {
+            let name = next.as_os_str();
+            if name == "cua-driver" || name == "cua-driver-rs" {
+                components.next();
+            }
         }
         let stripped: PathBuf = components.collect();
         if stripped.as_os_str().is_empty() {
@@ -599,4 +612,98 @@ fn print_path() -> Result<()> {
     let local = local_skill_dir()?;
     println!("{}", local.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_tar_gz;
+    use tempfile::tempdir;
+
+    /// Build a gzipped tarball with the entries given as
+    /// `(path, contents)` pairs. Returns the raw `.tar.gz` bytes.
+    fn build_tarball(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut gz_buf = Vec::new();
+        {
+            let gz = flate2::write::GzEncoder::new(&mut gz_buf, flate2::Compression::default());
+            let mut tar = tar::Builder::new(gz);
+            for (path, contents) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                tar.append_data(&mut header, path, &contents[..]).unwrap();
+            }
+            tar.finish().unwrap();
+        }
+        gz_buf
+    }
+
+    #[test]
+    fn extract_flat_tarball_v_0_2_20_plus() {
+        // Post-fix shape: one wrapper dir, files directly under it.
+        //   cua-driver-rs-v0.2.20-skills/SKILL.md
+        //   cua-driver-rs-v0.2.20-skills/WINDOWS.md
+        let bytes = build_tarball(&[
+            ("cua-driver-rs-v0.2.20-skills/SKILL.md",   b"flat-skill"),
+            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"flat-win"),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
+
+        let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
+        assert_eq!(s, "flat-skill");
+        let w = std::fs::read_to_string(dest.path().join("WINDOWS.md")).unwrap();
+        assert_eq!(w, "flat-win");
+        // No nested wrapper dir created.
+        assert!(!dest.path().join("cua-driver").exists());
+        assert!(!dest.path().join("cua-driver-rs").exists());
+    }
+
+    #[test]
+    fn extract_legacy_tarball_v_0_2_18_double_wrap_old_name() {
+        // v0.2.18 and earlier shape:
+        //   cua-driver-rs-v0.2.18-skills/cua-driver-rs/SKILL.md
+        // Both wrappers must be stripped or the user ends up with a
+        // nested cua-driver-rs/ dir (the bug this fixes).
+        let bytes = build_tarball(&[
+            ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/SKILL.md",   b"legacy-skill"),
+            ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/WINDOWS.md", b"legacy-win"),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
+
+        let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
+        assert_eq!(s, "legacy-skill");
+        let w = std::fs::read_to_string(dest.path().join("WINDOWS.md")).unwrap();
+        assert_eq!(w, "legacy-win");
+        assert!(!dest.path().join("cua-driver-rs").exists(),
+            "nested cua-driver-rs/ dir should have been stripped");
+    }
+
+    #[test]
+    fn extract_double_wrap_new_name_also_strips() {
+        // Interim shape (v0.2.19, briefly): inner dir is `cua-driver/`.
+        let bytes = build_tarball(&[
+            ("cua-driver-rs-v0.2.19-skills/cua-driver/SKILL.md", b"interim-skill"),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
+        let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
+        assert_eq!(s, "interim-skill");
+        assert!(!dest.path().join("cua-driver").exists());
+    }
+
+    #[test]
+    fn extract_preserves_subdirs_inside_pack() {
+        // If a future skill pack adds a real subdir (e.g. `examples/`),
+        // it must NOT be stripped — only the unambiguous pack-name
+        // wrappers are.
+        let bytes = build_tarball(&[
+            ("cua-driver-rs-v0.2.20-skills/examples/click.md", b"sample"),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path()).unwrap();
+        let s = std::fs::read_to_string(dest.path().join("examples/click.md")).unwrap();
+        assert_eq!(s, "sample");
+    }
 }

@@ -14,9 +14,10 @@
 //! - `update` — same as `install --force`: re-fetch even if local copy
 //!   already exists, refreshes content.
 //! - `uninstall [--all]` — remove the agent symlinks. With `--all`, also
-//!   delete the local copy under `<HomeDir>/skills/cua-driver-rs/`.
+//!   delete the local copy under `<HomeDir>/skills/cua-driver/` (and the
+//!   pre-rename `cua-driver-rs/` location if present).
 //! - `status` — print local install state + per-agent link state.
-//! - `path` — print `<HomeDir>/skills/cua-driver-rs` (the local copy).
+//! - `path` — print `<HomeDir>/skills/cua-driver` (the local copy).
 //!
 //! ## Fetch source
 //!
@@ -28,7 +29,7 @@
 //!
 //! `--from <tag>` lets the user pin a different release tag.
 //! `--from main` fetches the latest from the `main` branch via the
-//! `Skills/cua-driver-rs/` directory (one HTTP call per file — used
+//! `Skills/cua-driver/` directory (one HTTP call per file — used
 //! for bleeding-edge dev validation; not the default).
 //!
 //! ## Agent detection
@@ -43,14 +44,20 @@
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
-//! existing `<agent_skills>/cua-driver-rs` link — preserves dev users'
+//! existing `<agent_skills>/cua-driver` link — preserves dev users'
 //! hand-rolled symlinks.
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SKILL_PACK_NAME: &str = "cua-driver-rs";
+const SKILL_PACK_NAME: &str = "cua-driver";
+/// Pre-rename name. The skill pack used to install as `cua-driver-rs`
+/// (when the Rust port lived at `libs/cua-driver-rs/`). On install /
+/// uninstall we sweep this name out of every agent skills dir and the
+/// local stage so a user who had the old skill installed ends up with
+/// exactly one pack, named consistently with the rest of the binary.
+const LEGACY_SKILL_PACK_NAME: &str = "cua-driver-rs";
 const SKILL_FILES: &[&str] = &[
     "README.md",
     "SKILL.md",
@@ -61,7 +68,7 @@ const SKILL_FILES: &[&str] = &[
     "TESTS.md",
 ];
 
-/// Local install path for the skill pack: `<HomeDir>/skills/cua-driver-rs`.
+/// Local install path for the skill pack: `<HomeDir>/skills/cua-driver`.
 fn local_skill_dir() -> Result<PathBuf> {
     let home = home_dir()?;
     Ok(home.join("skills").join(SKILL_PACK_NAME))
@@ -172,6 +179,12 @@ fn install(flags: &[String], force: bool) -> Result<()> {
             && flags.iter().zip(flags.iter().skip(1)).any(|(a, b)| a == "--from" && b == "main"));
     let force = force || flags.iter().any(|f| f == "--force");
 
+    // Sweep the legacy `cua-driver-rs`-named pack out FIRST so the
+    // post-install state has exactly one skill pack at the new name.
+    // Done before fetch so a fresh install on a previously-installed
+    // machine doesn't leave orphan links pointing at a stale local dir.
+    sweep_legacy_skill_pack();
+
     let local = local_skill_dir()?;
     let already_present = local.join("SKILL.md").exists();
 
@@ -195,6 +208,50 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         println!("(No agent skills dirs present yet — install Claude Code / Codex / OpenClaw / OpenCode then re-run.)");
     }
     Ok(())
+}
+
+/// Best-effort removal of any pre-rename skill pack — the local stage at
+/// `<HomeDir>/skills/cua-driver-rs/` and every `<agent_skills>/cua-driver-rs`
+/// symlink/junction. Runs at the start of `install` / `update` so a user
+/// who had the legacy name installed gets cleanly migrated without
+/// having to run `skills uninstall` first.
+///
+/// Silent on failure — this is a UX nicety, not a correctness boundary.
+/// The new pack still installs even if a stale junction can't be cleaned.
+fn sweep_legacy_skill_pack() {
+    // Local stage at <HomeDir>/skills/cua-driver-rs.
+    if let Ok(home) = home_dir() {
+        let legacy_local = home.join("skills").join(LEGACY_SKILL_PACK_NAME);
+        if legacy_local.exists() {
+            if let Err(e) = fs::remove_dir_all(&legacy_local) {
+                eprintln!("  warning: could not remove legacy local pack at {}: {e}",
+                    legacy_local.display());
+            } else {
+                println!("  cleaned up legacy local pack at {}", legacy_local.display());
+            }
+        }
+    }
+    // Agent links named `<parent>/cua-driver-rs`.
+    for agent in AGENTS {
+        let parent = match agent.parent_path() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let legacy_link = parent.join(LEGACY_SKILL_PACK_NAME);
+        if !parent.exists() || !legacy_link.symlink_metadata().is_ok() {
+            continue;
+        }
+        if !is_symlink_or_junction(&legacy_link) {
+            // Real directory — don't clobber user-managed content.
+            continue;
+        }
+        if let Err(e) = remove_link(&legacy_link) {
+            eprintln!("  warning: could not remove legacy {} link at {}: {e}",
+                agent.label, legacy_link.display());
+        } else {
+            println!("  cleaned up legacy {} link at {}", agent.label, legacy_link.display());
+        }
+    }
 }
 
 /// Returns `Ok(true)` when a new link was created, `Ok(false)` when
@@ -253,7 +310,7 @@ fn fetch_into(dest: &Path, from_main: bool) -> Result<()> {
 
     if from_main {
         // Per-file raw GitHub fetch — used for bleeding-edge dev validation.
-        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver-rs";
+        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver";
         for f in SKILL_FILES {
             let url = format!("{base}/{f}");
             let body = http_get_text(&url)
@@ -298,9 +355,11 @@ fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
 fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
     let gz = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(gz);
-    // The tarball contains a `cua-driver-rs/` top-level dir matching the
+    // The tarball contains a `cua-driver/` top-level dir matching the
     // pack name. Strip it during extraction so the .md files land
-    // directly in `dest` (which is itself `<HomeDir>/skills/cua-driver-rs`).
+    // directly in `dest` (which is itself `<HomeDir>/skills/cua-driver`).
+    // Pre-rename tarballs had `cua-driver-rs/` — the stripping logic
+    // below is name-agnostic so both shapes extract identically.
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
@@ -328,28 +387,40 @@ use std::io::Read;
 fn uninstall(flags: &[String]) -> Result<()> {
     let remove_local = flags.iter().any(|f| f == "--all");
     let mut removed_any = false;
-    for agent in AGENTS {
-        let link = match agent.link_path() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        if link.symlink_metadata().is_ok() {
-            // Only remove if it's a symlink/junction we manage. If a
-            // user replaced it with a real dir, leave it alone.
-            if is_symlink_or_junction(&link) {
-                remove_link(&link)?;
-                println!("  ✅ removed {} link at {}", agent.label, link.display());
-                removed_any = true;
-            } else {
-                println!("  {} link at {} is not a symlink/junction; leaving alone", agent.label, link.display());
+    // Try BOTH the current name and the legacy `cua-driver-rs` name so a
+    // user who installed under the old name and then `skills uninstall`s
+    // ends up clean. Same symlink/junction safety check applies to each.
+    for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+        for agent in AGENTS {
+            let parent = match agent.parent_path() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let link = parent.join(name);
+            if link.symlink_metadata().is_ok() {
+                // Only remove if it's a symlink/junction we manage. If a
+                // user replaced it with a real dir, leave it alone.
+                if is_symlink_or_junction(&link) {
+                    remove_link(&link)?;
+                    println!("  ✅ removed {} link at {}", agent.label, link.display());
+                    removed_any = true;
+                } else {
+                    println!("  {} link at {} is not a symlink/junction; leaving alone", agent.label, link.display());
+                }
             }
         }
     }
     if remove_local {
-        let local = local_skill_dir()?;
-        if local.exists() {
-            fs::remove_dir_all(&local)?;
-            println!("  ✅ removed local skill pack at {}", local.display());
+        // Local stage at the current name + any legacy stage from before
+        // the rename. Both are owned by the installer; safe to delete.
+        if let Ok(home) = home_dir() {
+            for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+                let local = home.join("skills").join(name);
+                if local.exists() {
+                    fs::remove_dir_all(&local)?;
+                    println!("  ✅ removed local skill pack at {}", local.display());
+                }
+            }
         }
     }
     if !removed_any {

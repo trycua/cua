@@ -557,11 +557,6 @@ jobs:
             irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
             ```
 
-            > Note: both canonical installer URLs now live under
-            > `libs/cua-driver/scripts/`. Old URLs at
-            > `libs/cua-driver-rs/scripts/install.{sh,ps1}` still work via a
-            > deprecation shim that fetches the canonical script.
-
             The installer auto-detects host architecture (x86_64 / arm64) and uses
             directory junctions for the install layout, so it runs without admin
             and without Developer Mode.

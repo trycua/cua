@@ -19,10 +19,6 @@
 # Canonical user-facing invocation (forwards here on Linux / --backend=rust):
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 #
-# Legacy URL (backward-compat shim at libs/cua-driver-rs/scripts/install.sh
-# redirects here):
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
-#
 # Flags:
 #   --bin-dir <path>     install the visible binary/symlink to <path>
 #                        instead of ~/.local/bin

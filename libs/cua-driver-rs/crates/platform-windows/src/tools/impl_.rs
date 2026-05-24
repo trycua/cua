@@ -1692,10 +1692,27 @@ impl Tool for ClickTool {
             .await
             .unwrap_or(false);
             if chromium {
+                // Belt-and-suspenders foreground restore. `send_click_synthesized`
+                // does its own SetForegroundWindow(prev_fg) ~40ms after the
+                // click, BUT Chromium's reaction to the click can include an
+                // async re-activation (focus().activate() in the renderer-side
+                // event handler, sometimes 100-500 ms later). The launch_app
+                // FocusRestoreGuard (PR #1668) already proved the polling
+                // pattern works; reuse the same helper to catch the async case.
+                //
+                // Captured here (async-runtime side) rather than inside the
+                // blocking task so we have a known-stable "before" snapshot.
+                let prev_fg_addr = unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+                };
                 let send_result = tokio::task::spawn_blocking(move || {
                     crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, count, &btn)
                 })
                 .await;
+                // Kick off the polling restore regardless of click result
+                // — even a partially-inserted click might have started an
+                // async activation Chromium can't undo.
+                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 match send_result {
                     Ok(Ok(())) => {
                         let click_word = match count {
@@ -2120,28 +2137,48 @@ impl Tool for HotkeyTool {
             };
         }
 
-        // Non-XAML Win32 path. Two routes available:
-        //   1. SendInput synthesized hotkey — pushes the events onto the
-        //      *system input queue*. Updates GetKeyState's modifier state, so
-        //      TranslateAccelerator-based apps (LibreOffice, FAR, classic
-        //      Notepad, etc.) see Ctrl+S as a real accelerator. Trade-off:
-        //      brief focus theft to ensure SendInput lands on the right HWND.
-        //   2. PostMessage WM_KEYDOWN/UP — no focus theft, but the
-        //      synthesized Ctrl/Shift/Alt modifier never updates
-        //      GetKeyState, so accelerators don't fire. Only useful for
-        //      non-accelerator key sequences.
-        // We pick route 1 when modifiers are present (the accelerator case),
-        // route 2 otherwise (plain non-modifier keys still post fine).
+        // Non-XAML target. Three routing decisions:
+        //   1. PostMessage WM_KEYDOWN/UP — no foreground swap, no focus
+        //      theft. Modifier state is encoded in the LPARAM bits, not
+        //      in GetKeyState, so apps that read modifier state directly
+        //      from the message (Chromium's `Browser::HandleKeyboardEvent`,
+        //      Chromium renderer's input handler, every web app) see
+        //      Ctrl+X correctly. Apps that consult `GetKeyState` via
+        //      `TranslateAccelerator` (LibreOffice, FAR, classic Notepad)
+        //      DON'T fire the accelerator — the modifier looks unset to
+        //      them.
+        //   2. SendInput synthesized hotkey — pushes events onto the
+        //      *system input queue*. Updates GetKeyState system-wide, so
+        //      TranslateAccelerator-based apps see Ctrl+S as a real
+        //      accelerator. Trade-off: brief foreground swap so SendInput
+        //      lands on the right HWND. **This is the only path that
+        //      violates the no-foreground contract** — we minimise its
+        //      use to apps that genuinely require it.
+        //
+        // Routing:
+        //   - No modifiers → PostMessage (no accelerator concern).
+        //   - Modifiers + Chromium-family target → PostMessage. Chromium
+        //     processes accelerators in `Browser::HandleKeyboardEvent`,
+        //     which reads modifier state from the WM_KEYDOWN LPARAM
+        //     directly (not via GetKeyState). Every Chromium browser
+        //     (Chrome/Edge/Brave/Arc/Vivaldi) AND every Electron app
+        //     (Slack/VS Code/Discord/Teams/Notion) detects as Chromium
+        //     via `is_chromium_target_window` and gets the no-foreground
+        //     path.
+        //   - Modifiers + non-Chromium Win32 → SendInput (the
+        //     TranslateAccelerator path). The foreground swap stays.
         let has_modifiers = !mods.is_empty();
+        let is_chromium = crate::input::is_chromium_target_window(hwnd);
+        let use_send_input = has_modifiers && !is_chromium;
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-            if has_modifiers {
+            if use_send_input {
                 crate::input::send_key_synthesized(hwnd, &key, &m)
             } else {
                 crate::input::post_key(hwnd, &key, &m)
             }
         }).await;
-        let path = if has_modifiers { "SendInput" } else { "PostMessage" };
+        let path = if use_send_input { "SendInput" } else { "PostMessage" };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Pressed {key_display} on pid {raw_pid} via {path} \

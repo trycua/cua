@@ -691,22 +691,31 @@ pub fn run_mcp_config(client: Option<&str>) {
             // registrations use a distinct key — hence `cua-computer-use`.
             //
             // Why `add-json` instead of `add -- BIN --flag`? PowerShell's
-            // native-command arg parser mangles long flags (`--something`)
-            // that follow a bare `--`, so the canonical
-            //   claude mcp add NAME -- BIN mcp --extra-flag
-            // form errors out with "unknown option '--extra-flag'" on
+            // native-command arg parser mangles long flags after a bare
+            // `--`, so the canonical `claude mcp add NAME -- BIN mcp
+            // --extra-flag` form errors with "unknown option …" on
             // Windows. `add-json` takes the whole config as one JSON
-            // string, sidestepping both shell and claude-CLI arg parsing.
+            // string, sidestepping the bare-dash issue.
+            //
+            // Why a per-OS escape on the JSON literal? PowerShell 5.1's
+            // native-command arg passing strips the inner `"` characters
+            // when crossing the PS → exe boundary unless they're
+            // backslash-escaped inside the single-quoted literal. The
+            // bash form keeps the raw quotes. The two escapings are
+            // mutually exclusive — verified by piping each into the
+            // other shell — so we emit per-host.
+            //
             // Forward slashes in the binary path because Windows accepts
-            // them and the single-quoted JSON literal is portable across
-            // bash + PowerShell (cmd users with double-quoted shells can
-            // paste the raw JSON into ~/.claude.json instead).
+            // them and avoid backslash-soup inside the JSON literal.
             let normalised = binary.replace('\\', "/");
             let cfg = serde_json::json!({
                 "command": normalised,
                 "args": ["mcp", "--claude-code-computer-use-compat"],
             });
-            println!("claude mcp add-json cua-computer-use '{}'", cfg);
+            let json = cfg.to_string();
+            #[cfg(windows)]
+            let json = json.replace('"', "\\\"");
+            println!("claude mcp add-json cua-computer-use '{}'", json);
         }
         Some("codex") => {
             println!("codex mcp add cua-driver -- {binary} mcp");

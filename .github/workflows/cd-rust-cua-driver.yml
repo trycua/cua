@@ -54,15 +54,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            libs/cua-driver-rs/target
-          key: rust-cua-driver-rs-linux-x86_64-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+            libs/cua-driver/rust/target
+          key: rust-cua-driver-rs-linux-x86_64-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
           restore-keys: |
             rust-cua-driver-rs-linux-x86_64-
       - name: Build (release)
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: cargo build -p cua-driver --release --target x86_64-unknown-linux-gnu
       - name: Package
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           LABEL="linux-x86_64"
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cua-driver-rs-linux-x86_64
-          path: libs/cua-driver-rs/release/cua-driver-rs-*-linux-x86_64*.tar.gz
+          path: libs/cua-driver/rust/release/cua-driver-rs-*-linux-x86_64*.tar.gz
           if-no-files-found: error
 
   # ── Windows (x86_64 + arm64) ─────────────────────────────────────────────────
@@ -117,19 +117,19 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            libs/cua-driver-rs/target
-          key: rust-cua-driver-rs-windows-${{ matrix.arch }}-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+            libs/cua-driver/rust/target
+          key: rust-cua-driver-rs-windows-${{ matrix.arch }}-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
           restore-keys: |
             rust-cua-driver-rs-windows-${{ matrix.arch }}-
       - name: Build (release)
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         # Build both the main CLI/MCP binary AND the uiAccess'd worker.
         # `cua-driver-uia.exe` is the Windows-only sibling daemon that runs
         # at UIAccess integrity so SendInput / UI Automation can cross UIPI
         # into UWP apps — see crates/cua-driver-uia/ and #1602.
         run: cargo build -p cua-driver -p cua-driver-uia --release --target ${{ matrix.target }}
       - name: Package
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
@@ -158,7 +158,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cua-driver-rs-windows-${{ matrix.arch }}
-          path: libs/cua-driver-rs/release/cua-driver-rs-*-windows-${{ matrix.arch }}*.zip
+          path: libs/cua-driver/rust/release/cua-driver-rs-*-windows-${{ matrix.arch }}*.zip
           if-no-files-found: error
 
   # ── macOS universal (arm64 + x86_64 → lipo) ─────────────────────────────────
@@ -224,18 +224,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            libs/cua-driver-rs/target
-          key: rust-cua-driver-rs-darwin-universal-${{ hashFiles('libs/cua-driver-rs/Cargo.lock', 'libs/cua-driver-rs/**/Cargo.toml') }}
+            libs/cua-driver/rust/target
+          key: rust-cua-driver-rs-darwin-universal-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
           restore-keys: |
             rust-cua-driver-rs-darwin-universal-
       - name: Build arm64
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: cargo build -p cua-driver --release --target aarch64-apple-darwin
       - name: Build x86_64
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: cargo build -p cua-driver --release --target x86_64-apple-darwin
       - name: Create universal binary (lipo)
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: |
           ARM64="target/aarch64-apple-darwin/release/cua-driver"
           X86="target/x86_64-apple-darwin/release/cua-driver"
@@ -244,7 +244,7 @@ jobs:
           lipo -info release/universal/cua-driver
       - name: Codesign universal binary (hardened runtime)
         if: env.DO_NOTARIZE == 'true'
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         env:
           DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
@@ -254,7 +254,7 @@ jobs:
             --sign "$IDENTITY" release/universal/cua-driver
           codesign --verify --strict --verbose=2 release/universal/cua-driver
       - name: Assemble CuaDriver.app bundle
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: |
           # Copy the bundle skeleton (Info.plist) from
           # scripts/CuaDriverBundle/ and drop the universal binary into
@@ -297,7 +297,7 @@ jobs:
           plutil -p release/CuaDriver.app/Contents/Info.plist | grep -E 'CFBundle(Short)?Version'
       - name: Codesign + notarize + staple CuaDriver.app
         if: env.DO_NOTARIZE == 'true'
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         env:
           DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
@@ -332,7 +332,7 @@ jobs:
           # below builds the final tarballs from the stapled .app.
           rm -f release/CuaDriver.app.zip
       - name: Package
-        working-directory: libs/cua-driver-rs
+        working-directory: libs/cua-driver/rust
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           for LABEL in darwin-arm64 darwin-x86_64 darwin-universal; do
@@ -360,7 +360,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cua-driver-rs-darwin
-          path: libs/cua-driver-rs/release/cua-driver-rs-*-darwin-*.tar.gz
+          path: libs/cua-driver/rust/release/cua-driver-rs-*-darwin-*.tar.gz
           if-no-files-found: error
 
   # ── Release ──────────────────────────────────────────────────────────────────
@@ -463,12 +463,12 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           SKILLS_STAGE="cua-driver-rs-v${VERSION}-skills"
           mkdir -p "${SKILLS_STAGE}/cua-driver-rs"
-          if [ -d libs/cua-driver-rs/Skills/cua-driver-rs ]; then
-            cp -R libs/cua-driver-rs/Skills/cua-driver-rs/* "${SKILLS_STAGE}/cua-driver-rs/"
+          if [ -d libs/cua-driver/rust/Skills/cua-driver-rs ]; then
+            cp -R libs/cua-driver/rust/Skills/cua-driver-rs/* "${SKILLS_STAGE}/cua-driver-rs/"
             tar -czf "release-upload/${SKILLS_STAGE}.tar.gz" "${SKILLS_STAGE}"
             echo "Packaged skill pack: release-upload/${SKILLS_STAGE}.tar.gz"
           else
-            echo "Note: libs/cua-driver-rs/Skills/cua-driver-rs not present; skipping skill-pack asset."
+            echo "Note: libs/cua-driver/rust/Skills/cua-driver-rs not present; skipping skill-pack asset."
           fi
 
           echo "Release files:"
@@ -496,9 +496,9 @@ jobs:
             | grep -v "^${{ github.ref_name }}$" \
             | head -n 1 || echo "")
           if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver-rs" | head -50)
+            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
           else
-            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver-rs" | head -50)
+            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/cua-driver/rust" | head -50)
           fi
           [ -z "$NOTES" ] && NOTES="* No path-specific changes found"
           {
@@ -556,11 +556,6 @@ jobs:
             ```powershell
             irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
             ```
-
-            > Note: both canonical installer URLs now live under
-            > `libs/cua-driver/scripts/`. Old URLs at
-            > `libs/cua-driver-rs/scripts/install.{sh,ps1}` still work via a
-            > deprecation shim that fetches the canonical script.
 
             The installer auto-detects host architecture (x86_64 / arm64) and uses
             directory junctions for the install layout, so it runs without admin

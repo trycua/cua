@@ -2,7 +2,7 @@
 
 A [Claude Code](https://code.claude.com) skill that teaches Claude to
 drive native GUI apps on **macOS, Windows, and Linux** via the
-[`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver-rs)
+[`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust)
 CLI — snapshot an app's accessibility tree (AX on macOS, UIA on
 Windows, AT-SPI on Linux), click/type/scroll by `element_index` or
 pixel coords, and verify via re-snapshot. Backgrounded-first on every
@@ -76,7 +76,7 @@ forbidden-list / launch / click details.
 1. **Windows 10/11** (any edition with PowerShell 5.1+).
 2. **`cua-driver` CLI (Rust port `cua-driver-rs`)** — one-liner:
    ```powershell
-   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
    ```
    No TCC equivalent; no UAC elevation required for the default
    per-user install. See `WINDOWS.md` for Session 0 vs Session 1+
@@ -104,20 +104,20 @@ The skill is a drop-in directory. Same shape on every platform.
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -R libs/cua-driver-rs/Skills/cua-driver-rs ~/.claude/skills/
+cp -R libs/cua-driver/rust/Skills/cua-driver-rs ~/.claude/skills/
 ```
 
 Or symlink if you want edits-in-place:
 
 ```bash
-ln -s "$PWD/libs/cua-driver-rs/Skills/cua-driver-rs" ~/.claude/skills/cua-driver-rs
+ln -s "$PWD/libs/cua-driver/rust/Skills/cua-driver-rs" ~/.claude/skills/cua-driver-rs
 ```
 
 **Project scope** (committed alongside a specific repo):
 
 ```bash
 mkdir -p .claude/skills
-cp -R /path/to/cua/libs/cua-driver-rs/Skills/cua-driver-rs .claude/skills/
+cp -R /path/to/cua/libs/cua-driver/rust/Skills/cua-driver-rs .claude/skills/
 ```
 
 Or run the verb that does this automatically + fetches the matching
@@ -199,7 +199,7 @@ cua-driver skills update
 # Or, from a clone of trycua/cua:
 cd /path/to/cua && git pull
 # if you copied: re-copy
-cp -R libs/cua-driver-rs/Skills/cua-driver-rs ~/.claude/skills/
+cp -R libs/cua-driver/rust/Skills/cua-driver-rs ~/.claude/skills/
 # if you symlinked: nothing needed
 ```
 

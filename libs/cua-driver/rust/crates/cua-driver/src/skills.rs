@@ -253,7 +253,7 @@ fn fetch_into(dest: &Path, from_main: bool) -> Result<()> {
 
     if from_main {
         // Per-file raw GitHub fetch — used for bleeding-edge dev validation.
-        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/Skills/cua-driver-rs";
+        let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver-rs";
         for f in SKILL_FILES {
             let url = format!("{base}/{f}");
             let body = http_get_text(&url)

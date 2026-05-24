@@ -258,7 +258,7 @@ if (Test-Path -LiteralPath $HintsTxt) {
     # Repo layout changed or .txt missing — fall back to one-line
     # essentials so users still know what to do next.
     Write-Host "Next steps: $installedBinary --version  |  $installedBinary mcp-config  |  $installedBinary skills install"
-    Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+    Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 }
 
 # Windows-specific autostart hint (kept inline; per-shell natural location).

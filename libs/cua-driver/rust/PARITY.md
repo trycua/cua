@@ -8,7 +8,7 @@ covered by `tests/integration/test_api_parity.py` — **111 tests per binary,
 
 ```bash
 # Rust binary only
-cd libs/cua-driver-rs/tests/integration
+cd libs/cua-driver/rust/tests/integration
 ./run_tests.sh test_api_parity -v
 
 # Both binaries side-by-side
@@ -1170,7 +1170,7 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ## CLI subcommand: `list-tools`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/CallCommand.swift:298-322`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_list_tools`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/cli.rs::run_list_tools`
 - Status: VERIFIED
 - Test: `crates/platform-windows/examples/list_tools_parity.rs`
 
@@ -1197,7 +1197,7 @@ description content.
 ## CLI subcommand: `describe`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/CallCommand.swift:324-366`
   + `printUnknownTool:552`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_describe`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/cli.rs::run_describe`
 - Status: VERIFIED
 - Test: `crates/platform-windows/examples/describe_parity.rs`
 
@@ -1316,22 +1316,22 @@ Swift.
     `makeProxy` (the actor that re-implements `ListTools` /
     `CallTool` over the daemon UDS).
 - Rust:
-  - `libs/cua-driver-rs/crates/cua-driver/src/bundle.rs` —
+  - `libs/cua-driver/rust/crates/cua-driver/src/bundle.rs` —
     `is_executable_inside_cuadriver_app`,
     `parent_is_not_launchd`, `is_env_truthy`.
-  - `libs/cua-driver-rs/crates/cua-driver/src/cli.rs` —
+  - `libs/cua-driver/rust/crates/cua-driver/src/cli.rs` —
     `should_use_daemon_proxy`, `launch_daemon_and_wait`,
     `run_mcp_via_daemon_proxy`.
-  - `libs/cua-driver-rs/crates/cua-driver/src/proxy.rs` —
+  - `libs/cua-driver/rust/crates/cua-driver/src/proxy.rs` —
     `run_proxy` (the stdio loop forwarding `tools/list` and
     `tools/call` through the daemon socket).
-  - `libs/cua-driver-rs/scripts/CuaDriverBundle/Contents/Info.plist` —
+  - `libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist` —
     skeleton (Info.plist + empty MacOS/) that CD assembles into the
     release-tarball `CuaDriver.app` that the auto-relaunch path lands
     in. Stored under a non-`.app` directory so LaunchServices on
     developer machines doesn't surface a ghost entry alongside the
     real install.
-  - `libs/cua-driver-rs/scripts/install.sh` — drops the bundle to
+  - `libs/cua-driver/rust/scripts/install.sh` — drops the bundle to
     `/Applications/CuaDriver.app` and symlinks the bin into it.
 - Status: implemented on macOS (issue #1525); smoke-tested manually
   before merge.
@@ -1465,7 +1465,7 @@ older clients that only read name/description still work.
 
 ## CLI subcommands: `status` + `stop`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/ServeCommand.swift:368-470`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/serve.rs::run_status_cmd, run_stop_cmd`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/serve.rs::run_status_cmd, run_stop_cmd`
 - Status: VERIFIED
 - Test: `crates/platform-windows/examples/daemon_lifecycle_parity.rs`
 
@@ -1491,8 +1491,8 @@ status 0.  Now matches Swift byte-for-byte.
 
 ## MCP tool alias: `type_text_chars` → `type_text`
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/ToolRegistry.swift:55-70`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/serve.rs` (both pipe variants)
-  + `libs/cua-driver-rs/crates/mcp-server/src/tool.rs::ToolRegistry::invoke`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/serve.rs` (both pipe variants)
+  + `libs/cua-driver/rust/crates/mcp-server/src/tool.rs::ToolRegistry::invoke`
 - Status: VERIFIED
 - Test: `crates/platform-windows/examples/type_text_chars_alias_parity.rs`
 
@@ -1573,7 +1573,7 @@ Changes:
 
 ## CLI subcommand: `mcp-config`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/CuaDriverCommand.swift:37-150`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_mcp_config`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/cli.rs::run_mcp_config`
 - Status: VERIFIED (no fixes needed — already matched Swift)
 - Test: `crates/platform-windows/examples/mcp_config_parity.rs`
 
@@ -1597,7 +1597,7 @@ the right needles. All pass on first try.
 
 ## CLI subcommand: `update`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/CuaDriverCommand.swift:638-686`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_update_cmd`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/cli.rs::run_update_cmd`
 - Status: VERIFIED (bug fix)
 - Test: `crates/platform-windows/examples/update_parity.rs`
 
@@ -1622,8 +1622,8 @@ Now uses prefix `cua-driver-rs-v` (Rust port's actual tag prefix).
 ## CLI subcommand: `doctor`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/DoctorCommand.swift` (legacy-cleanup only — single
   `Nothing to clean — install is up to date.` codepath, no diagnostics)
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/doctor.rs` +
-        `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_doctor_cmd`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/doctor.rs` +
+        `libs/cua-driver/rust/crates/cua-driver/src/cli.rs::run_doctor_cmd`
 - Status: INTENTIONAL_DIVERGENCE (Rust adds full diagnostic surface)
 - Test: `crates/cua-driver/src/doctor.rs` `#[cfg(test)] mod tests`
         (5 unit tests: text rendering, JSON rendering, status-tag mapping,
@@ -1695,7 +1695,7 @@ arrays.
 
 ## CLI subcommand: `dump-docs`
 - Swift: `libs/cua-driver/Sources/CuaDriverCLI/DumpDocsCommand.swift`
-- Rust: `libs/cua-driver-rs/crates/cua-driver/src/cli.rs::run_dump_docs_with_type`
+- Rust: `libs/cua-driver/rust/crates/cua-driver/src/cli.rs::run_dump_docs_with_type`
 - Status: VERIFIED (with caveat about CLI extraction)
 - Test: `crates/platform-windows/examples/dump_docs_parity.rs`
 
@@ -1743,9 +1743,9 @@ setup per client / docs link) is sourced from a single shared file:
       raw.githubusercontent.com (remote install path) + bash `sed`.
     - `libs/cua-driver/scripts/install.ps1` — `Invoke-WebRequest` from
       raw.githubusercontent.com + PowerShell `-replace`.
-    - `libs/cua-driver-rs/scripts/install-local.sh` — direct disk read
+    - `libs/cua-driver/rust/scripts/install-local.sh` — direct disk read
       from `../cua-driver/scripts/post-install-hints.txt` + `sed`.
-    - `libs/cua-driver-rs/scripts/install-local.ps1` — direct disk read
+    - `libs/cua-driver/rust/scripts/install-local.ps1` — direct disk read
       from `..\cua-driver\scripts\post-install-hints.txt` + `-replace`.
 
 If the .txt is unreachable (network failure on remote installs, repo
@@ -1765,7 +1765,7 @@ only branching case). The OS-specific block is 4-6 lines, naturally
 fits in the script that targets that OS, and is the only part that
 would need conditional rendering in a single-file design.
 
-**Status**: VERIFIED on macOS via `bash libs/cua-driver-rs/scripts/install-local.sh`
+**Status**: VERIFIED on macOS via `bash libs/cua-driver/rust/scripts/install-local.sh`
 end-to-end. Windows VM verification pending.
 
 ---

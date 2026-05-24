@@ -161,7 +161,7 @@ $CurrentDir   = Join-Path $PackagesDir "current"
 # $AutoStartTask hoisted to the elevation pre-check block above.
 
 # Skill junctions — mirrors the AGENTS list in
-# libs/cua-driver-rs/crates/cua-driver/src/skills.rs (the verb that
+# libs/cua-driver/rust/crates/cua-driver/src/skills.rs (the verb that
 # creates them) so we remove from the same paths.
 $SkillJunctions = @(
     (Join-Path $env:USERPROFILE ".claude\skills\cua-driver-rs"),

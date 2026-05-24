@@ -5,7 +5,7 @@ description: Display server (X11 / Wayland), AT-SPI prerequisites, autostart, an
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-cua-driver-rs supports Linux as a first-class target — every action tool (`click`, `type_text`, `hotkey`, `drag`, `scroll`, `screenshot`, `launch_app`, `list_windows`, etc.) has a Linux implementation under [`crates/platform-linux/`](https://github.com/trycua/cua/tree/main/libs/cua-driver-rs/crates/platform-linux/src). This page covers the bits that diverge from the macOS / Windows quickstart: which display server you're running, what accessibility plumbing needs to be alive, how to keep the daemon up at logon, and how headless / CI workflows look.
+cua-driver-rs supports Linux as a first-class target — every action tool (`click`, `type_text`, `hotkey`, `drag`, `scroll`, `screenshot`, `launch_app`, `list_windows`, etc.) has a Linux implementation under [`crates/platform-linux/`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux/src). This page covers the bits that diverge from the macOS / Windows quickstart: which display server you're running, what accessibility plumbing needs to be alive, how to keep the daemon up at logon, and how headless / CI workflows look.
 
 For the install one-liner itself, see [Installation](/cua-driver/guide/getting-started/installation) — the canonical script auto-detects Linux and routes to the Rust port.
 
@@ -63,7 +63,7 @@ The `cua-driver autostart` verb family is **Windows-only today**. On Linux it cu
 
 ```text
 cua-driver autostart is currently Windows-only. macOS users: see
-libs/cua-driver-rs/scripts/install-local.sh --autostart for the
+libs/cua-driver/rust/scripts/install-local.sh --autostart for the
 LaunchAgent recipe. Linux users: same script registers a systemd
 --user unit. A cross-platform impl is tracked as a follow-up.
 ```
@@ -72,7 +72,7 @@ The two working alternatives:
 
 ### Option A — Use `install-local.sh --autostart`
 
-The dev-loop install script registers a systemd user unit when invoked with `--autostart`. See [`libs/cua-driver-rs/scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/scripts/install-local.sh) — built for local development off a git checkout, but the systemd unit it writes is the same shape you'd use in production.
+The dev-loop install script registers a systemd user unit when invoked with `--autostart`. See [`libs/cua-driver/rust/scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/scripts/install-local.sh) — built for local development off a git checkout, but the systemd unit it writes is the same shape you'd use in production.
 
 ### Option B — Write your own systemd user unit
 
@@ -148,11 +148,11 @@ If `cua-driver doctor` is happy after install, you're set.
 
 ## Per-tool Linux verification matrix
 
-See [`libs/cua-driver-rs/PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/PARITY.md) for the per-tool Linux-VERIFIED matrix — every action tool is annotated with its Linux source file (`crates/platform-linux/src/tools/impl_.rs`) and which platform features it depends on (X11 root window for `get_cursor_position`, AT-SPI for accessibility tree, `xtest` for synthetic input, etc.).
+See [`libs/cua-driver/rust/PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) for the per-tool Linux-VERIFIED matrix — every action tool is annotated with its Linux source file (`crates/platform-linux/src/tools/impl_.rs`) and which platform features it depends on (X11 root window for `get_cursor_position`, AT-SPI for accessibility tree, `xtest` for synthetic input, etc.).
 
 ## See also
 
 - [Installation](/cua-driver/guide/getting-started/installation) — canonical one-liner that handles Linux automatically
 - [Autostart](/cua-driver/guide/getting-started/autostart) — concept page (Windows-only verb family; Linux uses systemd)
 - [Process attribution](/cua-driver/explanation/process-attribution) — Linux has none of the macOS-TCC or Windows-Session-0 weirdness; this page explains what those problems are and why Linux sidesteps them
-- [`PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/PARITY.md) — per-tool platform verification matrix
+- [`PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) — per-tool platform verification matrix

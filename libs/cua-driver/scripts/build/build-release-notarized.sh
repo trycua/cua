@@ -3,8 +3,10 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Navigate to the cua-driver root directory (two levels up from scripts/build/)
-CUA_DRIVER_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Swift sources live at libs/cua-driver/swift/ (parent of scripts/build/
+# is libs/cua-driver/scripts/, so up two then into swift/). All
+# subsequent swift-build / App/ / Skills/ paths resolve under there.
+CUA_DRIVER_DIR="$(cd "$SCRIPT_DIR/../../swift" && pwd)"
 
 # Set default log level if not provided
 LOG_LEVEL=${LOG_LEVEL:-"normal"}
@@ -111,7 +113,7 @@ fi
 # Sign the .app bundle
 log "essential" "Signing .app bundle with Developer ID..."
 codesign --force --options runtime --timestamp \
-         --entitlements ./scripts/CuaDriver.entitlements \
+         --entitlements ../scripts/CuaDriver.entitlements \
          --sign "$CERT_APPLICATION_NAME" \
          --keychain "$KEYCHAIN_PATH" \
          "$APP_BUNDLE"

@@ -19,10 +19,6 @@
 # Canonical user-facing invocation (forwards here on Linux / --backend=rust):
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 #
-# Legacy URL (backward-compat shim at libs/cua-driver-rs/scripts/install.sh
-# redirects here):
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
-#
 # Flags:
 #   --bin-dir <path>     install the visible binary/symlink to <path>
 #                        instead of ~/.local/bin
@@ -91,7 +87,7 @@ KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
 # a stable bundle id (com.trycua.driver) to attribute the daemon to.
-# See libs/cua-driver-rs/scripts/CuaDriverBundle/Contents/Info.plist and
+# See libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist and
 # the matching docs on `cua-driver mcp`'s auto-relaunch behavior.
 # Identical to the Swift driver's CuaDriver.app + com.trycua.driver
 # pair — the Rust port replaces the Swift install at this path,
@@ -361,7 +357,7 @@ case "$OS-$ARCH_RAW" in
     *)
         err "unsupported platform: $OS / $ARCH_RAW"
         err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64."
-        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex)."
+        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex)."
         exit 1
         ;;
 esac
@@ -681,7 +677,7 @@ else
     # user always gets enough to recover, even if hint-text fetching is
     # blocked. Skip everything else.
     echo "Next steps: $BIN_LINK --version  |  $BIN_LINK mcp-config  |  $BIN_LINK skills install"
-    echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+    echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 
 case "$(uname -s)" in

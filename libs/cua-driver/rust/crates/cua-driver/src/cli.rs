@@ -684,15 +684,29 @@ pub fn run_mcp_config(client: Option<&str>) {
             // `--claude-code-computer-use-compat` so the regular
             // `screenshot` tool is replaced by a window-scoped variant
             // (pid + window_id required, JPEG @ 85%, text note pointing
-            // at pixel tools). See `mcp-server/src/protocol.rs` for the
-            // server-name reasoning, `updater.rs`/`skills.rs` for the
-            // matching skill-pack flow, and Skills/cua-driver/SKILL.md
-            // for the user-facing rationale.
+            // at pixel tools).
             //
             // Observed Claude Code behaviour: the exact config key
             // "computer-use" is reserved, so external stdio
             // registrations use a distinct key — hence `cua-computer-use`.
-            println!("claude mcp add --transport stdio cua-computer-use -- {binary} mcp --claude-code-computer-use-compat");
+            //
+            // Why `add-json` instead of `add -- BIN --flag`? PowerShell's
+            // native-command arg parser mangles long flags (`--something`)
+            // that follow a bare `--`, so the canonical
+            //   claude mcp add NAME -- BIN mcp --extra-flag
+            // form errors out with "unknown option '--extra-flag'" on
+            // Windows. `add-json` takes the whole config as one JSON
+            // string, sidestepping both shell and claude-CLI arg parsing.
+            // Forward slashes in the binary path because Windows accepts
+            // them and the single-quoted JSON literal is portable across
+            // bash + PowerShell (cmd users with double-quoted shells can
+            // paste the raw JSON into ~/.claude.json instead).
+            let normalised = binary.replace('\\', "/");
+            let cfg = serde_json::json!({
+                "command": normalised,
+                "args": ["mcp", "--claude-code-computer-use-compat"],
+            });
+            println!("claude mcp add-json cua-computer-use '{}'", cfg);
         }
         Some("codex") => {
             println!("codex mcp add cua-driver -- {binary} mcp");

@@ -14,10 +14,13 @@ Next steps:
      available via '{{BINARY}} mcp-config --client <name>':
 
      • Claude Code (computer-use compatibility mode):
-         claude mcp add --transport stdio cua-computer-use -- {{BINARY}} mcp --claude-code-computer-use-compat
-       This grounds Claude Code's vision/computer-use-style flow on
-       CuaDriver window screenshots. It keeps the normal CuaDriver tools
-       and changes only the screenshot tool.
+         {{BINARY}} mcp-config --client claude
+       Copy-paste the printed command into your shell — it uses
+       `claude mcp add-json` (not bare `--`) so the long flag travels
+       through PowerShell's arg parser intact. This mode grounds Claude
+       Code's vision/computer-use-style flow on CuaDriver window
+       screenshots — it keeps the normal CuaDriver tools and changes
+       only the screenshot tool.
 
      • Codex (OpenAI):
          codex mcp add cua-driver -- {{BINARY}} mcp

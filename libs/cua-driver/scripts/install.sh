@@ -432,16 +432,16 @@ Next steps:
      B. As an MCP server — run the one matching your client. Each is also
         available via 'cua-driver mcp-config --client <name>':
 
-        • Claude Code:
-            claude mcp add --transport stdio cua-driver -- $BIN_LINK mcp
+        • Claude Code (computer-use compatibility mode — recommended):
+            cua-driver mcp-config --client claude
+          Copy-paste the printed command into your shell — it uses
+          \`claude mcp add-json\` so the long flag survives PowerShell's
+          arg parser. This grounds Claude Code's vision/computer-use-style
+          flow on CuaDriver window screenshots — keeps the normal CuaDriver
+          tools, changes only the screenshot tool.
 
-          Claude Code computer-use compatibility mode:
-            claude mcp add --transport stdio cua-computer-use -- $BIN_LINK mcp --claude-code-computer-use-compat
-          Use this when you want Claude Code's vision/computer-use-style flow
-          to ground on CuaDriver window screenshots. It keeps the normal
-          CuaDriver tools and changes only the screenshot tool.
-          Use MCP for this path; CLI screenshots do not expose the
-          mcp__cua-computer-use__screenshot tool name cue.
+          Plain Claude Code (no computer-use compat):
+            claude mcp add --transport stdio cua-driver -- $BIN_LINK mcp
 
         • Codex (OpenAI):
             codex mcp add cua-driver -- $BIN_LINK mcp

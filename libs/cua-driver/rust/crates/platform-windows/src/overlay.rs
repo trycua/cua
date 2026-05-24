@@ -445,19 +445,39 @@ unsafe fn reapply_z_order(hwnd: windows::Win32::Foundation::HWND) {
         guard.as_ref().and_then(|rs| rs.core.pinned_wid)
     };
 
-    // If a target window is pinned, place the overlay just above it.
-    // Falls back to HWND_TOP when not set or when the target is gone.
-    let insert_after = if let Some(wid) = pinned_wid {
-        let target = HWND(wid as *mut _);
-        if IsWindow(target).as_bool() {
-            target
-        } else {
-            HWND_TOPMOST
-        }
-    } else {
-        HWND_TOPMOST
-    };
+    let pinned_target = pinned_wid.and_then(|wid| {
+        let h = HWND(wid as *mut _);
+        if IsWindow(h).as_bool() { Some(h) } else { None }
+    });
 
+    // The overlay must sit JUST above the pinned target window so the
+    // user's foreground app (a different non-topmost window — say their
+    // terminal) renders on top of the overlay. Two pitfalls:
+    //
+    //   1. HWND_TOPMOST was the previous fallback. Once Windows promotes
+    //      a window into the topmost band (sets WS_EX_TOPMOST), a later
+    //      SetWindowPos with a normal target_hwnd does NOT drop it back
+    //      out — the overlay stays above EVERYTHING non-topmost (incl.
+    //      the user's foreground). That was the symptom in #1688-style
+    //      reports: overlay sticks visible over a terminal even when
+    //      the pinned window (Calculator) is behind it.
+    //   2. To drop out of the topmost band, we need an explicit
+    //      SetWindowPos(hwnd, HWND_NOTOPMOST, …) call. Then we can
+    //      issue a second SetWindowPos with the real target_hwnd so
+    //      the overlay lands ABOVE the pin but BELOW any window
+    //      currently above the pin (the user's foreground).
+    //
+    // Fallback when there's no live pin: HWND_TOP — top of non-topmost
+    // band, NOT the topmost band. So a "no pin" overlay still respects
+    // the user's foreground stack.
+    let _ = SetWindowPos(
+        hwnd,
+        HWND_NOTOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+    );
+
+    let insert_after = pinned_target.unwrap_or(HWND_TOP);
     let _ = SetWindowPos(
         hwnd,
         insert_after,

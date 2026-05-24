@@ -19,6 +19,11 @@
 //! - `status` — print local install state + per-agent link state.
 //! - `path` — print `<HomeDir>/skills/cua-driver` (the local copy).
 //!
+//! Default install drops only the host platform's deep-dive .md
+//! (WINDOWS.md / MACOS.md / LINUX.md — whichever matches). Pass
+//! `--all-platforms` to keep all three (useful when assisting users
+//! across OSes from one machine).
+//!
 //! ## Fetch source
 //!
 //! The default fetch URL is the versioned release asset matched to the
@@ -62,11 +67,42 @@ const SKILL_FILES: &[&str] = &[
     "README.md",
     "SKILL.md",
     "WINDOWS.md",
+    "MACOS.md",
     "LINUX.md",
     "WEB_APPS.md",
     "RECORDING.md",
     "TESTS.md",
 ];
+
+/// Per-host filter: returns the platform-specific docs that should NOT
+/// land in the local stage. The skill pack ships docs for all three
+/// platforms in the same tarball, but a Windows user has no need for
+/// LINUX.md / MACOS.md and vice-versa. SKILL.md still references the
+/// matching platform doc by name, so the LLM sees one specific deep
+/// dive without two extra files of unused noise.
+///
+/// Override with `cua-driver skills install --all-platforms` to keep
+/// the full set (useful when assisting users across OSes from one
+/// machine).
+fn excluded_platform_docs(all_platforms: bool) -> &'static [&'static str] {
+    if all_platforms {
+        return &[];
+    }
+    #[cfg(target_os = "windows")]
+    { &["LINUX.md", "MACOS.md"] }
+    #[cfg(target_os = "linux")]
+    { &["WINDOWS.md", "MACOS.md"] }
+    #[cfg(target_os = "macos")]
+    { &["WINDOWS.md", "LINUX.md"] }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    { &[] }
+}
+
+/// True when the basename matches one of the excluded platform docs.
+fn is_excluded_platform_doc(basename: &str, all_platforms: bool) -> bool {
+    let excluded = excluded_platform_docs(all_platforms);
+    excluded.iter().any(|f| basename.eq_ignore_ascii_case(f))
+}
 
 /// Package-home subdir name (matches `telemetry::HOME_SUBDIRECTORY`).
 /// Pre-v0.2.16 this was `.cua-driver-rs`; the rename to `.cua-driver/` is
@@ -207,6 +243,10 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         || (flags.iter().any(|f| f == "--from")
             && flags.iter().zip(flags.iter().skip(1)).any(|(a, b)| a == "--from" && b == "main"));
     let force = force || flags.iter().any(|f| f == "--force");
+    // `--all-platforms` opts INTO keeping LINUX.md / MACOS.md / WINDOWS.md
+    // for every host. Default is host-only — only the matching platform's
+    // doc is kept, the other two are skipped during fetch.
+    let all_platforms = flags.iter().any(|f| f == "--all-platforms");
 
     // Sweep the legacy `cua-driver-rs`-named pack out FIRST so the
     // post-install state has exactly one skill pack at the new name.
@@ -218,7 +258,7 @@ fn install(flags: &[String], force: bool) -> Result<()> {
     let already_present = local.join("SKILL.md").exists();
 
     if !already_present || force {
-        fetch_into(&local, from_main)
+        fetch_into(&local, from_main, all_platforms)
             .with_context(|| format!("failed to fetch skill pack to {}", local.display()))?;
         println!("✅ Skill pack at {}", local.display());
     } else {
@@ -382,7 +422,7 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
 
 // ── fetch ──────────────────────────────────────────────────────────────────
 
-fn fetch_into(dest: &Path, from_main: bool) -> Result<()> {
+fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -396,6 +436,9 @@ fn fetch_into(dest: &Path, from_main: bool) -> Result<()> {
         // Per-file raw GitHub fetch — used for bleeding-edge dev validation.
         let base = "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/rust/Skills/cua-driver";
         for f in SKILL_FILES {
+            if is_excluded_platform_doc(f, all_platforms) {
+                continue;
+            }
             let url = format!("{base}/{f}");
             let body = http_get_text(&url)
                 .with_context(|| format!("GET {url}"))?;
@@ -411,7 +454,7 @@ fn fetch_into(dest: &Path, from_main: bool) -> Result<()> {
     );
     let bytes = http_get_bytes(&url)
         .with_context(|| format!("GET {url}"))?;
-    extract_tar_gz(&bytes, dest)?;
+    extract_tar_gz(&bytes, dest, all_platforms)?;
     Ok(())
 }
 
@@ -436,7 +479,7 @@ fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
+fn extract_tar_gz(bytes: &[u8], dest: &Path, all_platforms: bool) -> Result<()> {
     let gz = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(gz);
     // Tarball shape across versions:
@@ -467,6 +510,13 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
         let stripped: PathBuf = components.collect();
         if stripped.as_os_str().is_empty() {
             continue;
+        }
+        // Per-host filter: skip the other platforms' .md files unless
+        // the user opted into the full set with --all-platforms.
+        if let Some(basename) = stripped.file_name().and_then(|s| s.to_str()) {
+            if is_excluded_platform_doc(basename, all_platforms) {
+                continue;
+            }
         }
         let out = dest.join(&stripped);
         if let Some(parent) = out.parent() {
@@ -648,7 +698,7 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"flat-win"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path()).unwrap();
+        extract_tar_gz(&bytes, dest.path(), true).unwrap();
 
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert_eq!(s, "flat-skill");
@@ -670,7 +720,7 @@ mod tests {
             ("cua-driver-rs-v0.2.18-skills/cua-driver-rs/WINDOWS.md", b"legacy-win"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path()).unwrap();
+        extract_tar_gz(&bytes, dest.path(), true).unwrap();
 
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert_eq!(s, "legacy-skill");
@@ -687,7 +737,7 @@ mod tests {
             ("cua-driver-rs-v0.2.19-skills/cua-driver/SKILL.md", b"interim-skill"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path()).unwrap();
+        extract_tar_gz(&bytes, dest.path(), true).unwrap();
         let s = std::fs::read_to_string(dest.path().join("SKILL.md")).unwrap();
         assert_eq!(s, "interim-skill");
         assert!(!dest.path().join("cua-driver").exists());
@@ -702,8 +752,66 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/examples/click.md", b"sample"),
         ]);
         let dest = tempdir().unwrap();
-        extract_tar_gz(&bytes, dest.path()).unwrap();
+        extract_tar_gz(&bytes, dest.path(), true).unwrap();
         let s = std::fs::read_to_string(dest.path().join("examples/click.md")).unwrap();
         assert_eq!(s, "sample");
+    }
+
+    #[test]
+    fn extract_per_host_filter_drops_other_platform_docs() {
+        // The skill pack ships docs for all three platforms but a given
+        // host only needs one. all_platforms=false means the other two
+        // platform docs get skipped during extraction. README + SKILL +
+        // platform-agnostic docs are always kept.
+        let bytes = build_tarball(&[
+            ("cua-driver-rs-v0.2.20-skills/README.md",   b"r"),
+            ("cua-driver-rs-v0.2.20-skills/SKILL.md",    b"s"),
+            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md",  b"w"),
+            ("cua-driver-rs-v0.2.20-skills/MACOS.md",    b"m"),
+            ("cua-driver-rs-v0.2.20-skills/LINUX.md",    b"l"),
+            ("cua-driver-rs-v0.2.20-skills/RECORDING.md",b"R"),
+            ("cua-driver-rs-v0.2.20-skills/WEB_APPS.md", b"W"),
+            ("cua-driver-rs-v0.2.20-skills/TESTS.md",    b"T"),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ false).unwrap();
+        // README + SKILL + cross-platform docs ALWAYS present.
+        for f in ["README.md", "SKILL.md", "RECORDING.md", "WEB_APPS.md", "TESTS.md"] {
+            assert!(dest.path().join(f).exists(),
+                "{f} should be present after per-host extraction");
+        }
+        // Exactly one platform doc should land — whichever matches this
+        // test's compile target. The other two must be absent.
+        #[cfg(target_os = "windows")]
+        let expected_present = "WINDOWS.md";
+        #[cfg(target_os = "linux")]
+        let expected_present = "LINUX.md";
+        #[cfg(target_os = "macos")]
+        let expected_present = "MACOS.md";
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        let expected_present = "";
+        for f in ["WINDOWS.md", "MACOS.md", "LINUX.md"] {
+            let exists = dest.path().join(f).exists();
+            if f == expected_present {
+                assert!(exists, "{f} (host doc) should be present");
+            } else if !expected_present.is_empty() {
+                assert!(!exists, "{f} (non-host doc) should NOT be present");
+            }
+        }
+    }
+
+    #[test]
+    fn extract_all_platforms_flag_keeps_every_platform_doc() {
+        let bytes = build_tarball(&[
+            ("cua-driver-rs-v0.2.20-skills/WINDOWS.md", b"w"),
+            ("cua-driver-rs-v0.2.20-skills/MACOS.md",   b"m"),
+            ("cua-driver-rs-v0.2.20-skills/LINUX.md",   b"l"),
+        ]);
+        let dest = tempdir().unwrap();
+        extract_tar_gz(&bytes, dest.path(), /*all_platforms=*/ true).unwrap();
+        for f in ["WINDOWS.md", "MACOS.md", "LINUX.md"] {
+            assert!(dest.path().join(f).exists(),
+                "--all-platforms should keep {f}");
+        }
     }
 }

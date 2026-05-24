@@ -86,13 +86,14 @@ pub enum Command {
     Autostart { subcommand: String },
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
-    /// installs or updates the cua-driver-rs skill pack into their
-    /// agent dirs (Claude Code / Codex / OpenClaw / OpenCode); the
-    /// install scripts never touch ~/.claude/skills/ etc. directly.
-    /// `install` fetches the matching versioned release asset
-    /// (`cua-driver-rs-v<v>-skills.tar.gz`) from GitHub, places it
-    /// under `<HomeDir>/skills/cua-driver-rs/`, and symlinks into each
-    /// detected agent's `skills/` dir. See
+    /// installs or updates the cua-driver skill pack into their agent
+    /// dirs (Claude Code / Codex / OpenClaw / OpenCode); the install
+    /// scripts never touch ~/.claude/skills/ etc. directly. `install`
+    /// fetches the matching versioned release asset
+    /// (`cua-driver-rs-v<v>-skills.tar.gz` — the asset filename keeps
+    /// the legacy `-rs` for backward-compat with pinned URLs) from
+    /// GitHub, places it under `<HomeDir>/skills/cua-driver/`, and
+    /// symlinks into each detected agent's `skills/` dir. See
     /// `crates/cua-driver/src/skills.rs`.
     Skills { subcommand: String, flags: Vec<String> },
 }

@@ -151,7 +151,7 @@ pub fn initialize_result() -> Value {
     serde_json::json!({
         "protocolVersion": "2025-06-18",
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "cua-driver-rs", "version": env!("CARGO_PKG_VERSION") },
+        "serverInfo": { "name": "cua-driver", "version": env!("CARGO_PKG_VERSION") },
         "instructions": agent_instructions()
     })
 }
@@ -160,7 +160,7 @@ pub fn initialize_result() -> Value {
 /// connecting client. The spec frames this as a "hint... MAY be added
 /// to the system prompt" — eager, every-turn cost. We keep it under
 /// the community-recommended ~200-word ceiling and host the long-form
-/// workflow in `Skills/cua-driver-rs/SKILL.md`.
+/// workflow in `Skills/cua-driver/SKILL.md`.
 ///
 /// Templated per-host: the accessibility-tree provider name (AX on
 /// macOS, UIA on Windows, AT-SPI on Linux) is injected so a connecting
@@ -186,7 +186,7 @@ fn agent_instructions() -> String {
     };
 
     format!(
-        r#"cua-driver-rs: cross-platform background computer-use automation.
+        r#"cua-driver: cross-platform background computer-use automation.
 
 Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
 
@@ -199,6 +199,6 @@ Workflow per turn:
 
 Agent cursor: set_agent_cursor_* tools visualise where the agent is acting without affecting the real mouse pointer.
 
-If a `cua-driver-rs` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
 }

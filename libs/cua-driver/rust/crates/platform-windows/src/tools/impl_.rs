@@ -1569,7 +1569,14 @@ impl Tool for ClickTool {
                         std::mem::forget(elem);
                         if let Ok(pattern) = invoke_result {
                             if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
-                                match unsafe { inv.Invoke() } {
+                                // UWP foreground-steal bypass: wrap Invoke so
+                                // XAML hosts don't self-foreground and steal
+                                // user focus. See crate::uia::fg_bypass.
+                                let invoke_outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize,
+                                    || unsafe { inv.Invoke() },
+                                );
+                                match invoke_outcome {
                                     Ok(()) => {
                                         return Ok(format!(
                                             "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."

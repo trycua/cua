@@ -319,47 +319,52 @@ pub fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> bool {
             )
             .is_ok();
         let winner_has_invoke = winner.GetCurrentPattern(UIA_InvokePatternId).is_ok();
-        if winner_has_expand && winner_has_invoke {
-            // Try Expand first, fall back to Invoke if Expand fails.
-            if let Ok(pat) = winner.GetCurrentPattern(
-                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-            ) {
-                if let Ok(ec) = pat
-                    .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
-                {
-                    if ec.Expand().is_ok() {
-                        return true;
+        // UWP foreground-steal bypass: gate the entire activation block on
+        // `is_xaml_host_hwnd(hwnd)`. For non-XAML hosts the closure is a
+        // straight passthrough.
+        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd, || {
+            if winner_has_expand && winner_has_invoke {
+                // Try Expand first, fall back to Invoke if Expand fails.
+                if let Ok(pat) = winner.GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                ) {
+                    if let Ok(ec) = pat
+                        .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                    {
+                        if ec.Expand().is_ok() {
+                            return true;
+                        }
                     }
                 }
+                // Expand failed — fall through to Invoke as best-effort.
+            } else if winner_has_expand && !winner_has_invoke {
+                if let Ok(pat) = winner.GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                ) {
+                    if let Ok(ec) = pat
+                        .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                    {
+                        return ec.Expand().is_ok();
+                    }
+                }
+                return false;
             }
-            // Expand failed — fall through to Invoke as best-effort.
-        } else if winner_has_expand && !winner_has_invoke {
-            if let Ok(pat) = winner.GetCurrentPattern(
-                windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
-            ) {
-                if let Ok(ec) = pat
-                    .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
-                {
-                    return ec.Expand().is_ok();
+            let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+            let inv: IUIAutomationInvokePattern = match pattern.cast() {
+                Ok(i) => i,
+                Err(_) => return false,
+            };
+            match inv.Invoke() {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::debug!(target: "click", "UIA Invoke (windowed) at ({sx},{sy}) failed: {e}");
+                    false
                 }
             }
-            return false;
-        }
-        let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
-        let inv: IUIAutomationInvokePattern = match pattern.cast() {
-            Ok(i) => i,
-            Err(_) => return false,
-        };
-        match inv.Invoke() {
-            Ok(()) => true,
-            Err(e) => {
-                tracing::debug!(target: "click", "UIA Invoke (windowed) at ({sx},{sy}) failed: {e}");
-                false
-            }
-        }
+        })
     }
 }
 
@@ -439,7 +444,7 @@ pub fn try_invoke_accelerator_in_window(
             // as a TogglePattern button — calling .Invoke on it returns the
             // misleading "operation completed successfully (0x00000000)"
             // error because Invoke isn't supported on the element.
-            match try_invoke_via_patterns(&elem) {
+            match try_invoke_via_patterns(&elem, hwnd) {
                 Ok(true) => return Ok((true, count as usize)),
                 Ok(false) => {
                     matched_failure = Some(format!(
@@ -547,21 +552,36 @@ fn accelerator_modifier_rank(value: &str) -> Option<usize> {
 /// order: InvokePattern (for buttons / menu items that fire an action), then
 /// TogglePattern (for Bold / Italic / etc. that flip a binary state).
 ///
+/// `host_hwnd` is the top-level HWND containing the element; it gates the
+/// UWP foreground-steal bypass (see `crate::uia::fg_bypass`). Pass `0` if
+/// unknown — the bypass becomes a no-op and Invoke/Toggle run unwrapped.
+///
 /// Returns `Ok(true)` if a pattern was found AND its Invoke/Toggle call
 /// succeeded. `Ok(false)` means the element exposes neither pattern (caller
 /// should surface an actionable error). `Err` means a pattern was found but
 /// its call failed (caller should surface the underlying error).
-unsafe fn try_invoke_via_patterns(elem: &IUIAutomationElement) -> anyhow::Result<bool> {
+unsafe fn try_invoke_via_patterns(
+    elem: &IUIAutomationElement,
+    host_hwnd: isize,
+) -> anyhow::Result<bool> {
     // Invoke first — that's what most accelerator-targeted controls advertise.
     if let Ok(pattern) = elem.GetCurrentPattern(UIA_InvokePatternId) {
         if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
-            return inv.Invoke().map(|()| true).map_err(|e| anyhow::anyhow!("InvokePattern.Invoke: {e}"));
+            return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
+                inv.Invoke()
+                    .map(|()| true)
+                    .map_err(|e| anyhow::anyhow!("InvokePattern.Invoke: {e}"))
+            });
         }
     }
     // Toggle next — Bold/Italic/Underline-style toolbar buttons sit here.
     if let Ok(pattern) = elem.GetCurrentPattern(UIA_TogglePatternId) {
         if let Ok(tog) = pattern.cast::<IUIAutomationTogglePattern>() {
-            return tog.Toggle().map(|()| true).map_err(|e| anyhow::anyhow!("TogglePattern.Toggle: {e}"));
+            return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
+                tog.Toggle()
+                    .map(|()| true)
+                    .map_err(|e| anyhow::anyhow!("TogglePattern.Toggle: {e}"))
+            });
         }
     }
     Ok(false)

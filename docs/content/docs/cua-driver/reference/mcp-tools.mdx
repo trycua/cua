@@ -1173,6 +1173,16 @@ The `x, y` dispatch tries UIA Invoke first (no focus steal), then falls through 
 
 For canvases, paint surfaces, image maps, and custom widgets (control types `Image` / `Pane` / `Custom` / `Document` / `Group`), `click(x, y)` skips UIA Invoke even when the element advertises `InvokePattern` — invoking those fires the element's default action at the geometric centre, ignoring the requested coords. The click falls through to PostMessage or (for Chromium targets) SendInput, preserving pixel precision.
 
+### `click` on UWP / WinUI / XAML targets — foreground-steal bypass
+
+UWP, WinUI, and XAML-hosted apps (Calculator, Clock, Settings, Microsoft Photos, modern Notepad, etc.) self-foreground during UIA `InvokePattern.Invoke`. The XAML host calls `SetForegroundWindow(self)` unconditionally when its message-loop processes an input-like event — including UIA Invoke. Without mitigation, every `click` against a UWP target hidden behind the user's window steals focus and pulls the UWP app on top.
+
+The driver wraps `Invoke`, `ExpandCollapse.Expand`, and `Toggle.Toggle` calls in `EnableWindow(host, FALSE) / call / EnableWindow(host, TRUE)` when the target's top-level HWND identifies as an XAML host (window class `ApplicationFrameWindow` / `Windows.UI.Core.CoreWindow` / `WinUIDesktopWin32WindowClass` / `Microsoft.UI.Content.DesktopChildSiteBridge`, OR a known XAML-hosted exe). A disabled HWND silently rejects `SetForegroundWindow(self)`, but UIA pattern delivery still routes through (it uses the kernel accessibility channel, not the input queue gated by `EnableWindow`), so the click action still runs.
+
+Empirically: 91% of plain-Invoke samples saw the user's window drop below the target in z-order; with the bypass that drops to 0%. State changes (Calc digits, Clock tabs, Settings nav) are confirmed via UIA probes after the call.
+
+Classic Win32 / WPF / WinForms apps (Notepad legacy, charmap, mmc) don't self-foreground during Invoke and don't need the bypass — verified empirically. The wrap is therefore gated on `is_xaml_host_hwnd`; non-XAML targets call `Invoke` unwrapped.
+
 ### `click(x, y)` on Chromium — SendInput with brief foreground swap
 
 `PostMessage(WM_LBUTTONDOWN/UP)` on a Chromium HWND doesn't reach the DOM input pipeline (Chromium's input thread requires SendInput-queue origin). When the target HWND class is `Chrome_WidgetWin_*` or `CefBrowser*`, `click(x, y)` routes through `SendInput` with a brief `SetForegroundWindow(target)` + `SetCursorPos(x, y)` + restore-previous-foreground dance.

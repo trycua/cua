@@ -24,6 +24,7 @@ use windows::Win32::UI::Accessibility::{
 };
 
 pub mod cache;
+pub mod fg_bypass;
 pub mod windows_enum;
 pub use cache::ElementCache;
 pub use windows_enum::enumerate_top_level_windows;

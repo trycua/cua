@@ -32,6 +32,7 @@ mod proxy;
 mod serve;
 mod skills;
 mod telemetry;
+mod updater;
 mod version_check;
 
 use std::sync::Arc;

@@ -9,14 +9,18 @@
 //! - Z-ordering: `XRaiseWindow` every 80ms to stay above normal windows.
 //! - Wayland: when WAYLAND_DISPLAY is set but DISPLAY is also available (XWayland),
 //!   the X11 path is used.  Pure Wayland support is a TODO.
+//!
+//! ## Cross-platform note (2026-05 dedup audit)
+//!
+//! Animation state + render pipeline live in `cursor_overlay::render_state`
+//! (`RenderStateCore`, `tick_motion`, `apply_command_base`, `render_frame`).
+//! What stays here is the X11 window plumbing: connection setup,
+//! override-redirect visual, ShapeInput passthrough, and the XPutImage paint.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use cursor_overlay::{
-    CursorConfig, CursorShape, MotionConfig, OverlayCommand, Palette, PathPlanner, PathState,
-    PlannedPath,
-};
+use cursor_overlay::{CursorConfig, OverlayCommand, RenderStateCore};
 
 // ── Global channel ────────────────────────────────────────────────────────
 
@@ -47,7 +51,7 @@ pub fn run_on_thread() {
     let cfg = {
         let guard = RENDER.lock().unwrap();
         match &*guard {
-            Some(rs) => rs.cfg.clone(),
+            Some(rs) => rs.core.cfg.clone(),
             None => return,
         }
     };
@@ -65,308 +69,40 @@ pub fn run_on_thread() {
 }
 
 // ── Animation state ───────────────────────────────────────────────────────
+//
+// The platform-agnostic fields + tick + apply_command + render pipeline live
+// in `cursor_overlay::render_state` (2026-05 dedup audit). What stays here
+// is the X11-specific screen dimensions.
 
 struct RenderState {
-    cfg:        CursorConfig,
-    palette:    Palette,
-    motion:     MotionConfig,
-    pos:        (f64, f64),
-    heading:    f64,
-    path:       Option<PlannedPath>,
-    dist:       f64,
-    start_t:    Instant,
-    spring:     Option<Spring>,
-    spring_tgt: Option<(f64, f64, f64)>,
-    click_t:    Option<f64>,
-    shape:      Option<CursorShape>,
-    visible:    bool,
-    idle_secs:  f64,
-    idle_alpha: f64,
-    pinned_wid: Option<u64>,
+    core: RenderStateCore,
+    /// X11 screen dimensions in pixels (populated after XOpenDisplay).
     scr_w: u32,
     scr_h: u32,
 }
 
-// Spring physics state — moved to `cursor_overlay::Spring` in the
-// 2026-05 dedup audit (was duplicated 3× across the platform crates).
-use cursor_overlay::Spring;
-
 impl RenderState {
     fn new(cfg: CursorConfig) -> Self {
-        let palette = cfg.palette();
-        let motion  = cfg.motion.clone();
-        let shape   = cfg.shape.clone();
         RenderState {
-            cfg, palette, motion, shape,
-            pos:        (-200.0, -200.0),
-            heading:    std::f64::consts::FRAC_PI_4,
-            path:       None,
-            dist:       0.0,
-            start_t:    Instant::now(),
-            spring:     None,
-            spring_tgt: None,
-            click_t:    None,
-            visible:    true,
-            idle_secs:  0.0,
-            idle_alpha: 1.0,
-            pinned_wid: None,
+            core: RenderStateCore::new(cfg),
             scr_w: 1920,
             scr_h: 1080,
         }
     }
 
     fn tick(&mut self, dt: f64) {
-        let spring_k  = self.motion.spring * 400.0;
-        let spring_c  = self.motion.spring * 20.0;
-
-        if let Some(ref p) = self.path {
-            let path_frac = (self.dist / p.length.max(1.0)).clamp(0.0, 1.0);
-            let profile   = 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
-            let floor     = if path_frac < 0.5 { self.motion.min_start_speed } else { self.motion.min_end_speed };
-            let speed     = (floor + (self.motion.peak_speed - floor) * profile).max(floor);
-            self.dist   += speed * dt;
-
-            let path_len = p.length.max(1.0);
-            if self.dist >= path_len {
-                let end = p.sample(path_len);
-                let end_heading = p.end_visual_heading;
-                let vh = end.heading;
-                self.spring = Some(Spring {
-                    ox: 0.0, oy: 0.0,
-                    vx: speed * 0.5 * vh.cos(),
-                    vy: speed * 0.5 * vh.sin(),
-                });
-                self.spring_tgt = Some((end.x, end.y, end_heading));
-                self.pos = (end.x, end.y);
-                self.heading = end_heading;
-                self.path = None;
-                self.dist = 0.0;
-            } else {
-                let s: PathState = p.sample(self.dist);
-                self.pos = (s.x, s.y);
-                let desired = s.heading + std::f64::consts::PI;
-                let max_step = 14.0 * dt;
-                self.heading = rotate_toward(self.heading, desired, max_step);
-            }
-        } else if let Some(mut s) = self.spring {
-            if let Some((tx, ty, th)) = self.spring_tgt {
-                let sdt = dt / 4.0;
-                for _ in 0..4 {
-                    s.vx += (-spring_k * s.ox - spring_c * s.vx) * sdt;
-                    s.vy += (-spring_k * s.oy - spring_c * s.vy) * sdt;
-                    s.ox += s.vx * sdt;
-                    s.oy += s.vy * sdt;
-                }
-                self.pos = (tx + s.ox, ty + s.oy);
-                self.heading = th;
-                if s.ox.hypot(s.oy) < 0.3 && s.vx.hypot(s.vy) < 2.0 {
-                    self.pos = (tx, ty);
-                    self.spring = None;
-                } else {
-                    self.spring = Some(s);
-                }
-            }
-        }
-
-        if let Some(t) = self.click_t {
-            let next = t + dt * 4.0;
-            self.click_t = if next >= 1.0 { None } else { Some(next) };
-        }
-
-        let idle_hide_ms = self.motion.idle_hide_ms;
-        if idle_hide_ms > 0.0 {
-            let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
-            if moving {
-                self.idle_secs  = 0.0;
-                self.idle_alpha = 1.0;
-            } else {
-                self.idle_secs += dt;
-                let fade_start = idle_hide_ms / 1000.0;
-                let fade_end   = fade_start + 0.18;
-                if self.idle_secs > fade_end {
-                    self.idle_alpha = 0.0;
-                } else if self.idle_secs > fade_start {
-                    let t = (self.idle_secs - fade_start) / 0.18;
-                    self.idle_alpha = 1.0 - t.clamp(0.0, 1.0);
-                }
-            }
-        } else {
-            self.idle_alpha = 1.0;
-        }
+        self.core.tick_motion(dt);
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
-        match cmd {
-            OverlayCommand::MoveTo { x, y, end_heading_radians } => {
-                let (x0, y0) = self.pos;
-                let th0 = self.heading + std::f64::consts::PI;
-                let th1 = end_heading_radians + std::f64::consts::PI;
-                const CLICK_OFFSET: f64 = 16.0;
-                const TURN_RADIUS:  f64 = 80.0;
-                let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
-                let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
-                let plan = PathPlanner::plan(
-                    x0, y0, th0,
-                    tx, ty, th1,
-                    end_heading_radians,
-                    TURN_RADIUS,
-                );
-                self.path       = Some(plan);
-                self.dist       = 0.0;
-                self.start_t    = Instant::now();
-                self.spring     = None;
-                self.spring_tgt = None;
-                self.idle_secs  = 0.0;
-                self.idle_alpha = 1.0;
-            }
-            OverlayCommand::ClickPulse { x, y } => {
-                self.pos        = (x, y);
-                self.click_t    = Some(0.0);
-                self.idle_secs  = 0.0;
-                self.idle_alpha = 1.0;
-            }
-            OverlayCommand::SetEnabled(v)  => { self.visible = v; }
-            OverlayCommand::SetMotion(m)   => { self.motion  = m; }
-            OverlayCommand::SetPalette(p)  => { self.palette = p; }
-            OverlayCommand::PinAbove(wid)  => { self.pinned_wid = Some(wid); }
-            // Custom cursor shape/gradient/focus-rect — not yet rendered on Linux;
-            // accepted silently so the tool doesn't return an error.
-            OverlayCommand::SetShape(_) | OverlayCommand::SetGradient { .. }
-            | OverlayCommand::ShowFocusRect(_) => {}
-        }
+        // Linux uses the non-sentinel-snap behaviour for both MoveTo and
+        // ClickPulse: every command updates `self.pos` unconditionally.
+        // Custom-shape / gradient / focus-rect commands are not rendered on
+        // Linux at present; `apply_command_base` consumes SetShape +
+        // SetGradient and returns false for ShowFocusRect — both cases drop
+        // the visual update silently so callers don't see an error.
+        let _ = self.core.apply_command_base(cmd, false, false);
     }
-}
-
-// Shared with platform-windows — pulled into `cursor_overlay::util` so both
-// per-OS render loops use the exact same easing primitive.
-use cursor_overlay::util::rotate_toward;
-
-// ── Renderer (shared tiny-skia logic) ─────────────────────────────────────
-
-fn render_frame(rs: &RenderState) -> tiny_skia::Pixmap {
-    let w = rs.scr_w.max(1);
-    let h = rs.scr_h.max(1);
-    let mut pm = tiny_skia::Pixmap::new(w, h)
-        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-
-    if !rs.visible || rs.pos.0 < -100.0 || rs.idle_alpha < 0.004 {
-        return pm;
-    }
-
-    let (px, py)    = rs.pos;
-    let heading     = rs.heading;
-    let alpha_scale = rs.idle_alpha as f32;
-
-    let bloom_r: f32 = 22.0;
-    let [br, bg, bb, _] = rs.palette.bloom_inner;
-    let bloom_inner = tiny_skia::Color::from_rgba8(br, bg, bb, (115.0 * alpha_scale) as u8);
-    let [or_, og, ob, _] = rs.palette.bloom_outer;
-    let bloom_outer = tiny_skia::Color::from_rgba8(or_, og, ob, (26.0 * alpha_scale) as u8);
-    let bloom_zero  = tiny_skia::Color::from_rgba8(or_, og, ob, 0);
-
-    let bloom_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::RadialGradient::new(
-            tiny_skia::Point::from_xy(px as f32, py as f32),
-            tiny_skia::Point::from_xy(px as f32, py as f32),
-            bloom_r,
-            vec![
-                tiny_skia::GradientStop::new(0.0, bloom_inner),
-                tiny_skia::GradientStop::new(0.5, bloom_outer),
-                tiny_skia::GradientStop::new(1.0, bloom_zero),
-            ],
-            tiny_skia::SpreadMode::Pad,
-            tiny_skia::Transform::identity(),
-        ).unwrap_or(tiny_skia::Shader::SolidColor(bloom_inner));
-        p.anti_alias = true;
-        p
-    };
-    if let Some(r) = tiny_skia::Rect::from_xywh(
-        (px - bloom_r as f64) as f32, (py - bloom_r as f64) as f32,
-        bloom_r * 2.0, bloom_r * 2.0,
-    ) {
-        pm.fill_rect(r, &bloom_paint, tiny_skia::Transform::identity(), None);
-    }
-
-    if let Some(t) = rs.click_t {
-        let ring_r = (bloom_r + 20.0 * t as f32) * (1.0 - t as f32 * 0.5);
-        let alpha   = ((1.0 - t) * 180.0 * alpha_scale as f64) as u8;
-        let [cr, cg, cb, _] = rs.palette.cursor_mid;
-        let ring_color = tiny_skia::Color::from_rgba8(cr, cg, cb, alpha);
-        let mut ring_paint = tiny_skia::Paint::default();
-        ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
-        ring_paint.anti_alias = true;
-        let stroke = tiny_skia::Stroke { width: 2.0, ..Default::default() };
-        let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, ring_r);
-        if let Some(path) = pb.finish() {
-            pm.stroke_path(&path, &ring_paint, &stroke, tiny_skia::Transform::identity(), None);
-        }
-    }
-
-    if let Some(ref shape) = rs.shape {
-        let sz = 32.0_f32;
-        if let Some(pix) = tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height) {
-            let transform = tiny_skia::Transform::from_rotate_at(
-                heading.to_degrees() as f32 + 180.0, px as f32, py as f32,
-            ).pre_translate(px as f32 - sz / 2.0, py as f32 - sz / 2.0);
-            let mut paint = tiny_skia::PixmapPaint::default();
-            paint.opacity = alpha_scale;
-            pm.draw_pixmap(0, 0, pix, &paint, transform, None);
-        }
-    } else {
-        draw_default_arrow(&mut pm, &rs.palette, px as f32, py as f32, heading as f32, alpha_scale);
-    }
-
-    pm
-}
-
-fn draw_default_arrow(
-    pm: &mut tiny_skia::Pixmap,
-    palette: &Palette,
-    px: f32, py: f32,
-    heading: f32,
-    alpha_scale: f32,
-) {
-    let verts: [(f32, f32); 4] = [(14.0, 0.0), (-8.0, -9.0), (-3.0, 0.0), (-8.0, 9.0)];
-    let angle = heading + std::f64::consts::PI as f32;
-    let (sa, ca) = (angle.sin(), angle.cos());
-    let xform = |(vx, vy): (f32, f32)| (px + ca * vx - sa * vy, py + sa * vx + ca * vy);
-    let pts: Vec<(f32, f32)> = verts.iter().map(|&v| xform(v)).collect();
-    let mut pb = tiny_skia::PathBuilder::new();
-    pb.move_to(pts[0].0, pts[0].1);
-    for p in &pts[1..] { pb.line_to(p.0, p.1); }
-    pb.close();
-    let arrow_path = match pb.finish() { Some(p) => p, None => return };
-    let tip  = pts[0];
-    let tail = ((pts[1].0 + pts[3].0) / 2.0, (pts[1].1 + pts[3].1) / 2.0);
-    let [r0, g0, b0, _] = palette.cursor_start;
-    let [r1, g1, b1, _] = palette.cursor_mid;
-    let [r2, g2, b2, _] = palette.cursor_end;
-    let a = (255.0 * alpha_scale) as u8;
-    let fill_paint = {
-        let mut p = tiny_skia::Paint::default();
-        p.shader = tiny_skia::LinearGradient::new(
-            tiny_skia::Point::from_xy(tip.0, tip.1),
-            tiny_skia::Point::from_xy(tail.0, tail.1),
-            vec![
-                tiny_skia::GradientStop::new(0.00, tiny_skia::Color::from_rgba8(r0, g0, b0, a)),
-                tiny_skia::GradientStop::new(0.53, tiny_skia::Color::from_rgba8(r1, g1, b1, a)),
-                tiny_skia::GradientStop::new(1.00, tiny_skia::Color::from_rgba8(r2, g2, b2, a)),
-            ],
-            tiny_skia::SpreadMode::Pad,
-            tiny_skia::Transform::identity(),
-        ).unwrap_or(tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(r1, g1, b1, a)));
-        p.anti_alias = true;
-        p
-    };
-    pm.fill_path(&arrow_path, &fill_paint, tiny_skia::FillRule::Winding,
-                 tiny_skia::Transform::identity(), None);
-    let mut sp = tiny_skia::Paint::default();
-    sp.shader = tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(255, 255, 255, a));
-    sp.anti_alias = true;
-    let stroke = tiny_skia::Stroke { width: 1.5, ..Default::default() };
-    pm.stroke_path(&arrow_path, &sp, &stroke, tiny_skia::Transform::identity(), None);
 }
 
 // ── X11 thread ────────────────────────────────────────────────────────────
@@ -489,7 +225,15 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
         // Render and paint.
         let pixmap = {
             let guard = RENDER.lock().unwrap();
-            guard.as_ref().map(|rs| render_frame(rs))
+            guard.as_ref().map(|rs| {
+                cursor_overlay::render_frame(
+                    &rs.core,
+                    rs.scr_w.max(1),
+                    rs.scr_h.max(1),
+                    0.0, 0.0, // Linux uses screen-local coords (no origin offset)
+                    None,     // focus-rect is macOS-only
+                )
+            })
         };
 
         if let Some(pm) = pixmap {
@@ -501,7 +245,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
             last_ztick = Instant::now();
             let pinned_wid = {
                 let guard = RENDER.lock().unwrap();
-                guard.as_ref().and_then(|rs| rs.pinned_wid)
+                guard.as_ref().and_then(|rs| rs.core.pinned_wid)
             };
             let aux = if let Some(target_xid) = pinned_wid {
                 // Place overlay just above the pinned X11 window.

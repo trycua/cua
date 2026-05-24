@@ -462,14 +462,18 @@ jobs:
           # versioned binary tarballs.
           VERSION="${{ steps.version.outputs.version }}"
           # Asset name keeps the `cua-driver-rs-v*` prefix for backward
-          # compat with the URL skills.rs constructs. Internal directory
-          # is `cua-driver/` to match the renamed SKILL_PACK_NAME — both
-          # current binaries and old ones extract correctly because the
-          # tarball-extractor strips whatever top-level dir it finds.
+          # compat with the URL skills.rs constructs.
+          #
+          # Staging layout = one wrapper directory, flat .md files under
+          # it. extract_tar_gz strips that single wrapper and lands files
+          # directly in <HomeDir>/skills/cua-driver/. v0.2.19 and earlier
+          # had a second `cua-driver/` (or `cua-driver-rs/`) dir inside
+          # the wrapper — the extractor sees that and strips it too for
+          # backward compat with already-published releases.
           SKILLS_STAGE="cua-driver-rs-v${VERSION}-skills"
-          mkdir -p "${SKILLS_STAGE}/cua-driver"
           if [ -d libs/cua-driver/rust/Skills/cua-driver ]; then
-            cp -R libs/cua-driver/rust/Skills/cua-driver/* "${SKILLS_STAGE}/cua-driver/"
+            mkdir -p "${SKILLS_STAGE}"
+            cp -R libs/cua-driver/rust/Skills/cua-driver/. "${SKILLS_STAGE}/"
             tar -czf "release-upload/${SKILLS_STAGE}.tar.gz" "${SKILLS_STAGE}"
             echo "Packaged skill pack: release-upload/${SKILLS_STAGE}.tar.gz"
           else

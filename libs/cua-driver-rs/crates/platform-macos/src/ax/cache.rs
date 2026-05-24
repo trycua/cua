@@ -10,12 +10,16 @@
 //! Memory contract:
 //!   tree::walk_element retains each actionable element before storing its ptr.
 //!   CachedSnapshot::drop releases those retains so we have no AX leaks.
+//!
+//! The locked-HashMap plumbing lives in `mcp_server::element_cache` — see
+//! `docs/dedup-audit.md` item #3. This module owns the macOS-specific
+//! `CacheKey`, `CachedSnapshot`, and the `Drop` impl that fires `CFRelease`
+//! when an entry is replaced or removed.
 
 use super::bindings::AXUIElementRef;
 use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFTypeRef};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use mcp_server::element_cache::ElementCacheCore;
 
 /// Key for the element cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,12 +47,12 @@ impl Drop for CachedSnapshot {
 
 /// Global element cache.
 pub struct ElementCache {
-    inner: Mutex<HashMap<CacheKey, CachedSnapshot>>,
+    core: ElementCacheCore<CacheKey, CachedSnapshot>,
 }
 
 impl ElementCache {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self { core: ElementCacheCore::new() }
     }
 
     /// Replace the snapshot for (pid, window_id) with the nodes from a fresh walk.
@@ -58,20 +62,21 @@ impl ElementCache {
             .filter(|n| n.element_index.is_some())
             .map(|n| n.element_ptr)
             .collect();
-        let mut inner = self.inner.lock().unwrap();
-        inner.insert(CacheKey { pid, window_id }, CachedSnapshot { elements });
+        self.core.insert(CacheKey { pid, window_id }, CachedSnapshot { elements });
     }
 
     /// Look up the raw AXUIElementRef pointer for `element_index` in (pid, window_id).
     pub fn get_element_ptr(&self, pid: i32, window_id: u32, element_index: usize) -> Option<usize> {
-        let inner = self.inner.lock().unwrap();
-        inner.get(&CacheKey { pid, window_id })?.elements.get(element_index).copied()
+        self.core
+            .with_snapshot(&CacheKey { pid, window_id }, |s| s.elements.get(element_index).copied())
+            .flatten()
     }
 
     /// Number of indexed elements for (pid, window_id), or 0 if not cached.
     pub fn element_count(&self, pid: i32, window_id: u32) -> usize {
-        let inner = self.inner.lock().unwrap();
-        inner.get(&CacheKey { pid, window_id }).map(|s| s.elements.len()).unwrap_or(0)
+        self.core
+            .with_snapshot(&CacheKey { pid, window_id }, |s| s.elements.len())
+            .unwrap_or(0)
     }
 }
 

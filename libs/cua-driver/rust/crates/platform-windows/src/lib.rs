@@ -31,13 +31,17 @@ pub mod capture;
 pub mod launch_uwp;
 
 pub fn register_tools() -> ToolRegistry {
-    tools::build_registry()
+    tools::build_registry(false)
 }
 
-pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig) -> ToolRegistry {
+/// `compat=true` enables Claude Code computer-use compatibility mode:
+/// the regular `screenshot` tool is replaced by a window-scoped variant
+/// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
+/// tools). See `tools::impl_::ScreenshotCompatTool`.
+pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
-    tools::build_registry()
+    tools::build_registry(compat)
 }

@@ -36,6 +36,15 @@ mod updater;
 mod version_check;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set by the `Command::Mcp` arm when `--claude-code-computer-use-compat`
+/// is on argv. Read by `build_registry` / `build_registry_no_cursor` to
+/// pick which `screenshot` tool variant to register. Static keeps the
+/// thread of dependency arrows pointed away from the platform crates —
+/// they take `compat: bool` directly, but the binary crate decides what
+/// to pass without making every Command variant carry the flag.
+static CLAUDE_CODE_COMPAT: AtomicBool = AtomicBool::new(false);
 
 fn init_logging() {
     use tracing_subscriber::EnvFilter;
@@ -215,7 +224,8 @@ fn main() {
             cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
             return;
         }
-        cli::Command::Mcp { no_daemon_relaunch, socket } => {
+        cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
+            CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update
             // check before any TCC / daemon-proxy decisions so the
             // banner can land on stderr in either dispatch path.
@@ -285,9 +295,10 @@ fn main() {
                 .enable_all()
                 .build()
                 .expect("tokio runtime");
+            let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
             rt.block_on(async move {
                 // Register tools; overlay init has already happened above.
-                let registry = Arc::new(platform_macos::register_tools());
+                let registry = Arc::new(platform_macos::register_tools_with_compat(compat));
                 // Wire up replay tool's back-reference to the registry.
                 registry.init_self_weak();
                 if let Err(e) = mcp_server::server::run(registry).await {
@@ -430,7 +441,8 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Mcp { no_daemon_relaunch, socket } => {
+        cli::Command::Mcp { no_daemon_relaunch, socket, claude_code_compat } => {
+            CLAUDE_CODE_COMPAT.store(claude_code_compat, Ordering::SeqCst);
             // Long-running MCP server — kick off the background update
             // check before any daemon-proxy decisions.
             version_check::maybe_announce_update();
@@ -492,6 +504,7 @@ async fn async_main() -> anyhow::Result<()> {
 
 #[cfg(not(target_os = "macos"))]
 fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool::ToolRegistry {
+    let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
     #[cfg(target_os = "windows")]
     {
         mcp_server::recording::set_screenshot_fn(|window_id, pid| {
@@ -509,7 +522,7 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool:
         mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
-        platform_windows::register_tools_with_cursor(cursor_cfg)
+        platform_windows::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(target_os = "linux")]
     {
@@ -528,11 +541,12 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool:
         mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
-        platform_linux::register_tools_with_cursor(cursor_cfg)
+        platform_linux::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = cursor_cfg;
+        let _ = compat;
         let mut r = mcp_server::tool::ToolRegistry::new();
         r.register(Box::new(crate::stub::UnsupportedPlatformTool));
         r
@@ -543,6 +557,7 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool:
 /// Used by CLI subcommands (list-tools / describe / call) that don't need the overlay.
 #[cfg(not(target_os = "macos"))]
 fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
+    let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
     #[cfg(target_os = "windows")]
     {
         mcp_server::recording::set_screenshot_fn(|window_id, pid| {
@@ -560,7 +575,7 @@ fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
         mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
-        platform_windows::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() })
+        platform_windows::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }
     #[cfg(target_os = "linux")]
     {
@@ -579,10 +594,11 @@ fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
         mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
-        platform_linux::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() })
+        platform_linux::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
+        let _ = compat;
         let mut r = mcp_server::tool::ToolRegistry::new();
         r.register(Box::new(crate::stub::UnsupportedPlatformTool));
         r

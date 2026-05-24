@@ -29,6 +29,12 @@ pub enum Command {
         /// Override the daemon Unix socket path used by the proxy
         /// fallback. Defaults to `serve::default_socket_path()`.
         socket: Option<String>,
+        /// `--claude-code-computer-use-compat`: register the compat
+        /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
+        /// both required) instead of the full-featured one. Used when
+        /// the MCP server is wired up as `cua-computer-use` in Claude
+        /// Code, where this is the documented best-practice install.
+        claude_code_compat: bool,
     },
     ListTools,
     Describe(String),
@@ -170,6 +176,7 @@ pub fn parse_command() -> Command {
     }
 
     let no_daemon_relaunch = args.iter().any(|a| a == "--no-daemon-relaunch");
+    let claude_code_compat = args.iter().any(|a| a == "--claude-code-computer-use-compat");
 
     let mut pos = positionals.into_iter();
     match pos.next() {
@@ -198,11 +205,13 @@ pub fn parse_command() -> Command {
             Command::Mcp {
                 no_daemon_relaunch,
                 socket: socket.clone(),
+                claude_code_compat,
             }
         }
         Some("mcp") => Command::Mcp {
             no_daemon_relaunch,
             socket: socket.clone(),
+            claude_code_compat,
         },
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
@@ -669,8 +678,21 @@ pub fn run_mcp_config(client: Option<&str>) {
   }}
 }}"#);
         }
-        Some("claude") => {
-            println!("claude mcp add --transport stdio cua-driver -- {binary} mcp");
+        Some("claude") | Some("claude-code") => {
+            // Claude Code wants the MCP server registered as
+            // `cua-computer-use` and the binary invoked with
+            // `--claude-code-computer-use-compat` so the regular
+            // `screenshot` tool is replaced by a window-scoped variant
+            // (pid + window_id required, JPEG @ 85%, text note pointing
+            // at pixel tools). See `mcp-server/src/protocol.rs` for the
+            // server-name reasoning, `updater.rs`/`skills.rs` for the
+            // matching skill-pack flow, and Skills/cua-driver/SKILL.md
+            // for the user-facing rationale.
+            //
+            // Observed Claude Code behaviour: the exact config key
+            // "computer-use" is reserved, so external stdio
+            // registrations use a distinct key — hence `cua-computer-use`.
+            println!("claude mcp add --transport stdio cua-computer-use -- {binary} mcp --claude-code-computer-use-compat");
         }
         Some("codex") => {
             println!("codex mcp add cua-driver -- {binary} mcp");

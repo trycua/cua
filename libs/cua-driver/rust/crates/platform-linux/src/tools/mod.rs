@@ -13,13 +13,16 @@ pub(crate) mod page;
 #[cfg(not(target_os = "linux"))]
 mod stubs;
 
-pub fn build_registry() -> ToolRegistry {
+pub fn build_registry(compat: bool) -> ToolRegistry {
     #[cfg(target_os = "linux")]
-    return impl_::build_registry();
+    return impl_::build_registry(compat);
 
     #[cfg(not(target_os = "linux"))]
-    stubs::build_registry()
+    {
+        let _ = compat;
+        stubs::build_registry()
+    }
 }
 
 // Keep register_all as alias for backwards compat.
-pub fn register_all() -> ToolRegistry { build_registry() }
+pub fn register_all() -> ToolRegistry { build_registry(false) }

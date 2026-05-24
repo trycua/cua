@@ -15,6 +15,7 @@ mod hotkey;
 mod set_value;
 mod scroll;
 mod screenshot;
+mod screenshot_compat;
 mod get_screen_size;
 mod get_cursor_position;
 mod move_cursor;
@@ -198,8 +199,11 @@ impl Default for ToolState {
     }
 }
 
-/// Register all macOS tools into the registry.
-pub fn register_all(registry: &mut ToolRegistry) {
+/// Register all macOS tools into the registry. `compat=true` swaps the
+/// regular `screenshot` tool for the Claude Code computer-use compat
+/// variant — same name, stricter args, window-scoped JPEG @ 85% + a text
+/// note telling the caller to use pixel-addressed tools.
+pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     let state = Arc::new(ToolState::default());
 
     registry.register(Box::new(list_apps::ListAppsTool));
@@ -216,7 +220,11 @@ pub fn register_all(registry: &mut ToolRegistry) {
     registry.register(Box::new(hotkey::HotkeyTool::new(state.clone())));
     registry.register(Box::new(set_value::SetValueTool::new(state.clone())));
     registry.register(Box::new(scroll::ScrollTool::new(state.clone())));
-    registry.register(Box::new(screenshot::ScreenshotTool { state: state.clone() }));
+    if compat {
+        registry.register(Box::new(screenshot_compat::ClaudeCodeCompatScreenshotTool::new(state.clone())));
+    } else {
+        registry.register(Box::new(screenshot::ScreenshotTool { state: state.clone() }));
+    }
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));

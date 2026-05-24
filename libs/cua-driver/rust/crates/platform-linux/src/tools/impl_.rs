@@ -998,6 +998,98 @@ impl Tool for ScreenshotTool {
     }
 }
 
+// ── screenshot (Claude Code computer-use compat) ─────────────────────────────
+//
+// Drop-in replacement for `ScreenshotTool` selected via the
+// `--claude-code-computer-use-compat` flag. Same shape as the Windows /
+// macOS compat tools — see those files / SwiftCompatTools.swift for the
+// rationale.
+
+pub struct ScreenshotCompatTool {
+    state: Arc<ToolState>,
+}
+static SS_COMPAT_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for ScreenshotCompatTool {
+    fn def(&self) -> &ToolDef {
+        SS_COMPAT_DEF.get_or_init(|| ToolDef {
+            name: "screenshot".into(),
+            description:
+                "Capture a target window and return a JPEG image. Coordinates accepted by \
+                 CuaDriver's pixel tools are pixels in this window screenshot's coordinate space.\n\n\
+                 This is the compatibility anchor for Claude Code vision flows: CuaDriver remains \
+                 window-scoped, and all other tools are the normal CuaDriver tools.".into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["pid", "window_id"],
+                "properties": {
+                    "pid":       {"type":"integer","description":"Target process ID from list_windows or launch_app."},
+                    "window_id": {"type":"integer","description":"Target X11 XID from list_windows or launch_app."}
+                },
+                "additionalProperties": false
+            }),
+            read_only: true, destructive: false, idempotent: false, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use mcp_server::tool_args::ArgsExt;
+        let pid       = match args.require_u32("pid")       { Ok(v) => v, Err(e) => return e };
+        let window_id = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
+
+        // Validate: window must exist + belong to pid.
+        let window = tokio::task::spawn_blocking(move || {
+            crate::x11::list_windows(Some(pid))
+                .into_iter()
+                .find(|w| w.xid == window_id)
+        }).await.unwrap_or(None);
+
+        let window = match window {
+            Some(w) => w,
+            None => return ToolResult::error(format!(
+                "No visible window {window_id} found for pid {pid}. \
+                 Use list_windows to choose an on-screen target window."
+            )),
+        };
+
+        let max_dim = self.state.config.read().unwrap().max_image_dimension;
+
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u32, u32)> {
+            let raw = crate::capture::screenshot_window_bytes(window_id)?;
+            let png_bytes = crate::capture::resize_png_if_needed(&raw, max_dim)?;
+            let (w, h) = crate::capture::png_dimensions_pub(&png_bytes)?;
+            let jpeg = crate::capture::png_bytes_to_jpeg(&png_bytes, 85)?;
+            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+            Ok((B64.encode(&jpeg), w, h))
+        }).await;
+
+        match result {
+            Ok(Ok((b64, w, h))) => {
+                let title = if window.title.is_empty() { "(untitled)".into() } else { window.title };
+                let summary = format!(
+                    "Captured window screenshot {w}x{h} for {title} \
+                     [pid: {pid}, window_id: {window_id}]. \
+                     Use CuaDriver pixel tools with this window-local coordinate space."
+                );
+                ToolResult {
+                    content: vec![
+                        mcp_server::protocol::Content::image_jpeg(b64),
+                        mcp_server::protocol::Content::text(summary),
+                    ],
+                    is_error: None,
+                    structured_content: Some(json!({
+                        "pid": pid, "window_id": window_id,
+                        "width": w, "height": h, "format": "jpeg"
+                    })),
+                }
+            }
+            Ok(Err(e)) => ToolResult::error(format!("Screenshot failed: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+        }
+    }
+}
+
 // ── double_click ──────────────────────────────────────────────────────────────
 
 pub struct DoubleClickTool {
@@ -1961,7 +2053,7 @@ impl Tool for KillAppTool {
 
 // ── registry ─────────────────────────────────────────────────────────────────
 
-pub fn build_registry() -> ToolRegistry {
+pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
     let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
@@ -1978,7 +2070,11 @@ pub fn build_registry() -> ToolRegistry {
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
     r.register(Box::new(ScrollTool));
-    r.register(Box::new(ScreenshotTool { state: state.clone() }));
+    if compat {
+        r.register(Box::new(ScreenshotCompatTool { state: state.clone() }));
+    } else {
+        r.register(Box::new(ScreenshotTool { state: state.clone() }));
+    }
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool { state: state.clone() }));

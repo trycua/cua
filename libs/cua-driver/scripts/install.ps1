@@ -1189,7 +1189,7 @@ catch {
     # Network fetch failed — print one-line essentials so users always
     # get enough to recover.
     Write-Host "Next steps: $installedBinary --version  |  $installedBinary mcp-config  |  $installedBinary skills install"
-    Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+    Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 }
 
 # Windows-specific autostart hint (kept inline; OS-natural location).

@@ -346,7 +346,7 @@ mod platform {
 
     const NOT_YET: &str =
         "cua-driver autostart is currently Windows-only. macOS users: see \
-         libs/cua-driver-rs/scripts/install-local.sh --autostart for the \
+         libs/cua-driver/rust/scripts/install-local.sh --autostart for the \
          LaunchAgent recipe. Linux users: same script registers a systemd \
          --user unit. A cross-platform impl is tracked as a follow-up.";
 

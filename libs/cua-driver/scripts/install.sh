@@ -130,19 +130,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     LOCAL_RUST_INSTALLER=""
     if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
         SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-        # New canonical location — colocated helper under cua-driver/scripts/.
+        # Helper lives next to this script under libs/cua-driver/scripts/.
         CANDIDATE="$SCRIPT_DIR/_install-rust.sh"
         if [[ -f "$CANDIDATE" ]]; then
             LOCAL_RUST_INSTALLER="$CANDIDATE"
-        else
-            # Backward-compat: if someone is running this script from a
-            # tree where the helper hasn't been moved yet (e.g. a
-            # historical checkout being used with a freshly-pulled
-            # install.sh), fall through to the cua-driver-rs location.
-            CANDIDATE="$SCRIPT_DIR/../../cua-driver-rs/scripts/install.sh"
-            if [[ -f "$CANDIDATE" ]]; then
-                LOCAL_RUST_INSTALLER="$CANDIDATE"
-            fi
         fi
     fi
 

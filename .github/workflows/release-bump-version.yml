@@ -142,7 +142,7 @@ jobs:
               echo "type=cua-driver" >> $GITHUB_OUTPUT
               ;;
             "cua-driver-rs")
-              echo "directory=libs/cua-driver-rs" >> $GITHUB_OUTPUT
+              echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT
               echo "type=cua-driver-rs" >> $GITHUB_OUTPUT
               ;;
             "docker/cuabot")
@@ -408,7 +408,7 @@ jobs:
         if: ${{ inputs.service == 'cua-driver-rs' }}
         id: cua_driver_rs_version
         run: |
-          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver-rs/Cargo.toml)
+          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
           echo "cua-driver-rs version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 

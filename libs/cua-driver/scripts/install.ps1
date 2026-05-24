@@ -1173,6 +1173,32 @@ if ($AutoStart) {
         Write-Host "  In THIS shell (if already elevated), use: $installedBinary autostart enable"
         Write-Host ""
     }
+} else {
+    # No -AutoStart, but if a `cua-driver-serve` task is already
+    # registered, re-register it against the fresh binary. Otherwise
+    # the task <Command> still points at the previous release dir + an
+    # older binary that may be missing the hidden-console wrapper (#1654)
+    # or any later autostart-shape fix.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & schtasks.exe /Query /TN "cua-driver-serve" 2>$null | Out-Null
+        $hasTask = ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($hasTask) {
+        Write-Host ""
+        Write-Host "Existing 'cua-driver-serve' autostart task detected - re-registering against the fresh binary..." -ForegroundColor Cyan
+        try {
+            Register-CuaDriverAutostart -InstalledBinary $installedBinary
+            Write-Host "  Re-registered. Task action now uses this build's hidden-console wrapper." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "  Failed to re-register: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  The existing task still points at the previous binary. Run 'cua-driver autostart enable' from an elevated shell to update."
+        }
+    }
 }
 
 # Unified post-install hints come from a single shared text file so the

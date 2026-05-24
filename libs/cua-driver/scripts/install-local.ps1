@@ -239,6 +239,35 @@ if ($AutoStart) {
     catch {
         Write-Host "  Failed to register: $($_.Exception.Message)" -ForegroundColor Red
     }
+} else {
+    # User didn't pass -AutoStart, but if a `cua-driver-serve` task is
+    # ALREADY registered (from a previous `install.ps1 -AutoStart` or
+    # `cua-driver autostart enable`), re-register it pointing at this
+    # fresh binary. Otherwise the user ends up with a task whose
+    # <Command> path is the OLD release-install dir, running the OLD
+    # binary - even though `cua-driver` on PATH now resolves to the
+    # fresh one. See trycua/cua#1654 (hidden-console wrapper landed
+    # later - old tasks that survived an upgrade still produce the
+    # visible console window at logon).
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & schtasks.exe /Query /TN "cua-driver-serve" 2>$null | Out-Null
+        $hasTask = ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($hasTask) {
+        Write-Step "found existing 'cua-driver-serve' task - re-registering against fresh binary"
+        try {
+            Register-CuaDriverAutostart -InstalledBinary (Join-Path $VisibleBinDir $BinaryName)
+            Write-Host "  Re-registered. Task action now uses this build's hidden-console wrapper." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "  Failed to re-register: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  The existing task still points at the previous binary. Run 'cua-driver autostart enable' from an elevated shell to update."
+        }
+    }
 }
 
 # Unified post-install hints come from a single shared text file so the

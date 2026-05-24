@@ -120,57 +120,11 @@ function Register-CuaDriverAutostart {
     }
 }
 
-# KEEP IN SYNC WITH install.ps1::Stop-CuaDriverDaemons (both scripts run
-# standalone, install.ps1 is downloaded via `irm | iex` so it can't
-# dot-source — duplicated definitions, identical bodies).
-#
-# Best-effort kill of any running cua-driver / cua-driver-uia processes
-# so the next `cua-driver autostart kick` / `cua-driver mcp` starts the
-# FRESH binary, not whatever's still in memory. Without this the
-# previous daemon keeps running (and keeps drawing its overlay window)
-# until the user reboots — which surfaces as "the bug I just fixed is
-# still there" because the in-memory code is pre-fix.
-#
-# Layers of escalation:
-#   1. schtasks /End — terminates an autostart-task instance. Task
-#      Scheduler runs as SYSTEM so it can kill High-IL processes that
-#      a Medium-IL shell can't. /End on an instance the current user
-#      registered does NOT need admin.
-#   2. taskkill /F /IM — Medium-IL backstop for any process that
-#      wasn't task-attached.
-#   3. Returns the surviving process list so callers can warn the user
-#      (these are the processes a Medium-IL shell genuinely can't reach
-#      — High-IL daemons whose parent wasn't `cua-driver-serve`).
-function Stop-CuaDriverDaemons {
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
-        Start-Sleep -Milliseconds 200
-        & taskkill.exe /F /IM "cua-driver.exe" /T 2>$null | Out-Null
-        & taskkill.exe /F /IM "cua-driver-uia.exe" /T 2>$null | Out-Null
-    } finally {
-        $ErrorActionPreference = $prevEAP
-    }
-    Start-Sleep -Milliseconds 200
-    return @(Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue)
-}
-
-# KEEP IN SYNC WITH install.ps1::Show-CuaDriverDaemonSurvivors.
-# Prints a clear hint when Stop-CuaDriverDaemons leaves something
-# running (almost always a High-IL daemon spawned by the
-# RunLevel=Highest autostart task — Medium-IL kill returns Access
-# Denied for those).
-function Show-CuaDriverDaemonSurvivors {
-    param([Parameter(Mandatory = $true)][array]$Survivors)
-    if (-not $Survivors -or $Survivors.Count -eq 0) { return }
-    $pids = ($Survivors | ForEach-Object { $_.Id }) -join ', '
-    Write-Host "Note: $($Survivors.Count) cua-driver process(es) still running after best-effort kill (pid: $pids)." -ForegroundColor Yellow
-    Write-Host "      They are likely High-IL (spawned by RunLevel=Highest autostart task)." -ForegroundColor Yellow
-    Write-Host "      From an elevated PowerShell:" -ForegroundColor Yellow
-    Write-Host "        taskkill /IM cua-driver.exe /F" -ForegroundColor Yellow
-    Write-Host "      Or just reboot. Until they exit, the OLD binary keeps running." -ForegroundColor Yellow
-}
+# Stop-CuaDriverDaemons + Show-CuaDriverDaemonSurvivors are defined in
+# the sibling CuaDriverInstall.psm1 module - shared with install.ps1
+# so the daemon-cleanup logic stays in one place. Local dev runs from
+# a checked-out tree, so we always have the file on disk.
+Import-Module -Name (Join-Path $ScriptDir "CuaDriverInstall.psm1") -Force
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 

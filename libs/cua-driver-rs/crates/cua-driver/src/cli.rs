@@ -1084,9 +1084,10 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 /// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
 ///
 /// Shares the GitHub releases fetch with the startup banner via
-/// [`crate::version_check::fetch_latest_version`] so both code paths
-/// agree on tag filtering and HTTP semantics. Pass `--apply` to download
-/// and install via the canonical install.sh.
+/// [`crate::version_check::fetch_latest_version`] so both code paths agree on
+/// tag filtering and HTTP semantics. `--apply` delegates to the canonical
+/// installer script — see [`crate::updater`] for why we go through the script
+/// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool) {
     let current = env!("CARGO_PKG_VERSION");
     println!("Current version: {current}");
@@ -1114,23 +1115,38 @@ pub fn run_update_cmd(apply: bool) {
                 println!("  cua-driver update --apply");
                 println!();
                 println!("Or reinstall directly:");
-                println!("  curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash");
+                println!("  {}", crate::updater::manual_install_one_liner());
                 return;
             }
 
             println!("Downloading and installing cua-driver {v}…");
-            let status = std::process::Command::new("bash")
-                .arg("-c")
-                .arg("curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash")
-                .status();
-            match status {
-                Ok(s) if s.success() => {}
+            let daemon_was_running = crate::updater::daemon_is_running();
+            match crate::updater::run_install_script(&v) {
+                Ok(s) if s.success() => {
+                    println!("Installed cua-driver {v}.");
+                    if daemon_was_running {
+                        // The atomic swap (symlink retarget / junction flip)
+                        // means the running daemon kept executing the old
+                        // binary — restart picks up the new one.
+                        println!();
+                        println!("A daemon was running before the install. Restart it to pick up the new binary:");
+                        println!("  cua-driver stop && cua-driver serve");
+                    }
+                }
                 Ok(s) => {
-                    println!("Installation failed (exit {}). Run the command above manually.", s.code().unwrap_or(1));
+                    eprintln!(
+                        "Installation failed (exit {}). Re-run install manually:",
+                        s.code().unwrap_or(1)
+                    );
+                    eprintln!("  {}", crate::updater::manual_install_one_liner());
                     process::exit(s.code().unwrap_or(1));
                 }
                 Err(e) => {
-                    eprintln!("Failed to run installer: {e}");
+                    eprintln!("Failed to launch installer: {e}");
+                    #[cfg(windows)]
+                    eprintln!("  (is powershell.exe on PATH?)");
+                    #[cfg(not(windows))]
+                    eprintln!("  (is bash + curl on PATH?)");
                     process::exit(1);
                 }
             }

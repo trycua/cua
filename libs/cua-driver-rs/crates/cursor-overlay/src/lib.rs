@@ -14,6 +14,7 @@ pub mod bezier;
 pub mod path_planner;
 pub mod shape;
 pub mod capture_utils;
+pub mod util;
 
 pub use palette::Palette;
 pub use motion::MotionConfig;

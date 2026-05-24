@@ -109,6 +109,8 @@ pub struct DriverConfig {
     /// Default capture_mode for get_window_state when not specified per-call.
     pub capture_mode: String,
     /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
+    /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
+    /// the long edge is downscaled to this before encoding.
     pub max_image_dimension: u32,
 }
 
@@ -116,7 +118,7 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             capture_mode: "som".to_owned(),
-            max_image_dimension: 0,
+            max_image_dimension: 1568,
         }
     }
 }
@@ -228,7 +230,11 @@ pub fn register_all(registry: &mut ToolRegistry) {
     registry.register(Box::new(get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone())));
     registry.register(Box::new(zoom::ZoomTool { state: state.clone() }));
     registry.register(Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())));
-    registry.register(Box::new(page::PageTool::new(state.clone())));
+    // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
+    // its Apple-Events / CDP / AX-tree backend here.
+    registry.register(Box::new(mcp_server::page::PageTool::new(
+        Arc::new(page::MacOsPageBackend::new(state.clone())),
+    )));
     // Recording / replay tools are platform-independent — live in mcp-server.
     registry.register_recording_tools();
 }

@@ -32,7 +32,19 @@ pub enum Command {
     },
     ListTools,
     Describe(String),
-    Call { tool: String, json_args: Option<serde_json::Value>, screenshot_out_file: Option<String> },
+    Call {
+        tool: String,
+        json_args: Option<serde_json::Value>,
+        screenshot_out_file: Option<String>,
+        /// Override the daemon socket/pipe path used by the in-process
+        /// forwarding fallback (matches `--socket` semantics for `serve` /
+        /// `status` / `stop`). Defaults to `serve::default_socket_path()`
+        /// when None — i.e. `cua-driver call X` looks for the user's
+        /// default-path daemon. Surfaced to make integration tests able
+        /// to spin up a tempfile-socketed daemon and route calls
+        /// through it.
+        socket: Option<String>,
+    },
     McpConfig { client: Option<String> },
     Serve {
         socket: Option<String>,
@@ -234,7 +246,7 @@ pub fn parse_command() -> Command {
                 },
                 None => read_stdin_json(),
             };
-            Command::Call { tool, json_args, screenshot_out_file }
+            Command::Call { tool, json_args, screenshot_out_file, socket: socket.clone() }
         }
         Some("telemetry") => {
             // Hidden — used by install.sh. Only supports `install-event`
@@ -295,7 +307,7 @@ pub fn parse_command() -> Command {
                 },
                 None => read_stdin_json(),
             };
-            Command::Call { tool, json_args, screenshot_out_file }
+            Command::Call { tool, json_args, screenshot_out_file, socket: socket.clone() }
         }
     }
 }
@@ -701,6 +713,7 @@ pub fn run_call(
     tool: &str,
     json_args: Option<serde_json::Value>,
     screenshot_out_file: Option<String>,
+    socket_override: Option<String>,
 ) {
     // Daemon forwarding: if a daemon is listening, proxy the request
     // through it so AppStateEngine's element_index cache is shared.
@@ -710,17 +723,27 @@ pub fn run_call(
     // like Calculator / modern Notepad / Settings. The regular daemon at
     // `\\.\pipe\cua-driver` is Medium integrity and gets ERROR_ACCESS_DENIED on
     // SendInput into AppContainer'd processes. See #1602.
-    #[cfg(target_os = "windows")]
-    let socket_path = {
-        let uia = crate::serve::default_uia_pipe_path();
-        if crate::serve::is_daemon_listening(&uia) {
-            uia
-        } else {
+    //
+    // When `socket_override` is Some (i.e. caller passed `--socket <path>`),
+    // route directly to that path and skip the platform default + uia worker
+    // search. Used by integration tests to drive a tempfile-socketed daemon.
+    let socket_path = if let Some(s) = socket_override {
+        s
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            let uia = crate::serve::default_uia_pipe_path();
+            if crate::serve::is_daemon_listening(&uia) {
+                uia
+            } else {
+                crate::serve::default_socket_path()
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
             crate::serve::default_socket_path()
         }
     };
-    #[cfg(not(target_os = "windows"))]
-    let socket_path = crate::serve::default_socket_path();
     if crate::serve::is_daemon_listening(&socket_path) {
         let args_for_daemon = json_args.clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
@@ -733,26 +756,55 @@ pub fn run_call(
             Ok(resp) => {
                 if resp.ok {
                     if let Some(result) = resp.result {
-                        // Handle image write if --screenshot-out-file was given.
+                        // Walk the content array once: pick up any Image
+                        // payloads (either to write to --screenshot-out-file
+                        // or to merge into structuredContent below).
                         let mut printed = false;
+                        let mut image_b64: Option<(String, String)> = None;
                         if let Some(content) = result.get("content").and_then(|v| v.as_array()) {
                             for item in content {
                                 if item.get("type").and_then(|v| v.as_str()) == Some("image") {
-                                    if let Some(ref path) = screenshot_out_file {
-                                        if let Some(b64) = item.get("data").and_then(|v| v.as_str()) {
+                                    let b64 = item.get("data").and_then(|v| v.as_str()).map(str::to_owned);
+                                    let mime = item.get("mimeType").and_then(|v| v.as_str())
+                                        .unwrap_or("image/png").to_owned();
+                                    if let Some(b64) = b64 {
+                                        if let Some(ref path) = screenshot_out_file {
                                             use base64::Engine as _;
-                                            match base64::engine::general_purpose::STANDARD.decode(b64) {
-                                                Ok(bytes) => { let _ = std::fs::write(path, &bytes); }
-                                                Err(e) => eprintln!("--screenshot-out-file: {e}"),
+                                            match base64::engine::general_purpose::STANDARD.decode(&b64) {
+                                                Ok(bytes) => {
+                                                    if let Err(e) = std::fs::write(path, &bytes) {
+                                                        eprintln!("--screenshot-out-file: failed to write {path}: {e}");
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("--screenshot-out-file: base64 decode failed: {e}");
+                                                }
                                             }
+                                        } else {
+                                            // Stash for the structuredContent merge below.
+                                            image_b64 = Some((b64, mime));
                                         }
                                     }
                                 }
                             }
                         }
                         if let Some(sc) = result.get("structuredContent") {
-                            let pretty = serde_json::to_string_pretty(sc)
-                                .unwrap_or_else(|_| sc.to_string());
+                            // Merge image data into the structured payload
+                            // (matches in-process behaviour at the bottom of
+                            // this fn) so `cua-driver call screenshot` over
+                            // the daemon socket still emits
+                            // `screenshot_png_b64`. Previously this path
+                            // dropped the image entirely when no
+                            // --screenshot-out-file was given.
+                            let mut obj = sc.clone();
+                            if let Some((b64, mime)) = image_b64 {
+                                if let serde_json::Value::Object(ref mut map) = obj {
+                                    map.insert("screenshot_png_b64".into(), serde_json::Value::String(b64));
+                                    map.insert("screenshot_mime_type".into(), serde_json::Value::String(mime));
+                                }
+                            }
+                            let pretty = serde_json::to_string_pretty(&obj)
+                                .unwrap_or_else(|_| obj.to_string());
                             println!("{pretty}");
                             printed = true;
                         }
@@ -1057,11 +1109,6 @@ pub fn run_update_cmd(apply: bool) {
             }
         }
     }
-}
-
-/// `cua-driver dump-docs [--pretty]` — output all MCP tool schemas as JSON.
-pub fn run_dump_docs(registry: &ToolRegistry, pretty: bool) {
-    run_dump_docs_with_type(registry, pretty, "all")
 }
 
 /// Output documentation as JSON.  `doc_type` is one of:
@@ -1599,6 +1646,13 @@ pub fn run_doctor_cmd(json: bool) {
 /// Read JSON from stdin when stdin is a pipe (non-interactive). Returns `None`
 /// when stdin is a terminal or the input isn't valid JSON.
 /// Matches Swift's "If omitted, reads from stdin when stdin is a pipe."
+///
+/// Strips a leading UTF-8 BOM (`U+FEFF`, bytes `EF BB BF`) before parsing.
+/// Without this, payloads written via PowerShell 5.1's
+/// `Set-Content -Encoding utf8` (which silently prepends a BOM) parse as
+/// invalid JSON and the call falls through to default-args, producing
+/// confusing "Missing required integer field" errors despite the caller
+/// having sent a valid-looking payload. See the 2026-05-23 dogfood journal.
 fn read_stdin_json() -> Option<serde_json::Value> {
     use std::io::{self, IsTerminal, Read};
     let stdin = io::stdin();
@@ -1607,7 +1661,32 @@ fn read_stdin_json() -> Option<serde_json::Value> {
     }
     let mut buf = String::new();
     stdin.lock().read_to_string(&mut buf).ok()?;
-    serde_json::from_str(buf.trim()).ok()
+    let trimmed = buf.trim();
+    // U+FEFF is one character (3 bytes UTF-8) — `str::strip_prefix` matches by
+    // chars, so a single `'\u{feff}'` is the right comparand.
+    let stripped = trimmed.strip_prefix('\u{feff}').unwrap_or(trimmed);
+    serde_json::from_str(stripped).ok()
+}
+
+#[cfg(test)]
+mod stdin_bom_tests {
+    /// Manual cross-check that the BOM-stripping logic round-trips correctly
+    /// without needing a real stdin pipe.
+    #[test]
+    fn strip_prefix_handles_utf8_bom() {
+        let with_bom = "\u{feff}{\"pid\":42}";
+        let stripped = with_bom.strip_prefix('\u{feff}').unwrap_or(with_bom);
+        assert_eq!(stripped, "{\"pid\":42}");
+        let v: serde_json::Value = serde_json::from_str(stripped).unwrap();
+        assert_eq!(v["pid"], 42);
+    }
+
+    #[test]
+    fn strip_prefix_no_op_when_no_bom() {
+        let plain = "{\"pid\":7}";
+        let stripped = plain.strip_prefix('\u{feff}').unwrap_or(plain);
+        assert_eq!(stripped, plain);
+    }
 }
 
 /// Map a parsed [`Command`] to its canonical telemetry event name.

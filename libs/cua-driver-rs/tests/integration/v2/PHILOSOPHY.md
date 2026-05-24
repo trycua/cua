@@ -17,10 +17,10 @@ The driver exposes a small, stable interface:
 | `scroll` | Scroll wheel |
 | `drag` | Mouse drag |
 
-Tests **never** reach for `browser_eval`, CDP, Apple Events, or any other
-internal mechanism. The driver is a black box that delivers the action via
-whatever technique works best for the target app. Tests verify the
-*observable outcome*, not the delivery path.
+Tests **never** reach for `page.execute_javascript`, CDP, Apple Events, or
+any other internal mechanism. The driver is a black box that delivers the
+action via whatever technique works best for the target app. Tests verify
+the *observable outcome*, not the delivery path.
 
 ---
 

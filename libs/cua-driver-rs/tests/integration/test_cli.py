@@ -196,6 +196,47 @@ class ServeDaemonTests(unittest.TestCase):
             _run([self.binary, "stop", "--socket", self._sock_file])
             proc.wait(timeout=3)
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Windows: daemon spawned by subprocess.Popen runs in same session as "
+        "the test runner (typically Session 0 / non-interactive in CI); the "
+        "GDI BitBlt path fails with `The handle is invalid (0x80070006)` "
+        "because Session 0 has no graphics. The regression-guard behaviour "
+        "still verifies on macOS/Linux runners.",
+    )
+    def test_call_screenshot_via_daemon_emits_b64(self) -> None:
+        """`cua-driver call screenshot` over the daemon socket must emit
+        `screenshot_png_b64` — same shape as the in-process path. Regression
+        guard for the 2026-05-23 fix where the daemon-forwarding path in
+        `run_call` was silently dropping the image bytes (only printing
+        structuredContent metadata: format / width / height).
+        """
+        proc = self._start_daemon()
+        try:
+            r = _run(
+                [self.binary, "call", "--socket", self._sock_file, "screenshot"],
+                timeout=30,
+            )
+            self.assertEqual(r.returncode, 0, f"stderr: {r.stderr}")
+            data = json.loads(r.stdout)
+            self.assertIn(
+                "screenshot_png_b64", data,
+                "daemon-forwarded screenshot dropped the image — "
+                "merge into structuredContent regressed",
+            )
+            b64 = data["screenshot_png_b64"]
+            self.assertGreater(
+                len(b64), 100,
+                "screenshot base64 data seems too short — likely empty payload",
+            )
+            self.assertIn(
+                "screenshot_mime_type", data,
+                "merge into structuredContent missed the mime-type key",
+            )
+        finally:
+            _run([self.binary, "stop", "--socket", self._sock_file])
+            proc.wait(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

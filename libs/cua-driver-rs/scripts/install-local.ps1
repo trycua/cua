@@ -232,14 +232,43 @@ if ($AutoStart) {
     try {
         Register-CuaDriverAutostart -InstalledBinary (Join-Path $VisibleBinDir $BinaryName)
         Write-Host "  Registered. cua-driver serve auto-starts at every interactive logon." -ForegroundColor Green
-        Write-Host "  Start now without re-logging: schtasks /Run /TN cua-driver-serve"
-        Write-Host "  Remove:                       schtasks /Delete /TN cua-driver-serve /F"
     }
     catch {
         Write-Host "  Failed to register: $($_.Exception.Message)" -ForegroundColor Red
     }
-} else {
-    Write-Host "Auto-start (optional): re-run with -AutoStart to register a logon Scheduled Task,"
-    Write-Host "  or use 'schtasks /Run /TN cua-driver-serve' if you registered it previously."
 }
-Write-Host ""
+
+# Unified post-install hints come from a single shared text file so the
+# 4 Rust installers (this script + install-local.sh + install.ps1 +
+# _install-rust.sh) never drift. The .txt holds the OS-agnostic bulk
+# (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
+# placeholders; OS-specific bits stay inline below.
+$installedBinary = Join-Path $VisibleBinDir $BinaryName
+$HintsTxt = Join-Path $RepoRoot "..\cua-driver\scripts\post-install-hints.txt"
+if (Test-Path -LiteralPath $HintsTxt) {
+    # Read explicitly as UTF-8. PowerShell 5.1's Get-Content -Raw falls
+    # back to Windows-1252 when the source file has no BOM, which turns
+    # the .txt's `•` / `—` into mojibake (`â€¢` / `â€"`) in the rendered
+    # block. The other 3 installers don't hit this: install.ps1 reads
+    # the URL response via Invoke-WebRequest (HTTP charset decoding);
+    # _install-rust.sh / install-local.sh stream raw bytes through sed.
+    $hintsRaw = [System.IO.File]::ReadAllText($HintsTxt, [System.Text.Encoding]::UTF8)
+    Write-Host ($hintsRaw -replace '\{\{BINARY\}\}', $installedBinary)
+} else {
+    # Repo layout changed or .txt missing — fall back to one-line
+    # essentials so users still know what to do next.
+    Write-Host "Next steps: $installedBinary --version  |  $installedBinary mcp-config  |  $installedBinary skills install"
+    Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+}
+
+# Windows-specific autostart hint (kept inline; per-shell natural location).
+if (-not $AutoStart) {
+    Write-Host ""
+    Write-Host "Auto-start at logon (Windows-native equivalent of macOS LaunchAgent):" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart enable    (register Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
+    Write-Host "  Or re-run install-local.ps1 with -AutoStart for the same result." -ForegroundColor Cyan
+    Write-Host ""
+}

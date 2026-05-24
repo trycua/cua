@@ -234,12 +234,25 @@ fi
 echo "${BOLD}${GREEN}Installed.${NORMAL}"
 echo "  ${BOLD}$INSTALLED_BIN${NORMAL}"
 echo ""
-echo "Verify:"
-echo "  cua-driver --version"
-echo "  cua-driver doctor"
-echo ""
 
+# Unified post-install hints come from a single shared text file so the
+# 4 Rust installers (this script + install-local.ps1 + _install-rust.sh +
+# install.ps1) never drift. The .txt holds the OS-agnostic bulk
+# (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
+# placeholders; OS-specific bits stay inline below.
+HINTS_TXT="$REPO_ROOT/../cua-driver/scripts/post-install-hints.txt"
+if [ -f "$HINTS_TXT" ]; then
+    sed "s|{{BINARY}}|$INSTALLED_BIN|g" "$HINTS_TXT"
+else
+    # Repo layout changed or running from an unexpected location — fall
+    # back to one-line essentials so users still know what to do next.
+    echo "Next steps: $INSTALLED_BIN --version  |  $INSTALLED_BIN mcp-config  |  $INSTALLED_BIN skills install"
+    echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+fi
+
+# OS-specific autostart hint (kept inline; per-shell natural location).
 if [ "$INSTALL_AUTOSTART" != true ]; then
+    echo ""
     if [ "$OS" = "Darwin" ]; then
         echo "Auto-start (optional): re-run with --autostart to register a LaunchAgent."
     else

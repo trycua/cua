@@ -5,6 +5,13 @@
 > on macOS. For Windows web-app automation (Edge, Chrome with
 > PostMessage / WebView2), see `WINDOWS.md` → "Web apps on Windows". For
 > Linux: `LINUX.md` (BETA — limited browser automation today).
+>
+> The `page` tool itself is **cross-platform** — Windows + Linux back
+> `get_text` / `query_dom` with UIA / AT-SPI respectively, and
+> `execute_javascript` on those platforms uses CDP (browser must be
+> launched with `--remote-debugging-port=N`, with the port exposed via
+> the `CUA_DRIVER_CDP_PORT` env var). macOS routing (this doc) remains
+> Apple Events → CDP → AX-tree fallback.
 
 Covers apps whose UI is rendered in a web runtime inside a native
 macOS shell:

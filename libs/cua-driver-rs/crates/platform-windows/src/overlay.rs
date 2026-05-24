@@ -12,7 +12,7 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use cursor_overlay::{
     CursorConfig, CursorShape, MotionConfig, OverlayCommand, Palette, PathPlanner, PathState,
@@ -303,12 +303,9 @@ impl RenderState {
     }
 }
 
-fn rotate_toward(current: f64, desired: f64, max_step: f64) -> f64 {
-    let mut diff = desired - current;
-    while diff >  std::f64::consts::PI { diff -= 2.0 * std::f64::consts::PI; }
-    while diff < -std::f64::consts::PI { diff += 2.0 * std::f64::consts::PI; }
-    current + diff.clamp(-max_step, max_step)
-}
+// Shared with platform-linux — pulled into `cursor_overlay::util` so both
+// per-OS render loops use the exact same easing primitive.
+use cursor_overlay::util::rotate_toward;
 
 // ── tiny-skia render (shared logic) ──────────────────────────────────────
 
@@ -471,9 +468,7 @@ fn draw_default_arrow(
 
 #[cfg(target_os = "windows")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCommand>) {
-    use windows::Win32::Foundation::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::Media::timeBeginPeriod;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::core::PCWSTR;
@@ -547,7 +542,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     let hwnd = hwnd.unwrap();
 
     // Show without activation (mirrors ShowWithoutActivation in C# ref).
-    unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE); }
+    unsafe { let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE); }
 
     // Set up timer at 8ms (~125 Hz) matching the C# reference.
     unsafe { SetTimer(hwnd, 1, 8, None); }
@@ -561,7 +556,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     let mut msg = MSG::default();
     unsafe {
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
     }
@@ -591,7 +586,6 @@ unsafe extern "system" fn wnd_proc(
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::Foundation::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::Win32::Graphics::Gdi::*;
 
     match msg {
         WM_TIMER => {
@@ -607,7 +601,7 @@ unsafe extern "system" fn wnd_proc(
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(rs) = guard.as_mut() {
                     // Drain the channel.
-                    if let Ok(mut rx_guard) = CMD_RX_WIN.try_lock() {
+                    if let Ok(rx_guard) = CMD_RX_WIN.try_lock() {
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(cmd) = rx.try_recv() {
                                 rs.apply_command(cmd);
@@ -664,7 +658,7 @@ unsafe fn update_layered_window(
     let hdc_mem = CreateCompatibleDC(hdc_screen);
 
     // Create a 32-bit top-down DIB section (BGRA).
-    let mut bmi = BITMAPINFO {
+    let bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
             biWidth: w,
@@ -687,7 +681,7 @@ unsafe fn update_layered_window(
         0,
     );
     if hbmp.is_err() || bits_ptr.is_null() {
-        DeleteDC(hdc_mem);
+        let _ = DeleteDC(hdc_mem);
         ReleaseDC(None, hdc_screen);
         return;
     }
@@ -732,11 +726,11 @@ unsafe fn update_layered_window(
         SourceConstantAlpha: 255,
         AlphaFormat:         1, // AC_SRC_ALPHA
     };
-    UpdateLayeredWindow(hwnd, hdc_screen, Some(&pt_dst), Some(&sz),
+    let _ = UpdateLayeredWindow(hwnd, hdc_screen, Some(&pt_dst), Some(&sz),
                         hdc_mem, Some(&pt_src), COLORREF(0), Some(&blend), ULW_ALPHA);
 
-    DeleteObject(hbmp);
-    DeleteDC(hdc_mem);
+    let _ = DeleteObject(hbmp);
+    let _ = DeleteDC(hdc_mem);
     ReleaseDC(None, hdc_screen);
 }
 

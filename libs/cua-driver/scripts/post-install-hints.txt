@@ -1,0 +1,51 @@
+
+Next steps:
+
+  1. Try it:
+       {{BINARY}} --version
+       {{BINARY}} list-tools
+
+  2. Agent skill pack (optional):
+       {{BINARY}} skills install   # fetch + link the cua-driver-rs skill pack
+                                   # into Claude Code / Codex / OpenClaw / OpenCode.
+                                   # The install never touches your agent dirs.
+
+  3. As an MCP server — run the one matching your client. Each is also
+     available via '{{BINARY}} mcp-config --client <name>':
+
+     • Claude Code:
+         claude mcp add --transport stdio cua-driver -- {{BINARY}} mcp
+
+       Claude Code computer-use compatibility mode:
+         claude mcp add --transport stdio cua-computer-use -- {{BINARY}} mcp --claude-code-computer-use-compat
+       Use this when you want Claude Code's vision/computer-use-style flow
+       to ground on CuaDriver window screenshots. It keeps the normal
+       CuaDriver tools and changes only the screenshot tool.
+
+     • Codex (OpenAI):
+         codex mcp add cua-driver -- {{BINARY}} mcp
+
+     • OpenClaw:
+         {{BINARY}} mcp-config --client openclaw
+
+     • GitHub Copilot CLI (paste into ~/.copilot/mcp-config.json):
+         {
+           "mcpServers": {
+             "cua-driver": {
+               "type": "local",
+               "command": "{{BINARY}}",
+               "args": ["mcp"],
+               "tools": ["*"]
+             }
+           }
+         }
+
+     • Cursor / OpenCode / Hermes (no add CLI — paste config):
+         {{BINARY}} mcp-config --client cursor     # JSON for ~/.cursor/mcp.json
+         {{BINARY}} mcp-config --client opencode   # JSON for opencode.json
+         {{BINARY}} mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
+
+     For other clients accepting the generic mcpServers shape:
+         {{BINARY}} mcp-config
+
+Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs

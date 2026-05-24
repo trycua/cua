@@ -130,14 +130,11 @@ REQUIRED_TOOLS = [
 # In Rust, not in Swift yet.  Tests for these will fail on the Swift binary.
 RUST_ONLY_TOOLS = [
     "type_text_chars",       # per-character delay typing; Swift uses type_text
-    "browser_eval",          # CDP JS eval; Swift uses 'page' for browser JS
     "get_accessibility_tree",# lightweight desktop AX snapshot (separate from get_window_state)
 ]
 
-# In Swift, not registered in Rust yet (page.rs exists but not in register_all).
-SWIFT_ONLY_TOOLS = [
-    "page",  # browser JS + get_text + query_dom; Rust uses browser_eval
-]
+# In Swift, not registered in Rust yet. (`page` is now cross-platform in Rust.)
+SWIFT_ONLY_TOOLS: list[str] = []
 
 
 # ── parity mixin ───────────────────────────────────────────────────────────────
@@ -1070,7 +1067,7 @@ class _ParityMixin:
     # ── stdio MCP: Rust-only tools (missing in Swift) ────────────────────────
 
     def test_mcp_rust_only_tools_present(self) -> None:
-        """Rust-only tools (type_text_chars, browser_eval, get_accessibility_tree).
+        """Rust-only tools (type_text_chars, get_accessibility_tree).
 
         These are in the Rust binary but not yet in Swift.  Both binaries
         should eventually have them.  This test fails on Swift until ported.
@@ -1104,11 +1101,9 @@ class _ParityMixin:
     # ── stdio MCP: Swift-only tools (missing/unregistered in Rust) ───────────
 
     def test_mcp_swift_only_tools_present(self) -> None:
-        """Swift-only tools (page).
-
-        In Swift, not yet registered in Rust (page.rs exists but not in
-        register_all).  Both binaries should eventually have them.
-        This test fails on Rust until page::PageTool is added to register_all.
+        """Swift-only tools list — currently empty after the page-tool
+        unification in Rust. Kept as a no-op so the matrix stays symmetric
+        with `test_mcp_rust_only_tools_present`.
         """
         with self._mcp() as c:
             names = {t["name"] for t in c.list_tools()}
@@ -1116,25 +1111,6 @@ class _ParityMixin:
         self.assertFalse(
             missing,
             f"Swift-only tools missing: {missing} (not yet registered in this binary)",
-        )
-
-    # ── stdio MCP: browser_eval ───────────────────────────────────────────────
-
-    def test_mcp_browser_eval_is_registered(self) -> None:
-        """'browser_eval' tool must appear in tools/list.
-
-        Parity gap: Swift binary does not have 'browser_eval' — it uses 'page'
-        for browser JS. This test documents the requirement that both binaries
-        expose browser_eval. Fails on Swift until it is ported.
-        """
-        with self._mcp() as c:
-            names = {t["name"] for t in c.list_tools()}
-        self.assertIn("browser_eval", names, "'browser_eval' tool is not registered")
-
-    def test_mcp_browser_eval_missing_pid_raises_error(self) -> None:
-        """browser_eval with no pid should return an MCP error."""
-        self._assert_tool_raises_mcp_error(
-            "browser_eval", {"expression": "1+1"}
         )
 
     # ── stdio MCP: protocol-level contracts ──────────────────────────────────

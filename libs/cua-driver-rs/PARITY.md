@@ -20,10 +20,9 @@ cd libs/cua-driver-rs/tests/integration
 | Gap | Rust | Swift |
 |-----|------|-------|
 | `type_text_chars` | ✅ | missing |
-| `browser_eval` | ✅ | missing |
 | `get_accessibility_tree` | ✅ | missing |
-| `page` tool | ✅ (registered as of this commit) | ✅ |
-| `--version` flag | ✅ (fixed in this commit) | ✅ |
+| `page` tool | ✅ (cross-platform: Apple-Events on macOS, UIA+CDP on Windows, AT-SPI+CDP on Linux) | ✅ (macOS only) |
+| `--version` flag | ✅ | ✅ |
 | `call check_permissions` JSON | ✅ JSON | human-readable text |
 | `call screenshot` (no window_id) | ✅ full-display default | error (requires window_id) |
 
@@ -572,10 +571,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   - windows: VERIFIED for Win32 path; UWP path requires interactive session
     (returns descriptive error in Session 0 — never hangs). Win32 launches
     use `ShellExecuteExW` + `SW_SHOWNOACTIVATE` (no focus steal, matches
-    macOS oapp). UWP launches use `IApplicationActivationManager` +
-    best-effort `GetForegroundWindow` snapshot/restore (best-effort
-    because `SetForegroundWindow` is subject to Windows' foreground-lock
-    restrictions — visual confirmation in Session 1+ recommended).
+    macOS oapp) AND now schedule a best-effort polling
+    `GetForegroundWindow`/`SetForegroundWindow` restore (≤3s, 100ms cadence)
+    that flips the user's prior foreground back if the spawned app
+    activates. URLs-only invocations skip the restore (the user explicitly
+    asked the default browser to come up with that page). UWP launches use
+    `IApplicationActivationManager` + best-effort `GetForegroundWindow`
+    snapshot/restore (best-effort because `SetForegroundWindow` is subject
+    to Windows' foreground-lock restrictions — visual confirmation in
+    Session 1+ recommended).
   - macOS: VERIFIED (full focus-steal contract — see [Focus-steal prevention](#focus-steal-prevention))
   - linux: OPEN
 - Tests:
@@ -628,6 +632,25 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    Windows-equivalent of Swift's background-launch invariant.
 9. **Description** — multi-paragraph port from Swift with explicit
    Windows-specific notes (path takes precedence; bundle_id alias).
+10. **Polling foreground-restore for the Win32 path** — mirrors the macOS
+    `FocusRestoreGuard`. `LaunchAppTool::invoke` captures
+    `GetForegroundWindow()` before the launch dispatch and, for the
+    `ShellExecuteExW` branch, spawns a tokio task that polls every 100ms
+    (up to 3s) for "the spawned app actually grabbed foreground" and then
+    flips the prior HWND back via `SetForegroundWindow`. The UWP/AUMID
+    branch keeps its existing synchronous restore in
+    `launch_uwp::restore_foreground_best_effort` — the polling task is
+    gated on the Win32 branch to avoid double-restoring.
+
+    URLs-only invocations (`{urls: [...]}` with no app-identifying field)
+    skip the restore: the user asked for that page to come up in the
+    default browser, restoring would hide it. The decision is a pure
+    function (`should_restore_foreground_after_launch`) with unit
+    coverage in `launch_focus_restore_decision_tests`.
+
+    `SetForegroundWindow` from non-UIAccess processes is restricted by
+    Windows' foreground-lock; failures are logged at `tracing::trace!`
+    and not surfaced — the launch itself already succeeded.
 
 ### Intentional Rust-only fields accepted (no-op)
 
@@ -855,11 +878,15 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
    Swift verbatim: `"✅ Window screenshot — WxH png [window_id: ID]"`
    (em-dash, checkmark, window-id suffix). Display fallback uses
    `"✅ Display screenshot — WxH png"` (Rust-only, see intentional below).
-2. **Default JPEG quality** — was 85, Swift defaults 95. Now 95.
-3. **Description** — multi-paragraph port from Swift adapted to Windows
+2. **Description** — multi-paragraph port from Swift adapted to Windows
    (BitBlt + PrintWindow transport; no permission gate needed).
-4. **`idempotent`** — was `true`; Swift uses `false` (a fresh pixel grab
+3. **`idempotent`** — was `true`; Swift uses `false` (a fresh pixel grab
    every call). Now matches Swift.
+4. **`max_image_dimension` default** — was 0 (no cap), Swift uses 1568.
+   Now 1568 on all 3 Rust platforms (matches
+   `CuaDriverConfig.defaultMaxImageDimension`). The 0 default was
+   producing 10MB screenshots on the Windows VM; 1568 caps the long
+   edge before encoding.
 
 ### Intentional Rust-only
 
@@ -868,6 +895,16 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
   Windows-only convenience that Swift can't easily provide because
   macOS Screen Recording requires per-window grants.  Schema accepts
   both shapes; description explains.
+- **Default `format`** — Swift defaults `png`; all 3 Rust platforms now
+  default `jpeg`. Rationale: agents typically want compact images for
+  vision-model context windows; PNG is lossless but multi-MB on screen
+  content. Schema still accepts both; callers wanting PNG pass
+  `{"format":"png"}`. Swift may follow; tracked as a follow-up parity
+  question.
+- **Default JPEG `quality`** — Swift defaults 95; Rust defaults 85
+  (already Linux's default and the macOS Claude-Code-compat tool's
+  default). 85 is the typical sweet spot for screen content. Diverges
+  from Swift only when both sides actually emit JPEG.
 
 ### Verified on Windows
 
@@ -1356,7 +1393,6 @@ older clients that only read name/description still work.
      "id": 1,
      "result": {
        "tools": [
-         { "name": "browser_eval",            "description": "…", "inputSchema": {…}, "annotations": {…} },
          { "name": "check_permissions",       "description": "…", "inputSchema": {…}, "annotations": {…} },
          { "name": "click",                   "description": "…", "inputSchema": {…}, "annotations": {…} },
          { "name": "double_click",            "…": "…" },
@@ -1689,6 +1725,48 @@ arrays.
 - `--type=mcp`: top-level `{version, tools}` ✓
 - `--type=cli`: stub section ✓
 - `--pretty`: multi-line JSON (991 lines) ✓
+
+---
+
+## Installer post-install hints
+
+Not an MCP tool — an installer-text contract. The hint text printed at
+the end of every cua-driver-rs install (Try-it / agent skill pack / MCP
+setup per client / docs link) is sourced from a single shared file:
+
+- **Shared text**: `libs/cua-driver/scripts/post-install-hints.txt`
+  with `{{BINARY}}` placeholder.
+- **Renderers**: each of the 4 Rust installers reads the .txt, swaps
+  `{{BINARY}}` for the installed binary path, prints it, then appends
+  an OS-specific autostart hint inline:
+    - `libs/cua-driver/scripts/_install-rust.sh` — `curl` from
+      raw.githubusercontent.com (remote install path) + bash `sed`.
+    - `libs/cua-driver/scripts/install.ps1` — `Invoke-WebRequest` from
+      raw.githubusercontent.com + PowerShell `-replace`.
+    - `libs/cua-driver-rs/scripts/install-local.sh` — direct disk read
+      from `../cua-driver/scripts/post-install-hints.txt` + `sed`.
+    - `libs/cua-driver-rs/scripts/install-local.ps1` — direct disk read
+      from `..\cua-driver\scripts\post-install-hints.txt` + `-replace`.
+
+If the .txt is unreachable (network failure on remote installs, repo
+layout change on local), each installer falls back to a one-line
+essentials string so the user always gets enough to recover.
+
+**Why not a CLI subcommand**: an earlier draft of this work added
+`cua-driver post-install` to the Rust binary and had all 4 installers
+delegate via `& $installedBinary post-install`. Reverted — the
+chicken-and-egg risk (failed binary install = no hints either) made
+the .txt approach the safer choice. The .txt has no runtime
+dependency; even a totally broken binary install still prints hints.
+
+**Why OS-specific hints stay inline**: each script targets one OS
+(install.ps1 = Windows; install-local.sh on macOS vs Linux is the
+only branching case). The OS-specific block is 4-6 lines, naturally
+fits in the script that targets that OS, and is the only part that
+would need conditional rendering in a single-file design.
+
+**Status**: VERIFIED on macOS via `bash libs/cua-driver-rs/scripts/install-local.sh`
+end-to-end. Windows VM verification pending.
 
 ---
 

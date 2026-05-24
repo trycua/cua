@@ -446,14 +446,15 @@ jobs:
           cp libs/cua-driver/scripts/install.ps1        release-upload/install.ps1
           cp libs/cua-driver/scripts/_install-rust.sh   release-upload/_install-rust.sh
 
-          # Uninstaller scripts — mirror the install side. The canonical
-          # uninstall.sh dispatches to the Swift uninstall path by default
-          # and to _uninstall-rust.sh on --experimental-rust / non-macOS
-          # auto-detect. uninstall.ps1 is the canonical Windows
-          # uninstaller (cua-driver-rs only — no Swift Windows build).
+          # Uninstaller scripts — single canonical file per shell (no
+          # `_uninstall-rust.sh` helper). uninstall.sh handles both Swift
+          # (macOS default) and Rust (Linux auto-select, macOS opt-in via
+          # --experimental-rust / --backend=rust) inline. uninstall.ps1
+          # is the Windows uninstaller (cua-driver-rs only — no Swift
+          # Windows build) and self-elevates via UAC when an -AutoStart
+          # install (RunLevel=Highest task) needs to be torn down.
           cp libs/cua-driver/scripts/uninstall.sh       release-upload/uninstall.sh
           cp libs/cua-driver/scripts/uninstall.ps1      release-upload/uninstall.ps1
-          cp libs/cua-driver/scripts/_uninstall-rust.sh release-upload/_uninstall-rust.sh
 
           # Skill pack — single platform-agnostic tarball fetched by
           # `cua-driver skills install`. The .md files are identical across

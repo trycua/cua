@@ -47,6 +47,7 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)] // Non-macOS stub kept for API symmetry — see module header.
 pub fn is_executable_inside_cuadriver_app() -> bool {
     false
 }
@@ -74,6 +75,7 @@ pub fn parent_is_not_launchd() -> bool {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)] // Non-unix stub kept for API symmetry — see module header.
 pub fn parent_is_not_launchd() -> bool {
     // No launchd on non-Unix; the heuristic is macOS-only anyway.
     // Returning false keeps the caller in-process on unsupported

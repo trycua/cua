@@ -16,7 +16,15 @@ fn def() -> &'static ToolDef {
         name: "screenshot".into(),
         description:
             "Capture a screenshot. Returns base64-encoded image data in the requested format \
-             (default png).\n\n\
+             (default `jpeg`, quality `85`). The long edge is downscaled to fit the \
+             `max_image_dimension` config (default `1568` px — matches Anthropic's \
+             multimodal-vision input size, so a click-coord picked off this PNG addresses the \
+             same pixels the model reasoned over).\n\n\
+             **Prefer `get_window_state` for UI work** — it returns the AX tree alongside the \
+             same screenshot in one call, populates the element_index cache the click / \
+             type_text / scroll tools resolve against, and is the only path to backgrounded \
+             accessibility actions. `screenshot` is for when you just need pixels (vision \
+             grounding, debugging, attaching to a report).\n\n\
              Without `window_id`, captures the full main display. With `window_id`, captures \
              just that window (pair with `list_windows` or `get_accessibility_tree` which return \
              window IDs).\n\n\
@@ -32,13 +40,13 @@ fn def() -> &'static ToolDef {
                 "format": {
                     "type": "string",
                     "enum": ["png", "jpeg"],
-                    "description": "Image format. Default: png."
+                    "description": "Image format. Default: jpeg."
                 },
                 "quality": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 95,
-                    "description": "JPEG quality 1-95; ignored for png. Default: 95."
+                    "description": "JPEG quality 1-95; ignored for png. Default: 85."
                 }
             },
             "additionalProperties": false
@@ -56,8 +64,8 @@ impl Tool for ScreenshotTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let window_id = args.get("window_id").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let format    = args.get("format").and_then(|v| v.as_str()).unwrap_or("png").to_owned();
-        let quality   = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(95) as u8;
+        let format    = args.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg").to_owned();
+        let quality   = args.get("quality").and_then(|v| v.as_u64()).unwrap_or(85) as u8;
         let use_jpeg  = format == "jpeg";
         let max_dim   = self.state.config.read().unwrap().max_image_dimension;
 

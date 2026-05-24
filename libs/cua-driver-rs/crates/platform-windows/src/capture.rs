@@ -211,8 +211,8 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     let ok = GetDIBits(mem_dc, bitmap, 0, h as u32, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
 
     SelectObject(mem_dc, old_bitmap);
-    DeleteObject(bitmap);
-    DeleteDC(mem_dc);
+    let _ = DeleteObject(bitmap);
+    let _ = DeleteDC(mem_dc);
     ReleaseDC(hwnd, screen_dc);
 
     if ok == 0 { bail!("GetDIBits returned 0"); }
@@ -372,8 +372,8 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let mut pixels = vec![0u8; (w * h * 4) as usize];
         let ok = GetDIBits(mem_dc, bitmap, 0, h as u32, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
         SelectObject(mem_dc, old_bitmap);
-        DeleteObject(bitmap);
-        DeleteDC(mem_dc);
+        let _ = DeleteObject(bitmap);
+        let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
         if ok == 0 { bail!("GetDIBits returned 0"); }
         encode_bgra_to_png(&pixels, w as u32, h as u32)

@@ -143,11 +143,14 @@ trycua.com in Edge". You can also invoke it explicitly:
 
 ## Claude Code MCP compatibility mode
 
-For normal skill-driven use, prefer the CLI or the standard MCP server. If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver screenshots, register the compatibility server:
+For normal skill-driven use, prefer the CLI or the standard MCP server. If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver screenshots, register the compatibility server. The cleanest path is to let `cua-driver` print the right command for your shell:
 
 ```bash
-claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
+cua-driver mcp-config --client claude
+# then paste + run the printed `claude mcp add-json …` line
 ```
+
+Under the hood this registers a `cua-computer-use` stdio server that runs `cua-driver mcp --claude-code-computer-use-compat`. The `add-json` form sidesteps a PowerShell arg-parsing quirk that mangles long flags following `--`.
 
 This mode exposes the normal CuaDriver tools and changes only `screenshot`. The compatibility screenshot requires `pid` and `window_id`, captures that window only, and establishes a window-local pixel coordinate frame. It does not call Anthropic APIs or expose Anthropic's native computer-use API tool.
 

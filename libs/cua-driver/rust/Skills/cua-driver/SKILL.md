@@ -75,7 +75,7 @@ server path above. If the user explicitly wants Claude Code's
 vision/computer-use-style flow, they can register:
 
 ```bash
-claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
+cua-driver mcp-config --client claude   # then paste + run the printed line
 ```
 
 Observation: Claude Code vision flows appear to treat a screenshot

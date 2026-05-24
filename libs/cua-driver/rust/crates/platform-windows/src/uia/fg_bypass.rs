@@ -22,7 +22,8 @@
 //! for non-XAML hosts.
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{EnableWindow, GA_ROOT, GetAncestor};
+use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+use windows::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor};
 
 /// RAII guard that disables a window on construction and restores its
 /// previous enabled-state on Drop. Always re-arms on Drop even if the

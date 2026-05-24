@@ -161,10 +161,41 @@ if (-not (Test-Path -LiteralPath $BuiltBinary)) {
 
 $VersionTag  = "0.0.0-local-$Config"
 $VersionedDir = Join-Path $ReleasesDir "$VersionTag-$Target"
+$DestBinary = Join-Path $VersionedDir $BinaryName
+
+# If a previous install-local left a binary here and it's currently
+# being executed (typical: `cua-driver autostart kick` spawned a
+# High-IL daemon at logon, which we can't terminate from this
+# Medium-IL shell without UAC), the Copy-Item below fails with
+# "The process cannot access the file ... because it is being used by
+# another process." Windows DOES allow renaming a locked .exe — the
+# loader opens images with FILE_SHARE_DELETE, so a rename succeeds
+# while the content stays locked. Renaming out of the way frees up
+# the destination path so Copy-Item lands cleanly. The old file gets
+# unlinked at the next reboot or when the daemon exits.
+if (Test-Path -LiteralPath $DestBinary) {
+    $ts = (Get-Date).ToString('yyyyMMdd-HHmmss')
+    $stale = "$DestBinary.stale-$ts"
+    try {
+        Move-Item -LiteralPath $DestBinary -Destination $stale -Force -ErrorAction Stop
+        Write-Step "renamed locked previous binary to $(Split-Path -Leaf $stale)"
+    } catch {
+        Write-Host "Note: could not rename previous binary at $DestBinary." -ForegroundColor Yellow
+        Write-Host "      ($($_.Exception.Message))" -ForegroundColor Yellow
+        Write-Host "      Most likely a running cua-driver daemon is holding it." -ForegroundColor Yellow
+        Write-Host "      Stop it first (e.g. ``schtasks /End /TN cua-driver-serve`` then re-run)." -ForegroundColor Yellow
+    }
+    # Best-effort GC of stale-* siblings older than this run. Cheap;
+    # keeps the dir from growing unbounded over many re-builds.
+    Get-ChildItem -LiteralPath $VersionedDir -Filter "$BinaryName.stale-*" -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+        ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {} }
+}
+
 Write-Step "staging into $VersionedDir"
 New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
-Copy-Item -LiteralPath $BuiltBinary -Destination (Join-Path $VersionedDir $BinaryName) -Force
-$installedBinary = Join-Path $VersionedDir $BinaryName
+Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
+$installedBinary = $DestBinary
 
 # Stage the skill pack alongside the binary. install-local mirrors what
 # install.ps1 does from a release zip — copies Skills/cua-driver-rs/ from

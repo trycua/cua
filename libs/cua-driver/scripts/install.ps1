@@ -527,6 +527,41 @@ function Test-IsElevated {
     return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Stop-CuaDriverDaemons + Show-CuaDriverDaemonSurvivors live in the
+# sibling _install-common.psm1 module so install-local.ps1 and this
+# script share the daemon-cleanup logic. Two load paths:
+#   * checked-out tree: the .psm1 sits next to install.ps1 on disk;
+#     Import-Module from $PSScriptRoot works directly.
+#   * `irm | iex` install: no file on disk, $PSScriptRoot is empty.
+#     Fetch the .psm1 from GitHub raw and Import-Module from a temp
+#     file. See Import-CuaDriverInstallModule below (defined inline so
+#     it's available before the module load itself).
+function Import-CuaDriverInstallModuleBootstrap {
+    [CmdletBinding()]
+    param(
+        [string]$LocalDir,
+        [Parameter(Mandatory = $true)][string]$Url
+    )
+    if ($LocalDir) {
+        $localPsm = Join-Path $LocalDir "_install-common.psm1"
+        if (Test-Path -LiteralPath $localPsm) {
+            Import-Module -Name $localPsm -Force -ErrorAction Stop
+            return
+        }
+    }
+    $body = Invoke-RestMethod -Uri $Url -UseBasicParsing
+    $tmp = Join-Path $env:TEMP ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
+    Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+    try {
+        Import-Module -Name $tmp -Force -ErrorAction Stop
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+Import-CuaDriverInstallModuleBootstrap `
+    -LocalDir $PSScriptRoot `
+    -Url "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-common.psm1"
+
 function Register-CuaDriverAutostart {
     param([Parameter(Mandatory = $true)][string]$InstalledBinary)
 
@@ -1159,6 +1194,19 @@ else {
         Write-ManualPathInstructions $VisibleBinDir
     }
 }
+
+# Kill any cua-driver / cua-driver-uia process still running off the
+# OLD binary, so the next time the daemon is invoked (autostart kick,
+# manual `cua-driver mcp`, MCP client startup) it picks up the freshly-
+# installed code. Without this, in-memory daemons keep serving old
+# behaviour - which surfaces as "the bug I just patched is still
+# there" because the user's in-memory code is pre-fix. Best-effort:
+# High-IL daemons from the RunLevel=Highest autostart task survive a
+# Medium-IL kill and get reported via Show-CuaDriverDaemonSurvivors.
+Write-Host ""
+Write-Host "Stopping any previous cua-driver processes (best-effort; High-IL needs admin)..." -ForegroundColor Cyan
+$survivors = Stop-CuaDriverDaemons
+Show-CuaDriverDaemonSurvivors -Survivors $survivors
 
 if ($AutoStart) {
     Write-Host ""

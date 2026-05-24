@@ -120,6 +120,12 @@ function Register-CuaDriverAutostart {
     }
 }
 
+# Stop-CuaDriverDaemons + Show-CuaDriverDaemonSurvivors are defined in
+# the sibling _install-common.psm1 module - shared with install.ps1
+# so the daemon-cleanup logic stays in one place. Local dev runs from
+# a checked-out tree, so we always have the file on disk.
+Import-Module -Name (Join-Path $ScriptDir "_install-common.psm1") -Force
+
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
 # ---------- Prerequisites --------------------------------------------------
@@ -190,6 +196,10 @@ if (Test-Path -LiteralPath $DestBinary) {
     Get-ChildItem -LiteralPath $VersionedDir -Filter "$BinaryName.stale-*" -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
         ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {} }
+
+    Write-Step "killing previous cua-driver processes (best-effort; High-IL needs admin)"
+    $survivors = Stop-CuaDriverDaemons
+    Show-CuaDriverDaemonSurvivors -Survivors $survivors
 }
 
 Write-Step "staging into $VersionedDir"

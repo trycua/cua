@@ -43,6 +43,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # under libs/cua-driver/rust/.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../rust" && pwd)"
 
+# --- Load shared daemon-cleanup helpers ---------------------------------
+#
+# Sibling _install-common.sh defines stop_cua_driver_daemons +
+# show_cua_driver_daemon_survivors, mirroring CuaDriverInstall.psm1.
+# This is a dev-only path always invoked from a checked-out tree (the
+# `install-local.sh` dispatcher only runs from a clone), so the on-disk
+# load is the only branch we need — no curl fallback like _install-rust.sh.
+# Define no-op stubs if the file is missing so call sites stay
+# unconditional and a stale clone doesn't fail the install.
+if [ -f "$SCRIPT_DIR/_install-common.sh" ]; then
+    # shellcheck source=_install-common.sh
+    . "$SCRIPT_DIR/_install-common.sh"
+else
+    echo "warning: $SCRIPT_DIR/_install-common.sh missing; daemon kill skipped" >&2
+    stop_cua_driver_daemons() { :; }
+    show_cua_driver_daemon_survivors() { :; }
+fi
+
 BOLD=$(tput bold 2>/dev/null || true)
 NORMAL=$(tput sgr0 2>/dev/null || true)
 RED=$(tput setaf 1 2>/dev/null || true)
@@ -179,6 +197,17 @@ echo "${GREEN}$BIN_DIR/cua-driver -> $CURRENT_LINK/cua-driver${NORMAL}"
 echo ""
 
 INSTALLED_BIN="$BIN_DIR/cua-driver"
+
+# --- Stop any pre-swap cua-driver daemons ------------------------------
+#
+# Mirror of install-local.ps1's daemon kill — the new binary is now
+# under packages/current/, but any LaunchAgent / systemd user unit /
+# manual `serve` shell is still running off the OLD binary. Stop them
+# so the next invocation picks up this build. Best-effort, never
+# fails the install. Survivors (rare on Unix — `pkill` reaches all
+# user-owned procs without elevation) get a yellow hint.
+stop_cua_driver_daemons
+show_cua_driver_daemon_survivors
 
 # Agent skill pack symlinks: NOT auto-created. Run
 # `cua-driver skills install --local` to symlink agent dirs to the

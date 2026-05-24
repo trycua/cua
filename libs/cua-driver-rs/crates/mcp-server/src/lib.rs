@@ -18,5 +18,6 @@ pub mod recording;
 pub mod recording_tools;
 pub mod server;
 pub mod tool;
+pub mod tool_args;
 
 pub use recording::RecordingSession;

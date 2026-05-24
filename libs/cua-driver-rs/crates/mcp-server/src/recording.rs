@@ -181,15 +181,16 @@ fn write_turn(
     std::fs::create_dir_all(turn_dir)?;
     let now = now_ms();
 
+    use crate::tool_args::ArgsExt;
     // Extract window_id and pid from args for screenshot capture.
-    let window_id = args.get("window_id").and_then(|v| v.as_u64());
-    let pid       = args.get("pid").and_then(|v| v.as_i64());
+    let window_id = args.opt_u64("window_id");
+    let pid       = args.opt_i64("pid");
 
     // Extract click point for click-family tools.
     let click_point: Option<(f64, f64)> = if matches!(
         tool_name, "click" | "double_click" | "right_click"
     ) {
-        match (args.get("x").and_then(|v| v.as_f64()), args.get("y").and_then(|v| v.as_f64())) {
+        match (args.opt_f64("x"), args.opt_f64("y")) {
             (Some(x), Some(y)) => Some((x, y)),
             _ => None,
         }

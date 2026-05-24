@@ -106,7 +106,11 @@ pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> Re
     let path = if let Some(rest) = path.strip_prefix('~') {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_default();
+            .map_err(|_| anyhow::anyhow!(
+                "Cannot expand `~` in path {path:?}: neither HOME nor USERPROFILE is set"))?;
+        if home.is_empty() {
+            anyhow::bail!("Cannot expand `~` in path {path:?}: HOME/USERPROFILE is empty");
+        }
         format!("{home}{rest}")
     } else {
         path.to_owned()

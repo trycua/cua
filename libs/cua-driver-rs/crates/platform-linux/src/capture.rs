@@ -27,7 +27,7 @@ pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
 pub fn screenshot_window(xid: u64) -> Result<(String, u32, u32)> {
     // Try `import -window <xid> png:-` (ImageMagick).
     if let Ok(bytes) = capture_via_import(xid) {
-        let (w, h) = png_dimensions(&bytes)?;
+        let (w, h) = mcp_server::image_utils::png_dimensions(&bytes)?;
         return Ok((BASE64.encode(&bytes), w, h));
     }
 

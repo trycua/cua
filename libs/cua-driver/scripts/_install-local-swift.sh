@@ -32,6 +32,31 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CUA_DRIVER_DIR="$(cd "$SCRIPT_DIR/../swift" && pwd)"
 SHARED_SCRIPTS_DIR="$SCRIPT_DIR"
 
+# --- Load shared daemon-cleanup helpers --------------------------------
+#
+# Sibling _install-common.sh exposes stop_cua_driver_daemons +
+# show_cua_driver_daemon_survivors, the bash counterpart to
+# CuaDriverInstall.psm1. The kill targets `cua-driver` by exact name —
+# which covers BOTH the Swift binary and the Rust binary (both exec
+# under that name; same product name, same com.trycua.driver bundle id
+# per build-app.sh), so we don't need a separate Swift-only function.
+# The shared helper also handles the Swift LaunchAgent
+# (com.trycua.cua_driver_daemon.plist) the --daemon path below
+# registers.
+#
+# This script is dev-only (always invoked from a checked-out clone via
+# the install-local.sh dispatcher), so on-disk is the only load path —
+# no curl fallback. Stub the functions if the file is missing so
+# call sites stay unconditional.
+if [ -f "$SCRIPT_DIR/_install-common.sh" ]; then
+    # shellcheck source=_install-common.sh
+    . "$SCRIPT_DIR/_install-common.sh"
+else
+    echo "warning: $SCRIPT_DIR/_install-common.sh missing; daemon kill skipped" >&2
+    stop_cua_driver_daemons() { :; }
+    show_cua_driver_daemon_survivors() { :; }
+fi
+
 # Guard `tput` against environments where TERM is unset (agent sandboxes,
 # CI containers, `launchd` jobs): tput aborts with "No value for $TERM and
 # no -T specified" otherwise, killing the script before any work starts.
@@ -173,6 +198,18 @@ if [ ! -w "$BIN_INSTALL_DIR" ]; then
 fi
 ln -sf "$APP_DEST/Contents/MacOS/cua-driver" "$BIN_LINK"
 echo "${GREEN}Linked $BIN_LINK → $APP_DEST/Contents/MacOS/cua-driver${NORMAL}"
+
+# --- Stop any pre-swap cua-driver daemons ------------------------------
+#
+# The new .app is now in /Applications, but any LaunchAgent or manual
+# `cua-driver serve` shell is still running the OLD binary (open file
+# handles survive `ditto` overwriting the bundle). Kill them so the
+# --daemon block below (or the user's next manual `serve`) picks up
+# the freshly-built binary. Without this, a TCC-permission re-prompt
+# fix that touched the binary's signature wouldn't take effect until
+# the user logged out.
+stop_cua_driver_daemons
+show_cua_driver_daemon_survivors
 
 # --- Daemon (optional) --------------------------------------------------
 

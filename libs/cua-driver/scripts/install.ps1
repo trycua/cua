@@ -528,7 +528,7 @@ function Test-IsElevated {
 }
 
 # Stop-CuaDriverDaemons + Show-CuaDriverDaemonSurvivors live in the
-# sibling CuaDriverInstall.psm1 module so install-local.ps1 and this
+# sibling _install-common.psm1 module so install-local.ps1 and this
 # script share the daemon-cleanup logic. Two load paths:
 #   * checked-out tree: the .psm1 sits next to install.ps1 on disk;
 #     Import-Module from $PSScriptRoot works directly.
@@ -543,7 +543,7 @@ function Import-CuaDriverInstallModuleBootstrap {
         [Parameter(Mandatory = $true)][string]$Url
     )
     if ($LocalDir) {
-        $localPsm = Join-Path $LocalDir "CuaDriverInstall.psm1"
+        $localPsm = Join-Path $LocalDir "_install-common.psm1"
         if (Test-Path -LiteralPath $localPsm) {
             Import-Module -Name $localPsm -Force -ErrorAction Stop
             return
@@ -560,7 +560,7 @@ function Import-CuaDriverInstallModuleBootstrap {
 }
 Import-CuaDriverInstallModuleBootstrap `
     -LocalDir $PSScriptRoot `
-    -Url "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/CuaDriverInstall.psm1"
+    -Url "https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-common.psm1"
 
 function Register-CuaDriverAutostart {
     param([Parameter(Mandatory = $true)][string]$InstalledBinary)

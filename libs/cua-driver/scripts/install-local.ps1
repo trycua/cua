@@ -121,10 +121,10 @@ function Register-CuaDriverAutostart {
 }
 
 # Stop-CuaDriverDaemons + Show-CuaDriverDaemonSurvivors are defined in
-# the sibling CuaDriverInstall.psm1 module - shared with install.ps1
+# the sibling _install-common.psm1 module - shared with install.ps1
 # so the daemon-cleanup logic stays in one place. Local dev runs from
 # a checked-out tree, so we always have the file on disk.
-Import-Module -Name (Join-Path $ScriptDir "CuaDriverInstall.psm1") -Force
+Import-Module -Name (Join-Path $ScriptDir "_install-common.psm1") -Force
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 

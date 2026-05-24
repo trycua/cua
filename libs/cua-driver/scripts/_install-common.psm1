@@ -1,9 +1,9 @@
-# CuaDriverInstall.psm1 - shared helpers for install.ps1 + install-local.ps1.
+# _install-common.psm1 - shared helpers for install.ps1 + install-local.ps1.
 #
 # Both scripts import this module to avoid drift in the daemon-kill logic.
 #
 #   * install-local.ps1 runs from a checked-out repo, so it imports the
-#     module from disk via $PSScriptRoot/CuaDriverInstall.psm1.
+#     module from disk via $PSScriptRoot/_install-common.psm1.
 #   * install.ps1 is fetched via `irm | iex` and has no file on disk
 #     during execution. It uses Import-CuaDriverInstallModule (below)
 #     which prefers the on-disk copy when available (dev / CI) and
@@ -68,7 +68,7 @@ function Show-CuaDriverDaemonSurvivors {
     Write-Host "      Or just reboot. Until they exit, the OLD binary keeps running." -ForegroundColor Yellow
 }
 
-# Load this module from disk if `$LocalDir/CuaDriverInstall.psm1` exists
+# Load this module from disk if `$LocalDir/_install-common.psm1` exists
 # (install-local.ps1 / checked-out install.ps1), else fetch the same
 # file from GitHub raw and load it as an in-memory module
 # (`irm | iex` install.ps1 path).
@@ -86,7 +86,7 @@ function Import-CuaDriverInstallModule {
         [string]$Url
     )
     if ($LocalDir) {
-        $localPsm = Join-Path $LocalDir "CuaDriverInstall.psm1"
+        $localPsm = Join-Path $LocalDir "_install-common.psm1"
         if (Test-Path -LiteralPath $localPsm) {
             Import-Module -Name $localPsm -Force -ErrorAction Stop
             return

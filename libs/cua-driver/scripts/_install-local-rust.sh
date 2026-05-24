@@ -38,7 +38,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Rust workspace root: scripts/ is the cross-cutting installer dir at
+# libs/cua-driver/scripts/; the Cargo workspace lives one level deeper
+# under libs/cua-driver/rust/.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../rust" && pwd)"
 
 BOLD=$(tput bold 2>/dev/null || true)
 NORMAL=$(tput sgr0 2>/dev/null || true)
@@ -150,7 +153,7 @@ chmod +x "$VERSIONED_DIR/cua-driver"
 # Skill pack — stage from the repo so the `current` symlink below
 # transparently exposes it to agents. Mirrors what install.sh does
 # from a release tarball.
-SOURCE_SKILLS="$SCRIPT_DIR/../Skills/cua-driver-rs"
+SOURCE_SKILLS="$REPO_ROOT/Skills/cua-driver-rs"
 if [ -d "$SOURCE_SKILLS" ]; then
     STAGED_SKILLS="$VERSIONED_DIR/Skills/cua-driver-rs"
     rm -rf "$STAGED_SKILLS"
@@ -245,7 +248,7 @@ echo ""
 # install.ps1) never drift. The .txt holds the OS-agnostic bulk
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits stay inline below.
-HINTS_TXT="$REPO_ROOT/../cua-driver/scripts/post-install-hints.txt"
+HINTS_TXT="$SCRIPT_DIR/post-install-hints.txt"
 if [ -f "$HINTS_TXT" ]; then
     sed "s|{{BINARY}}|$INSTALLED_BIN|g" "$HINTS_TXT"
 else

@@ -50,7 +50,10 @@ $ProgressPreference = "SilentlyContinue"
 # the logic would otherwise drift.
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot    = (Resolve-Path "$ScriptDir\..").Path
+# Rust workspace root: scripts/ is the cross-cutting installer dir at
+# libs/cua-driver/scripts/; the Cargo workspace lives one level deeper
+# under libs/cua-driver/rust/.
+$RepoRoot    = (Resolve-Path "$ScriptDir\..\rust").Path
 $BinaryName  = "cua-driver.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
@@ -244,7 +247,7 @@ if ($AutoStart) {
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits stay inline below.
 $installedBinary = Join-Path $VisibleBinDir $BinaryName
-$HintsTxt = Join-Path $RepoRoot "..\cua-driver\scripts\post-install-hints.txt"
+$HintsTxt = Join-Path $ScriptDir "post-install-hints.txt"
 if (Test-Path -LiteralPath $HintsTxt) {
     # Read explicitly as UTF-8. PowerShell 5.1's Get-Content -Raw falls
     # back to Windows-1252 when the source file has no BOM, which turns

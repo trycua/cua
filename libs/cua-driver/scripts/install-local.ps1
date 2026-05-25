@@ -208,14 +208,16 @@ if (Test-Path -LiteralPath $DestBinary) {
         ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {} }
 
     Write-Step "killing previous cua-driver processes (best-effort; High-IL needs admin)"
-    # WithHealth variant also probes \\.\pipe\cua-driver post-kill so we
-    # can distinguish "survivors but daemon is healthy" (mild — old
-    # binary in memory) from "survivors AND the named pipe is dead"
-    # (stale — daemon is wedged, MCP/CLI calls will hang or error
-    # until the zombie is killed). The Show- helper picks the right
-    # message based on the Stale flag.
-    $result = Stop-CuaDriverDaemonsWithHealth
-    Show-CuaDriverDaemonSurvivors -Survivors $result.Survivors -Stale:$result.Stale
+    # Repair- variant does Stop-CuaDriverDaemonsWithHealth + stale
+    # detection + UAC self-elevation when wedged: if survivors are
+    # present AND the pipe is dead, prompts the user (y/n), and on
+    # yes triggers a UAC prompt to spawn a brief elevated
+    # PowerShell that kills the High-IL pids and re-runs the
+    # scheduled task. On UAC accept + healthy pipe afterward, the
+    # install proceeds at Medium IL like nothing happened. On UAC
+    # cancel / failure, falls back to the same printed manual
+    # recovery instructions the previous flow used.
+    $null = Repair-CuaDriverStaleDaemon
 }
 
 Write-Step "staging into $VersionedDir"

@@ -1215,11 +1215,12 @@ else {
 # Medium-IL kill and get reported via Show-CuaDriverDaemonSurvivors.
 Write-Host ""
 Write-Host "Stopping any previous cua-driver processes (best-effort; High-IL needs admin)..." -ForegroundColor Cyan
-# WithHealth variant also probes \\.\pipe\cua-driver so the Show- helper
-# can escalate the wording when a survivor's pipe is dead (stale daemon
-# wedge → MCP / CLI calls fail until the zombie is killed).
-$result = Stop-CuaDriverDaemonsWithHealth
-Show-CuaDriverDaemonSurvivors -Survivors $result.Survivors -Stale:$result.Stale
+# Repair- handles the wedged-daemon case: detect stale (process alive
+# but pipe dead), prompt the user, and on consent self-elevate via
+# UAC to kill the High-IL pids + restart the scheduled task. On UAC
+# cancel / failure it falls back to printing the manual recovery
+# instructions, same as the previous behavior.
+$null = Repair-CuaDriverStaleDaemon
 
 if ($AutoStart) {
     Write-Host ""

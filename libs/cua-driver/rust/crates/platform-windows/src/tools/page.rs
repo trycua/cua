@@ -179,11 +179,29 @@ impl PageBackend for WindowsPageBackend {
                 "click_element: could not parse coord JSON from probe (raw: {probe_raw:?}): {e}"
             ))?;
 
-        let vx = parsed["vx"].as_f64().unwrap_or(0.0);
-        let vy = parsed["vy"].as_f64().unwrap_or(0.0);
-        let sx = parsed["sx"].as_f64().unwrap_or(0.0);
-        let sy = parsed["sy"].as_f64().unwrap_or(0.0);
-        let dpr = parsed["dpr"].as_f64().unwrap_or(1.0);
+        // Required-field validation. The previous version defaulted any
+        // missing field to 0.0, which silently animated the visible cursor
+        // to (0,0) AND still fired element.click() — the click would still
+        // hit the DOM element correctly but the visual cursor would lie.
+        // For a fast-fail loud-error contract, require all four screen-
+        // coord inputs from the JS probe and reject anything missing/NaN.
+        // `dpr` retains its 1.0 default because devicePixelRatio is
+        // genuinely optional on the JS side (older webviews / unusual
+        // contexts may not expose it).
+        let require = |key: &str| -> Result<f64, anyhow::Error> {
+            parsed.get(key).and_then(|v| v.as_f64()).filter(|f| f.is_finite())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "click_element: probe JSON missing/invalid required field '{key}' \
+                     (raw: {probe_raw:?}). All four of vx/vy/sx/sy must be finite numbers."
+                ))
+        };
+        let vx = require("vx")?;
+        let vy = require("vy")?;
+        let sx = require("sx")?;
+        let sy = require("sy")?;
+        let dpr = parsed.get("dpr").and_then(|v| v.as_f64())
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .unwrap_or(1.0);
 
         let screen_x = sx + vx * dpr;
         let screen_y = sy + vy * dpr;

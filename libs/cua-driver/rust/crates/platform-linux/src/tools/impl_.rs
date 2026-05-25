@@ -2090,6 +2090,16 @@ impl Tool for BringToFrontTool {
         .with_structured(serde_json::json!({
             "code": "bring_to_front_unsupported_on_platform",
             "platform": "linux",
+            // Machine-readable remediation hint — mirrors the macOS
+            // bring_to_front stub's structured `suggestion` field so
+            // cross-platform clients can dispatch on a uniform key.
+            "suggestion":
+                "Linux input tools (click / type_text / press_key / hotkey) already \
+                 reach backgrounded windows via AT-SPI / X11 input injection — \
+                 there is no equivalent need to bring a window to the foreground. \
+                 If you need explicit window activation for UX reasons, shell out \
+                 to `wmctrl -a <title>` or `xdotool windowactivate <wid>` from \
+                 outside cua-driver.",
         }))
     }
 }

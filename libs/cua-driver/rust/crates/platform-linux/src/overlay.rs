@@ -284,16 +284,31 @@ impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<
         use x11rb::protocol::xproto::*;
         use x11rb::protocol::xproto::ConnectionExt as _;
 
-        let aux = if let Some(target_xid) = target {
+        // Per the ZOrderEnforcer trait contract, a stale `target` (window
+        // gone) should fall back to the `None` behavior — top of the
+        // normal stack, no sibling. Using a stale XID as a `sibling` here
+        // triggers BadWindow on every tick of the overlay-enforcer loop
+        // (~125 Hz), spamming the X server and silently skipping the
+        // intended z-reassertion. Probe liveness via get_window_attributes
+        // before committing to the sibling path.
+        let target_live = target.and_then(|xid| {
+            self.conn
+                .get_window_attributes(xid as u32)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|_| xid)
+        });
+        let aux = if let Some(target_xid) = target_live {
             // Place overlay just above the pinned X11 window.
             ConfigureWindowAux::new()
                 .sibling(target_xid as u32)
                 .stack_mode(StackMode::ABOVE)
         } else {
-            // No pin → raise to the top of the normal stack. (X11 has no
-            // OS-level "always-on-top" band like Windows / NSStatusWindowLevel,
-            // so a plain ABOVE here cannot accidentally float over a focused
-            // foreground app the way HWND_TOPMOST would on Windows.)
+            // No pin (or stale target XID) → raise to the top of the
+            // normal stack. (X11 has no OS-level "always-on-top" band like
+            // Windows / NSStatusWindowLevel, so a plain ABOVE here cannot
+            // accidentally float over a focused foreground app the way
+            // HWND_TOPMOST would on Windows.)
             ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)
         };
         self.conn.configure_window(self.win, &aux).ok();

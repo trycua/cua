@@ -599,11 +599,10 @@ impl Tool for GetWindowStateTool {
                 Err(anyhow::anyhow!(
                     "get_window_state timed out after 4s (UIA provider unresponsive on \
                      hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
-                     (a) call `screenshot(pid, window_id)` and drive via pixel \
-                     coordinates with `click(x, y)` — bypasses UIA entirely; \
-                     (b) re-call this tool with `capture_mode:\"vision\"` to skip the \
-                     UIA walk and just capture the screenshot (no element_index cache); \
-                     (c) if the target is a transient VCL / message-box dialog, send \
+                     (a) re-call this tool with `capture_mode:\"vision\"` to skip the \
+                     UIA walk and just capture the screenshot — bypasses UIA entirely, \
+                     then drive via pixel `click(x, y)` against the returned image; \
+                     (b) if the target is a transient VCL / message-box dialog, send \
                      `press_key` with `dispatch:\"foreground\"` (SendInput) to fire the \
                      default accelerator (Esc / Enter / Y / N) without needing the tree."
                 ))
@@ -1520,13 +1519,12 @@ impl Tool for LaunchAppTool {
                 .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
                 .unwrap_or("")
                 .to_owned();
-            // parent_pid retained for future heuristics that combine the
-            // pid-snapshot diff with launched-pid ancestry (e.g. allowing
-            // descendant pids that pre-existed in the snapshot but
-            // re-spawned for the new launch). Prefixed `_` so the unused
-            // warning stays out of `cargo build` output without losing the
-            // intent in the source.
-            let _parent_pid = pid;
+            // parent_pid is the launched pid family root — used below to
+            // constrain the post-launch minimize sweep to descendants /
+            // name-relatives of the launched app, so we don't accidentally
+            // minimize a user's unrelated app that started during the 5 s
+            // poll window.
+            let parent_pid = pid;
             let _ = tokio::task::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
@@ -1535,18 +1533,24 @@ impl Tool for LaunchAppTool {
                 }
             }).await;
             // Detached polling for launcher-stub late-window cases.
-            // Strategy: every 200 ms for 5 s, list all processes, find
-            // any whose pid wasn't in the pre-launch snapshot, and
-            // minimize their visible windows. This catches:
-            //   - The launched pid itself (always new).
-            //   - Direct descendants (LO's launcher stub).
-            //   - Renamed-binary children (swriter.exe → soffice.bin)
-            //     that wouldn't match `related_processes`'s basename
-            //     filter.
+            // Strategy: every 200 ms for 5 s, find pids that
+            //   (a) weren't in the pre-launch snapshot, AND
+            //   (b) are part of the launched app's family — either a
+            //       descendant of the launched root pid, OR a process
+            //       sharing the launched binary's name prefix (covers
+            //       renamed-binary chains like swriter.exe → soffice.bin
+            //       where the child's name doesn't match but it's a
+            //       direct descendant).
+            // Minimize THEIR visible windows only. Without the family
+            // constraint, anything the user opens during the 5 s window
+            // (Chrome, terminal, IDE) would also get minimized — that's
+            // the regression CodeRabbit flagged.
+            //
             // Loop ends early once we've minimized the first set of
             // windows AND remained idle for one tick — the typical
             // app has its main window up within ~2 s of launch.
             let pre_pids = pre_launch_pids.clone();
+            let basename_for_poll = stub_basename.clone();
             tokio::spawn(async move {
                 use std::collections::HashSet;
                 use windows::Win32::Foundation::HWND;
@@ -1556,17 +1560,28 @@ impl Tool for LaunchAppTool {
                 let mut hit_count_total: usize = 0;
                 for _ in 0..25 {
                     let pre_pids_clone = pre_pids.clone();
-                    let new_pids: Vec<u32> = tokio::task::spawn_blocking(move || {
+                    let basename_clone = basename_for_poll.clone();
+                    // Build the family pid set fresh each tick — both
+                    // descendant graph and name-relatives can grow as
+                    // launcher-stub chains spawn deeper children.
+                    let family_new_pids: Vec<u32> = tokio::task::spawn_blocking(move || {
+                        let related: std::collections::HashSet<u32> =
+                            crate::win32::related_processes(parent_pid, &basename_clone)
+                                .into_iter()
+                                .chain(std::iter::once(parent_pid))
+                                .collect();
                         crate::win32::list_processes()
                             .into_iter()
-                            .filter(|p| !pre_pids_clone.contains(&p.pid))
+                            .filter(|p| {
+                                !pre_pids_clone.contains(&p.pid) && related.contains(&p.pid)
+                            })
                             .map(|p| p.pid)
                             .collect()
                     })
                     .await
                     .unwrap_or_default();
                     let mut tick_hits: usize = 0;
-                    for cpid in new_pids {
+                    for cpid in family_new_pids {
                         let wins = tokio::task::spawn_blocking(move || {
                             crate::win32::list_windows(Some(cpid))
                         })
@@ -1598,7 +1613,6 @@ impl Tool for LaunchAppTool {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
-                let _ = stub_basename; // explicitly retained for future heuristics
             });
         }
 
@@ -2710,13 +2724,38 @@ impl Tool for ScrollTool {
         };
 
         // dispatch:"background" — WM_VSCROLL/HSCROLL is silently dropped by
-        // Chromium and may be by GTK; surface a structured error so the
-        // caller can bring_to_front and retry with a SendInput-based
-        // wheel synthesis once that helper exists.
+        // Chromium and may be by GTK. Don't use the generic
+        // `background_unavailable_error` helper here: its standard
+        // remediation suggests retrying with `dispatch:"foreground"`, but
+        // scroll's foreground path is unimplemented (see the explicit
+        // foreground rejection below), so the advertised recovery would
+        // dead-end at another error. Surface a scroll-specific structured
+        // error that points at `bring_to_front` + `dispatch:"auto"` (the
+        // PostMessage path against an already-foreground window works for
+        // most non-Chromium targets) as the actual viable recovery.
         if dispatch == DispatchMode::Background
             && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseScroll)
         {
-            return background_unavailable_error(hwnd, EventKind::MouseScroll);
+            let class = crate::input::dispatch::read_class_name(hwnd);
+            return ToolResult::error(format!(
+                "Background scroll dispatch is not available for target window class \
+                 '{class}' on this event kind (mouse_scroll). The Chromium / GTK input \
+                 stack silently drops PostMessage WM_VSCROLL/HSCROLL events. \
+                 dispatch:\"foreground\" is also unimplemented for scroll — there is no \
+                 SendInput-based wheel-synthesis helper yet. Workaround: call \
+                 bring_to_front(pid, window_id) to make the target frontmost, then \
+                 retry with dispatch:\"auto\" — PostMessage scroll against an already-\
+                 foreground window works for most non-Chromium targets."
+            ))
+            .with_structured(serde_json::json!({
+                "code": "scroll_unavailable",
+                "target_class": class,
+                "event_kind": "mouse_scroll",
+                "suggestion":
+                    "bring_to_front + dispatch:\"auto\". dispatch:\"foreground\" is \
+                     NOT a valid recovery for scroll — that path returns an explicit \
+                     not-implemented error.",
+            }));
         }
         // dispatch:"foreground" — TODO: route through SendInput MOUSEEVENTF_WHEEL
         // with brief SetForegroundWindow swap. No helper yet.

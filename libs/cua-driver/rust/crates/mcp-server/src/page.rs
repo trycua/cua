@@ -292,7 +292,15 @@ impl Tool for PageTool {
             },
 
             "click_element" => {
-                let selector = match args.get("selector").and_then(|v| v.as_str()) {
+                // Trim before emptiness check so whitespace-only selectors
+                // fail fast at the input boundary rather than blowing up
+                // inside the backend's JS payload (`querySelector("   ")`
+                // returns null and the error there is much less specific).
+                let selector = match args
+                    .get("selector")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                {
                     Some(s) if !s.is_empty() => s.to_owned(),
                     _ => return ToolResult::error(
                         "Missing required parameter: selector (CSS selector for click_element)"

@@ -345,11 +345,21 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // to remove the invisible-shadow margin PrintWindow doesn't paint.
     // Skipped on the DWM-failed branch — caller sees a thin dark trim
     // around the body but the body itself is intact.
+    //
+    // INSET: DWMWA_EXTENDED_FRAME_BOUNDS reports the rect WITHOUT the
+    // invisible shadow margin, but Win11 dialogs paint a 1-2 px dark
+    // stroke at the rounded-corner edge that ends up at the very edge
+    // of the DWM-extended-frame rect. The visual artifact is a thin
+    // black hairline along (typically) the bottom or right edge of the
+    // captured bitmap. A 1-px inset on each side removes the hairline
+    // without losing actual UI content — anything that close to the
+    // edge is window-frame chrome, not content.
+    const DWM_CROP_INSET_PX: i32 = 1;
     let (pixels, w, h) = if let Some(dwm) = dwm_rect {
-        let off_x = (dwm.left - win_rect.left) as i32;
-        let off_y = (dwm.top - win_rect.top) as i32;
-        let crop_w = (dwm.right - dwm.left) as i32;
-        let crop_h = (dwm.bottom - dwm.top) as i32;
+        let off_x = (dwm.left - win_rect.left) as i32 + DWM_CROP_INSET_PX;
+        let off_y = (dwm.top - win_rect.top) as i32 + DWM_CROP_INSET_PX;
+        let crop_w = (dwm.right - dwm.left) as i32 - 2 * DWM_CROP_INSET_PX;
+        let crop_h = (dwm.bottom - dwm.top) as i32 - 2 * DWM_CROP_INSET_PX;
         if off_x >= 0 && off_y >= 0 && crop_w > 0 && crop_h > 0
             && off_x + crop_w <= w && off_y + crop_h <= h
         {

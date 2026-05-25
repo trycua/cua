@@ -19,11 +19,9 @@
 //!   tool isn't the place to fight that.
 
 use anyhow::{bail, Context, Result};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use windows::{
-    Foundation::TypedEventHandler,
     Graphics::{
         Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem},
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
@@ -113,48 +111,66 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
         );
     }
 
-    // 4. Frame pool + capture session. 1-frame pool because we only need
-    //    a single shot; using 2+ frames would just waste GPU memory.
-    let pool = Direct3D11CaptureFramePool::Create(
+    // 4. Frame pool + capture session.
+    //    `CreateFreeThreaded` (not `Create`) — `Create` requires the
+    //    calling thread to have a CoreDispatcher/event loop running
+    //    for FrameArrived to fire, which we don't have inside a
+    //    daemon's spawn_blocking thread. `CreateFreeThreaded`
+    //    dispatches FrameArrived on a system thread-pool thread, which
+    //    is exactly what our mpsc channel handler expects. Without
+    //    this, FrameArrived silently never fires and our 1500 ms wait
+    //    always times out.
+    //
+    //    Frame count 2 — WGC docs recommend ≥2 to avoid GPU stalls
+    //    while the consumer reads the previous frame. We only consume
+    //    one but the GPU side is happier with breathing room.
+    let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
         &direct3d_device,
         DirectXPixelFormat::B8G8R8A8UIntNormalized,
-        1,
+        2,
         item_size,
     )
-    .context("Direct3D11CaptureFramePool::Create")?;
+    .context("Direct3D11CaptureFramePool::CreateFreeThreaded")?;
     let session = pool
         .CreateCaptureSession(&item)
         .context("Direct3D11CaptureFramePool::CreateCaptureSession")?;
 
-    // 5. Subscribe to FrameArrived BEFORE StartCapture so we don't miss
-    //    the first frame. The handler just signals the main thread.
-    let (tx, rx) = mpsc::channel::<()>();
-    let handler = TypedEventHandler::<Direct3D11CaptureFramePool, windows::core::IInspectable>::new(
-        move |_pool, _args| {
-            let _ = tx.send(());
-            Ok(())
-        },
-    );
-    let token = pool
-        .FrameArrived(&handler)
-        .context("FrameArrived subscription")?;
-
-    // 6. Hide the WGC capture indicator (yellow border) if the build
+    // 5. Hide the WGC capture indicator (yellow border) if the build
     //    supports it. Available since Win11 (IsBorderRequired property).
     //    Best-effort — older Win10 won't have the setter; ignore failure.
     let _ = session.SetIsBorderRequired(false);
     let _ = session.SetIsCursorCaptureEnabled(false);
 
-    // 7. Start capture, wait for the first frame.
+    // 6. Start capture, then poll TryGetNextFrame until a frame is
+    //    available or we time out. We tried FrameArrived events first
+    //    (both `Create` and `CreateFreeThreaded` pool variants) but
+    //    the event never fired in our daemon's thread environment —
+    //    likely an STA/COM-apartment mismatch we couldn't isolate.
+    //    Polling is what windows-capture and OBS-style consumers do
+    //    for single-shot capture anyway: WGC drops frames in the pool
+    //    as DWM composes them, and TryGetNextFrame returns Ok(None) /
+    //    NULL until one's available. 50 ms polling interval keeps the
+    //    "frame finally arrived" detection latency low without burning
+    //    CPU on a tight spin.
     session.StartCapture().context("GraphicsCaptureSession::StartCapture")?;
-    // 1500 ms is generous — first frames usually arrive in <50 ms on a
-    // healthy GPU. Larger budget covers cold-start D3D11 cases.
-    rx.recv_timeout(Duration::from_millis(1500))
-        .context("WGC FrameArrived timed out after 1500 ms — GPU stalled?")?;
 
-    let frame = pool
-        .TryGetNextFrame()
-        .context("Direct3D11CaptureFramePool::TryGetNextFrame")?;
+    let deadline = std::time::Instant::now() + Duration::from_millis(1500);
+    let mut frame_opt = None;
+    while std::time::Instant::now() < deadline {
+        match pool.TryGetNextFrame() {
+            Ok(f) => { frame_opt = Some(f); break; }
+            Err(_) => {
+                // TryGetNextFrame returns an error when no frame is
+                // available yet. Wait briefly, retry.
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    let frame = frame_opt.ok_or_else(|| anyhow::anyhow!(
+        "WGC TryGetNextFrame returned no frame within 1500 ms — \
+         DWM may not be compositing this window (cloaked / not actually \
+         rendered). Fall through to screen-region BitBlt."
+    ))?;
 
     // 8. Pull the underlying ID3D11Texture2D out of the WinRT frame
     //    surface via the IDirect3DDxgiInterfaceAccess shim.
@@ -200,9 +216,9 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
     }
     d3d_context.Unmap(&staging, 0);
 
-    // 11. Cleanup: detach the event handler, close the session and pool.
-    //     RAII would handle this but being explicit is cheaper to audit.
-    let _ = pool.RemoveFrameArrived(token);
+    // 11. Cleanup: close the session and pool explicitly. RAII would
+    //     handle this but being explicit makes the lifetimes easier to
+    //     audit. (No FrameArrived to unhook — we polled instead.)
     let _ = session.Close();
     let _ = pool.Close();
 

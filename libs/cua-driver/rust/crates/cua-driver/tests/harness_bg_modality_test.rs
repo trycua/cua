@@ -40,8 +40,10 @@ fn harness_wpf_exe() -> PathBuf {
     workspace_root().join("test-apps/harness-wpf/CuaTestHarness.Wpf.exe")
 }
 
-fn loss_file() -> PathBuf { std::env::temp_dir().join("focus_monitor_losses.txt") }
-fn key_loss_file() -> PathBuf { std::env::temp_dir().join("focus_monitor_key_losses.txt") }
+fn loss_file()      -> PathBuf { std::env::temp_dir().join("focus_monitor_losses.txt") }
+fn gain_file()      -> PathBuf { std::env::temp_dir().join("focus_monitor_gains.txt") }
+fn key_loss_file()  -> PathBuf { std::env::temp_dir().join("focus_monitor_key_losses.txt") }
+fn key_gain_file()  -> PathBuf { std::env::temp_dir().join("focus_monitor_key_gains.txt") }
 fn focus_pid_file()  -> PathBuf { std::env::temp_dir().join("focus_monitor_pid.txt") }
 fn focus_hwnd_file() -> PathBuf { std::env::temp_dir().join("focus_monitor_hwnd.txt") }
 
@@ -132,7 +134,9 @@ fn setup() -> Option<BgFixture> {
 
     // Reset sentinel files so we start from a known baseline.
     let _ = std::fs::write(loss_file(), "0");
+    let _ = std::fs::write(gain_file(), "0");
     let _ = std::fs::write(key_loss_file(), "0");
+    let _ = std::fs::write(key_gain_file(), "0");
     let _ = std::fs::remove_file(focus_pid_file());
     let _ = std::fs::remove_file(focus_hwnd_file());
 
@@ -168,7 +172,9 @@ fn setup() -> Option<BgFixture> {
     // counts (e.g. from harness coming up after the sentinel did) shouldn't
     // count against the test.
     let _ = std::fs::write(loss_file(), "0");
+    let _ = std::fs::write(gain_file(), "0");
     let _ = std::fs::write(key_loss_file(), "0");
+    let _ = std::fs::write(key_gain_file(), "0");
 
     let mut driver = Command::new(&driver_bin)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
@@ -202,14 +208,12 @@ where F: FnOnce(&mut ChildStdin, &mut BufReader<&mut ChildStdout>, u32, u64) -> 
     f(&mut fx.driver_stdin, &mut stdout, fx.harness_pid, fx.harness_wid)
 }
 
-/// Snapshot losses, run action, assert delta == 0.
+/// Strict mode: action must not generate ANY sentinel-loss event.
 fn assert_no_focus_steal<F>(label: &str, f: F)
 where F: FnOnce() {
     let before_act = read_count(&loss_file());
     let before_key = read_count(&key_loss_file());
     f();
-    // Brief settle so the sentinel WM_ACTIVATE event has time to fire if
-    // the harness DID steal focus.
     std::thread::sleep(Duration::from_millis(400));
     let after_act = read_count(&loss_file());
     let after_key = read_count(&key_loss_file());
@@ -219,9 +223,41 @@ where F: FnOnce() {
         "{label}: sentinel act_losses went {before_act} -> {after_act} (delta={d_act}). \
          cua-driver's background action stole foreground from the user.");
     assert_eq!(d_key, 0,
-        "{label}: sentinel key_losses went {before_key} -> {after_key} (delta={d_key}). \
-         Keyboard focus stolen from the user during cua-driver action.");
+        "{label}: sentinel key_losses went {before_key} -> {after_key} (delta={d_key}).");
     println!("✅ {label}: no focus steal (act_losses=0, key_losses=0)");
+}
+
+/// Relaxed mode: read GetForegroundWindow() after the action and assert
+/// it's still the sentinel HWND. Tolerates a transient blip during the
+/// action (which UIA Invoke against WPF Buttons creates unavoidably —
+/// the target's handler calls Focus() before cua-driver gets control).
+/// The cua-driver fg_bypass restores foreground after, and this check
+/// asserts that restoration actually worked.
+fn assert_foreground_restored<F>(label: &str, f: F)
+where F: FnOnce() {
+    let sentinel_hwnd: u64 = std::fs::read_to_string(focus_hwnd_file())
+        .ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    assert!(sentinel_hwnd != 0, "{label}: sentinel hwnd unknown (file missing)");
+
+    let before_loss = read_count(&loss_file());
+    f();
+    std::thread::sleep(Duration::from_millis(500));
+    let after_loss = read_count(&loss_file());
+    let d_loss = after_loss.saturating_sub(before_loss);
+
+    // Read current foreground via Win32 directly.
+    let now_fg: u64 = unsafe {
+        let h = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        h.0 as u64
+    };
+    assert_eq!(now_fg, sentinel_hwnd,
+        "{label}: GetForegroundWindow={now_fg:#x} but sentinel hwnd={sentinel_hwnd:#x}. \
+         Foreground was NOT restored to the user's window after the action.");
+    if d_loss == 0 {
+        println!("✅ {label}: no focus blip at all (losses=0)");
+    } else {
+        println!("✅ {label}: foreground restored after {d_loss} blip(s) — sentinel HWND={sentinel_hwnd:#x} matches GetForegroundWindow");
+    }
 }
 
 // ── BACKGROUND MODALITY: cua-driver must keep harness at z+1 ────────────────
@@ -238,32 +274,26 @@ fn bg_modality_get_window_state_no_focus_steal() {
     });
 }
 
-/// Known cua-driver gap: UIA Invoke on a WPF Button transfers Win32
-/// keyboard focus to the WPF window. WPF's ButtonBase.OnClick calls
-/// `Focus()` as part of its handler, which (when invoked on a non-
-/// foreground window from an attached UIA peer) ends up making the WPF
-/// window foreground. The agent-cursor overlay is NOT the cause —
-/// disabling it (`set_agent_cursor_enabled: false`) doesn't change the
-/// behaviour.
+/// Documents the cua-driver focus-steal gap for UIA Invoke on a WPF
+/// Button. Root cause: WPF's ButtonBase.OnClick handler synchronously
+/// calls `UIElement.Focus()` which routes through `SetForegroundWindow`
+/// and is NOT gated by the EnableWindow(false) bypass used for UWP
+/// hosts. The daemon CAN'T restore foreground reliably either, because
+/// non-UIAccess processes are subject to the foreground-lock.
 ///
-/// This test ASSERTS the gap currently exists. If the assertion flips
-/// (delta becomes 0), it means cua-driver now restores foreground after
-/// UIA actions — flip the assertion to `delta == 0` and tag this as
-/// covering the regression guard for that fix.
+/// **Mitigation**: route UIA activations through `cua-driver-uia.exe`
+/// (UIAccess-manifested worker). With UIAccess, the worker can both
+/// suppress the self-foreground and restore the user's foreground if
+/// it leaked through.
 ///
-/// Mitigation options for cua-driver:
-///   1. Snapshot `GetForegroundWindow()` before the UIA action and
-///      restore via the AttachThreadInput SetForegroundWindow trick
-///      after — same approach used by `bring_to_front`.
-///   2. Use UIA's "no-focus" pattern variants where available (most
-///      patterns don't have one).
+/// This test ASSERTS the gap currently exists. When cua-driver gains
+/// the UIAccess worker path, flip this assertion to `delta == 0` and
+/// rename to `..._no_focus_steal`.
 #[test]
 #[ignore]
 fn bg_modality_uia_invoke_click_DOCUMENTED_steals_focus() {
     let mut fx = match setup() { Some(f) => f, None => return };
     with_session(&mut fx, |stdin, stdout, pid, wid| {
-        // Disable the overlay so we attribute any focus loss to UIA Invoke
-        // itself, not to the overlay window's z-order operations.
         let _ = call(stdin, stdout, 29, "set_agent_cursor_enabled",
             serde_json::json!({"enabled": false}));
         std::thread::sleep(Duration::from_millis(200));
@@ -278,24 +308,18 @@ fn bg_modality_uia_invoke_click_DOCUMENTED_steals_focus() {
         std::thread::sleep(Duration::from_millis(500));
         let after = read_count(&loss_file());
         let delta = after.saturating_sub(before);
-
-        // INVERTED assertion: we currently expect delta >= 1 (focus steal).
-        // The fix in cua-driver would add foreground-restoration around
-        // UIA Invoke — at that point flip to assert_eq!(delta, 0).
         assert!(delta >= 1,
-            "cua-driver appears to have fixed the UIA-Invoke focus steal: \
-             delta={delta}. Flip this assertion to delta == 0 and tag this \
-             test as covering the regression guard for the fix.");
-        println!("⚠️  bg_modality_uia_invoke_click: DOCUMENTED gap confirmed — \
-                  UIA Invoke on WPF Button transfers focus to harness \
-                  (delta={delta}, overlay disabled)");
+            "Expected the documented focus-steal gap (delta>=1). Got delta={delta}. \
+             If this now passes, cua-driver has fixed UIA Invoke focus-steal — \
+             flip this assertion to delta==0 and update the docstring.");
+        println!("⚠️  bg_modality_uia_invoke_click: gap confirmed (delta={delta}). \
+                  Mitigation = route UIA via cua-driver-uia.exe (UIAccess worker).");
     });
 }
 
-/// Companion gap: UIA ValuePattern.SetValue on a WPF TextBox also
-/// transfers focus to the harness. Same root cause as the UIA Invoke
-/// gap — WPF's TextBoxAutomationPeer.IValueProvider.SetValue ends up
-/// calling Focus() on the TextBox.
+/// Companion gap: UIA ValuePattern.SetValue on WPF TextBox.
+/// Same root cause and mitigation path as
+/// bg_modality_uia_invoke_click_DOCUMENTED_steals_focus.
 #[test]
 #[ignore]
 fn bg_modality_set_value_DOCUMENTED_steals_focus() {
@@ -318,13 +342,9 @@ fn bg_modality_set_value_DOCUMENTED_steals_focus() {
         std::thread::sleep(Duration::from_millis(500));
         let after = read_count(&loss_file());
         let delta = after.saturating_sub(before);
-
         assert!(delta >= 1,
-            "cua-driver appears to have fixed the UIA-SetValue focus steal: \
-             delta={delta}. Flip this assertion to delta == 0.");
-        println!("⚠️  bg_modality_set_value: DOCUMENTED gap confirmed — \
-                  UIA ValuePattern.SetValue on WPF TextBox transfers focus \
-                  to harness (delta={delta})");
+            "Expected the documented SetValue focus-steal gap. delta={delta}.");
+        println!("⚠️  bg_modality_set_value: gap confirmed (delta={delta})");
     });
 }
 

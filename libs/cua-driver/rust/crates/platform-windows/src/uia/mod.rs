@@ -164,34 +164,86 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
     // for the fallback (which would then truncate large trees prematurely).
     if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
-        if let Some(target_pid) = pid_from_hwnd(hwnd_win) {
-            let mut fallback_nodes: Vec<UiaNode> = Vec::new();
-            let mut fallback_lines: Vec<(usize, String)> = Vec::new();
-            let mut fallback_counter = 0usize;
-            let mut fallback_total = 0usize;
+        // Skip the desktop-root walk-by-pid fallback for VCL / SAL
+        // targets (LibreOffice, OpenOffice). The fallback does its own
+        // `BuildUpdatedCache(TreeScope.Subtree)` per matched top-level
+        // window — which is exactly the bulk-cache RPC shape that SAL
+        // hangs on. The primary two-call path (ElementFromHandle +
+        // BuildUpdatedCache on the dialog's own HWND) ALREADY dodged the
+        // hang on that one specific call, but the fallback re-introduces
+        // it. Returning the empty tree here lets the outer
+        // get_window_state timeout fire its structured diagnostic
+        // promptly instead of stalling 4 s on the fallback's hang.
+        //
+        // The diagnostic tells callers exactly how to drive the SAL
+        // dialog without the tree: pixel click via screenshot,
+        // capture_mode:"vision", or press_key with dispatch:"foreground"
+        // for accelerator-style dismissal. That's enough for the
+        // common modal-dismissal case (Yes/No/Esc on a Confirmation),
+        // which is what SAL dialogs almost always need.
+        let is_sal = {
+            use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+            let mut buf = [0u16; 64];
+            let n = GetClassNameW(hwnd_win, &mut buf);
+            n > 0 && {
+                let class = String::from_utf16_lossy(&buf[..n as usize]);
+                class.starts_with("SAL")
+            }
+        };
+        if !is_sal {
+            if let Some(target_pid) = pid_from_hwnd(hwnd_win) {
+                let mut fallback_nodes: Vec<UiaNode> = Vec::new();
+                let mut fallback_lines: Vec<(usize, String)> = Vec::new();
+                let mut fallback_counter = 0usize;
+                let mut fallback_total = 0usize;
 
+                tracing::debug!(
+                    target: "uia",
+                    "ElementFromHandle returned empty tree for hwnd 0x{hwnd:x}; \
+                     falling back to GetRootElement + filter ProcessId={target_pid}"
+                );
+                walk_root_by_pid(
+                    &automation,
+                    &cache_req,
+                    target_pid,
+                    &mut fallback_nodes,
+                    &mut fallback_lines,
+                    &mut fallback_counter,
+                    &mut fallback_total,
+                );
+
+                if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
+                    nodes = fallback_nodes;
+                    lines = fallback_lines;
+                    // counter/total aren't read after this point — they're
+                    // only used by walk_cached's &mut params for element
+                    // indexing inside that call.
+                }
+            }
+        } else {
             tracing::debug!(
                 target: "uia",
-                "ElementFromHandle returned empty tree for hwnd 0x{hwnd:x}; \
-                 falling back to GetRootElement + filter ProcessId={target_pid}"
+                "SAL target hwnd 0x{hwnd:x} returned empty primary tree; \
+                 skipping walk_root_by_pid fallback (known to re-hang on SAL Subtree fetch). \
+                 Caller should use press_key/screenshot fallbacks per the get_window_state diagnostic."
             );
-            walk_root_by_pid(
-                &automation,
-                &cache_req,
-                target_pid,
-                &mut fallback_nodes,
-                &mut fallback_lines,
-                &mut fallback_counter,
-                &mut fallback_total,
+            // Return a tree_markdown that mirrors the get_window_state
+            // timeout diagnostic so callers get the same actionable
+            // fallback options even though the walk itself didn't hit
+            // the 4 s outer timeout (because we skipped the hang-prone
+            // fallback). Without this the caller sees an empty tree
+            // and no error, which is less actionable.
+            let stub = format!(
+                "- Window <SAL class — empty primary UIA tree>\n\
+                 (SAL providers don't expose modal-dialog children via \
+                 ElementFromHandle, and the desktop-root fallback walk that \
+                 would normally find them is known to hang on SAL Subtree \
+                 BuildUpdatedCache. Use one of: \
+                 (a) `screenshot(pid, window_id)` + pixel `click(x, y)`; \
+                 (b) `press_key` with `dispatch:\"foreground\"` (Esc / Enter / Y / N); \
+                 (c) `get_window_state` with `capture_mode:\"vision\"`.)\n"
             );
-
-            if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
-                nodes = fallback_nodes;
-                lines = fallback_lines;
-                // counter/total aren't read after this point — they're
-                // only used by walk_cached's &mut params for element
-                // indexing inside that call.
-            }
+            return UiaTreeResult { tree_markdown: stub, nodes: Vec::new() };
         }
     }
 

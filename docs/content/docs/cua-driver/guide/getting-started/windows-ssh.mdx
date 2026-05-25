@@ -106,7 +106,7 @@ No interactive session means `autostart kick` has no Session 1+ to land the daem
 
 ## How the proxy decides whether to forward
 
-`cua-driver mcp` and `cua-driver call <tool>` share the same gating function ([`should_use_daemon_proxy` in `cli.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver-rs/crates/cua-driver/src/cli.rs)):
+`cua-driver mcp` and `cua-driver call <tool>` share the same gating function ([`should_use_daemon_proxy` in `cli.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/crates/cua-driver/src/cli.rs)):
 
 - If `--no-daemon-relaunch` is passed, **stay in-process**.
 - If `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` is set, **stay in-process**.

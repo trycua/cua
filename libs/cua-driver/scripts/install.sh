@@ -130,19 +130,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     LOCAL_RUST_INSTALLER=""
     if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
         SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-        # New canonical location — colocated helper under cua-driver/scripts/.
+        # Helper lives next to this script under libs/cua-driver/scripts/.
         CANDIDATE="$SCRIPT_DIR/_install-rust.sh"
         if [[ -f "$CANDIDATE" ]]; then
             LOCAL_RUST_INSTALLER="$CANDIDATE"
-        else
-            # Backward-compat: if someone is running this script from a
-            # tree where the helper hasn't been moved yet (e.g. a
-            # historical checkout being used with a freshly-pulled
-            # install.sh), fall through to the cua-driver-rs location.
-            CANDIDATE="$SCRIPT_DIR/../../cua-driver-rs/scripts/install.sh"
-            if [[ -f "$CANDIDATE" ]]; then
-                LOCAL_RUST_INSTALLER="$CANDIDATE"
-            fi
         fi
     fi
 
@@ -441,16 +432,16 @@ Next steps:
      B. As an MCP server — run the one matching your client. Each is also
         available via 'cua-driver mcp-config --client <name>':
 
-        • Claude Code:
-            claude mcp add --transport stdio cua-driver -- $BIN_LINK mcp
+        • Claude Code (computer-use compatibility mode — recommended):
+            cua-driver mcp-config --client claude
+          Copy-paste the printed command into your shell — it uses
+          \`claude mcp add-json\` so the long flag survives PowerShell's
+          arg parser. This grounds Claude Code's vision/computer-use-style
+          flow on CuaDriver window screenshots — keeps the normal CuaDriver
+          tools, changes only the screenshot tool.
 
-          Claude Code computer-use compatibility mode:
-            claude mcp add --transport stdio cua-computer-use -- $BIN_LINK mcp --claude-code-computer-use-compat
-          Use this when you want Claude Code's vision/computer-use-style flow
-          to ground on CuaDriver window screenshots. It keeps the normal
-          CuaDriver tools and changes only the screenshot tool.
-          Use MCP for this path; CLI screenshots do not expose the
-          mcp__cua-computer-use__screenshot tool name cue.
+          Plain Claude Code (no computer-use compat):
+            claude mcp add --transport stdio cua-driver -- $BIN_LINK mcp
 
         • Codex (OpenAI):
             codex mcp add cua-driver -- $BIN_LINK mcp

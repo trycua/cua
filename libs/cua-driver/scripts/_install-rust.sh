@@ -19,10 +19,6 @@
 # Canonical user-facing invocation (forwards here on Linux / --backend=rust):
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 #
-# Legacy URL (backward-compat shim at libs/cua-driver-rs/scripts/install.sh
-# redirects here):
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.sh)"
-#
 # Flags:
 #   --bin-dir <path>     install the visible binary/symlink to <path>
 #                        instead of ~/.local/bin
@@ -74,6 +70,45 @@
 # production macOS automation prefer `libs/cua-driver/scripts/install.sh`.
 set -euo pipefail
 
+# --- Load shared daemon-cleanup helpers ---------------------------------
+#
+# Bash counterpart of install.ps1's `Import-CuaDriverInstallModule`. On
+# a checked-out tree (`$BASH_SOURCE` points at a real file) we source
+# the sibling _install-common.sh from disk. When this script is run via
+# `curl ... | bash` (the production path forwarded from install.sh on
+# Linux), there's no on-disk copy — fall back to curling the canonical
+# raw URL and sourcing the downloaded tempfile.
+#
+# Failure here is non-fatal: the daemon-stop is a best-effort upgrade
+# nicety, not load-bearing. If we can't load the helpers, define
+# no-op stubs so the rest of the script can call them unconditionally.
+_CUA_INSTALL_COMMON_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-common.sh"
+_cua_install_common_loaded=0
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" && -f "${BASH_SOURCE[0]}" ]]; then
+    _CUA_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "$_CUA_SCRIPT_DIR/_install-common.sh" ]]; then
+        # shellcheck source=_install-common.sh
+        . "$_CUA_SCRIPT_DIR/_install-common.sh" && _cua_install_common_loaded=1
+    fi
+fi
+if [[ "$_cua_install_common_loaded" == "0" ]] && command -v curl >/dev/null 2>&1; then
+    _cua_install_common_tmp="$(mktemp -t cua-install-common.XXXXXX 2>/dev/null || mktemp)"
+    if curl -fsSL "$_CUA_INSTALL_COMMON_URL" -o "$_cua_install_common_tmp" 2>/dev/null; then
+        # shellcheck source=/dev/null
+        . "$_cua_install_common_tmp" && _cua_install_common_loaded=1
+    fi
+    rm -f "$_cua_install_common_tmp" 2>/dev/null || true
+fi
+if [[ "$_cua_install_common_loaded" == "0" ]]; then
+    # Stubs so call sites stay unconditional. Print a one-line warning
+    # so a fetch failure shows up in the install log, but don't fail
+    # the install over it — the binary swap below is the load-bearing
+    # part, daemon cleanup is "nice to have".
+    printf 'warning: could not load _install-common.sh (on-disk + network); daemon kill skipped\n' >&2
+    stop_cua_driver_daemons() { :; }
+    show_cua_driver_daemon_survivors() { :; }
+fi
+
 REPO="trycua/cua"
 BINARY_NAME="cua-driver"
 TAG_PREFIX="cua-driver-rs-v"
@@ -91,7 +126,7 @@ KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
 # a stable bundle id (com.trycua.driver) to attribute the daemon to.
-# See libs/cua-driver-rs/scripts/CuaDriverBundle/Contents/Info.plist and
+# See libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist and
 # the matching docs on `cua-driver mcp`'s auto-relaunch behavior.
 # Identical to the Swift driver's CuaDriver.app + com.trycua.driver
 # pair — the Rust port replaces the Swift install at this path,
@@ -361,7 +396,7 @@ case "$OS-$ARCH_RAW" in
     *)
         err "unsupported platform: $OS / $ARCH_RAW"
         err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64."
-        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex)."
+        err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex)."
         exit 1
         ;;
 esac
@@ -611,6 +646,19 @@ else
     prune_old_releases "$RELEASES_DIR" "$CURRENT_LINK" "$TARGET" "$KEEP_VERSIONS"
 fi
 
+# --- Stop any pre-swap cua-driver daemons -------------------------------
+#
+# Mirror of install.ps1's `Stop-CuaDriverDaemons` call sequence. The
+# new binary is now in place under packages/current/ (Linux) or
+# /Applications/CuaDriver.app (macOS) — kill any in-memory daemon
+# that was holding the OLD binary so the next `cua-driver` invocation
+# picks up the freshly-installed code. Without this, an autostart
+# LaunchAgent / systemd user unit / manual `serve` shell keeps serving
+# pre-upgrade behaviour until logout, which is what surfaces to users
+# as "the bug I just fixed is still there".
+stop_cua_driver_daemons
+show_cua_driver_daemon_survivors
+
 # Agent skill pack: NOT auto-linked. The install script never touches
 # ~/.claude/skills/, ~/.agents/skills/, etc. Run `cua-driver skills
 # install` after install to fetch + symlink the skill pack from the
@@ -681,7 +729,7 @@ else
     # user always gets enough to recover, even if hint-text fetching is
     # blocked. Skip everything else.
     echo "Next steps: $BIN_LINK --version  |  $BIN_LINK mcp-config  |  $BIN_LINK skills install"
-    echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs"
+    echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 
 case "$(uname -s)" in

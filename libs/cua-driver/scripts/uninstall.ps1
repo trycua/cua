@@ -161,9 +161,15 @@ $CurrentDir   = Join-Path $PackagesDir "current"
 # $AutoStartTask hoisted to the elevation pre-check block above.
 
 # Skill junctions — mirrors the AGENTS list in
-# libs/cua-driver-rs/crates/cua-driver/src/skills.rs (the verb that
-# creates them) so we remove from the same paths.
+# libs/cua-driver/rust/crates/cua-driver/src/skills.rs (the verb that
+# creates them) so we remove from the same paths. Both the current
+# `cua-driver` name and the pre-rename `cua-driver-rs` name are swept
+# so a user who installed before the rename ends up clean.
 $SkillJunctions = @(
+    (Join-Path $env:USERPROFILE ".claude\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".agents\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
+    (Join-Path $env:APPDATA      "opencode\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".claude\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver-rs"),

@@ -13,14 +13,14 @@ Next steps:
   3. As an MCP server — run the one matching your client. Each is also
      available via '{{BINARY}} mcp-config --client <name>':
 
-     • Claude Code:
-         claude mcp add --transport stdio cua-driver -- {{BINARY}} mcp
-
-       Claude Code computer-use compatibility mode:
-         claude mcp add --transport stdio cua-computer-use -- {{BINARY}} mcp --claude-code-computer-use-compat
-       Use this when you want Claude Code's vision/computer-use-style flow
-       to ground on CuaDriver window screenshots. It keeps the normal
-       CuaDriver tools and changes only the screenshot tool.
+     • Claude Code (computer-use compatibility mode):
+         {{BINARY}} mcp-config --client claude
+       Copy-paste the printed command into your shell — it uses
+       `claude mcp add-json` (not bare `--`) so the long flag travels
+       through PowerShell's arg parser intact. This mode grounds Claude
+       Code's vision/computer-use-style flow on CuaDriver window
+       screenshots — it keeps the normal CuaDriver tools and changes
+       only the screenshot tool.
 
      • Codex (OpenAI):
          codex mcp add cua-driver -- {{BINARY}} mcp
@@ -48,4 +48,4 @@ Next steps:
      For other clients accepting the generic mcpServers shape:
          {{BINARY}} mcp-config
 
-Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver-rs
+Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust

@@ -35,7 +35,7 @@ libs/cua-driver/Tests/integration/
 └── assets/
     └── test_page.html        → ../../../../cua-driver-fixtures/test_page.html
 
-libs/cua-driver-rs/tests/integration/
+libs/cua-driver/rust/tests/integration/
 ├── fixtures/
 │   └── interactive.html      → ../../../../cua-driver-fixtures/interactive.html
 └── v2/assets/

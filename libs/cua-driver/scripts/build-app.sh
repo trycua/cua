@@ -13,7 +13,11 @@
 # + integration tests. The real signed cask build lives elsewhere.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# Swift sources moved to libs/cua-driver/swift/ when the cua-driver/ folder
+# was reshaped to host both ports as siblings. cd there so `swift build`
+# resolves Package.swift, and `App/` + `Skills/` paths below resolve under
+# swift/ unchanged.
+cd "$(dirname "$0")/../swift"
 
 CONFIG="${1:-debug}"
 echo "==> swift build ($CONFIG)"
@@ -23,7 +27,9 @@ BUILD_BIN=".build/$CONFIG/cua-driver"
 APP_BUNDLE=".build/CuaDriver.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
-ENTITLEMENTS="scripts/CuaDriver.entitlements"
+# Entitlements stay at libs/cua-driver/scripts/ (cross-cutting); we're now
+# one level deeper than scripts/ so reach back up.
+ENTITLEMENTS="../scripts/CuaDriver.entitlements"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"

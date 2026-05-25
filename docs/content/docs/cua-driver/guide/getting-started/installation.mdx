@@ -68,8 +68,6 @@ Both canonical installers live under `libs/cua-driver/scripts/`. On macOS the `.
 irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
 ```
 
-The legacy `libs/cua-driver-rs/scripts/install.{sh,ps1}` URLs continue to work via backward-compat shims that redirect to the canonical installers — Hermes and any other integration that hardcodes the old URLs keep working unchanged.
-
 <Callout type="warn">
   **Known issue on Windows PowerShell 5.1**: `install.ps1` currently fails to parse on stock Windows PowerShell 5.1 (the version shipped with Windows 10 / Server 2019 / Server 2025) due to backtick + ampersand escaping in the post-install hint block — see [#1626](https://github.com/trycua/cua/issues/1626). Workaround until that lands: manual zip install:
 
@@ -162,7 +160,7 @@ Re-run the install one-liner with `$env:CUA_DRIVER_RS_VERSION` pinned to the ver
 
 ```powershell
 $env:CUA_DRIVER_RS_VERSION = "0.2.0"
-irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver-rs/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
 cua-driver --version    # → 0.2.0
 ```
 

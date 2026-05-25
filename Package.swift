@@ -3,8 +3,8 @@ import PackageDescription
 
 // Root shim: re-exports CuaDriverCore and CuaDriverServer so Swift packages
 // can consume them directly from the trycua/cua monorepo without knowing the
-// internal layout. Sources live in libs/cua-driver/Sources/; this file uses
-// path: to forward there.
+// internal layout. Sources live in libs/cua-driver/swift/Sources/; this file
+// uses path: to forward there.
 //
 // IMPORTANT — SPM version resolution:
 // SPM's `from:` / `upToNextMajor` only recognises semver tags ("0.1.0",
@@ -41,12 +41,12 @@ let package = Package(
         ),
     ],
     targets: [
-        // NOTE: if libs/cua-driver/Package.swift ever gains resources:,
+        // NOTE: if libs/cua-driver/swift/Package.swift ever gains resources:,
         // swiftSettings:, linkerSettings:, or exclude: on these targets,
         // mirror those changes here to avoid a silent build mismatch.
         .target(
             name: "CuaDriverCore",
-            path: "libs/cua-driver/Sources/CuaDriverCore"
+            path: "libs/cua-driver/swift/Sources/CuaDriverCore"
         ),
         .target(
             name: "CuaDriverServer",
@@ -54,7 +54,7 @@ let package = Package(
                 "CuaDriverCore",
                 .product(name: "MCP", package: "swift-sdk"),
             ],
-            path: "libs/cua-driver/Sources/CuaDriverServer"
+            path: "libs/cua-driver/swift/Sources/CuaDriverServer"
         ),
     ]
 )

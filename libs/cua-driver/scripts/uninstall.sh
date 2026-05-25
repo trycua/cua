@@ -153,7 +153,11 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
     LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
     SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver-rs.service"
-    SKILL_PACK_NAME="cua-driver-rs"
+    SKILL_PACK_NAME="cua-driver"
+    # Pre-rename skill pack name — swept alongside the current one so
+    # users who installed under the legacy name end up clean after
+    # `uninstall.sh --backend=rust`.
+    LEGACY_SKILL_PACK_NAME="cua-driver-rs"
 
     # Rust-install marker. The post-rename Rust bundle path
     # `/Applications/CuaDriver.app` is shared with the Swift driver
@@ -296,7 +300,11 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         "$HOME/.claude/skills/$SKILL_PACK_NAME" \
         "$HOME/.agents/skills/$SKILL_PACK_NAME" \
         "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
-        "$HOME/.config/opencode/skills/$SKILL_PACK_NAME"; do
+        "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
+        "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
+        "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
+        "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
+        "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
         if [[ -L "$SKILL_LINK" ]]; then
             rm -f "$SKILL_LINK"
             log "removed skill symlink $SKILL_LINK"

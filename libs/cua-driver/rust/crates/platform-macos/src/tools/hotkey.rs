@@ -1,0 +1,158 @@
+use async_trait::async_trait;
+use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use serde_json::Value;
+use std::sync::Arc;
+use libc;
+
+use crate::apps;
+use crate::focus_guard;
+use crate::window_change_detector::WindowChangeDetector;
+
+use super::ToolState;
+
+pub struct HotkeyTool {
+    state: Arc<ToolState>,
+}
+
+impl HotkeyTool {
+    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+}
+
+static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn def() -> &'static ToolDef {
+    DEF.get_or_init(|| ToolDef {
+        name: "hotkey".into(),
+        description:
+            "Press a combination of keys simultaneously — e.g. `[\"cmd\", \"c\"]` for Copy, \
+             `[\"cmd\", \"shift\", \"4\"]` for screenshot selection. The combo is posted directly \
+             to the target pid's event queue; the target does NOT need to be frontmost.\n\n\
+             Two delivery paths:\n\
+             • Default (no window_id): auth-message envelope — Chromium/Electron apps accept \
+               the keystrokes as trusted live input on macOS 14+.\n\
+             • With window_id: NSMenu path — briefly activates the target WindowServer-frontmost \
+               via SLPSSetFrontProcessWithOptions (kCPSNoWindows, < 1 ms), posts WITHOUT the auth \
+               envelope so IOHIDPostEvent fires and NSApplication.sendEvent: dispatches NSMenu key \
+               equivalents (e.g. Cmd+Z undo, Cmd+W close). Restores prior frontmost immediately. \
+               Use this path when you need native menu-bar actions on non-Chromium apps.\n\n\
+             Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. \
+             Non-modifier keys use the same vocabulary as `press_key` (return, tab, escape, \
+             up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, letters, \
+             digits). Order: modifiers first, one non-modifier last."
+            .into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "required": ["pid", "keys"],
+            "properties": {
+                "pid": { "type": "integer", "description": "Target process ID." },
+                "keys": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 2,
+                    "description": "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"]."
+                },
+                "window_id": {
+                    "type": "integer",
+                    "description": "When set, uses NSMenu path: briefly activates the window for menu key dispatch, then restores prior frontmost."
+                }
+            },
+            "additionalProperties": false
+        }),
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: true,
+    })
+}
+
+/// Modifier key names — split the keys array into modifiers + base key.
+fn is_modifier(k: &str) -> bool {
+    matches!(
+        k.to_lowercase().as_str(),
+        "cmd" | "command" | "shift" | "option" | "alt" | "ctrl" | "control" | "fn"
+    )
+}
+
+#[async_trait]
+impl Tool for HotkeyTool {
+    fn def(&self) -> &ToolDef { def() }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use mcp_server::tool_args::ArgsExt;
+        let _ = &self.state;
+
+        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+
+        if args.get("keys").and_then(|v| v.as_array()).is_none() {
+            return ToolResult::error("Missing required parameter: keys");
+        }
+        let raw_keys = args.str_array("keys");
+
+        if raw_keys.is_empty() {
+            return ToolResult::error("keys must be a non-empty array of strings.");
+        }
+
+        // Split: modifiers are all entries that are modifier names; base key is everything else.
+        // Typically: last non-modifier is the key; all others are modifiers.
+        let modifiers: Vec<String> = raw_keys.iter()
+            .filter(|k| is_modifier(k))
+            .cloned()
+            .collect();
+        let non_modifiers: Vec<String> = raw_keys.iter()
+            .filter(|k| !is_modifier(k))
+            .cloned()
+            .collect();
+
+        if non_modifiers.is_empty() {
+            return ToolResult::error(
+                "keys must include at least one non-modifier key (e.g. \"c\" in [\"cmd\", \"c\"])."
+            );
+        }
+
+        // Use the last non-modifier key; if there are multiple, treat earlier ones as extra keys.
+        let key = non_modifiers.last().unwrap().clone();
+        let key_display = raw_keys.join("+");
+        let window_id = args.opt_u64("window_id").map(|v| v as u32);
+
+        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
+        // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
+        // windows. The NSMenu path also briefly activates the target via
+        // SLPSSetFrontProcessWithOptions which can race the wildcard
+        // suppressor — wrapping ensures both side-effects are observed
+        // and the prior frontmost is restored if the activation lingers.
+        let prior_front = apps::frontmost_pid();
+        let snapshot = WindowChangeDetector::snapshot(prior_front);
+
+        let result = focus_guard::with_focus_suppressed(
+            Some(pid),
+            prior_front,
+            "hotkey.CGEvent",
+            || async move {
+                tokio::task::spawn_blocking(move || {
+                    let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    if let Some(wid) = window_id {
+                        crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {
+                            crate::input::keyboard::hotkey_no_auth(pid, &key, &m)
+                        })?;
+                        Ok(())
+                    } else {
+                        crate::input::keyboard::hotkey(pid, &key, &m)
+                    }
+                })
+                .await
+            },
+        )
+        .await;
+
+        let changes = snapshot.detect_async().await;
+
+        match result {
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Pressed {key_display} on pid {pid}.{}",
+                changes.result_suffix()
+            )),
+            Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+        }
+    }
+}

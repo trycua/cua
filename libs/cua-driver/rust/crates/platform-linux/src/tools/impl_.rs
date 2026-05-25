@@ -2114,11 +2114,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
     r.register(Box::new(ScrollTool));
-    if compat {
-        r.register(Box::new(ScreenshotCompatTool { state: state.clone() }));
-    } else {
-        r.register(Box::new(ScreenshotTool { state: state.clone() }));
-    }
+    // `screenshot` removed - see the matching comment in
+    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
+    // screenshot path is `get_window_state` with `capture_mode:"vision"`.
+    let _ = compat;
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool { state: state.clone() }));

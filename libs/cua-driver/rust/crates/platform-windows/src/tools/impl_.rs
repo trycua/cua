@@ -5068,11 +5068,24 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool { state: state.clone() }));
     r.register(Box::new(ScrollTool));
-    if compat {
-        r.register(Box::new(ScreenshotCompatTool { state: state.clone() }));
-    } else {
-        r.register(Box::new(ScreenshotTool { state: state.clone() }));
-    }
+    // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
+    // — `get_window_state` with `capture_mode:"vision"` is the single
+    // canonical path for getting a window screenshot. Reasons:
+    //   1. One entry point means callers always have a window_id context,
+    //      which `screenshot` made ambiguous (whole-display fallback
+    //      always picked the wrong thing for headless agent workflows).
+    //   2. `get_window_state` already returns a JPEG in vision/som mode
+    //      — there's no information `screenshot` exposed that's not in
+    //      `get_window_state`.
+    //   3. Claude Code's vision pipeline can be retargeted at
+    //      `get_window_state` via its tool-anchor config — no need for
+    //      a dedicated "screenshot" name.
+    // The `ScreenshotTool` and `ScreenshotCompatTool` structs are kept in
+    // this file for now as private impl helpers — the `capture::*`
+    // functions they wrap are still the actual screenshot machinery.
+    // Delete the structs in a follow-up after confirming no callers
+    // depend on them via `Tool` trait reflection.
+    let _ = compat; // formerly drove the ScreenshotCompatTool branch
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool { state: state.clone() }));

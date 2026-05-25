@@ -222,11 +222,10 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(hotkey::HotkeyTool::new(state.clone())));
     registry.register(Box::new(set_value::SetValueTool::new(state.clone())));
     registry.register(Box::new(scroll::ScrollTool::new(state.clone())));
-    if compat {
-        registry.register(Box::new(screenshot_compat::ClaudeCodeCompatScreenshotTool::new(state.clone())));
-    } else {
-        registry.register(Box::new(screenshot::ScreenshotTool { state: state.clone() }));
-    }
+    // `screenshot` removed - see the matching comment in
+    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
+    // screenshot path is `get_window_state` with `capture_mode:"vision"`.
+    let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));

@@ -663,7 +663,11 @@ impl Tool for TypeTextTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Strip trailing agent-protocol closing tags — see
+        // mcp_server::text_sanitize docs for rationale.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let xid_opt = args.opt_u64("window_id");
 
         // Resolve XID: use window_id if given, else first window for pid.
@@ -1983,7 +1987,11 @@ impl Tool for TypeTextCharsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Same trailing-protocol-tag scrub as TypeTextTool — see
+        // mcp_server::text_sanitize for rationale.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let xid_opt = args.opt_u64("window_id");
         let xid = match xid_opt {

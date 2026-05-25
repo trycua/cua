@@ -1,0 +1,72 @@
+============================================================
+macOS cua-driver smoke test
+Driver: /Users/francesco/cua/libs/cua-driver/rust/target/release/cua-driver
+Version: cua-driver 0.2.18
+Harness: /Users/francesco/cua/libs/cua-driver/rust/test-apps/harness-appkit/CuaTestHarness.AppKit.app
+Date: Tue May 26 00:49:30 CEST 2026
+============================================================
+
+==> Spawning AppKit harness as victim
+  Harness pid=25623
+  Window id=17782
+
+=== group 1: no-arg / config tools ===
+
+=== group 2: setters ===
+
+=== group 3: app lifecycle ===
+  TextEdit pid=28700
+
+=== group 4: per-window state (harness pid=25623 wid=17782) ===
+
+=== group 5: input synthesis (against harness) ===
+
+=== group 6: aliases + special ===
+
+==> cleanup
+/Users/francesco/cua/scripts/mac-smoke.sh: line 184: 25623 Killed: 9               "$HARNESS_EXE" > /dev/null 2>&1
+
+============================================================
+SUMMARY
+============================================================
+TOOL                           VERDICT DETAIL
+----------------------------------------------------------------
+bring_to_front                 SKIP   intentional cross-platform stub on macOS
+check_permissions              PASS   {
+click                          PASS   ✅ Posted click to pid 25623.
+double_click                   PASS   ✅ Double-clicked at (660.0, 102.0).
+drag                           PASS   ✅ Posted drag to pid 25623 from window-pixel (120, 80) → (180, 120), screen (660
+get_accessibility_tree         PASS   {
+get_agent_cursor_state         PASS   {
+get_config                     PASS   {
+get_cursor_position            PASS   {
+get_recording_state            PASS   {
+get_screen_size                PASS   {
+get_window_state               PASS   {
+hotkey                         PASS   Pressed cmd+a on pid 25623.
+kill_app                       PASS   ✅ Sent SIGKILL to pid 28700.
+launch_app                     PASS   {
+list_apps                      PASS   {
+list_windows                   PASS   {
+move_cursor                    PASS   Agent cursor 'default' moved to (400.0, 400.0).
+page                           SKIP   needs Chromium with --remote-debugging-port
+press_key                      PASS   ✅ Pressed a on pid 25623.
+replay_trajectory              SKIP   needs a recorded trajectory file
+right_click                    PASS   Right-clicked at (660.0, 102.0).
+scroll                         PASS   Scrolled down by line × 3.
+set_agent_cursor_enabled       PASS   Agent cursor 'default' enabled.
+set_agent_cursor_motion        PASS   {
+set_agent_cursor_style         PASS   ✅ cursor style: gradient_colors=(unchanged) bloom_color=(unchanged) image_path=(
+set_config                     PASS   Config updated: capture_mode=som, max_image_dimension=1024
+set_recording                  PASS   {
+set_value                      SKIP   exercised by harness_appkit_text_input integration test instead
+type_text                      PASS   ✅ Inserted 2 char(s) into focused AXTextField "".
+type_text_chars                SKIP   deprecated alias resolved by mcp-server, not registered
+zoom                           PASS   {
+
+Tools probed: 32    PASS=27    FAIL=0    SKIP=5
+
+Interpretation:
+  PASS = tool ran cleanly (exit 0, no ❌ in output)
+  FAIL = error or non-zero exit
+  SKIP = intentionally not probed (covered by integration tests, missing fixture, etc.)

@@ -2685,7 +2685,11 @@ impl Tool for ScrollTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        // `background_unavailable_error` was dropped from this import when
+        // the ScrollTool background-rejection branch swapped to a
+        // scroll-specific structured error (see commit 9e30d2cb). The
+        // dispatch enums are still in use just below.
+        use crate::input::dispatch::{DispatchMode, EventKind};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -2824,232 +2828,14 @@ impl Tool for ScrollTool {
     }
 }
 
-// ── screenshot ────────────────────────────────────────────────────────────────
-
-pub struct ScreenshotTool {
-    state: Arc<ToolState>,
-}
-static SCREENSHOT_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[async_trait]
-impl Tool for ScreenshotTool {
-    fn def(&self) -> &ToolDef {
-        SCREENSHOT_DEF.get_or_init(|| ToolDef {
-            name: "screenshot".into(),
-            // Description ported from Swift `ScreenshotTool.swift` with the
-            // Windows-specific transport note (BitBlt + PrintWindow instead of
-            // ScreenCaptureKit).
-            description: "Capture a screenshot of a single window via BitBlt + PrintWindow \
-                (no focus change). Returns base64-encoded image data in the requested format \
-                (default `jpeg`, quality `85`). The long edge is downscaled to fit the \
-                `max_image_dimension` config (default `1568` px — matches Anthropic's \
-                multimodal-vision input size, so a click-coord picked off this PNG addresses \
-                the same pixels the model reasoned over).\n\n\
-                **Prefer `get_window_state` for UI work** — it returns the UIA tree alongside \
-                the same screenshot in one call, populates the element_index cache the click / \
-                type_text / scroll tools resolve against, and is the only path to backgrounded \
-                accessibility actions. `screenshot` is for when you just need pixels (vision \
-                grounding, debugging, attaching to a report).\n\n\
-                `window_id` is recommended (use `list_windows` to find it). When omitted, \
-                captures the full primary display — a Windows-only convenience for whole-\
-                screen snapshots without a per-window target.\n\n\
-                Requires no special permissions on Windows.".into(),
-            input_schema: json!({
-                "type":"object","properties":{
-                    "window_id":{"type":"integer","description":"HWND of the window to capture. When omitted, captures the full primary display (Windows-only)."},
-                    "format":{"type":"string","enum":["png","jpeg"],"description":"Image format. Default: jpeg."},
-                    "quality":{"type":"integer","minimum":1,"maximum":95,
-                        "description":"JPEG quality 1-95; ignored for png. Default: 85."}
-                },"additionalProperties":false
-            }),
-            read_only: true, destructive: false, idempotent: false, open_world: false,
-        })
-    }
-
-    async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
-        let hwnd_opt = args.opt_u64("window_id");
-        let format = args.str_or("format", "jpeg");
-        let quality = args.u64_or("quality", 85) as u8;
-        let is_jpeg = format == "jpeg";
-        let max_dim = self.state.config.read().unwrap().max_image_dimension;
-
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u32, u32, bool)> {
-            // Use the occlusion-aware variant so we can flag captures that
-            // went through the screen-region BitBlt path while another
-            // window was visibly covering the target — those captures show
-            // the OBSCURING window's pixels, not the target's, and silent
-            // delivery would mislead the agent (regression captured in
-            // the autonomous-test journal: a backgrounded Notepad
-            // screenshot returned LibreOffice's pixels).
-            let (raw, occluded) = match hwnd_opt {
-                Some(hwnd) => crate::capture::screenshot_window_bytes_with_occlusion(hwnd)?,
-                None       => (crate::capture::screenshot_display_bytes()?, false),
-            };
-            let png_bytes = crate::capture::resize_png_if_needed(&raw, max_dim)?;
-            let (w, h) = crate::capture::png_dimensions_pub(&png_bytes)?;
-            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-            if is_jpeg {
-                let jpeg = crate::capture::png_bytes_to_jpeg(&png_bytes, quality)?;
-                Ok((B64.encode(&jpeg), w, h, occluded))
-            } else {
-                Ok((B64.encode(&png_bytes), w, h, occluded))
-            }
-        }).await;
-
-        match result {
-            Ok(Ok((b64, w, h, occluded))) => {
-                let label = if is_jpeg { "jpeg" } else { "png" };
-                // Match Swift `ScreenshotTool.swift` text format 1:1:
-                //   "✅ Window screenshot — WxH png [window_id: ID]"
-                // Whole-display fallback uses "✅ Display screenshot — WxH png"
-                // (Rust-only path; Swift always requires window_id).
-                let summary = match hwnd_opt {
-                    Some(wid) => format!("✅ Window screenshot — {w}x{h} {label} [window_id: {wid}]"),
-                    None      => format!("✅ Display screenshot — {w}x{h} {label}"),
-                };
-                let mut tr = ToolResult::text(summary);
-                let img_content = if is_jpeg {
-                    mcp_server::protocol::Content::image_jpeg(b64)
-                } else {
-                    mcp_server::protocol::Content::image_png(b64)
-                };
-                tr.content.push(img_content);
-                // Occlusion warning: when the screen-region BitBlt path was
-                // used AND another window was on top, the bitmap shows the
-                // covering window. Tell the caller so they don't reason from
-                // the wrong pixels. Always before the image in the content
-                // vec so it's visible regardless of how the consumer reads.
-                if occluded {
-                    tr.content.insert(0, mcp_server::protocol::Content::text(
-                        format!(
-                            "⚠️ Screenshot may not show the target window — HWND \
-                             {} appears to be obscured by another window. The \
-                             returned bitmap reflects whatever pixels are on \
-                             screen at the target's coordinates, not the \
-                             target's own backing store. Call \
-                             `bring_to_front(pid, window_id)` first if you need \
-                             an accurate capture, or use `get_window_state` \
-                             with `capture_mode:\"ax\"` for occlusion-immune \
-                             UIA tree access.",
-                            hwnd_opt.unwrap_or(0)
-                        )
-                    ));
-                }
-                tr.structured_content = Some(json!({
-                    "width": w,
-                    "height": h,
-                    "format": label,
-                    "occluded": occluded,
-                }));
-                tr
-            }
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
-        }
-    }
-}
-
-// ── screenshot (Claude Code computer-use compat) ─────────────────────────────
-//
-// Drop-in replacement for `ScreenshotTool` selected via the
-// `--claude-code-computer-use-compat` flag. Differences:
-//   - `pid` AND `window_id` BOTH required (the regular tool makes window_id
-//     optional and falls back to whole-display capture).
-//   - Validates the target window belongs to that pid and is visible.
-//   - Always returns JPEG @ 85% (Claude Code vision flows prefer smaller).
-//   - Includes a follow-up text note pointing the caller at pixel-addressed
-//     tools so the LLM uses the window's coordinate space.
-//
-// Mirrors libs/cua-driver/swift/Sources/CuaDriverServer/
-// ClaudeCodeComputerUseCompatTools.swift's `screenshot`. Same name as the
-// regular tool — `build_registry(compat)` chooses which to register; both
-// are never registered together.
-
-pub struct ScreenshotCompatTool {
-    state: Arc<ToolState>,
-}
-static SCREENSHOT_COMPAT_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[async_trait]
-impl Tool for ScreenshotCompatTool {
-    fn def(&self) -> &ToolDef {
-        SCREENSHOT_COMPAT_DEF.get_or_init(|| ToolDef {
-            name: "screenshot".into(),
-            description:
-                "Capture a target window and return a JPEG image. Coordinates accepted by \
-                 CuaDriver's pixel tools are pixels in this window screenshot's coordinate space.\n\n\
-                 This is the compatibility anchor for Claude Code vision flows: CuaDriver remains \
-                 window-scoped, and all other tools are the normal CuaDriver tools.".into(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["pid", "window_id"],
-                "properties": {
-                    "pid":       {"type":"integer","description":"Target process ID from list_windows or launch_app."},
-                    "window_id": {"type":"integer","description":"Target HWND from list_windows or launch_app."}
-                },
-                "additionalProperties": false
-            }),
-            read_only: true, destructive: false, idempotent: false, open_world: false,
-        })
-    }
-
-    async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
-        let pid       = match args.require_u32("pid")       { Ok(v) => v, Err(e) => return e };
-        let window_id = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
-
-        // Validate: window must exist, belong to pid, and be visible.
-        let window = tokio::task::spawn_blocking(move || {
-            crate::win32::list_windows(Some(pid))
-                .into_iter()
-                .find(|w| w.hwnd == window_id && w.width > 1 && w.height > 1)
-        }).await.unwrap_or(None);
-
-        let window = match window {
-            Some(w) => w,
-            None => return ToolResult::error(format!(
-                "No visible window {window_id} found for pid {pid}. \
-                 Use list_windows to choose an on-screen target window."
-            )),
-        };
-
-        let max_dim = self.state.config.read().unwrap().max_image_dimension;
-
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u32, u32)> {
-            let raw = crate::capture::screenshot_window_bytes(window_id)?;
-            let png_bytes = crate::capture::resize_png_if_needed(&raw, max_dim)?;
-            let (w, h) = crate::capture::png_dimensions_pub(&png_bytes)?;
-            let jpeg = crate::capture::png_bytes_to_jpeg(&png_bytes, 85)?;
-            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-            Ok((B64.encode(&jpeg), w, h))
-        }).await;
-
-        match result {
-            Ok(Ok((b64, w, h))) => {
-                let title = if window.title.is_empty() { "(untitled)".into() } else { window.title };
-                let summary = format!(
-                    "Captured window screenshot {w}x{h} for {title} \
-                     [pid: {pid}, window_id: {window_id}]. \
-                     Use CuaDriver pixel tools with this window-local coordinate space."
-                );
-                ToolResult {
-                    content: vec![
-                        mcp_server::protocol::Content::image_jpeg(b64),
-                        mcp_server::protocol::Content::text(summary),
-                    ],
-                    is_error: None,
-                    structured_content: Some(json!({
-                        "pid": pid, "window_id": window_id,
-                        "width": w, "height": h, "format": "jpeg"
-                    })),
-                }
-            }
-            Ok(Err(e)) => ToolResult::error(format!("Screenshot failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
-        }
-    }
-}
+// `ScreenshotTool` and `ScreenshotCompatTool` were removed in PR #1692 —
+// `get_window_state` with `capture_mode:"vision"` is the single canonical
+// screenshot path. The underlying capture functions
+// (`crate::capture::screenshot_window_bytes_with_occlusion`,
+// `screenshot_display_bytes`, etc.) and the WGC backend
+// (`crate::wgc::screenshot_window_via_wgc`) are still in use by
+// `GetWindowStateTool` — that's where the actual screenshot machinery
+// lives now.
 
 // ── double_click ──────────────────────────────────────────────────────────────
 

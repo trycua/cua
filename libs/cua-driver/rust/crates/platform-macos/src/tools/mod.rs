@@ -15,8 +15,11 @@ mod press_key;
 mod hotkey;
 mod set_value;
 mod scroll;
-mod screenshot;
-mod screenshot_compat;
+// `screenshot` / `screenshot_compat` modules removed in PR #1692 —
+// `get_window_state` capture_mode:"vision" is the canonical screenshot
+// path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
+// etc.) live elsewhere under CuaDriverCore::Capture and are reached
+// through GetWindowStateTool.
 mod get_screen_size;
 mod get_cursor_position;
 mod move_cursor;

@@ -176,8 +176,53 @@ pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
     Ok(())
 }
 
+/// Post `\n` (or `\r`, or `\r\n`) as a real Enter keystroke pair —
+/// WM_KEYDOWN/WM_KEYUP(VK_RETURN) — to the focused child `h`.
+///
+/// Why a keystroke and not WM_CHAR(0x0A) or WM_CHAR(0x0D): standard Win32
+/// edit controls accept `WM_CHAR(0x0D)` (carriage return) and insert a
+/// newline; richer controls (LibreOffice's VCL edit, modern WPF/WinForms,
+/// Scintilla) ignore `0x0A` outright and only sometimes accept `0x0D`.
+/// A real `WM_KEYDOWN(VK_RETURN)` is the universally-honoured "Enter
+/// pressed" signal — it produces a paragraph break in word processors,
+/// activates the default button in dialogs, and submits forms in browsers.
+/// The previous `WM_CHAR(0x0A)`-as-newline path silently joined every
+/// line of multi-line `type_text` input into a single run (visible in the
+/// LibreOffice Writer ode-to-a-background-cursor screenshot).
+unsafe fn post_enter_keystroke(h: HWND) -> Result<()> {
+    let vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
+    let scan = MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC);
+    let lp_down = 1u32 | (scan << 16);
+    let lp_up   = lp_down | (1u32 << 30) | (1u32 << 31);
+    PostMessageW(h, WM_KEYDOWN, WPARAM(vk.0 as usize), LPARAM(lp_down as isize))?;
+    // Hold time between KEYDOWN and KEYUP — matches `post_key`'s pattern and
+    // gives the target's message loop time to TranslateMessage the KEYDOWN
+    // (which synthesizes WM_CHAR(0x0D)) and DispatchMessage the paragraph
+    // break before the KEYUP arrives. Without this gap, LibreOffice Writer
+    // intermittently produced a double paragraph break AND dropped the
+    // next character — visible in the "ABC\nDEF\nGHI" repro as "ABC / DEF /
+    // (gap) / HI".
+    sleep(Duration::from_millis(KEY_DELAY_MS));
+    PostMessageW(h, WM_KEYUP,   WPARAM(vk.0 as usize), LPARAM(lp_up   as isize))?;
+    Ok(())
+}
+
 /// Post all characters in a string as WM_CHAR messages with inter-key delay.
+///
+/// Line breaks (`\n`, `\r`, or `\r\n`) are emitted as Enter keystrokes
+/// (see [`post_enter_keystroke`]) instead of literal `WM_CHAR(0x0A/0x0D)`,
+/// which most rich-text Win32 controls drop.
 pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
+    post_type_text_with_delay(hwnd, text, 0)
+}
+
+/// Post all characters in `text` as WM_CHAR messages with a configurable
+/// inter-character delay (on top of the baseline KEY_DELAY_MS gap).
+///
+/// Line breaks (`\n`, `\r`, or `\r\n`) are emitted as Enter keystrokes
+/// (see [`post_enter_keystroke`]) — see the LibreOffice screenshot in
+/// the PR description for the bug this fixes.
+pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> Result<()> {
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -185,26 +230,33 @@ pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
     // Resolve focused-child once at entry — re-querying per-character would
     // race with text-insertion side effects on the focus.
     let h = focused_descendant(h_parent).unwrap_or(h_parent);
-    for ch in text.chars() {
-        let code = ch as u32 as usize;
-        unsafe { PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?; }
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-    }
-    Ok(())
-}
 
-/// Post all characters in `text` as WM_CHAR messages with a configurable
-/// inter-character delay (on top of the baseline KEY_DELAY_MS gap).
-pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> Result<()> {
-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
-        anyhow::bail!(msg);
-    }
-    let h_parent = HWND(hwnd as *mut _);
-    let h = focused_descendant(h_parent).unwrap_or(h_parent);
+    let mut prev_was_cr = false;
     for ch in text.chars() {
-        let code = ch as u32 as usize;
-        unsafe { PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?; }
-        sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
+        match ch {
+            // `\r\n` (Windows-style line ending) → single Enter. The `\r`
+            // does the Enter; the following `\n` is consumed silently.
+            '\n' if prev_was_cr => {
+                prev_was_cr = false;
+            }
+            '\n' | '\r' => {
+                unsafe { post_enter_keystroke(h)?; }
+                prev_was_cr = ch == '\r';
+                // Extra settle after Enter — paragraph creation in rich
+                // editors (VCL Writer, Scintilla, RichEdit) is heavier than
+                // a single-character insert, so the baseline KEY_DELAY_MS +
+                // inter_char_ms is not enough on slower hosts. The extra
+                // 20 ms covers the queue drain without noticeably slowing
+                // multi-line typing.
+                sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms + 20));
+            }
+            _ => {
+                prev_was_cr = false;
+                let code = ch as u32 as usize;
+                unsafe { PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?; }
+                sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
+            }
+        }
     }
     Ok(())
 }
@@ -316,6 +368,31 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         let _ = SetForegroundWindow(target);
         // Brief settle so the foreground swap is processed before we send.
         sleep(Duration::from_millis(8));
+
+        // Verify the swap actually happened. `SetForegroundWindow` returns a
+        // BOOL but Windows treats foreground-lock violations as a silent
+        // no-op in most cases (the call returns success-ish, the foreground
+        // doesn't change). The reliable check is observing the foreground
+        // after the settle. If we didn't get it, abort BEFORE SendInput —
+        // otherwise the events land on whatever app actually held foreground
+        // (typically the terminal hosting this process), which causes spooky
+        // side effects like Alt+Enter toggling the terminal into fullscreen.
+        let actual_fg = GetForegroundWindow();
+        if actual_fg != target {
+            // Don't restore — prev_fg is presumably still foreground anyway.
+            bail!(
+                "Foreground swap to target HWND {:?} was rejected by Windows \
+                 (actual foreground is HWND {:?}). This daemon is not at \
+                 UIAccess integrity, so SetForegroundWindow is subject to the \
+                 foreground-lock and the swap silently fails. Without the \
+                 swap, SendInput would land on the wrong window. Fix: install \
+                 / spawn the cua-driver-uia worker (UIAccess-manifested PE) \
+                 and route hotkey calls through it. Until then, the calling \
+                 app must already be foreground for dispatch:\"foreground\" \
+                 to be safe.",
+                target.0, actual_fg.0
+            );
+        }
 
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {

@@ -28,6 +28,9 @@ pub mod input;
 pub mod capture;
 
 #[cfg(target_os = "windows")]
+pub mod wgc;
+
+#[cfg(target_os = "windows")]
 pub mod launch_uwp;
 
 pub fn register_tools() -> ToolRegistry {

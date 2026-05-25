@@ -51,5 +51,19 @@ windows = { version = "0.58", features = [
     "Management_Deployment",
     "ApplicationModel",
     "Foundation_Collections",
+    # Windows.Graphics.Capture (WGC) - the supported way to capture
+    # UWP / DirectComposition windows even when they're occluded by
+    # another window. PrintWindow returns black for these surfaces,
+    # and the screen-region BitBlt fallback returns the occluding
+    # window's pixels. Min OS: Win10 1903 (~100% of users today).
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
 ] }
 base64 = { workspace = true }

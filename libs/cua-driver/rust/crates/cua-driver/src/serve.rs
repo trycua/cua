@@ -109,14 +109,52 @@ impl DaemonResponse {
 
 // ── Client ────────────────────────────────────────────────────────────────────
 
-/// Probe whether a daemon is listening on `socket_path` by sending a
-/// trivial `list` request and checking for a valid response.
+/// Probe whether a daemon is listening on `socket_path`.
+///
+/// On Windows this uses `WaitNamedPipeW` with a tiny timeout, which checks
+/// whether a pipe instance is available **without consuming one**. The
+/// previous design (sending a `list` request) opened a pipe instance,
+/// then the immediately-following real `send_request` had to wait for the
+/// daemon to spin up its NEXT instance — that race caused real tool calls
+/// (especially state-dependent ones like `click` that need the daemon's
+/// element_index cache) to fall through to the in-process path with a
+/// fresh empty cache. See the conversation around the
+/// "Element 3 not in cache" bug for the diagnosis.
+///
+/// `WaitNamedPipeW(name, 1)`:
+///   - Returns TRUE if an instance is currently available.
+///   - Returns FALSE if not available within 1 ms.
+///   - Does NOT consume the instance — that's reserved for the actual call.
 pub fn is_daemon_listening(socket_path: &str) -> bool {
-    let req = DaemonRequest { method: "list".into(), name: None, args: None };
-    send_request(socket_path, &req)
-        .ok()
-        .map(|r| r.ok)
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        // Raw FFI to `WaitNamedPipeW` so this crate doesn't have to pull in
+        // the `windows` crate as a direct dependency just for one probe.
+        // `kernel32.dll` is implicitly linked on Windows targets.
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn WaitNamedPipeW(lpNamedPipeName: *const u16, nTimeOut: u32) -> i32;
+        }
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(socket_path)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // NMPWAIT_NOWAIT == 1: "do not wait at all"; returns nonzero only if an
+        // instance is immediately available. We don't want to block here —
+        // this is a one-shot existence probe.
+        unsafe { WaitNamedPipeW(wide.as_ptr(), 1) != 0 }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let req = DaemonRequest { method: "list".into(), name: None, args: None };
+        send_request(socket_path, &req)
+            .ok()
+            .map(|r| r.ok)
+            .unwrap_or(false)
+    }
 }
 
 /// Read the PID stored in `pid_file_path`, if any.
@@ -505,6 +543,69 @@ fn is_self_at_high_il() -> bool {
     }
 }
 
+/// Build a SECURITY_ATTRIBUTES that lets any Medium-IL (or higher) process
+/// open the named pipe, even though the daemon itself is running at
+/// High IL (via the autostart Scheduled Task's `RunLevel=Highest`, per
+/// #1630). Without this, the default UIPI rule "no write-up across IL
+/// boundaries" makes the High-IL daemon's pipe unreachable from a normal
+/// Medium-IL user shell — every `cua-driver <tool>` call from the CLI
+/// silently falls through to in-process execution with a fresh, empty
+/// `ToolState`, which breaks the element_index cache invariant
+/// (`get_window_state` → `click(element_index)` stops working because
+/// the two calls land in different ToolState instances).
+///
+/// SDDL: `D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)`
+///   - DACL grants `GENERIC_ALL` to `WD` (Everyone).
+///   - SACL sets the mandatory label to LOW with `NW` (NoWriteUp), so
+///     processes at Low-IL and above can write the pipe — i.e. no
+///     IL-based write restriction in practice.
+///
+/// Returns the SECURITY_ATTRIBUTES struct AND the raw security-descriptor
+/// pointer (which the caller must keep alive for the lifetime of the
+/// pipe-server, then free via `LocalFree`).
+#[cfg(target_os = "windows")]
+unsafe fn build_open_pipe_security_attrs()
+    -> Option<(SecurityAttributesRaw, *mut std::ffi::c_void)>
+{
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            string_security_descriptor: *const u16,
+            string_sd_revision: u32,
+            security_descriptor: *mut *mut std::ffi::c_void,
+            security_descriptor_size: *mut u32,
+        ) -> i32;
+    }
+    let sddl: Vec<u16> = "D:(A;OICI;GA;;;WD)S:(ML;;NW;;;LW)\0"
+        .encode_utf16()
+        .collect();
+    let mut sd_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut sd_size: u32 = 0;
+    let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        sddl.as_ptr(),
+        1, // SDDL_REVISION_1
+        &mut sd_ptr,
+        &mut sd_size,
+    );
+    if ok == 0 || sd_ptr.is_null() {
+        return None;
+    }
+    let attrs = SecurityAttributesRaw {
+        n_length: std::mem::size_of::<SecurityAttributesRaw>() as u32,
+        lp_security_descriptor: sd_ptr,
+        b_inherit_handle: 0,
+    };
+    Some((attrs, sd_ptr))
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct SecurityAttributesRaw {
+    n_length: u32,
+    lp_security_descriptor: *mut std::ffi::c_void,
+    b_inherit_handle: i32,
+}
+
 #[cfg(target_os = "windows")]
 pub async fn run_serve(
     registry: std::sync::Arc<mcp_server::tool::ToolRegistry>,
@@ -515,6 +616,25 @@ pub async fn run_serve(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     eprintln!("cua-driver daemon listening on {socket_path}");
+
+    // Build the cross-IL security descriptor once, reuse on every pipe
+    // instance. If this fails we fall back to the default-ACL `create`
+    // (which is High-IL exclusive when the daemon is at High IL — i.e.
+    // the bug we're trying to fix). Log the failure so it's diagnosable.
+    let security_attrs = unsafe { build_open_pipe_security_attrs() };
+    if security_attrs.is_none() {
+        eprintln!(
+            "cua-driver: failed to build cross-IL SECURITY_ATTRIBUTES; pipe will be \
+             High-IL exclusive. CLI calls from Medium-IL shells will fall through \
+             to in-process and break state-dependent tool sequences."
+        );
+    }
+    // Hold the SD pointer alive for the lifetime of run_serve. We never
+    // free it — the daemon process exit reclaims it.
+    let sec_attrs_ptr: *mut std::ffi::c_void = match &security_attrs {
+        Some((attrs, _sd_ptr)) => attrs as *const _ as *mut _,
+        None => std::ptr::null_mut(),
+    };
 
     // Spawn the sibling uiAccess'd worker if it's installed. Best-effort —
     // the main daemon still serves requests even if the worker fails to start.
@@ -533,10 +653,23 @@ pub async fn run_serve(
 
     loop {
         // Create a new pipe server instance to accept the next client.
-        let server = ServerOptions::new()
-            .first_pipe_instance(false)
-            .create(socket_path)
-            .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?;
+        // Use create_with_security_attributes_raw so Medium-IL clients can
+        // open the pipe even though we're at High IL (see comment on
+        // build_open_pipe_security_attrs). Fall back to default ACL if
+        // SD construction failed at startup.
+        let server = if sec_attrs_ptr.is_null() {
+            ServerOptions::new()
+                .first_pipe_instance(false)
+                .create(socket_path)
+                .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
+        } else {
+            unsafe {
+                ServerOptions::new()
+                    .first_pipe_instance(false)
+                    .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
+                    .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
+            }
+        };
 
         tokio::select! {
             result = server.connect() => {

@@ -16,6 +16,7 @@
 //! get a clear error instead of a panic.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -23,6 +24,23 @@ use crate::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
 };
+
+/// Result of a `click_element` call. The backend is responsible for driving
+/// the cursor overlay before returning; `screen_x` / `screen_y` are reported
+/// back to the caller for diagnostics + downstream chaining.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClickElementResult {
+    /// Screen-space x of the element center, after cursor animation landed.
+    pub screen_x: f64,
+    /// Screen-space y of the element center.
+    pub screen_y: f64,
+    /// Viewport-space x (page-relative, before scroll offset compensation).
+    pub viewport_x: f64,
+    /// Viewport-space y.
+    pub viewport_y: f64,
+    /// Free-form message for the agent (e.g. "Clicked button.submit").
+    pub message: String,
+}
 
 /// Platform-specific backend for the `page` tool.
 ///
@@ -69,6 +87,29 @@ pub trait PageBackend: Send + Sync {
              (Chrome/Brave/Edge use Apple Events as the JS backend there)."
         )
     }
+
+    /// Click an element identified by a CSS selector, animating the agent
+    /// cursor to the element's on-screen center before firing the click.
+    ///
+    /// The backend is responsible for: (1) running JS to derive the
+    /// element's screen coordinates; (2) driving the cursor overlay
+    /// (`pin_above` + `animate_cursor_to` + `ClickPulse`); (3) firing
+    /// `element.click()` via JS; (4) returning the coords for diagnostics.
+    ///
+    /// Default impl returns an actionable "not implemented" error so
+    /// non-Windows backends keep compiling until they're wired up.
+    async fn click_element(
+        &self,
+        _pid: i32,
+        _window_id: u32,
+        _selector: &str,
+    ) -> anyhow::Result<ClickElementResult> {
+        anyhow::bail!(
+            "click_element is not yet implemented on this platform's page \
+             backend. Use execute_javascript with `el.click()` directly \
+             (no visible cursor animation)."
+        )
+    }
 }
 
 /// The cross-platform `page` MCP tool.  Holds a backend trait object the
@@ -95,6 +136,10 @@ fn def() -> &'static ToolDef {
             - execute_javascript: Run JS and return the result.\n\
             - get_text: Extract visible text from the page.\n\
             - query_dom: Find elements matching a CSS selector.\n\
+            - click_element: Click a CSS-selected element AND animate the agent cursor \
+              to its on-screen center first (so the user sees what the agent is doing). \
+              Prefer over `execute_javascript('el.click()')` whenever you want visible \
+              cursor feedback.\n\
             - enable_javascript_apple_events: macOS-only — patch the browser's \
               Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user \
               confirmation and a browser restart).".into(),
@@ -111,8 +156,12 @@ fn def() -> &'static ToolDef {
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "action": {
                     "type": "string",
-                    "enum": ["execute_javascript", "get_text", "query_dom", "enable_javascript_apple_events"],
+                    "enum": ["execute_javascript", "get_text", "query_dom", "click_element", "enable_javascript_apple_events"],
                     "description": "Action to perform."
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector for click_element (e.g. 'button.submit', '#login a')."
                 },
                 "javascript": {
                     "type": "string",
@@ -241,6 +290,36 @@ impl Tool for PageTool {
                 Ok(text) => ToolResult::text(text),
                 Err(e) => ToolResult::error(format!("Page text extraction failed: {e}")),
             },
+
+            "click_element" => {
+                // Trim before emptiness check so whitespace-only selectors
+                // fail fast at the input boundary rather than blowing up
+                // inside the backend's JS payload (`querySelector("   ")`
+                // returns null and the error there is much less specific).
+                let selector = match args
+                    .get("selector")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                {
+                    Some(s) if !s.is_empty() => s.to_owned(),
+                    _ => return ToolResult::error(
+                        "Missing required parameter: selector (CSS selector for click_element)"
+                    ),
+                };
+                match self.backend.click_element(pid, window_id, &selector).await {
+                    Ok(res) => {
+                        let structured = serde_json::json!({
+                            "screen_x":   res.screen_x,
+                            "screen_y":   res.screen_y,
+                            "viewport_x": res.viewport_x,
+                            "viewport_y": res.viewport_y,
+                            "selector":   selector,
+                        });
+                        ToolResult::text(res.message).with_structured(structured)
+                    }
+                    Err(e) => ToolResult::error(format!("click_element failed: {e}")),
+                }
+            }
 
             "query_dom" => {
                 let selector = args

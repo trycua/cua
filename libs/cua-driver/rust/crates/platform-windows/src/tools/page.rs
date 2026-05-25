@@ -28,7 +28,7 @@
 //!        Returns an actionable error if neither path works.
 
 use async_trait::async_trait;
-use mcp_server::page::PageBackend;
+use mcp_server::page::{ClickElementResult, PageBackend};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -128,6 +128,146 @@ impl PageBackend for WindowsPageBackend {
         let result = mcp_server::cdp::evaluate(port, javascript, true).await?;
         Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
+
+    async fn click_element(
+        &self,
+        pid: i32,
+        window_id: u32,
+        selector: &str,
+    ) -> anyhow::Result<ClickElementResult> {
+        // Two-step:
+        //   (1) JS to derive element center + viewport screen position.
+        //   (2) Animate cursor overlay to those screen coords + ClickPulse.
+        //   (3) JS to fire element.click().
+        //
+        // Steps 1 and 3 reuse self.execute_javascript so they take the same
+        // bookmark / CDP routing the agent already knows. Step 2 uses the
+        // existing overlay primitives (pin + animate_cursor_to + ClickPulse).
+
+        let selector_js = escape_js_string_literal(selector);
+
+        // Step 1 — query coords.
+        let probe_js = format!(
+            "(function(){{\
+                var el = document.querySelector('{selector_js}');\
+                if (!el) throw new Error('element_not_found:{selector_js}');\
+                var r = el.getBoundingClientRect();\
+                return JSON.stringify({{\
+                    vx: r.left + r.width/2,\
+                    vy: r.top  + r.height/2,\
+                    sx: window.screenX + (window.outerWidth - window.innerWidth)/2,\
+                    sy: window.screenY + (window.outerHeight - window.innerHeight),\
+                    dpr: window.devicePixelRatio || 1\
+                }});\
+            }})()"
+        );
+        let probe_raw = self.execute_javascript(pid, window_id, &probe_js).await?;
+        let probe_json = strip_dispatch_prefix(&probe_raw);
+
+        // The wrapper paths return the result JSON-stringified. The bookmark
+        // wrapper wraps the user expression's return in JSON.stringify(),
+        // which means the inner string itself is JSON-encoded — we need to
+        // parse twice to get the actual coord object.
+        let parsed: serde_json::Value = serde_json::from_str(&probe_json)
+            .or_else(|_| {
+                // Bookmark wrapper double-encoded the string — decode the
+                // outer JSON-string, then parse the inner JSON.
+                let inner: String = serde_json::from_str(&probe_json)?;
+                serde_json::from_str::<serde_json::Value>(&inner)
+            })
+            .map_err(|e| anyhow::anyhow!(
+                "click_element: could not parse coord JSON from probe (raw: {probe_raw:?}): {e}"
+            ))?;
+
+        // Required-field validation. The previous version defaulted any
+        // missing field to 0.0, which silently animated the visible cursor
+        // to (0,0) AND still fired element.click() — the click would still
+        // hit the DOM element correctly but the visual cursor would lie.
+        // For a fast-fail loud-error contract, require all four screen-
+        // coord inputs from the JS probe and reject anything missing/NaN.
+        // `dpr` retains its 1.0 default because devicePixelRatio is
+        // genuinely optional on the JS side (older webviews / unusual
+        // contexts may not expose it).
+        let require = |key: &str| -> Result<f64, anyhow::Error> {
+            parsed.get(key).and_then(|v| v.as_f64()).filter(|f| f.is_finite())
+                .ok_or_else(|| anyhow::anyhow!(
+                    "click_element: probe JSON missing/invalid required field '{key}' \
+                     (raw: {probe_raw:?}). All four of vx/vy/sx/sy must be finite numbers."
+                ))
+        };
+        let vx = require("vx")?;
+        let vy = require("vy")?;
+        let sx = require("sx")?;
+        let sy = require("sy")?;
+        let dpr = parsed.get("dpr").and_then(|v| v.as_f64())
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .unwrap_or(1.0);
+
+        let screen_x = sx + vx * dpr;
+        let screen_y = sy + vy * dpr;
+
+        // Step 2 — drive the cursor overlay. Pin above the browser's root
+        // HWND so the overlay sits at z+1 of the page, glide, click-pulse.
+        // Inlined GA_ROOT lookup mirrors the helper in tools/impl_.rs but
+        // keeps page.rs from depending on a private symbol there.
+        let hwnd = window_id as u64;
+        {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
+            let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
+            let pin_wid = if !root.0.is_null() { root.0 as u64 } else { hwnd };
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(pin_wid));
+        }
+        crate::overlay::animate_cursor_to(screen_x, screen_y).await;
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+            x: screen_x,
+            y: screen_y,
+        });
+
+        // Step 3 — fire the real click.
+        let click_js = format!(
+            "(function(){{\
+                var el = document.querySelector('{selector_js}');\
+                if (!el) throw new Error('element_not_found_on_click:{selector_js}');\
+                el.click();\
+                return 'clicked:{selector_js}';\
+            }})()"
+        );
+        let _ = self.execute_javascript(pid, window_id, &click_js).await?;
+
+        Ok(ClickElementResult {
+            screen_x,
+            screen_y,
+            viewport_x: vx,
+            viewport_y: vy,
+            message: format!(
+                "✅ click_element('{selector}') at screen ({screen_x:.0},{screen_y:.0}) on pid {pid}."
+            ),
+        })
+    }
+}
+
+/// Escape `s` for safe interpolation inside a single-quoted JS string
+/// literal. Backslash and apostrophe are the only characters that can
+/// break out of `'...'` after the opening quote; newlines also confuse
+/// the bookmark wrapper which strips them, so we replace with space.
+fn escape_js_string_literal(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\r', " ")
+        .replace('\n', " ")
+}
+
+/// `execute_javascript` returns the raw JS result prefixed with the
+/// dispatch route (e.g. `"uia.bookmark_exec: ..."`, `"cdp.runtime.evaluate.user_gesture: ..."`).
+/// Strip that prefix so coord parsing sees the bare value.
+fn strip_dispatch_prefix(s: &str) -> String {
+    for prefix in &["uia.bookmark_exec: ", "cdp.runtime.evaluate.user_gesture: "] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            return rest.to_owned();
+        }
+    }
+    s.to_owned()
 }
 
 // ── implementation ────────────────────────────────────────────────────────

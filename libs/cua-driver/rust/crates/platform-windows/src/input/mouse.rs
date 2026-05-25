@@ -323,6 +323,25 @@ pub fn send_click_synthesized(
         let _ = SetForegroundWindow(target);
         sleep(Duration::from_millis(8));
 
+        // Verify the swap actually happened. Without UIAccess the call returns
+        // success but the foreground stays put — and SendInput then lands on
+        // whatever window IS foreground (typically the terminal hosting this
+        // process). Abort before injecting so we don't click random apps.
+        let actual_fg = GetForegroundWindow();
+        if actual_fg != target {
+            bail!(
+                "Foreground swap to target HWND {:?} was rejected by Windows \
+                 (actual foreground is HWND {:?}). This daemon is not at \
+                 UIAccess integrity, so SetForegroundWindow is subject to the \
+                 foreground-lock and the swap silently fails. Without the \
+                 swap, SendInput-based mouse events would land on the wrong \
+                 window. Fix: install / spawn the cua-driver-uia worker \
+                 (UIAccess-manifested PE) and route Chromium coord clicks \
+                 through it.",
+                target.0, actual_fg.0
+            );
+        }
+
         // Move the cursor first so the OS hover state matches before the click.
         // `SetCursorPos` is the visible cursor move; the MOUSEEVENTF_MOVE input
         // ensures Chromium's input filter sees a coordinated move event.

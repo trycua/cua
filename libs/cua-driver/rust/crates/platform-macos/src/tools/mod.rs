@@ -241,7 +241,14 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(set_config::SetConfigTool::new(state.clone())));
     registry.register(Box::new(get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone())));
     registry.register(Box::new(zoom::ZoomTool { state: state.clone() }));
-    registry.register(Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())));
+    // `type_text_chars` is intentionally NOT registered — Swift treats it as
+    // a deprecated alias for `type_text` resolved at invoke time in
+    // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
+    // means it doesn't show up in `tools/list` either, matching Swift's
+    // ToolRegistry.swift (`type_text_chars` not in `handlers`) and the
+    // platform-windows::build_registry which uses the same convention.
+    // Touch the struct so it stays in this crate for the alias resolver.
+    let _: &type_text_chars::TypeTextCharsTool = &type_text_chars::TypeTextCharsTool::new(state.clone());
     // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
     // its Apple-Events / CDP / AX-tree backend here.
     registry.register(Box::new(mcp_server::page::PageTool::new(

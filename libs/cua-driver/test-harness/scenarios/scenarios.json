@@ -183,5 +183,126 @@
         }
       }
     ]
+  },
+  "appkit": {
+    "process_name": "CuaTestHarness.AppKit",
+    "app_bundle_relative_path": "test-apps/harness-appkit/CuaTestHarness.AppKit.app",
+    "exe_relative_path": "test-apps/harness-appkit/CuaTestHarness.AppKit.app/Contents/MacOS/CuaTestHarness.AppKit",
+    "bundle_id": "com.trycua.harness.appkit",
+    "main_window": {
+      "title": "CuaTestHarness AppKit",
+      "ax_identifier": "wnd-main"
+    },
+    "scenarios": [
+      {
+        "id": "counter",
+        "kind": "click_counter",
+        "description": "NSButton increments NSTextField counter. Tests AXPress on a Cocoa NSButton (no flash, background-dispatch).",
+        "controls": {
+          "increment_button_aid": "btn-increment",
+          "counter_label_aid": "lbl-counter",
+          "reset_button_aid": "btn-reset"
+        }
+      },
+      {
+        "id": "text_body",
+        "kind": "static_text",
+        "description": "NSTextField (label mode) with a shared marker. Tests get_window_state text extraction from a Cocoa label.",
+        "controls": { "text_block_aid": "txt-body" },
+        "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+      },
+      {
+        "id": "text_input",
+        "kind": "text_box_mirror",
+        "description": "Editable NSTextField with a mirror label. Tests type_text and set_value via AXValue on AppKit.",
+        "controls": {
+          "textbox_aid": "txt-input",
+          "mirror_label_aid": "lbl-input-mirror"
+        }
+      },
+      {
+        "id": "click_target",
+        "kind": "right_double_click",
+        "description": "Custom NSView records left, right, and double-click counts. Tests right_click / double_click delivered via CGEvent or AX action.",
+        "controls": {
+          "target_aid": "view-click-target",
+          "last_action_label_aid": "lbl-last-action",
+          "click_count_label_aid": "lbl-click-count"
+        }
+      },
+      {
+        "id": "scroll_target",
+        "kind": "scroll_viewer",
+        "description": "NSScrollView with a tall NSTextView body and an offset label. Tests scroll tool delivery.",
+        "controls": {
+          "scroller_aid": "scroll-tall",
+          "offset_label_aid": "lbl-scroll-offset",
+          "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
+        }
+      },
+      {
+        "id": "ns_menubar",
+        "kind": "menubar_item",
+        "description": "Mac-specific: app menu item with a known title. Tests menubar enumeration via AX (the macOS main menu lives in the menubar, not the window's UIA tree).",
+        "controls": {
+          "menu_item_aid": "menu-test-item",
+          "expected_menu_item_title": "Harness Test Item"
+        }
+      },
+      {
+        "id": "exit",
+        "kind": "exit_button",
+        "controls": { "exit_button_aid": "btn-exit" }
+      }
+    ]
+  },
+  "swiftui": {
+    "process_name": "CuaTestHarness.SwiftUI",
+    "app_bundle_relative_path": "test-apps/harness-swiftui/CuaTestHarness.SwiftUI.app",
+    "exe_relative_path": "test-apps/harness-swiftui/CuaTestHarness.SwiftUI.app/Contents/MacOS/CuaTestHarness.SwiftUI",
+    "bundle_id": "com.trycua.harness.swiftui",
+    "main_window": {
+      "title": "CuaTestHarness SwiftUI"
+    },
+    "scenarios": [
+      {
+        "id": "counter",
+        "kind": "click_counter",
+        "controls": {
+          "increment_button_aid": "btn-increment",
+          "counter_label_aid": "lbl-counter",
+          "reset_button_aid": "btn-reset"
+        }
+      },
+      {
+        "id": "text_body",
+        "kind": "static_text",
+        "controls": { "text_block_aid": "txt-body" },
+        "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+      },
+      {
+        "id": "text_input",
+        "kind": "text_box_mirror",
+        "controls": {
+          "textbox_aid": "txt-input",
+          "mirror_label_aid": "lbl-input-mirror"
+        }
+      },
+      {
+        "id": "popover",
+        "kind": "swiftui_popover",
+        "description": "SwiftUI .popover() — SwiftUI's analogue of WinUI3 CommandBarFlyout / XAML Popup. Tests popover/flyout enumeration via AX (a separate AX subtree, but same NSWindow).",
+        "controls": {
+          "open_button_aid": "btn-open-popover",
+          "popover_text_aid": "txt-popover-body",
+          "expected_marker": "POPOVER_MARKER_v1"
+        }
+      },
+      {
+        "id": "exit",
+        "kind": "exit_button",
+        "controls": { "exit_button_aid": "btn-exit" }
+      }
+    ]
   }
 }

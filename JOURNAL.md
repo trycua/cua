@@ -123,3 +123,212 @@ Decisions:
 - Macos-specific scenarios to add: `nstoolbar` (NSToolbar item enumeration), `nsmenubar` (top menubar — uniquely Mac).
 
 Starting Phase 3 (apps) next.
+
+---
+
+### [Phase 3] Test apps + scenarios — complete
+
+- Built `libs/cua-driver/test-harness/CuaTestHarness.AppKit/main.swift`
+  — single-file AppKit harness with @main entry point. Scenarios:
+  counter, text_body, text_input, click_target, scroll_target,
+  ns_menubar (Mac-specific), exit.
+- Built `libs/cua-driver/test-harness/CuaTestHarness.SwiftUI/main.swift`
+  — @main SwiftUI App. Scenarios: counter, text_body, text_input,
+  popover, exit.
+- Wrote `build.sh` (parallel to build.ps1). Compiles with `xcrun
+  swiftc -O -target arm64-apple-macos13.0`, hand-rolls a minimal
+  `Info.plist`, stages `.app` bundles into
+  `../rust/test-apps/harness-{appkit,swiftui}/`.
+- First `build.sh` errored: `-parse-as-library` flag rejects top-level
+  statements on the AppKit app. Wrapped the entry in `@main struct
+  CuaAppKitHarness { static func main() { ... } }`. Both apps now build
+  cleanly in ~4s.
+- Extended `scenarios/scenarios.json` with `appkit` + `swiftui` sections
+  mirroring the WPF/WinUI3 structure. Scenario IDs aligned across
+  platforms where the concept maps so the cross-platform matrix stays
+  consistent.
+- Smoke-launched both apps via `open` + `ps` — both materialize windows
+  and survive being killed cleanly. AX integration tests follow.
+
+### [Phase 4] Rust integration tests — complete
+
+- `harness_appkit_test.rs` — 3 tests:
+  - `harness_appkit_smoke`: list_windows finds the harness, get_window_state
+    returns a non-empty AX tree, expected AX identifiers present on
+    actionable controls, expected marker text in label content.
+  - `harness_appkit_counter`: element_index-addressed click via AXPress
+    increments the counter label from "0" to "1".
+  - `harness_appkit_text_input`: set_value via AXValue propagates to the
+    mirror label.
+- `harness_swiftui_test.rs` — 2 tests:
+  - `harness_swiftui_smoke`: similar to AppKit smoke.
+  - `harness_swiftui_popover`: click the trigger, walk new windows,
+    assert POPOVER_MARKER_v1 present in the new AX subtree.
+- Pattern matches `harness_wpf_test.rs` from PR #1698: spawn driver +
+  harness as separate processes, drive cua-driver via JSON-RPC stdio,
+  `#[ignore]` so plain `cargo test` doesn't fire them.
+
+#### First-run results
+
+- **All 5 tests PASS** on this Mac with TCC Accessibility granted.
+- Issues found and fixed during this phase:
+  1. Initial scroll body (200 lines) blew past the AX tree-walk element
+     budget, truncating later scenarios — reduced to 30 lines.
+  2. AXStaticText leaves don't propagate `setAccessibilityIdentifier`
+     on either AppKit or SwiftUI — same quirk as WPF's TextBlock.
+     Test assertions split: AX-id on actionable controls (Buttons,
+     TextFields, MenuItems), text-content on labels.
+  3. `serde_json::json!` macro + match arm with early `return` tripped
+     the never-type-fallback Rust 2024 deny lint — restructured as
+     `if let Some(i) = ... { i } else { return; }`.
+
+### [Phase 5] Per-tool CLI smoke — complete
+
+`scripts/mac-smoke.sh` — bash 3 compatible (macOS ships bash 3.2;
+substituted associative arrays for a temp-file accumulator). Spawns the
+AppKit harness, iterates every cua-driver tool, classifies results.
+
+**First clean run:**
+```
+Tools probed: 32    PASS=27    FAIL=0    SKIP=5
+```
+
+The 5 SKIPs are intentional (page needs Chromium with --remote-
+debugging-port; replay_trajectory needs a recording; set_value covered
+by integration tests; type_text_chars is a deprecated alias not
+registered; bring_to_front is a documented Windows-only stub on macOS).
+
+**Surprise finding (now classified as SKIP):** `bring_to_front` on
+macOS returns "Windows-only — use NSRunningApplication.activate via
+your own AppleScript / shell call." Looking at `bring_to_front.rs`,
+this is by design: CGEvent.postToPid reaches backgrounded windows so
+no foreground activation is needed. Updated the smoke runner to
+recognise documented per-platform stubs (responses containing
+`unsupported_on_platform` / `is Windows-only` etc.) and classify them
+as SKIP rather than FAIL.
+
+Same bash `${var:-{}}` parsing trap as `linux-smoke.sh`: bash treats
+`${var:-{}}` as `${var:-{}` followed by literal `}`, so the default
+collapses to `{` and every no-arg tool fails JSON parsing. Fixed by
+using an explicit if-block to default the arg.
+
+### [Phase 6] Warning cleanup — complete
+
+Cut platform-macos warnings from 9 to 3:
+- dropped 3 unused imports (`CFIndex`, `NSPoint`/`NSSize`, `CursorConfig`)
+- added `#[allow(non_upper_case_globals)]` to the kCG* constants so they
+  retain Apple's canonical names without lint nagging — mirrors the
+  same convention `platform-windows::uia/windows_enum.rs` uses for UIA_*
+
+Remaining 3 warnings are intentional dead-yet-kept code (`BUTTON_BAR_H`
+in permissions/panel.rs, `window` field in PanelHandles, `Snapshot::diff`
+method in window_change_detector.rs) — pre-existing, left untouched to
+avoid scope creep.
+
+### [Phase 7] Final state + reproduction
+
+#### What's in this branch
+
+| Path | Purpose |
+|---|---|
+| `libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs` | Parity fix: stop registering `type_text_chars` as own tool (mirrors Windows) |
+| `libs/cua-driver/test-harness/CuaTestHarness.AppKit/main.swift` | New Cocoa test app |
+| `libs/cua-driver/test-harness/CuaTestHarness.SwiftUI/main.swift` | New SwiftUI test app |
+| `libs/cua-driver/test-harness/build.sh` | Mac build script (parallels build.ps1) |
+| `libs/cua-driver/test-harness/scenarios/scenarios.json` | Extended with `appkit` + `swiftui` sections |
+| `libs/cua-driver/test-harness/README.md` | Extended with macOS instructions, AX quirks, coverage matrix |
+| `libs/cua-driver/rust/crates/cua-driver/tests/harness_appkit_test.rs` | 3 integration tests, JSON-RPC vs MCP |
+| `libs/cua-driver/rust/crates/cua-driver/tests/harness_swiftui_test.rs` | 2 integration tests |
+| `scripts/mac-smoke.sh` | Per-tool CLI smoke runner |
+| `scripts/mac-smoke-RESULTS.txt` | Checked-in baseline output for diff-based regression detection |
+| `JOURNAL.md` | This document |
+
+Plus minor warning cleanup in platform-macos (4 files, 10/3 LOC delta).
+
+#### Reproduction (for tomorrow-morning Francesco)
+
+```bash
+# 1. Make sure Rust is on PATH (rustup was installed this session — Mac
+#    didn't have cargo before)
+. "$HOME/.cargo/env"
+
+# 2. Build cua-driver
+cd ~/cua/libs/cua-driver/rust
+cargo build --release -p cua-driver
+
+# 3. Build the AppKit + SwiftUI test apps
+~/cua/libs/cua-driver/test-harness/build.sh
+
+# 4. Run the Rust integration tests (need TCC Accessibility granted)
+cd ~/cua/libs/cua-driver/rust
+cargo test --release --test harness_appkit_test   -- --ignored --nocapture
+cargo test --release --test harness_swiftui_test  -- --ignored --nocapture
+
+# 5. Per-tool smoke
+~/cua/scripts/mac-smoke.sh
+```
+
+Expected result: 5/5 integration tests PASS, 27/0/5 smoke result.
+
+#### Verified working tools on macOS (via mac-smoke + integration tests)
+
+`check_permissions, click, double_click, drag, get_accessibility_tree,
+get_agent_cursor_state, get_config, get_cursor_position,
+get_recording_state, get_screen_size, get_window_state, hotkey,
+kill_app, launch_app, list_apps, list_windows, move_cursor, press_key,
+right_click, scroll, set_agent_cursor_enabled, set_agent_cursor_motion,
+set_agent_cursor_style, set_config, set_recording, set_value (via
+harness_appkit_text_input), type_text, zoom`
+
+That's 27 tools verified end-to-end on macOS today.
+
+#### Open items / left for tomorrow
+
+1. **Open a PR off this branch.** Branch is local-only per instructions.
+   Suggested PR title: `feat(cua-driver-rs)(macos): AppKit + SwiftUI
+   test harness + per-tool smoke + parity fix (#1698 sibling for macOS)`.
+2. **CodeRabbit pass** on review when PR is open.
+3. **Optional scope expansion** worth considering in follow-on:
+   - Add a `sheet` scenario (NSWindow attached as sheet to parent)
+   - Add a `nstabbing` scenario (NSWindow with macOS native tabs)
+   - Add an Electron-app scenario (parallels the existing
+     `desktop-test-app-electron`)
+   - macOS sandbox runner (analog of `rust/sandbox/run-tests-in-
+     sandbox.ps1`) — useful if you ever want hermetic CI runs
+4. **`bring_to_front` design question to confirm**: is it intentional to
+   register the tool surface on macOS just to return a per-platform
+   error? Pro: stable tool surface for agent codegen, no per-OS
+   conditional in MCP schemas. Con: a wasted tool call. Today's macOS
+   `bring_to_front.rs` documents the rationale — leaving as-is.
+5. **TCC prompts**: the first time you run the integration tests on a
+   fresh Mac, macOS will prompt to grant Accessibility to the test
+   binary. After grant, all 5 tests pass. If you ever rebuild the
+   binary path it has to be re-granted — consider running the tests
+   through `cua-driver serve` (which is the already-trusted process)
+   instead of the test binary for CI portability. Not in scope today.
+
+#### Decisions made (no user to ask)
+
+- **Did NOT push branch to origin** — user explicitly asked for local only.
+- **Did NOT uninstall existing cua-driver** — there was no existing install
+  to uninstall (no `~/.cua-driver/`, no `~/.local/bin/cua-driver` symlink
+  before this session). The release build at
+  `libs/cua-driver/rust/target/release/cua-driver` is what every test
+  uses; harmless.
+- **Did NOT touch `libs/cua-driver/swift/`** — explicitly scoped out.
+- **Did NOT remove the 3 dead-code warnings in platform-macos** — pre-
+  existing, unrelated to this branch's scope.
+- **Did NOT investigate the focus_guard / focus_steal modules** —
+  no failing test pointed at them and the smoke + harness coverage
+  exercises the code paths they back. Left as a future audit item.
+
+### Final commit log
+
+```
+e7dd6914 chore(cua-driver-rs)(macos): drop 3 unused imports + tag Apple-canonical kCG* lowercase consts
+a87e85e0 feat(scripts)(macos): per-tool smoke test (mac-smoke.sh) mirroring linux-smoke.sh
+d88e0347 feat(cua-driver-rs)(macos)(test-harness): AppKit + SwiftUI Rust integration tests passing
+0ca15cf3 feat(cua-driver-rs)(macos): parity fix + AppKit/SwiftUI test harness skeleton
+```
+
+Plus an additional commit landing the README + this JOURNAL final write-up.

@@ -217,14 +217,31 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     let hwnd_raw = hwnd;
     let hwnd = HWND(hwnd as *mut _);
 
-    // CUA-542 routing: for known XAML / WinUI3 / UWP targets, skip
-    // PrintWindow entirely and go straight to the screen-region BitBlt
-    // path. PrintWindow either returns all-black bitmaps for those
-    // surfaces or — as observed for backgrounded Calculator — a tiny
-    // clipped capture of the window's collapsed client rect. The
-    // screen-region path reads from the live desktop DC, which has the
-    // real composited image.
+    // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the
+    // PrintWindow GDI path returns black (DirectComposition isn't in
+    // the GDI back-buffer). We try Windows.Graphics.Capture (WGC)
+    // first — that's the only API that returns the target's actual
+    // composited pixels even when it's occluded by another window
+    // (the Calculator-behind-terminal regression captured in the
+    // autonomous-test journal). On older Windows / GPU stalls / cloaked
+    // windows WGC may fail; fall back to the screen-region BitBlt
+    // path, then to PrintWindow as a last resort.
     if crate::input::is_xaml_host_hwnd(hwnd_raw) {
+        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
+            Ok((pixels, w, h)) => {
+                return Ok((
+                    mcp_server::image_utils::encode_bgra_to_png(&pixels, w, h)?,
+                    false, // WGC reads target's own pixels — never occluded by definition
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "cua-driver",
+                    "screenshot: WGC failed for XAML target hwnd 0x{hwnd_raw:x}: {e}; \
+                     falling back to screen-region BitBlt (may be occluded)."
+                );
+            }
+        }
         let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
             Ok((pixels, w, h)) => {
@@ -289,9 +306,28 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     if ok == 0 { bail!("GetDIBits returned 0"); }
 
     // CUA-542: detect the all-black bitmap PrintWindow returns for
-    // DirectComposition-backed UWP / WinUI3 surfaces and retry via
-    // screen-region BitBlt. See module docs for the rationale.
+    // DirectComposition-backed UWP / WinUI3 surfaces. Recovery order:
+    //   1. WGC (occlusion-immune; works for UWP).
+    //   2. Screen-region BitBlt (works when target is on-screen and
+    //      not covered).
+    // The WGC-first ordering covers backgrounded UWP targets the
+    // screen-region path mishandles (returns covering window's pixels).
     if is_mostly_black_bgra(&pixels) {
+        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
+            Ok((alt_pixels, w, h)) => {
+                return Ok((
+                    mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
+                    false,
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "cua-driver",
+                    "screenshot: PrintWindow returned black AND WGC failed for hwnd 0x{hwnd_raw:x}: {e}; \
+                     trying screen-region BitBlt next."
+                );
+            }
+        }
         let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
             Ok((alt_pixels, alt_w, alt_h)) => {

@@ -176,16 +176,22 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         exit.setAccessibilityIdentifier(kExitButtonAID)
         content.addArrangedSubview(exit)
 
-        let scrollWrapOuter = NSScrollView(frame: window.contentLayoutRect)
-        scrollWrapOuter.documentView = content
-        scrollWrapOuter.hasVerticalScroller = true
-        scrollWrapOuter.borderType = .noBorder
-        scrollWrapOuter.autoresizingMask = [.width, .height]
-        window.contentView = scrollWrapOuter
-
+        // No outer scroll-view wrap: the content is sized to fit the window
+        // so the only scrollable surface is the inner scroll_target NSScrollView.
+        // Otherwise scroll events delivered at window-local coords get
+        // consumed by the outer scroll view before reaching the inner one,
+        // and `scroll` tool tests can't deterministically move the inner offset.
+        let container = NSView(frame: window.contentLayoutRect)
+        container.autoresizingMask = [.width, .height]
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
         NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: container.topAnchor),
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             content.widthAnchor.constraint(equalToConstant: 700),
         ])
+        window.contentView = container
     }
 
     private func sectionLabel(_ id: String) -> NSTextField {

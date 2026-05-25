@@ -306,6 +306,155 @@ fn harness_appkit_text_input() {
     let _ = child.kill();
 }
 
+/// type_text: synthesize a keystroke into the NSTextField (CGEvent
+/// path, distinct from set_value's AX path). Verifies the keyboard
+/// dispatch chain reaches a backgrounded Cocoa text input.
+#[test]
+#[ignore]
+fn harness_appkit_type_text_keystroke() {
+    let driver = driver_binary();
+    if !driver.exists() { eprintln!("cua-driver not built"); return; }
+    let harness = match Harness::launch() {
+        Some(h) => h,
+        None => { eprintln!("harness not built — skipping"); return; }
+    };
+
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
+                                       "CuaTestHarness AppKit")
+        .expect("main window not found");
+    let snap_pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
+    if ax_tree_looks_empty(&snap_pre) {
+        eprintln!("AX empty — TCC not granted; skipping"); let _ = child.kill(); return;
+    }
+    let idx: u64 = if let Some(i) = find_element_index_by_aid(&snap_pre, "txt-input") {
+        i
+    } else {
+        eprintln!("txt-input not found; skipping"); let _ = child.kill(); return;
+    };
+
+    // Focus the field first so the keystrokes land in it. AX press on
+    // a text field has the side effect of giving it keyboard focus.
+    let _ = tools_call(&mut stdin, &mut stdout, 60, "click",
+        serde_json::json!({
+            "pid": harness.pid as i64, "window_id": wid,
+            "element_index": idx, "action": "press"
+        }));
+    std::thread::sleep(Duration::from_millis(150));
+
+    // CGEvent-based type_text against the focused field (does NOT use
+    // set_value — exercises the keystroke synthesis chain).
+    let resp = tools_call(&mut stdin, &mut stdout, 61, "type_text",
+        serde_json::json!({
+            "pid": harness.pid as i64, "window_id": wid,
+            "text": "kbd-cua"
+        }));
+    println!("type_text resp: {resp}");
+    std::thread::sleep(Duration::from_millis(250));
+
+    let snap_post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
+    let post = snapshot_text(&snap_post).to_owned();
+    assert!(post.contains("kbd-cua"),
+            "type_text keystroke did not land in the text field; snapshot:\n{post}");
+
+    let _ = child.kill();
+}
+
+/// scroll: scroll the NSScrollView downward, verify the offset label
+/// changes (it mirrors the clip view's documentVisibleRect.origin.y).
+///
+/// **Status:** EXPECTED-FAIL today (see notes below). The `scroll` tool
+/// itself works at the API level — `scripts/mac-smoke.sh` confirms it
+/// PASSes against the same harness window. What this test would
+/// verify additionally is that the scroll event actually moved the
+/// scroll view's bounds (state-change observation, not just API
+/// success).
+///
+/// Why it's expected-fail: on macOS, `CGEvent.scroll` requires the
+/// cursor position to lie inside the target NSScrollView for the event
+/// to be routed to it (Cocoa scroll-routing is cursor-anchored). The
+/// `move_cursor` tool we expose is overlay-only — it doesn't move the
+/// OS hardware cursor on macOS. So state-change tests for scroll need
+/// either (a) an OS-cursor warp (intentionally not exposed) or (b) a
+/// different scroll dispatch primitive (NSEvent.otherEvent
+/// keyDown(.swipeUp) on focused window, or an AXScrollAreaScrollTo
+/// action). Both are open implementation work; tracking in the journal's
+/// "Open items" section.
+#[test]
+#[ignore]
+#[should_panic(expected = "scroll offset label did not advance from 0")]
+fn harness_appkit_scroll_expected_fail() {
+    let driver = driver_binary();
+    if !driver.exists() { eprintln!("cua-driver not built"); return; }
+    let harness = match Harness::launch() {
+        Some(h) => h,
+        None => { eprintln!("harness not built — skipping"); return; }
+    };
+
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
+                                       "CuaTestHarness AppKit")
+        .expect("main window not found");
+    let snap_pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
+    if ax_tree_looks_empty(&snap_pre) {
+        eprintln!("AX empty — TCC not granted; skipping"); let _ = child.kill(); return;
+    }
+    // Pre-condition: offset label should be at "0" (the controller
+    // initial state). The label text appears as an AXStaticText leaf
+    // immediately after the AXTextArea body in the rendered tree.
+    let pre = snapshot_text(&snap_pre).to_owned();
+    let pre_has_zero_offset = pre.lines()
+        .any(|l| l.trim() == "- AXStaticText = \"0\"");
+    assert!(pre_has_zero_offset, "scroll offset label not at 0 pre-scroll");
+
+    // Scroll the scroll view down a few ticks. The scroll tool takes
+    // window-local pixel coords; pick a point inside the scroller
+    // (the scroll target sits roughly mid-window).
+    let resp = tools_call(&mut stdin, &mut stdout, 70, "scroll",
+        serde_json::json!({
+            "pid": harness.pid as i64, "window_id": wid,
+            "x": 180, "y": 450,            // inside the scroll view
+            "direction": "down",
+            "amount": 5
+        }));
+    println!("scroll resp: {resp}");
+    std::thread::sleep(Duration::from_millis(250));
+
+    let snap_post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
+    let post = snapshot_text(&snap_post).to_owned();
+    // After scroll, the offset label should no longer be "0" — any
+    // positive integer indicates the bounds-change notification fired
+    // and the label updated. We don't pin a specific value (scroll
+    // wheel pixel delta varies by macOS version + accessibility setting).
+    let still_zero = post.lines().any(|l| l.trim() == "- AXStaticText = \"0\"");
+    let unchanged_count = post.matches("- AXStaticText = \"0\"").count();
+    let pre_count = pre.matches("- AXStaticText = \"0\"").count();
+    // Counter label is also "0" so the bare presence isn't a signal —
+    // instead check the COUNT decreased by 1 (only the offset label
+    // moved off zero, not the counter).
+    assert!(
+        unchanged_count < pre_count || !still_zero,
+        "scroll offset label did not advance from 0; pre: {} \"0\" leaves; post: {} \"0\" leaves",
+        pre_count, unchanged_count
+    );
+
+    let _ = child.kill();
+}
+
 /// counter: click the increment button via element_index, verify the
 /// counter label flips from 0 to 1.
 #[test]

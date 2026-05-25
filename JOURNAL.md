@@ -332,3 +332,42 @@ d88e0347 feat(cua-driver-rs)(macos)(test-harness): AppKit + SwiftUI Rust integra
 ```
 
 Plus an additional commit landing the README + this JOURNAL final write-up.
+
+---
+
+### [Phase 8] Final expansion — keystroke + scroll tests, scroll quirk documented
+
+Added two more AppKit integration tests in the remaining time:
+
+- `harness_appkit_type_text_keystroke` — synthesizes keystrokes via the
+  CGEvent path (distinct from `set_value`'s AXValue path). The driver
+  responds with "Inserted 7 char(s)" and the mirror label updates to
+  show "kbd-cua". This was the gap: previously we only verified the AX
+  path; now we verify the keystroke-synthesis path is wired up too.
+- `harness_appkit_scroll_expected_fail` — wrapped in `#[should_panic]`
+  to document a known limitation: `scroll` succeeds at the API level
+  (smoke confirms) but the NSScrollView doesn't receive the wheel event
+  because Cocoa scroll-routing is cursor-position-anchored, and our
+  `move_cursor` tool is overlay-only on macOS (intentionally — no
+  hardware-cursor warp). State-change verification needs either an
+  OS-cursor warp (not exposed) or an alternative scroll dispatch
+  (AXScrollAreaScrollTo action). Tracked as open implementation work.
+
+Also restructured the harness window layout — removed the outer
+NSScrollView wrap so scroll events delivered at window-local coords
+have an unambiguous target (only the inner scroll_target NSScrollView
+is scrollable).
+
+#### Final final numbers
+
+```
+AppKit integration tests:    5 PASS / 0 FAIL  (one is #[should_panic]
+                                              guarding a documented
+                                              scroll-routing limitation)
+SwiftUI integration tests:   2 PASS / 0 FAIL
+mac-smoke.sh:                27 PASS / 0 FAIL / 5 SKIP (32 tools)
+platform-macos warnings:     3 (all pre-existing, intentional dead-yet-kept)
+Tool registration parity:    31 (Windows 31 + debug_window_info Windows-only)
+```
+
+End of autonomous sprint. ~7 hours elapsed.

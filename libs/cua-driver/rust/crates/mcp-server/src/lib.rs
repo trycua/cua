@@ -18,6 +18,7 @@ pub mod protocol;
 pub mod recording;
 pub mod recording_tools;
 pub mod server;
+pub mod text_sanitize;
 pub mod tool;
 pub mod tool_args;
 

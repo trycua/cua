@@ -2107,7 +2107,14 @@ impl Tool for TypeTextTool {
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Strip trailing agent-protocol closing tags before delivery —
+        // catches the case where an LLM hallucinated its own tool-
+        // invocation tags into the text param (see text_sanitize docs).
+        // Returns Cow::Borrowed on the no-match fast path so the common
+        // case is allocation-free.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index");
         let dispatch = DispatchMode::from_args(&args);
@@ -4362,7 +4369,11 @@ impl Tool for TypeTextCharsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Same trailing-protocol-tag scrub as the main TypeTextTool — see
+        // mcp_server::text_sanitize for rationale.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let hwnd_opt = args.opt_u64("window_id");
         let hwnd = match hwnd_opt {

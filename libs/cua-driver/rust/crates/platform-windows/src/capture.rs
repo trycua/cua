@@ -271,12 +271,11 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // button strip OUTSIDE the standard Win32 client area, so a
     // client-sized buffer loses the Save/Cancel/OK row at the bottom.
     // Window-sized buffer captures title bar + body + non-client trim
-    // correctly; the small extra rows at the top (window frame) are
-    // worth it to never silently truncate buttons.
-    let mut rect = RECT::default();
-    GetWindowRect(hwnd, &mut rect)?;
-    let w = (rect.right - rect.left) as i32;
-    let h = (rect.bottom - rect.top) as i32;
+    // correctly.
+    let mut win_rect = RECT::default();
+    GetWindowRect(hwnd, &mut win_rect)?;
+    let w = (win_rect.right - win_rect.left) as i32;
+    let h = (win_rect.bottom - win_rect.top) as i32;
     if w <= 0 || h <= 0 {
         bail!("Window has zero/negative size: {}x{}", w, h);
     }
@@ -290,6 +289,32 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     if !pw_ok.as_bool() {
         BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
     }
+
+    // Compute the DWM-extended-frame bounds. On Win10+ the OS draws an
+    // invisible drop-shadow margin around every top-level window that
+    // GetWindowRect counts in its dimensions but PrintWindow does NOT
+    // actually paint into — leaving a black trim around the body in the
+    // captured bitmap (except the title bar, which spans the full width
+    // and so doesn't pick up the artifact). DWMWA_EXTENDED_FRAME_BOUNDS
+    // returns the rectangle WITHOUT the shadow margin. We compute the
+    // offsets relative to GetWindowRect and crop the bitmap below.
+    //
+    // Best-effort: if the DWM call fails (e.g. very old Windows, hooked
+    // by some shell extension), we keep the full-window bitmap as-is —
+    // user sees a small dark border but no clipping.
+    let dwm_rect: Option<RECT> = {
+        use windows::Win32::Graphics::Dwm::{
+            DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
+        };
+        let mut r = RECT::default();
+        let hr = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut r as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        hr.ok().map(|_| r)
+    };
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -315,6 +340,35 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     ReleaseDC(hwnd, screen_dc);
 
     if ok == 0 { bail!("GetDIBits returned 0"); }
+
+    // Crop the bitmap to the DWM extended-frame bounds (computed above)
+    // to remove the invisible-shadow margin PrintWindow doesn't paint.
+    // Skipped on the DWM-failed branch — caller sees a thin dark trim
+    // around the body but the body itself is intact.
+    let (pixels, w, h) = if let Some(dwm) = dwm_rect {
+        let off_x = (dwm.left - win_rect.left) as i32;
+        let off_y = (dwm.top - win_rect.top) as i32;
+        let crop_w = (dwm.right - dwm.left) as i32;
+        let crop_h = (dwm.bottom - dwm.top) as i32;
+        if off_x >= 0 && off_y >= 0 && crop_w > 0 && crop_h > 0
+            && off_x + crop_w <= w && off_y + crop_h <= h
+        {
+            let stride_full = (w * 4) as usize;
+            let stride_crop = (crop_w * 4) as usize;
+            let mut cropped = vec![0u8; (crop_w * crop_h * 4) as usize];
+            for row in 0..crop_h as usize {
+                let src_row = (off_y as usize + row) * stride_full + (off_x as usize) * 4;
+                let dst_row = row * stride_crop;
+                cropped[dst_row..dst_row + stride_crop]
+                    .copy_from_slice(&pixels[src_row..src_row + stride_crop]);
+            }
+            (cropped, crop_w, crop_h)
+        } else {
+            (pixels, w, h)
+        }
+    } else {
+        (pixels, w, h)
+    };
 
     // CUA-542: detect the all-black bitmap PrintWindow returns for
     // DirectComposition-backed UWP / WinUI3 surfaces. Recovery order:

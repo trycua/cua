@@ -21,6 +21,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{CursorConfig, OverlayCommand, RenderStateCore};
+#[cfg(target_os = "linux")]
+use cursor_overlay::ZOrderEnforcer;
 
 // ── Global channel ────────────────────────────────────────────────────────
 
@@ -205,6 +207,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     let frame_dur = Duration::from_millis(16);
     let mut last_tick = Instant::now();
     let mut last_ztick = Instant::now();
+    let z_enforcer = X11ZOrderEnforcer { conn: &conn, win };
 
     loop {
         let now = Instant::now();
@@ -240,23 +243,16 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
             paint_x11(&conn, win, scr_w, scr_h, depth, visual_id, &pm);
         }
 
-        // Z-order maintenance every 80ms.
+        // Z-order maintenance every 80ms — delegate to the cross-platform
+        // ZOrderEnforcer so the contract for "z+1 of the application under
+        // test" is documented once in `cursor_overlay::z_order`.
         if last_ztick.elapsed() >= Duration::from_millis(80) {
             last_ztick = Instant::now();
             let pinned_wid = {
                 let guard = RENDER.lock().unwrap();
                 guard.as_ref().and_then(|rs| rs.core.pinned_wid)
             };
-            let aux = if let Some(target_xid) = pinned_wid {
-                // Place overlay just above the pinned X11 window.
-                ConfigureWindowAux::new()
-                    .sibling(target_xid as u32)
-                    .stack_mode(StackMode::ABOVE)
-            } else {
-                ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)
-            };
-            conn.configure_window(win, &aux).ok();
-            conn.flush().ok();
+            z_enforcer.reassert(pinned_wid);
         }
 
         // Drain any X events (needed to avoid blocking).
@@ -266,6 +262,42 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
         if let Some(remaining) = frame_dur.checked_sub(elapsed) {
             std::thread::sleep(remaining);
         }
+    }
+}
+
+// ── Z-order enforcer (Linux impl of cursor_overlay::ZOrderEnforcer) ──────
+
+/// X11 implementation of [`cursor_overlay::ZOrderEnforcer`].
+///
+/// Borrows the X11 connection and overlay window id; lives only inside
+/// `run_overlay_thread` (the X11 connection is not `'static`). Called
+/// every 80 ms from the render loop.
+#[cfg(target_os = "linux")]
+struct X11ZOrderEnforcer<'a, C: x11rb::connection::Connection> {
+    conn: &'a C,
+    win: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<'a, C> {
+    fn reassert(&self, target: Option<u64>) {
+        use x11rb::protocol::xproto::*;
+        use x11rb::protocol::xproto::ConnectionExt as _;
+
+        let aux = if let Some(target_xid) = target {
+            // Place overlay just above the pinned X11 window.
+            ConfigureWindowAux::new()
+                .sibling(target_xid as u32)
+                .stack_mode(StackMode::ABOVE)
+        } else {
+            // No pin → raise to the top of the normal stack. (X11 has no
+            // OS-level "always-on-top" band like Windows / NSStatusWindowLevel,
+            // so a plain ABOVE here cannot accidentally float over a focused
+            // foreground app the way HWND_TOPMOST would on Windows.)
+            ConfigureWindowAux::new().stack_mode(StackMode::ABOVE)
+        };
+        self.conn.configure_window(self.win, &aux).ok();
+        self.conn.flush().ok();
     }
 }
 

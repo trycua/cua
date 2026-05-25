@@ -115,10 +115,27 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     }
 
     let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
-    let root_elem = match automation.ElementFromHandleBuildCache(hwnd_win, &cache_req) {
+    // Two-call sequence (ElementFromHandle + BuildUpdatedCache) instead of
+    // the atomic ElementFromHandleBuildCache. Empirically, the single-call
+    // batched variant hangs against SAL (LibreOffice) transient dialogs
+    // (SALSUBFRAME class — confirmation/warning modals): the provider's
+    // batched-request handler blocks indefinitely, while the same
+    // properties + patterns fetched via two separate RPCs return in
+    // ~17 ms. See flash-repro/probe-sal-bulk.ps1 for the side-by-side
+    // benchmark that established this. The semantic result is identical;
+    // we just give the provider two smaller requests instead of one
+    // monolithic one.
+    let uncached = match automation.ElementFromHandle(hwnd_win) {
         Ok(e) => e,
         Err(e) => return UiaTreeResult {
-            tree_markdown: format!("ElementFromHandleBuildCache failed: {e}"),
+            tree_markdown: format!("ElementFromHandle failed: {e}"),
+            nodes: Vec::new(),
+        },
+    };
+    let root_elem = match uncached.BuildUpdatedCache(&cache_req) {
+        Ok(e) => e,
+        Err(e) => return UiaTreeResult {
+            tree_markdown: format!("BuildUpdatedCache failed: {e}"),
             nodes: Vec::new(),
         },
     };

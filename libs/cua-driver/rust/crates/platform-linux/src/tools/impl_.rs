@@ -2051,6 +2051,49 @@ impl Tool for KillAppTool {
     }
 }
 
+// ── bring_to_front (Linux stub) ──────────────────────────────────────────────
+
+pub struct BringToFrontTool;
+
+static BTF_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for BringToFrontTool {
+    fn def(&self) -> &ToolDef {
+        BTF_DEF.get_or_init(|| ToolDef {
+            name: "bring_to_front".into(),
+            description:
+                "Activate a window so subsequent input tools land on it. **Windows-only \
+                 today:** on Linux this stub returns an error; the X11/Wayland equivalents \
+                 (`wmctrl -a`, `xdotool windowactivate`) aren't wired up because the Linux \
+                 input tools deliver via AT-SPI / X11 input injection which already reaches \
+                 backgrounded windows without needing activation."
+                .into(),
+            input_schema: serde_json::json!({
+                "type":"object","required":["pid"],"properties":{
+                    "pid":{"type":"integer"},
+                    "window_id":{"type":"integer"}
+                },"additionalProperties":false
+            }),
+            read_only: false, destructive: false, idempotent: true, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, _args: Value) -> ToolResult {
+        ToolResult::error(
+            "bring_to_front is Windows-only today. On Linux the input tools deliver via \
+             AT-SPI / X11 input injection which already reaches backgrounded windows. If \
+             you need explicit activation for your own UX reasons, shell out to \
+             `wmctrl -a` or `xdotool windowactivate` from outside cua-driver."
+                .to_string(),
+        )
+        .with_structured(serde_json::json!({
+            "code": "bring_to_front_unsupported_on_platform",
+            "platform": "linux",
+        }))
+    }
+}
+
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
@@ -2061,6 +2104,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
+    r.register(Box::new(BringToFrontTool));
     r.register(Box::new(ClickTool { state: state.clone() }));
     r.register(Box::new(DoubleClickTool { state: state.clone() }));
     r.register(Box::new(RightClickTool { state: state.clone() }));

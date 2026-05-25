@@ -458,6 +458,7 @@ doesn't-survive-across-sessions caveat.
 | `Invalid element_index N for pid X window_id W` | Index is stale or out of range | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree |
 | `window_id W belongs to pid P, not …` | Passed a window_id that's owned by a different process | Use `list_windows({pid: X})` to enumerate this pid's own windows |
 | `AX action … failed with code …` / `UIA invoke failed` | Element doesn't support the default action | Try `show_menu`, `confirm`, `cancel`, `pick`, or fall through to a pixel click on the element's center |
+| `The user doesn't want to proceed with this tool use. The tool use was rejected …` | The harness uses this *exact* string for BOTH a permission-prompt denial AND a manual interrupt (Esc / stop) of a running tool — they are indistinguishable from the tool result | Treat as "tool canceled, no result, await the user." Do NOT paraphrase ("you stopped me") — quote the literal message and name the canceled tool + its args, so the user can tell what was in flight vs. what landed |
 
 Platform-specific errors (TCC dialogs on macOS, Session 0 / UAC
 prompts on Windows, AT-SPI bus issues on Linux) live in their

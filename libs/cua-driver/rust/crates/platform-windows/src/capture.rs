@@ -68,6 +68,62 @@ fn is_mostly_black_bgra(bgra: &[u8]) -> bool {
     sampled > 0 && (black * 200) >= (sampled * 199)
 }
 
+/// Probe whether `target` is currently obscured by some other window.
+/// Samples `WindowFromPoint` at the target's center + four corners (insetting
+/// 2 px from each corner so we don't catch invisible 1-px frame slop). If any
+/// sample returns a window whose root ancestor isn't `target` itself, we
+/// consider the target occluded. Used by the screen-region BitBlt path to
+/// warn callers that the bitmap they're about to receive does NOT actually
+/// show the target's pixels — it shows whatever's covering it. Without this
+/// signal, the BitBlt result is silently misleading (see the regression
+/// captured during the autonomous-test journal: a backgrounded Notepad
+/// screenshot returned LibreOffice's pixels).
+unsafe fn target_is_obscured(target: HWND) -> bool {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetWindowRect, WindowFromPoint, GA_ROOT,
+    };
+
+    if target.0.is_null() {
+        return false;
+    }
+    let mut rect = RECT::default();
+    if GetWindowRect(target, &mut rect).is_err() {
+        return false;
+    }
+    let w = rect.right - rect.left;
+    let h = rect.bottom - rect.top;
+    if w <= 4 || h <= 4 {
+        return false;
+    }
+    // 5 sample points: 4 corners (inset 2 px) + center.
+    let pts: [(i32, i32); 5] = [
+        (rect.left + 2,         rect.top + 2),
+        (rect.right - 3,        rect.top + 2),
+        (rect.left + 2,         rect.bottom - 3),
+        (rect.right - 3,        rect.bottom - 3),
+        ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2),
+    ];
+    let target_root = GetAncestor(target, GA_ROOT);
+    let mut covered_samples = 0;
+    for (x, y) in &pts {
+        let p = POINT { x: *x, y: *y };
+        let owner = WindowFromPoint(p);
+        if owner.0.is_null() {
+            continue;
+        }
+        let owner_root = GetAncestor(owner, GA_ROOT);
+        if owner_root != target_root {
+            covered_samples += 1;
+        }
+    }
+    // Threshold of 2 of 5: a single corner being "covered" can be a layered
+    // overlay (e.g. the cua-driver agent cursor) that's not actually opaque
+    // over the content; we don't want to false-positive on that. Two or more
+    // sample points missing means real content is being covered.
+    covered_samples >= 2
+}
+
 /// Fallback capture path: BitBlt the desktop DC over the rectangle covered
 /// by `hwnd`'s on-screen bounds. Works for UWP / WinUI3 / DirectComposition
 /// surfaces that PrintWindow can't reach, as long as the window is on-screen
@@ -128,7 +184,18 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)
 
 /// Capture a window by HWND, returning raw PNG bytes.
 pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
-    unsafe { screenshot_window_bytes_unsafe(hwnd) }
+    screenshot_window_bytes_with_occlusion(hwnd).map(|(b, _)| b)
+}
+
+/// Capture a window by HWND. Returns `(png_bytes, occluded_flag)` — the
+/// boolean is `true` when the capture had to fall through to the
+/// screen-region BitBlt path AND another window was visibly covering the
+/// target at sample time. In that case the bitmap reflects the COVERING
+/// window's pixels, not the target's. Callers that surface the image to a
+/// user / LLM should attach an explicit warning. See `target_is_obscured`
+/// for the sampling heuristic.
+pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, bool)> {
+    unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) }
 }
 
 /// Capture a window by HWND, returning (base64_png, width, height).
@@ -143,7 +210,7 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
-unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
+unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Vec<u8>, bool)> {
     use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
     use windows::Win32::Foundation::RECT;
 
@@ -158,9 +225,13 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     // screen-region path reads from the live desktop DC, which has the
     // real composited image.
     if crate::input::is_xaml_host_hwnd(hwnd_raw) {
+        let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
             Ok((pixels, w, h)) => {
-                return mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32);
+                return Ok((
+                    mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
+                    occluded,
+                ));
             }
             Err(e) => {
                 // Screen-region failed — fall through and try PrintWindow as a
@@ -221,9 +292,13 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     // DirectComposition-backed UWP / WinUI3 surfaces and retry via
     // screen-region BitBlt. See module docs for the rationale.
     if is_mostly_black_bgra(&pixels) {
+        let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
             Ok((alt_pixels, alt_w, alt_h)) => {
-                return mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32);
+                return Ok((
+                    mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32)?,
+                    occluded,
+                ));
             }
             Err(e) => {
                 // Screen-region path failed too — return the (black) PrintWindow
@@ -244,7 +319,10 @@ unsafe fn screenshot_window_bytes_unsafe(hwnd: u64) -> Result<Vec<u8>> {
     // uncompressed-PNG path that produced ~5x larger output. The
     // `image` crate's encoder is already a workspace dep so the
     // smaller output is free).
-    mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
+    // PrintWindow itself reads from the target's own DC, so the bitmap
+    // we return here is the target's pixels even when occluded — no
+    // occluded warning needed on this path.
+    Ok((mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?, false))
 }
 
 // NOTE: previously this module carried a hand-rolled

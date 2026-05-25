@@ -58,7 +58,11 @@ function Stop-CuaDriverDaemons {
 # Denied for those).
 function Show-CuaDriverDaemonSurvivors {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][array]$Survivors)
+    # AllowNull + non-mandatory: PowerShell collapses `return @()` from
+    # Stop-CuaDriverDaemons to $null at the call site, which would fail
+    # a `Mandatory = $true [array]` bind. The body below already treats
+    # null and empty array as the no-survivors case, so accept both.
+    param([Parameter()][AllowNull()][array]$Survivors)
     if (-not $Survivors -or $Survivors.Count -eq 0) { return }
     $pids = ($Survivors | ForEach-Object { $_.Id }) -join ', '
     Write-Host "Note: $($Survivors.Count) cua-driver process(es) still running after best-effort kill (pid: $pids)." -ForegroundColor Yellow

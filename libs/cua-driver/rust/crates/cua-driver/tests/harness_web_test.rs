@@ -181,28 +181,65 @@ fn harness_electron_window_discoverable() {
 
 #[test]
 #[ignore]
-fn harness_electron_page_tool_documented_gap() {
-    // Documents the cua-driver CDP `/json` discovery bug: see module
-    // docstring. cua-driver's read_to_end hangs because Chromium ignores
-    // Connection: close. Until that's fixed, this test asserts the error
-    // shape so a regression in the underlying TCP code (different timeout
-    // wording, different error path, etc.) shows up.
+fn harness_electron_page_tool() {
+    // Regression guard for the CDP /json discovery fix (parse
+    // Content-Length / Transfer-Encoding instead of read_to_end).
+    // cua-driver's page tool now reaches Electron's CDP successfully.
     run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
         |pid, wid, stdin, stdout| {
 
-        let resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
+        // 1. execute_javascript via CDP.
+        let marker_resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
-            "javascript": "1+1"
+            "javascript": "document.querySelector('[data-cua-id=\"page-marker\"]').textContent"
+        }));
+        let marker = marker_resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(marker.contains("WEB_HARNESS_MARKER_v1"),
+            "Electron CDP execute_javascript marker fetch: {marker:?}");
+
+        // 2. Increment counter via direct execute_javascript (the
+        //    click_element path has a separate probe-JSON-parsing gap
+        //    documented below — track separately).
+        let _ = tools_call(stdin, stdout, 31, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('btn-increment').click()"
+        }));
+        std::thread::sleep(Duration::from_millis(300));
+
+        let counter_resp = tools_call(stdin, stdout, 32, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('lbl-counter').textContent"
+        }));
+        let post = counter_resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(post.contains("counter=1"),
+            "Electron counter did not advance via execute_javascript: {post:?}");
+        println!("✅ harness_electron_page_tool: CDP+execute_javascript green");
+    });
+}
+
+/// Documents a separate gap in page.click_element: its CDP probe runs JS
+/// that returns a JSON object (vx/vy/sx/sy/dpr) but the result is wrapped
+/// as a CDP `runtime.evaluate.user_gesture` string by the time the page
+/// tool's JSON parser sees it — causing "probe JSON missing required
+/// field 'vx'". Fix: unwrap the CDP result's `.value` before parsing,
+/// or send the probe with `returnByValue:true` in the Runtime.evaluate
+/// params. Manually unwrapping the harness's verified JSON string works.
+#[test]
+#[ignore]
+fn harness_electron_click_element_DOCUMENTED_wrapper_bug() {
+    run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
+        |pid, wid, stdin, stdout| {
+        let resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "click_element",
+            "selector": "#btn-increment"
         }));
         let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-        let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
-        // Either an explicit error OR a "timed out" message in the text body.
-        let expected_pattern = is_err || text.contains("timed out") || text.contains("Cannot connect");
-        assert!(expected_pattern,
-            "Expected CDP /json discovery gap (Chromium ignores Connection: close \
-             so cua-driver's read_to_end hangs). Got: is_err={is_err}, text={text:?}. \
-             If this test now PASSES the cua-driver CDP bug is fixed — flip the \
-             assertion to assert success and re-enable the deleted behavioural tests.");
-        println!("✅ harness_electron_page_tool_documented_gap: confirmed CDP read_to_end gap still present");
+        // Expect the gap: parser fails on the CDP-wrapped probe response.
+        let expected_gap = text.contains("probe JSON missing") || text.contains("required field");
+        assert!(expected_gap,
+            "Expected click_element probe-wrapper gap. Got: {text:?}. \
+             If this asserts on a success message, the wrapper-unwrap fix is in — \
+             flip this assertion to assert success.");
+        println!("⚠️  harness_electron_click_element_DOCUMENTED_wrapper_bug: probe JSON parse gap present");
     });
 }

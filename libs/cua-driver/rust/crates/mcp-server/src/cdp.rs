@@ -103,28 +103,72 @@ fn format_cdp_result(response: &Value) -> String {
 // ── HTTP page discovery ───────────────────────────────────────────────────
 
 async fn cdp_list_pages(port: u16) -> anyhow::Result<Vec<Value>> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
         .map_err(|e| anyhow::anyhow!("Cannot connect to CDP on port {port}: {e}"))?;
 
+    // `Connection: close` would be ideal but Chromium's CDP HTTP server
+    // ignores it and keeps the socket alive — a `read_to_end` then hangs
+    // forever. Parse Content-Length / Transfer-Encoding: chunked from the
+    // response headers and read exactly that many body bytes, leaving the
+    // socket open (it's torn down when we drop the stream).
     let req = format!(
         "GET /json HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(req.as_bytes()).await?;
 
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
+    let mut reader = BufReader::new(stream);
+    let mut header_line = String::new();
+    let mut content_length: Option<usize> = None;
+    let mut chunked = false;
+    loop {
+        header_line.clear();
+        let n = reader.read_line(&mut header_line).await?;
+        if n == 0 { anyhow::bail!("CDP /json: EOF in headers"); }
+        if header_line == "\r\n" { break; }
+        let lower = header_line.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("content-length:") {
+            content_length = v.trim().parse::<usize>().ok();
+        }
+        if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
+            chunked = true;
+        }
+    }
 
-    let text = std::str::from_utf8(&buf)
+    let body_bytes: Vec<u8> = if let Some(n) = content_length {
+        let mut buf = vec![0u8; n];
+        reader.read_exact(&mut buf).await?;
+        buf
+    } else if chunked {
+        let mut out = Vec::new();
+        loop {
+            let mut size_line = String::new();
+            reader.read_line(&mut size_line).await?;
+            let size = usize::from_str_radix(size_line.trim_end(), 16)
+                .map_err(|_| anyhow::anyhow!("CDP /json: bad chunk size {size_line:?}"))?;
+            if size == 0 { break; }
+            let mut chunk = vec![0u8; size];
+            reader.read_exact(&mut chunk).await?;
+            out.extend_from_slice(&chunk);
+            let mut crlf = [0u8; 2];
+            reader.read_exact(&mut crlf).await?;
+        }
+        out
+    } else {
+        // No Content-Length and not chunked — fall back to read-until-EOF.
+        // Server will close eventually if it actually honoured our
+        // Connection: close header.
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).await?;
+        buf
+    };
+
+    let body = std::str::from_utf8(&body_bytes)
         .map_err(|_| anyhow::anyhow!("CDP /json response is not valid UTF-8"))?;
-    let body_start = text
-        .find("\r\n\r\n")
-        .ok_or_else(|| anyhow::anyhow!("Invalid HTTP response from CDP"))?
-        + 4;
 
-    let all: Value = serde_json::from_str(&text[body_start..])
+    let all: Value = serde_json::from_str(body)
         .map_err(|e| anyhow::anyhow!("CDP /json parse error: {e}"))?;
 
     let pages = all

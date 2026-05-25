@@ -115,16 +115,63 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     }
 
     let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
+
+    // SAL (LibreOffice / OpenOffice) fast-path: VCL's UIA provider hangs
+    // on `BuildUpdatedCache(TreeScope.Subtree)` for transient dialogs
+    // (SALSUBFRAME class — Confirmation, Warning, modal Yes/No). Both
+    // the atomic `ElementFromHandleBuildCache` and the split
+    // `ElementFromHandle + BuildUpdatedCache(Subtree)` paths block
+    // indefinitely under the daemon's MTA thread pool (the same code
+    // runs fine via CLI in-process, suggesting a COM apartment /
+    // concurrent-access interaction with SAL's provider). The 4 s
+    // outer timeout fires and the caller gets the structured
+    // diagnostic, but that's a wasted 4 s every call.
+    //
+    // Short-circuit by class detection: if the target's class starts
+    // with "SAL", skip the bulk-cache walk entirely and return the
+    // same synthetic stub the post-walk SAL-skip would emit, with the
+    // three actionable fallback options. Saves the 4 s wait and the
+    // ambiguity of "did the walk run? did it find nothing? did it
+    // hang?" The caller sees the stub immediately and routes to the
+    // appropriate workaround.
+    // Class lookup once — used both for the fast-path skip decision
+    // and the diagnostic stub. SALSUBFRAME is the empirically-confirmed
+    // hang class (modal Confirmation / Warning dialogs). SALFRAME
+    // (the document window, the Recovery dialog) walks fine, so don't
+    // include it in the skip list — pixel + element_index against
+    // Recovery's Discard All button worked end-to-end through the
+    // primary path. SALMENU / SALTMPSUBFRAME are transient menu hosts
+    // that the user typically doesn't get_window_state on; default to
+    // skipping out of caution. If a real use-case emerges, narrow.
+    let sal_class: Option<String> = {
+        use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(hwnd_win, &mut buf);
+        if n > 0 {
+            let s = String::from_utf16_lossy(&buf[..n as usize]);
+            if s == "SALSUBFRAME" || s == "SALMENU" || s == "SALTMPSUBFRAME" {
+                Some(s)
+            } else { None }
+        } else { None }
+    };
+    if let Some(class) = sal_class {
+        let stub = format!(
+            "- Window <{class} — SAL/VCL target, UIA walk skipped>\n\
+             (SAL's UIA provider hangs on TreeScope.Subtree BuildUpdatedCache \
+             when the daemon is running in MTA; the cua-driver fast-path \
+             returns immediately rather than wait 4 s. Use one of: \
+             (a) `screenshot(pid, window_id)` + pixel `click(x, y)`; \
+             (b) `press_key` with `dispatch:\"foreground\"` (Esc / Enter / Y / N); \
+             (c) `get_window_state` with `capture_mode:\"vision\"`.)\n"
+        );
+        return UiaTreeResult { tree_markdown: stub, nodes: Vec::new() };
+    }
+
     // Two-call sequence (ElementFromHandle + BuildUpdatedCache) instead of
     // the atomic ElementFromHandleBuildCache. Empirically, the single-call
-    // batched variant hangs against SAL (LibreOffice) transient dialogs
-    // (SALSUBFRAME class — confirmation/warning modals): the provider's
-    // batched-request handler blocks indefinitely, while the same
-    // properties + patterns fetched via two separate RPCs return in
-    // ~17 ms. See flash-repro/probe-sal-bulk.ps1 for the side-by-side
-    // benchmark that established this. The semantic result is identical;
-    // we just give the provider two smaller requests instead of one
-    // monolithic one.
+    // batched variant hangs against SAL even in CLI in-process tests;
+    // the two-call path works in-process. Kept for non-SAL targets where
+    // the difference matters for performance-sensitive providers.
     let uncached = match automation.ElementFromHandle(hwnd_win) {
         Ok(e) => e,
         Err(e) => return UiaTreeResult {

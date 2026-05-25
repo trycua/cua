@@ -1520,7 +1520,13 @@ impl Tool for LaunchAppTool {
                 .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
                 .unwrap_or("")
                 .to_owned();
-            let parent_pid = pid;
+            // parent_pid retained for future heuristics that combine the
+            // pid-snapshot diff with launched-pid ancestry (e.g. allowing
+            // descendant pids that pre-existed in the snapshot but
+            // re-spawned for the new launch). Prefixed `_` so the unused
+            // warning stays out of `cargo build` output without losing the
+            // intent in the source.
+            let _parent_pid = pid;
             let _ = tokio::task::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};

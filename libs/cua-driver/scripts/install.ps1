@@ -78,9 +78,19 @@
 [CmdletBinding()]
 param(
     [string]$Release = "latest",
-    [switch]$AutoStart,
+    # Default-on: cua-driver-serve is what makes the agent flow work
+    # across logon / reboot. Without the scheduled task the user has
+    # to remember to run `cua-driver autostart kick` every time, and
+    # MCP-style flows go silently in-process. Opt out with
+    # `-AutoStart:$false` or `-NoAutoStart` for CI / sandbox installs
+    # that specifically don't want a scheduled task registered.
+    [switch]$AutoStart = $true,
+    [switch]$NoAutoStart,
     [switch]$NoPathUpdate
 )
+# `-NoAutoStart` is the explicit opt-out and takes precedence over
+# the default-true `-AutoStart`.
+if ($NoAutoStart) { $AutoStart = $false }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -1271,12 +1281,18 @@ catch {
 
 # Windows-specific autostart hint (kept inline; OS-natural location).
 Write-Host ""
-Write-Host "Auto-start at logon (Windows-native equivalent of macOS LaunchAgent):" -ForegroundColor Cyan
-Write-Host "  cua-driver autostart enable    (Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan
-Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
-Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
-Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
-Write-Host "  Or re-run this installer with -AutoStart for the same result." -ForegroundColor Cyan
+if ($AutoStart) {
+    Write-Host "Auto-start: 'cua-driver-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+} else {
+    Write-Host "Auto-start at logon (NOT enabled - re-run without -NoAutoStart to register, or:):" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart enable    (Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
+}
 Write-Host ""
 Write-Host "WARNING -- BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
 Write-Host "          cua-driver. Windows and Linux support is feature-complete; macOS" -ForegroundColor Yellow

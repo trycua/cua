@@ -34,9 +34,19 @@
 
 [CmdletBinding()]
 param(
-    [switch]$AutoStart,
+    # Default-on: most users want the daemon to come back at every
+    # logon. Opt out with `-AutoStart:$false` (or the dedicated
+    # `-NoAutoStart`) when running install-local.ps1 from CI / a
+    # container build / a sandbox where you specifically don't want
+    # a scheduled task registered.
+    [switch]$AutoStart = $true,
+    [switch]$NoAutoStart,
     [switch]$NoPathUpdate
 )
+# `-NoAutoStart` is the explicit opt-out; takes precedence over the
+# default-true `-AutoStart` for callers who'd rather read negative
+# than `-AutoStart:$false`.
+if ($NoAutoStart) { $AutoStart = $false }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -341,13 +351,23 @@ if (Test-Path -LiteralPath $HintsTxt) {
 }
 
 # Windows-specific autostart hint (kept inline; per-shell natural location).
-if (-not $AutoStart) {
+if ($AutoStart) {
+    # Default branch: autostart was enabled (either by default or explicitly).
+    # Surface the management subcommands so the user knows how to inspect /
+    # disable later without digging through Task Scheduler.
     Write-Host ""
-    Write-Host "Auto-start at logon (Windows-native equivalent of macOS LaunchAgent):" -ForegroundColor Cyan
+    Write-Host "Auto-start: 'cua-driver-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+    Write-Host ""
+} else {
+    # Opt-out branch (-NoAutoStart or -AutoStart:`$false`).
+    Write-Host ""
+    Write-Host "Auto-start at logon (NOT enabled - re-run without -NoAutoStart to register, or:):" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart enable    (register Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
-    Write-Host "  Or re-run install-local.ps1 with -AutoStart for the same result." -ForegroundColor Cyan
     Write-Host ""
 }

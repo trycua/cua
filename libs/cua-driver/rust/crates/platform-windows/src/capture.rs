@@ -211,7 +211,7 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 }
 
 unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Vec<u8>, bool)> {
-    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
     use windows::Win32::Foundation::RECT;
 
     let hwnd_raw = hwnd;
@@ -262,12 +262,23 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         }
     }
 
+    // Size the capture buffer to the WHOLE window (GetWindowRect), not
+    // just the client area (GetClientRect). PrintWindow draws the entire
+    // window at 1:1 starting at (0,0) — if the buffer is sized to the
+    // client area only, anything in the non-client region clips. The
+    // surprising case is VCL/SAL dialogs (LibreOffice's "Document
+    // Recovery", any of its Confirmation modals): VCL puts the bottom
+    // button strip OUTSIDE the standard Win32 client area, so a
+    // client-sized buffer loses the Save/Cancel/OK row at the bottom.
+    // Window-sized buffer captures title bar + body + non-client trim
+    // correctly; the small extra rows at the top (window frame) are
+    // worth it to never silently truncate buttons.
     let mut rect = RECT::default();
-    GetClientRect(hwnd, &mut rect)?;
+    GetWindowRect(hwnd, &mut rect)?;
     let w = (rect.right - rect.left) as i32;
     let h = (rect.bottom - rect.top) as i32;
     if w <= 0 || h <= 0 {
-        bail!("Window has zero/negative client size: {}x{}", w, h);
+        bail!("Window has zero/negative size: {}x{}", w, h);
     }
 
     let screen_dc = GetWindowDC(hwnd);

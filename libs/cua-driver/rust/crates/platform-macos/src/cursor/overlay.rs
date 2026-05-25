@@ -224,7 +224,7 @@ impl RenderState {
 unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCommand>) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::NSRect;
 
     // ---- NSApplication ----
     // Verify main thread (MainThreadMarker is a zero-size compile-time token).

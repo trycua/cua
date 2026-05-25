@@ -148,10 +148,13 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
         scroller.setAccessibilityIdentifier(kScrollerAID)
         scroller.hasVerticalScroller = true
         scroller.borderType = .lineBorder
-        let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 2000))
+        let bodyText = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 600))
         bodyText.isEditable = false
+        // Keep this small (one AX node per line on macOS) so the get_window_state
+        // tree walk doesn't exhaust its element budget before reaching the rest
+        // of the scenarios. 30 lines is plenty for verifying scroll offset.
         var bigBody = ""
-        for i in 0..<200 {
+        for i in 0..<30 {
             bigBody += "Line \(i)\n"
         }
         bigBody += kScrollBottomMarker

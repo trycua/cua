@@ -1,0 +1,102 @@
+<Window
+    x:Class="CuaTestHarness.WinUI3.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:auto="using:Microsoft.UI.Xaml.Automation"
+    Title="CuaTestHarness WinUI3">
+
+    <Grid Padding="16" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Counter -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+            <Button x:Name="BtnIncrement"
+                    auto:AutomationProperties.AutomationId="btn-increment"
+                    Content="Increment" Width="100"
+                    Click="OnIncrementClick"/>
+            <Button x:Name="BtnReset"
+                    auto:AutomationProperties.AutomationId="btn-reset"
+                    Content="Reset" Width="80"
+                    Click="OnResetClick"/>
+            <TextBlock x:Name="LblCounter"
+                       auto:AutomationProperties.AutomationId="lbl-counter"
+                       VerticalAlignment="Center"
+                       FontFamily="Consolas" FontSize="14"
+                       Text="counter=0"/>
+        </StackPanel>
+
+        <!-- Text body -->
+        <TextBlock Grid.Row="1"
+                   auto:AutomationProperties.AutomationId="txt-body"
+                   FontFamily="Consolas" TextWrapping="Wrap"
+                   Text="HARNESS_TEXT_MARKER_v1 — WinUI3 text body for get_window_state."/>
+
+        <!-- TextBox + mirror -->
+        <StackPanel Grid.Row="2" Orientation="Vertical" Spacing="4">
+            <TextBox x:Name="TxtInput"
+                     auto:AutomationProperties.AutomationId="txt-input"
+                     Width="300" HorizontalAlignment="Left"
+                     TextChanged="OnInputChanged"/>
+            <TextBlock x:Name="LblInputMirror"
+                       auto:AutomationProperties.AutomationId="lbl-input-mirror"
+                       FontFamily="Consolas"
+                       Text="mirror="/>
+        </StackPanel>
+
+        <!-- CommandBarFlyout trigger -->
+        <Button Grid.Row="3"
+                x:Name="BtnOpenFlyout"
+                auto:AutomationProperties.AutomationId="btn-open-flyout"
+                Content="Open CommandBarFlyout"
+                Width="220" HorizontalAlignment="Left"
+                Click="OnOpenFlyoutClick">
+            <Button.Flyout>
+                <CommandBarFlyout x:Name="CmdFlyout">
+                    <AppBarButton Icon="Copy"  Label="Copy"
+                                  auto:AutomationProperties.AutomationId="flyout-copy"/>
+                    <AppBarButton Icon="Paste" Label="Paste"
+                                  auto:AutomationProperties.AutomationId="flyout-paste"/>
+                </CommandBarFlyout>
+            </Button.Flyout>
+        </Button>
+
+        <!-- XAML Popup trigger -->
+        <Button Grid.Row="4"
+                x:Name="BtnOpenPopup"
+                auto:AutomationProperties.AutomationId="btn-open-popup"
+                Content="Open XAML Popup"
+                Width="220" HorizontalAlignment="Left"
+                Click="OnOpenPopupClick"/>
+
+        <Popup x:Name="PopXaml" Grid.Row="5"
+               HorizontalOffset="40" VerticalOffset="40">
+            <Border Background="#202020" Padding="16" CornerRadius="6"
+                    BorderBrush="#FFFFFF" BorderThickness="1">
+                <StackPanel Spacing="8">
+                    <TextBlock Foreground="White" FontWeight="Bold"
+                               Text="XAML Popup (same HWND)"/>
+                    <TextBlock Foreground="White"
+                               auto:AutomationProperties.AutomationId="txt-popup-body"
+                               Text="XAML_POPUP_MARKER_v1 — Popup is NOT a separate HWND; it lives inside the main window."/>
+                    <Button Content="Close" Width="80" Click="OnClosePopupClick"/>
+                </StackPanel>
+            </Border>
+        </Popup>
+
+        <!-- Exit -->
+        <Button Grid.Row="7"
+                x:Name="BtnExit"
+                auto:AutomationProperties.AutomationId="btn-exit"
+                Content="Exit" Width="80" HorizontalAlignment="Right"
+                Click="OnExitClick"/>
+    </Grid>
+</Window>

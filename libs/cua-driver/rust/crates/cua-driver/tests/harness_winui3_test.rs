@@ -254,3 +254,139 @@ fn harness_winui3_xaml_popup_open() {
 
     child.kill().ok();
 }
+
+// ── Session helper for the additional control tests ──────────────────────────
+
+fn winui3_with_session<F>(f: F)
+where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) {
+    let driver = driver_binary();
+    if !driver.exists() { eprintln!("cua-driver.exe not built"); return; }
+    let harness = match Harness::launch() { Some(h) => h, None => return };
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WinUI3")
+        .expect("WinUI3 main window");
+    f(harness.pid, wid, &mut stdin, &mut stdout);
+    drop(stdout);
+    drop(stdin);
+    child.kill().ok();
+}
+
+/// Documents the WinUI3 CheckBox gap. cua-driver `click` tries UIA Invoke
+/// (CheckBox has TogglePattern only, no InvokePattern), then falls
+/// through to PostMessage WM_LBUTTONDOWN/UP. PostMessage doesn't reach
+/// the WinUI3 input chain (the CoreInput dispatcher only consumes events
+/// from the system input queue — same reason type_text on XAML hosts
+/// requires UIA ValuePattern). Real fix: cua-driver should try
+/// TogglePatternId.Toggle() before falling through to PostMessage on
+/// XAML hosts.
+#[test]
+#[ignore]
+fn harness_winui3_checkbox_toggle_DOCUMENTED_no_op() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "chk-agreed").expect("chk-agreed");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("agreed=False"),
+            "Expected WinUI3 CheckBox no-op (toggle pattern not attempted). \
+             If now agreed=True, cua-driver added TogglePattern dispatch.");
+        println!("⚠️  harness_winui3_checkbox_toggle_DOCUMENTED_no_op: toggle not dispatched");
+    });
+}
+
+/// Documents cua-driver gap: the `click` tool tries UIA Invoke then falls
+/// back to PostMessage. WinUI3 RadioButton implements
+/// `SelectionItemPattern.Select` (not Invoke), and PostMessage clicks
+/// don't reach its handler chain. Real fix: cua-driver should detect
+/// `SelectionItemPattern` on the target and call `Select()` as one of
+/// the pattern attempts before falling through to PostMessage.
+#[test]
+#[ignore]
+fn harness_winui3_radio_select_DOCUMENTED_no_op() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "rdo-high").expect("rdo-high");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let text = snapshot_text(&post);
+        // Expected behaviour today: state stays at Low (the click was a no-op).
+        // When cua-driver adds SelectionItemPattern.Select dispatch, flip this
+        // assertion to assert prio=High and rename to `_radio_select`.
+        assert!(text.contains("prio=Low"),
+            "Expected the documented WinUI3 RadioButton no-op (prio stays Low). \
+             If this now asserts prio=High, cua-driver added SelectionItemPattern \
+             support — update the test.");
+        println!("⚠️  harness_winui3_radio_select_DOCUMENTED_no_op: confirmed no-op (UIA Invoke fell through, SelectionItem.Select not attempted)");
+    });
+}
+
+/// Documents cua-driver gap: WinUI3 Slider implements
+/// `RangeValuePattern`, not `ValuePattern`. cua-driver's `set_value` tool
+/// queries `ValuePatternId` specifically (impl_.rs:2640), so it silently
+/// fails on RangeValuePattern-only elements. Real fix: cua-driver should
+/// try RangeValuePattern.SetValue (coercing the string to a double) when
+/// ValuePattern isn't found.
+/// WinUI3 Slider's AutomationId doesn't surface in the flat UIA element
+/// list (same quirk as WPF Slider — SliderAutomationPeer doesn't show up
+/// as an indexed actionable element). Slider sub-parts (Decrease/Increase
+/// thumb) similarly aren't exposed in WinUI3's tree. Together with the
+/// `set_value` tool only trying ValuePatternId (not RangeValuePattern),
+/// driving a WinUI3 Slider via cua-driver isn't currently possible.
+/// Real fix: enumerate Slider's sub-parts in UIA + `set_value` tries
+/// RangeValuePattern when ValuePattern isn't supported.
+#[test]
+#[ignore]
+fn harness_winui3_slider_DOCUMENTED_unreachable() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx_opt = find_idx(snapshot_text(&snap), "sld-value");
+        assert!(idx_opt.is_none(),
+            "WinUI3 Slider's AutomationId 'sld-value' now appears in the UIA tree — \
+             cua-driver may have fixed the slider-element enumeration gap.");
+        println!("⚠️  harness_winui3_slider_DOCUMENTED_unreachable: sld-value not in UIA flat tree");
+    });
+}
+
+/// WinUI3 ComboBox uses ExpandCollapsePattern for the parent and
+/// SelectionItemPattern for items. cua-driver's `click` tool tries
+/// InvokePattern first, then PostMessage — neither fires WinUI3's
+/// ComboBox handlers reliably. This test documents the gap; a real fix
+/// would have `click` try ExpandCollapse on parents and SelectionItem
+/// on items before falling through to PostMessage.
+#[test]
+#[ignore]
+fn harness_winui3_combo_select_DOCUMENTED_no_op() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let combo_idx = find_idx(snapshot_text(&snap), "cbo-color").expect("cbo-color");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": combo_idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("color=green"),
+            "Expected WinUI3 ComboBox to stay at default green (Invoke fell through, \
+             ExpandCollapse not attempted). If now color=orange, cua-driver added \
+             ExpandCollapse dispatch.");
+        println!("⚠️  harness_winui3_combo_select_DOCUMENTED_no_op: ExpandCollapse not dispatched");
+    });
+}

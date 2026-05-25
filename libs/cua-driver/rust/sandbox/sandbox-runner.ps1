@@ -44,16 +44,20 @@ Log "cua-driver   : $driverExe"
 # Run mcp_protocol_test first, then ux_guard_test (UX guard needs a real
 # desktop session and spawns visible windows, so it runs second).
 $testSuites = @(
-    @{ Pattern = "mcp_protocol_test-*.exe";    Label = "mcp_protocol_test" },
-    @{ Pattern = "ux_guard_test-*.exe";        Label = "ux_guard_test" },
-    @{ Pattern = "harness_wpf_test-*.exe";     Label = "harness_wpf_test";     Extra = @("--ignored") },
-    @{ Pattern = "harness_winui3_test-*.exe";  Label = "harness_winui3_test";  Extra = @("--ignored") }
+    @{ Pattern = "mcp_protocol_test-*.exe";       Label = "mcp_protocol_test" },
+    @{ Pattern = "ux_guard_test-*.exe";           Label = "ux_guard_test" },
+    @{ Pattern = "harness_wpf_test-*.exe";        Label = "harness_wpf_test";        Extra = @("--ignored") },
+    @{ Pattern = "harness_winui3_test-*.exe";     Label = "harness_winui3_test";     Extra = @("--ignored") },
+    @{ Pattern = "harness_web_test-*.exe";        Label = "harness_web_test";        Extra = @("--ignored") },
+    @{ Pattern = "harness_bg_modality_test-*.exe";Label = "harness_bg_modality_test";Extra = @("--ignored") }
 )
 
 # ── stage harness binaries to %TEMP% (same Zone-3 ShellExecute workaround) ──
 $harnessRoots = @(
-    @{ Src = "C:\cua-driver-rs\test-apps\harness-wpf";     EnvVar = "HARNESS_WPF_EXE";    Exe = "CuaTestHarness.Wpf.exe" },
-    @{ Src = "C:\cua-driver-rs\test-apps\harness-winui3";  EnvVar = "HARNESS_WINUI3_EXE"; Exe = "CuaTestHarness.WinUI3.exe" }
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-wpf";      EnvVar = "HARNESS_WPF_EXE";      Exe = "CuaTestHarness.Wpf.exe" },
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-winui3";   EnvVar = "HARNESS_WINUI3_EXE";   Exe = "CuaTestHarness.WinUI3.exe" },
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-webview";  EnvVar = "HARNESS_WEBVIEW_EXE";  Exe = "CuaTestHarness.WebView.exe" },
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-electron"; EnvVar = "HARNESS_ELECTRON_EXE"; Exe = "CuaTestHarness.Electron.exe" }
 )
 foreach ($h in $harnessRoots) {
     if (-not (Test-Path $h.Src)) {

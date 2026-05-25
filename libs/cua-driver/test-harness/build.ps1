@@ -11,7 +11,7 @@
 # Requires: .NET 8 SDK on PATH.
 
 param(
-    [ValidateSet("none","wpf","winui3")]
+    [ValidateSet("none","wpf","winui3","webview","electron")]
     [string]$Skip = "none"
 )
 
@@ -61,6 +61,27 @@ if ($Skip -ne "winui3") {
         Publish-Project $winuiProj "harness-winui3"
     } else {
         Write-Host "[SKIP] WinUI3 project not present yet - skipping." -ForegroundColor Yellow
+    }
+}
+if ($Skip -ne "webview") {
+    $webProj = Join-Path $harnessDir "CuaTestHarness.WebView\CuaTestHarness.WebView.csproj"
+    if (Test-Path $webProj) {
+        Publish-Project $webProj "harness-webview"
+    } else {
+        Write-Host "[SKIP] WebView project not present yet - skipping." -ForegroundColor Yellow
+    }
+}
+if ($Skip -ne "electron") {
+    $elecBuild = Join-Path $harnessDir "CuaTestHarness.Electron\build.ps1"
+    if (Test-Path $elecBuild) {
+        Write-Host ""
+        Write-Host "[BUILD] CuaTestHarness.Electron -> $testAppsDir\harness-electron\" -ForegroundColor Cyan
+        & $elecBuild
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN] Electron build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[SKIP] Electron project not present yet - skipping." -ForegroundColor Yellow
     }
 }
 

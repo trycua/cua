@@ -1,0 +1,27 @@
+<Window x:Class="CuaTestHarness.WebView.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="CuaTestHarness WebView"
+        AutomationProperties.AutomationId="wnd-main"
+        Width="940" Height="780"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel LastChildFill="True">
+        <Border DockPanel.Dock="Top" Background="#F0F0F0" Padding="10,6">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="WebView2 host — same DOM as the Electron harness ("
+                           VerticalAlignment="Center"/>
+                <TextBlock x:Name="LblPageUrl"
+                           AutomationProperties.AutomationId="lbl-page-url"
+                           FontFamily="Consolas" Text="(loading)" VerticalAlignment="Center"/>
+                <TextBlock Text=")" VerticalAlignment="Center"/>
+                <Button x:Name="BtnExit"
+                        AutomationProperties.AutomationId="btn-exit"
+                        Content="Exit" Width="80" Margin="20,0,0,0"
+                        Click="OnExitClick"/>
+            </StackPanel>
+        </Border>
+        <wv2:WebView2 x:Name="Wv"
+                      AutomationProperties.AutomationId="wv-host"/>
+    </DockPanel>
+</Window>

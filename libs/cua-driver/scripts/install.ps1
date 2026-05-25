@@ -1205,8 +1205,11 @@ else {
 # Medium-IL kill and get reported via Show-CuaDriverDaemonSurvivors.
 Write-Host ""
 Write-Host "Stopping any previous cua-driver processes (best-effort; High-IL needs admin)..." -ForegroundColor Cyan
-$survivors = Stop-CuaDriverDaemons
-Show-CuaDriverDaemonSurvivors -Survivors $survivors
+# WithHealth variant also probes \\.\pipe\cua-driver so the Show- helper
+# can escalate the wording when a survivor's pipe is dead (stale daemon
+# wedge → MCP / CLI calls fail until the zombie is killed).
+$result = Stop-CuaDriverDaemonsWithHealth
+Show-CuaDriverDaemonSurvivors -Survivors $result.Survivors -Stale:$result.Stale
 
 if ($AutoStart) {
     Write-Host ""

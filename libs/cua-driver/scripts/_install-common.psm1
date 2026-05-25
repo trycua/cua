@@ -52,6 +52,55 @@ function Stop-CuaDriverDaemons {
     return @(Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue)
 }
 
+# Probe whether `\\.\pipe\cua-driver` is currently accepting connections.
+# Distinguishes a *healthy* High-IL daemon (process alive AND pipe
+# responsive - install can proceed by deferring to the user to restart
+# from elevated PS) from a *stale* daemon (process alive but pipe gone
+# - daemon process is hung, no new daemon can bind, MCP is broken until
+# someone kills the zombie).
+#
+# Returns $true iff a real serve daemon is listening. Uses a short
+# 200 ms timeout so install latency stays bounded.
+function Test-CuaDriverPipeAlive {
+    [CmdletBinding()]
+    param()
+    try {
+        $fs = [System.IO.File]::Open(
+            '\\.\pipe\cua-driver',
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::ReadWrite
+        )
+        $fs.Close()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# Stop-CuaDriverDaemons + stale-daemon detection in one go. Returns a
+# PSCustomObject with both the survivor list AND a `Stale` boolean
+# flagging "processes are alive but the named pipe is dead". Used by
+# install/install-local to swap the user-facing message from "you need
+# to kill these from elevated PS" to the stronger "your daemon is
+# WEDGED - kill it now or reboot, MCP is currently broken".
+function Stop-CuaDriverDaemonsWithHealth {
+    [CmdletBinding()]
+    param()
+    $survivors = Stop-CuaDriverDaemons
+    $pipeAlive = Test-CuaDriverPipeAlive
+    # @() forces array context so .Count works even when PowerShell
+    # collapsed a 1-element array to a single PSObject (strict-mode
+    # otherwise errors on .Count missing on the bare object).
+    $count = @($survivors).Count
+    $stale = ($count -gt 0 -and -not $pipeAlive)
+    return [pscustomobject]@{
+        Survivors  = $survivors
+        PipeAlive  = $pipeAlive
+        Stale      = $stale
+    }
+}
+
 # Prints a clear hint when Stop-CuaDriverDaemons leaves something
 # running (almost always a High-IL daemon spawned by the
 # RunLevel=Highest autostart task - Medium-IL kill returns Access
@@ -62,14 +111,36 @@ function Show-CuaDriverDaemonSurvivors {
     # Stop-CuaDriverDaemons to $null at the call site, which would fail
     # a `Mandatory = $true [array]` bind. The body below already treats
     # null and empty array as the no-survivors case, so accept both.
-    param([Parameter()][AllowNull()][array]$Survivors)
+    #
+    # `-Stale` toggles the user-facing wording from "the old binary is
+    # still running" (mild - install completed, OLD binary in memory
+    # until the daemon restarts) to "MCP is currently broken because
+    # the daemon process is alive but its named pipe is dead" (loud -
+    # nothing will work until the zombie process is killed).
+    param(
+        [Parameter()][AllowNull()][array]$Survivors,
+        [switch]$Stale
+    )
     if (-not $Survivors -or $Survivors.Count -eq 0) { return }
     $pids = ($Survivors | ForEach-Object { $_.Id }) -join ', '
-    Write-Host "Note: $($Survivors.Count) cua-driver process(es) still running after best-effort kill (pid: $pids)." -ForegroundColor Yellow
-    Write-Host "      They are likely High-IL (spawned by RunLevel=Highest autostart task)." -ForegroundColor Yellow
-    Write-Host "      From an elevated PowerShell:" -ForegroundColor Yellow
-    Write-Host "        taskkill /IM cua-driver.exe /F" -ForegroundColor Yellow
-    Write-Host "      Or just reboot. Until they exit, the OLD binary keeps running." -ForegroundColor Yellow
+    if ($Stale) {
+        Write-Host "" -ForegroundColor Red
+        Write-Host "ERROR: cua-driver daemon is STALE - process alive (pid: $pids) but \\.\pipe\cua-driver" -ForegroundColor Red
+        Write-Host "       is not accepting connections. The daemon is wedged; MCP / CLI calls will fail" -ForegroundColor Red
+        Write-Host "       with 'cannot find the file specified' until this process is killed." -ForegroundColor Red
+        Write-Host "" -ForegroundColor Red
+        Write-Host "       From an ELEVATED PowerShell (right-click PowerShell, 'Run as Administrator'):" -ForegroundColor Yellow
+        Write-Host "         Stop-Process -Id $pids -Force" -ForegroundColor Yellow
+        Write-Host "         schtasks /Run /TN 'cua-driver-serve'" -ForegroundColor Yellow
+        Write-Host "" -ForegroundColor Yellow
+        Write-Host "       Reboot also clears it. After the kill+restart, MCP recovers automatically." -ForegroundColor Yellow
+    } else {
+        Write-Host "Note: $($Survivors.Count) cua-driver process(es) still running after best-effort kill (pid: $pids)." -ForegroundColor Yellow
+        Write-Host "      They are likely High-IL (spawned by RunLevel=Highest autostart task)." -ForegroundColor Yellow
+        Write-Host "      From an elevated PowerShell:" -ForegroundColor Yellow
+        Write-Host "        taskkill /IM cua-driver.exe /F" -ForegroundColor Yellow
+        Write-Host "      Or just reboot. Until they exit, the OLD binary keeps running." -ForegroundColor Yellow
+    }
 }
 
 # Load this module from disk if `$LocalDir/_install-common.psm1` exists
@@ -113,5 +184,7 @@ function Import-CuaDriverInstallModule {
 
 Export-ModuleMember -Function `
     Stop-CuaDriverDaemons, `
+    Stop-CuaDriverDaemonsWithHealth, `
+    Test-CuaDriverPipeAlive, `
     Show-CuaDriverDaemonSurvivors, `
     Import-CuaDriverInstallModule

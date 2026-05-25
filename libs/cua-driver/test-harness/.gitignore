@@ -1,0 +1,5 @@
+# .NET build artifacts — recreated by `build.ps1` / `dotnet publish`.
+bin/
+obj/
+*.user
+.vs/

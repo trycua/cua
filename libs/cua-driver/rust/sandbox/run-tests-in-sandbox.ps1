@@ -79,7 +79,35 @@ try {
     Write-Host "`n[BUILD] cargo test --no-run (ux_guard_test)..." -ForegroundColor Yellow
     cargo test --test ux_guard_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (ux_guard_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (harness_wpf_test)..." -ForegroundColor Yellow
+    cargo test --test harness_wpf_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_wpf_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (harness_winui3_test)..." -ForegroundColor Yellow
+    cargo test --test harness_winui3_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_winui3_test) failed" }
 } finally { Pop-Location }
+
+# ── 1.5. Build the .NET test-harness if dotnet is on PATH ────────────────────
+# The harness produces test-apps/harness-{wpf,winui3}/ which the sandbox
+# runner picks up via the existing mapped-folder route. Skip silently if
+# dotnet isn't available — the smoke tests degrade to "skipped" inside
+# the sandbox rather than failing the whole run.
+if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+    $harnessBuild = Join-Path $wsRoot "..\test-harness\build.ps1"
+    if (Test-Path $harnessBuild) {
+        Write-Host "`n[BUILD] test-harness (dotnet publish)..." -ForegroundColor Yellow
+        & $harnessBuild
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN] test-harness build failed — harness tests will skip." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "`n[SKIP] test-harness/build.ps1 not found — harness tests will skip." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "`n[SKIP] dotnet CLI not on PATH — test-harness build skipped, harness tests will degrade." -ForegroundColor Yellow
+}
 
 $mcpBin = Get-ChildItem "$wsRoot\target\debug\deps\mcp_protocol_test-*.exe" |
           Sort-Object LastWriteTime -Descending | Select-Object -First 1

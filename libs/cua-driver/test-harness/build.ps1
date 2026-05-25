@@ -1,0 +1,68 @@
+# build.ps1 - publish the cua-driver test harness binaries.
+#
+# Outputs land in libs/cua-driver/rust/test-apps/harness-{wpf,winui3}/ so
+# the existing sandbox runner picks them up via its mapped folder.
+#
+# Usage:
+#   .\build.ps1            # build both
+#   .\build.ps1 -Skip wpf  # build only WinUI3
+#   .\build.ps1 -Skip winui3
+#
+# Requires: .NET 8 SDK on PATH.
+
+param(
+    [ValidateSet("none","wpf","winui3")]
+    [string]$Skip = "none"
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$harnessDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$cuaDriverDir = Split-Path -Parent $harnessDir
+$testAppsDir = Join-Path $cuaDriverDir "rust\test-apps"
+
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    Write-Host "[ERROR] dotnet CLI not found on PATH. Install .NET 8 SDK first." -ForegroundColor Red
+    exit 1
+}
+
+New-Item -ItemType Directory -Force $testAppsDir | Out-Null
+
+function Publish-Project {
+    param([string]$ProjPath, [string]$OutDirName)
+    $outDir = Join-Path $testAppsDir $OutDirName
+    Write-Host ""
+    Write-Host "[BUILD] $ProjPath -> $outDir" -ForegroundColor Cyan
+    # Self-contained so the published exe runs in the Windows Sandbox without
+    # requiring a separate .NET runtime install. The harness is small (~30MB
+    # per project after framework-dependent stripping), so the size cost is
+    # acceptable for the deterministic-test gain.
+    $publishArgs = @(
+        "publish", $ProjPath,
+        "-c", "Release",
+        "-r", "win-x64",
+        "--self-contained", "true",
+        "-o", $outDir,
+        "-p:PublishSingleFile=false",
+        "-p:DebugType=embedded"
+    )
+    & dotnet @publishArgs
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $ProjPath" }
+    Write-Host "[OK]    Published: $outDir" -ForegroundColor Green
+}
+
+if ($Skip -ne "wpf") {
+    Publish-Project (Join-Path $harnessDir "CuaTestHarness.Wpf\CuaTestHarness.Wpf.csproj") "harness-wpf"
+}
+if ($Skip -ne "winui3") {
+    $winuiProj = Join-Path $harnessDir "CuaTestHarness.WinUI3\CuaTestHarness.WinUI3.csproj"
+    if (Test-Path $winuiProj) {
+        Publish-Project $winuiProj "harness-winui3"
+    } else {
+        Write-Host "[SKIP] WinUI3 project not present yet - skipping." -ForegroundColor Yellow
+    }
+}
+
+Write-Host ""
+Write-Host "[DONE] Test harness build complete." -ForegroundColor Green

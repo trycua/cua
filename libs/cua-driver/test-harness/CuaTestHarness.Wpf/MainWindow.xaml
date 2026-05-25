@@ -1,0 +1,115 @@
+<Window x:Class="CuaTestHarness.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="clr-namespace:System;assembly=mscorlib"
+        xmlns:auto="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+        Title="CuaTestHarness WPF"
+        AutomationProperties.AutomationId="wnd-main"
+        Width="900" Height="700"
+        WindowStartupLocation="CenterScreen">
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Control+Shift" Key="H" Command="{x:Static local:MainWindow.AccelCmd}"
+                    xmlns:local="clr-namespace:CuaTestHarness.Wpf"/>
+    </Window.InputBindings>
+
+    <DockPanel LastChildFill="True">
+        <!-- Bottom Save/Cancel strip mirrors the LO Document Recovery layout
+             that previously caused our GetClientRect capture to clip. -->
+        <Border DockPanel.Dock="Bottom" Background="#F0F0F0" BorderBrush="#D0D0D0"
+                BorderThickness="0,1,0,0" Padding="10,8">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="BtnSave"
+                        AutomationProperties.AutomationId="btn-save"
+                        Content="Save" Width="90" Margin="4,0"
+                        Click="OnSaveClick"/>
+                <Button x:Name="BtnCancel"
+                        AutomationProperties.AutomationId="btn-cancel"
+                        Content="Cancel" Width="90" Margin="4,0"
+                        Click="OnCancelClick"/>
+                <Button x:Name="BtnExit"
+                        AutomationProperties.AutomationId="btn-exit"
+                        Content="Exit" Width="90" Margin="4,0"
+                        Click="OnExitClick"/>
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="16">
+
+                <!-- Counter scenario -->
+                <GroupBox Header="counter" Padding="10" Margin="0,0,0,12">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="BtnIncrement"
+                                AutomationProperties.AutomationId="btn-increment"
+                                Content="Increment" Width="100"
+                                Click="OnIncrementClick"/>
+                        <Button x:Name="BtnReset"
+                                AutomationProperties.AutomationId="btn-reset"
+                                Content="Reset" Width="80" Margin="8,0,0,0"
+                                Click="OnResetClick"/>
+                        <TextBlock x:Name="LblCounter"
+                                   AutomationProperties.AutomationId="lbl-counter"
+                                   Margin="20,0,0,0" VerticalAlignment="Center"
+                                   FontFamily="Consolas" FontSize="14"
+                                   Text="counter=0"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Static text body -->
+                <GroupBox Header="text_body" Padding="10" Margin="0,0,0,12">
+                    <TextBlock x:Name="TxtBody"
+                               AutomationProperties.AutomationId="txt-body"
+                               TextWrapping="Wrap" FontFamily="Consolas">
+HARNESS_TEXT_MARKER_v1
+The agent should be able to read this block via get_window_state.
+Multi-line. Deterministic. Used for OCR + AX value comparisons.
+                    </TextBlock>
+                </GroupBox>
+
+                <!-- MessageBox modal -->
+                <GroupBox Header="message_box" Padding="10" Margin="0,0,0,12">
+                    <Button x:Name="BtnOpenMsgBox"
+                            AutomationProperties.AutomationId="btn-open-msgbox"
+                            Content="Open MessageBox" Width="160" HorizontalAlignment="Left"
+                            Click="OnOpenMessageBoxClick"/>
+                </GroupBox>
+
+                <!-- Owned popup -->
+                <GroupBox Header="owned_popup" Padding="10" Margin="0,0,0,12">
+                    <Button x:Name="BtnOpenOwned"
+                            AutomationProperties.AutomationId="btn-open-owned"
+                            Content="Open Owned Window" Width="180" HorizontalAlignment="Left"
+                            Click="OnOpenOwnedClick"/>
+                </GroupBox>
+
+                <!-- Layered transparent popup -->
+                <GroupBox Header="layered_popup" Padding="10" Margin="0,0,0,12">
+                    <Button x:Name="BtnOpenLayered"
+                            AutomationProperties.AutomationId="btn-open-layered"
+                            Content="Open Layered Popup" Width="180" HorizontalAlignment="Left"
+                            Click="OnOpenLayeredClick"/>
+                </GroupBox>
+
+                <!-- Native Win32 child HWND host -->
+                <GroupBox Header="child_hwnd" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="Native Win32 BUTTON hosted via HwndHost:" Margin="0,0,0,6"/>
+                        <Border Width="220" Height="40" HorizontalAlignment="Left"
+                                BorderBrush="#888" BorderThickness="1">
+                            <ContentControl x:Name="HwndHostSlot"/>
+                        </Border>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Keyboard accelerator -->
+                <GroupBox Header="accelerator (Ctrl+Shift+H)" Padding="10" Margin="0,0,0,12">
+                    <TextBlock x:Name="LblAccelCount"
+                               AutomationProperties.AutomationId="lbl-accel-count"
+                               FontFamily="Consolas" FontSize="14"
+                               Text="accel_fired=0"/>
+                </GroupBox>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

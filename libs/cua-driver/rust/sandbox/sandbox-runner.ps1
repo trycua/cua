@@ -44,9 +44,27 @@ Log "cua-driver   : $driverExe"
 # Run mcp_protocol_test first, then ux_guard_test (UX guard needs a real
 # desktop session and spawns visible windows, so it runs second).
 $testSuites = @(
-    @{ Pattern = "mcp_protocol_test-*.exe"; Label = "mcp_protocol_test" },
-    @{ Pattern = "ux_guard_test-*.exe";      Label = "ux_guard_test" }
+    @{ Pattern = "mcp_protocol_test-*.exe";    Label = "mcp_protocol_test" },
+    @{ Pattern = "ux_guard_test-*.exe";        Label = "ux_guard_test" },
+    @{ Pattern = "harness_wpf_test-*.exe";     Label = "harness_wpf_test";     Extra = @("--ignored") },
+    @{ Pattern = "harness_winui3_test-*.exe";  Label = "harness_winui3_test";  Extra = @("--ignored") }
 )
+
+# ── stage harness binaries to %TEMP% (same Zone-3 ShellExecute workaround) ──
+$harnessRoots = @(
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-wpf";     EnvVar = "HARNESS_WPF_EXE";    Exe = "CuaTestHarness.Wpf.exe" },
+    @{ Src = "C:\cua-driver-rs\test-apps\harness-winui3";  EnvVar = "HARNESS_WINUI3_EXE"; Exe = "CuaTestHarness.WinUI3.exe" }
+)
+foreach ($h in $harnessRoots) {
+    if (-not (Test-Path $h.Src)) {
+        Log "harness $($h.Exe) not built — $($h.EnvVar) tests will skip"
+        continue
+    }
+    $dst = Join-Path $env:TEMP (Split-Path $h.Src -Leaf)
+    Copy-Item $h.Src $dst -Recurse -Force
+    Set-Item "Env:$($h.EnvVar)" (Join-Path $dst $h.Exe)
+    Log "$($h.Exe) staged to $dst (env $($h.EnvVar))"
+}
 
 # ── optional test filter ────────────────────────────────────────────────────
 $filterSuite = ""
@@ -77,6 +95,9 @@ foreach ($suite in $testSuites) {
     Log "Running $label : $($testBin.FullName)"
 
     $testArgs = @("--test-threads=1", "--nocapture")
+    if ($suite.ContainsKey("Extra") -and $suite.Extra) {
+        $testArgs += $suite.Extra
+    }
     $stderrFile = "C:\sandbox-output\$label-stderr.txt"
 
     "`n=== $label ===`n" | Add-Content $outputFile -Encoding utf8

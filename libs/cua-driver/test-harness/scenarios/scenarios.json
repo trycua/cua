@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "description": "Single source of truth for the cua-driver Windows test harness. Consumed by both the C# host apps (at startup, to set window titles / AutomationIds) and by Rust integration tests (to assert expected tree shape without hardcoding strings).",
+  "wpf": {
+    "process_name": "CuaTestHarness.Wpf",
+    "exe_relative_path": "test-apps/harness-wpf/CuaTestHarness.Wpf.exe",
+    "main_window": {
+      "title": "CuaTestHarness WPF",
+      "automation_id": "wnd-main",
+      "expected_class_prefix": "HwndWrapper"
+    },
+    "scenarios": [
+      {
+        "id": "counter",
+        "kind": "click_counter",
+        "description": "Plain button increments a counter. Tests UIA Invoke pattern + label refresh.",
+        "controls": {
+          "increment_button_aid": "btn-increment",
+          "counter_label_aid": "lbl-counter",
+          "reset_button_aid": "btn-reset"
+        }
+      },
+      {
+        "id": "text_body",
+        "kind": "static_text",
+        "description": "Multi-line TextBlock with a known content hash. Tests get_window_state text extraction and screenshot OCR-ability.",
+        "controls": {
+          "text_block_aid": "txt-body"
+        },
+        "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+      },
+      {
+        "id": "message_box",
+        "kind": "modal_messagebox",
+        "description": "MessageBox.Show with OK/Cancel. Tests modal-dialog detection and popup-window enumeration.",
+        "controls": {
+          "open_button_aid": "btn-open-msgbox"
+        },
+        "expected_dialog_title": "Harness MessageBox"
+      },
+      {
+        "id": "bottom_strip",
+        "kind": "save_cancel_strip",
+        "description": "Bottom button strip (Save/Cancel) mimicking LO Document Recovery. Tests GetWindowRect-vs-GetClientRect capture boundary (previously cropped the strip).",
+        "controls": {
+          "save_button_aid": "btn-save",
+          "cancel_button_aid": "btn-cancel"
+        }
+      },
+      {
+        "id": "child_hwnd",
+        "kind": "native_win32_child",
+        "description": "Native Win32 child HWND (CreateWindowEx BUTTON) hosted inside the WPF window via HwndHost. Tests UIA descent into non-WPF child HWNDs.",
+        "controls": {
+          "child_button_text": "Native Win32 Child"
+        }
+      },
+      {
+        "id": "owned_popup",
+        "kind": "owned_popup",
+        "description": "Owned secondary Window (Owner set). Tests window enumeration follows ownership chain and capture targets the right HWND.",
+        "controls": {
+          "open_button_aid": "btn-open-owned",
+          "owned_window_title": "Harness Owned Popup",
+          "owned_window_aid": "wnd-owned"
+        }
+      },
+      {
+        "id": "layered_popup",
+        "kind": "layered_transparent",
+        "description": "WS_EX_LAYERED window with alpha. Tests PrintWindow against layered windows (some surfaces render black without WGC fallback).",
+        "controls": {
+          "open_button_aid": "btn-open-layered",
+          "layered_window_title": "Harness Layered Popup"
+        }
+      },
+      {
+        "id": "accelerator",
+        "kind": "keyboard_accelerator",
+        "description": "Ctrl+Shift+H increments the counter via KeyBinding. Tests press_key / hotkey delivering to background windows.",
+        "controls": {
+          "label_aid": "lbl-accel-count"
+        },
+        "expected_chord": "ctrl+shift+h"
+      },
+      {
+        "id": "exit",
+        "kind": "exit_button",
+        "description": "Exit button for clean teardown.",
+        "controls": {
+          "exit_button_aid": "btn-exit"
+        }
+      }
+    ]
+  },
+  "winui3": {
+    "process_name": "CuaTestHarness.WinUI3",
+    "exe_relative_path": "test-apps/harness-winui3/CuaTestHarness.WinUI3.exe",
+    "main_window": {
+      "title": "CuaTestHarness WinUI3",
+      "automation_id": "wnd-main",
+      "expected_class_prefix": "WinUIDesktopWin32WindowClass"
+    },
+    "scenarios": [
+      {
+        "id": "counter",
+        "kind": "click_counter",
+        "controls": {
+          "increment_button_aid": "btn-increment",
+          "counter_label_aid": "lbl-counter",
+          "reset_button_aid": "btn-reset"
+        }
+      },
+      {
+        "id": "text_body",
+        "kind": "static_text",
+        "controls": {
+          "text_block_aid": "txt-body"
+        },
+        "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+      },
+      {
+        "id": "command_bar_flyout",
+        "kind": "command_bar_flyout",
+        "description": "CommandBarFlyout (popup with command items). Tests flyout enumeration on WinUI3 with DirectComposition rendering.",
+        "controls": {
+          "trigger_button_aid": "btn-open-flyout",
+          "copy_item_aid": "flyout-copy",
+          "paste_item_aid": "flyout-paste"
+        }
+      },
+      {
+        "id": "xaml_popup",
+        "kind": "xaml_popup",
+        "description": "Popup (XAML primitive, NOT a separate HWND). Tests UIA descent into XAML popup hosted in the same window.",
+        "controls": {
+          "open_button_aid": "btn-open-popup",
+          "popup_text_aid": "txt-popup-body"
+        }
+      },
+      {
+        "id": "exit",
+        "kind": "exit_button",
+        "controls": {
+          "exit_button_aid": "btn-exit"
+        }
+      }
+    ]
+  }
+}

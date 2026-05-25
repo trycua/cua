@@ -47,4 +47,9 @@ public sealed partial class MainWindow : Window
         Close();
         System.Environment.Exit(0);
     }
+
+    private void OnInputChanged(object sender, TextChangedEventArgs e)
+    {
+        LblInputMirror.Text = $"mirror={TxtInput.Text}";
+    }
 }

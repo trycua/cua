@@ -8,6 +8,13 @@
         Width="900" Height="700"
         WindowStartupLocation="CenterScreen">
     <Window.InputBindings>
+        <!-- F5 (no modifiers) — chosen for automated testing. WPF's
+             Keyboard.Modifiers is sourced from GetKeyState() which is
+             never updated by PostMessage(WM_KEYDOWN, VK_CONTROL); so a
+             modifier-bearing binding ("Ctrl+Shift+H") doesn't fire on
+             the cua-driver PostMessage hotkey path. Use F5 here. -->
+        <KeyBinding Key="F5" Command="{x:Static local:MainWindow.AccelCmd}"
+                    xmlns:local="clr-namespace:CuaTestHarness.Wpf"/>
         <KeyBinding Modifiers="Control+Shift" Key="H" Command="{x:Static local:MainWindow.AccelCmd}"
                     xmlns:local="clr-namespace:CuaTestHarness.Wpf"/>
     </Window.InputBindings>
@@ -35,6 +42,43 @@
 
         <ScrollViewer VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="16">
+
+                <!-- TextBox + mirror (placed at top so the cached center
+                     stays within the visible window for PostMessage clicks
+                     even when the main ScrollViewer hasn't been scrolled). -->
+                <GroupBox Header="text_input" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBox x:Name="TxtInput"
+                                 AutomationProperties.AutomationId="txt-input"
+                                 Width="300" HorizontalAlignment="Left"
+                                 TextChanged="OnInputChanged"/>
+                        <TextBlock x:Name="LblInputMirror"
+                                   AutomationProperties.AutomationId="lbl-input-mirror"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="mirror="/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Click target (Button) — also at top for visibility. -->
+                <GroupBox Header="click_target" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Button x:Name="BtnClickTarget"
+                                AutomationProperties.AutomationId="border-click-target"
+                                Content="Click target (left / right / double)"
+                                Width="260" Height="40" HorizontalAlignment="Left"
+                                MouseLeftButtonDown="OnTargetLeftDown"
+                                MouseRightButtonDown="OnTargetRightDown"
+                                MouseDoubleClick="OnTargetDoubleClick"/>
+                        <TextBlock x:Name="LblLastAction"
+                                   AutomationProperties.AutomationId="lbl-last-action"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="last_action=none"/>
+                        <TextBlock x:Name="LblClickCount"
+                                   AutomationProperties.AutomationId="lbl-click-count"
+                                   FontFamily="Consolas"
+                                   Text="clicks=0"/>
+                    </StackPanel>
+                </GroupBox>
 
                 <!-- Counter scenario -->
                 <GroupBox Header="counter" Padding="10" Margin="0,0,0,12">
@@ -107,6 +151,38 @@ Multi-line. Deterministic. Used for OCR + AX value comparisons.
                                AutomationProperties.AutomationId="lbl-accel-count"
                                FontFamily="Consolas" FontSize="14"
                                Text="accel_fired=0"/>
+                </GroupBox>
+
+                <!-- Scroll-target with offset label -->
+                <GroupBox Header="scroll_target" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock x:Name="LblScrollOffset"
+                                   AutomationProperties.AutomationId="lbl-scroll-offset"
+                                   FontFamily="Consolas"
+                                   Text="scroll_offset=0"/>
+                        <ScrollViewer x:Name="ScrollTall"
+                                      AutomationProperties.AutomationId="scroll-tall"
+                                      Height="120" Width="400" HorizontalAlignment="Left"
+                                      Margin="0,6,0,0"
+                                      VerticalScrollBarVisibility="Auto"
+                                      ScrollChanged="OnScrollChanged">
+                            <StackPanel>
+                                <TextBlock Text="SCROLL_TOP_MARKER_v1"/>
+                                <TextBlock Text="line 02"/><TextBlock Text="line 03"/>
+                                <TextBlock Text="line 04"/><TextBlock Text="line 05"/>
+                                <TextBlock Text="line 06"/><TextBlock Text="line 07"/>
+                                <TextBlock Text="line 08"/><TextBlock Text="line 09"/>
+                                <TextBlock Text="line 10"/><TextBlock Text="line 11"/>
+                                <TextBlock Text="line 12"/><TextBlock Text="line 13"/>
+                                <TextBlock Text="line 14"/><TextBlock Text="line 15"/>
+                                <TextBlock Text="line 16"/><TextBlock Text="line 17"/>
+                                <TextBlock Text="line 18"/><TextBlock Text="line 19"/>
+                                <TextBlock Text="line 20"/><TextBlock Text="line 21"/>
+                                <TextBlock Text="line 22"/><TextBlock Text="line 23"/>
+                                <TextBlock Text="SCROLL_BOTTOM_MARKER_v1"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </StackPanel>
                 </GroupBox>
 
             </StackPanel>

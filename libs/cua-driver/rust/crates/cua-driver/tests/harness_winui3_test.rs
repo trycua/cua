@@ -148,3 +148,97 @@ fn harness_winui3_smoke() {
 
     child.kill().ok();
 }
+
+fn find_idx(text: &str, aid: &str) -> Option<u64> {
+    let needle = format!("id={aid}");
+    for line in text.lines() {
+        if !line.contains(&needle) { continue; }
+        let s = line.find('[')? + 1;
+        let e = line[s..].find(']')? + s;
+        return line[s..e].trim().parse().ok();
+    }
+    None
+}
+
+#[test]
+#[ignore]
+fn harness_winui3_type_text() {
+    let driver = driver_binary();
+    if !driver.exists() { return; }
+    let harness = match Harness::launch() { Some(h) => h, None => return };
+
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WinUI3")
+        .expect("WinUI3 main window");
+
+    let snap = tools_call(&mut stdin, &mut stdout, 20, "get_window_state",
+        serde_json::json!({"pid": harness.pid as i64, "window_id": wid, "capture_mode":"som"}));
+    let snap_text = snapshot_text(&snap);
+    let idx = find_idx(snap_text, "txt-input").expect("txt-input not in WinUI3 snapshot");
+
+    // WinUI3 is a XAML host — type_text requires element_index + window_id
+    // (routes through UIA ValuePattern.SetValue, see Windows backend docs).
+    let resp = tools_call(&mut stdin, &mut stdout, 30, "type_text", serde_json::json!({
+        "pid": harness.pid as i64,
+        "window_id": wid,
+        "element_index": idx,
+        "text": "winui3-typed"
+    }));
+    println!("type_text (WinUI3): {}", resp["result"]["content"][0]["text"]);
+    std::thread::sleep(Duration::from_millis(500));
+
+    let post = tools_call(&mut stdin, &mut stdout, 31, "get_window_state",
+        serde_json::json!({"pid": harness.pid as i64, "window_id": wid, "capture_mode":"som"}));
+    let post_text = snapshot_text(&post);
+    assert!(post_text.contains("mirror=winui3-typed"),
+        "WinUI3 TextBox mirror did not advance. Snapshot excerpt: {}",
+        post_text.chars().take(600).collect::<String>());
+    println!("✅ harness_winui3_type_text: WinUI3 TextBox mirror reflects 'winui3-typed'");
+
+    child.kill().ok();
+}
+
+#[test]
+#[ignore]
+fn harness_winui3_xaml_popup_open() {
+    let driver = driver_binary();
+    if !driver.exists() { return; }
+    let harness = match Harness::launch() { Some(h) => h, None => return };
+
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WinUI3")
+        .expect("WinUI3 main window");
+
+    let snap = tools_call(&mut stdin, &mut stdout, 20, "get_window_state",
+        serde_json::json!({"pid": harness.pid as i64, "window_id": wid, "capture_mode":"som"}));
+    let idx = find_idx(snapshot_text(&snap), "btn-open-popup").expect("btn-open-popup");
+
+    let _ = tools_call(&mut stdin, &mut stdout, 30, "click", serde_json::json!({
+        "pid": harness.pid as i64, "window_id": wid, "element_index": idx
+    }));
+    std::thread::sleep(Duration::from_millis(500));
+
+    let post = tools_call(&mut stdin, &mut stdout, 31, "get_window_state",
+        serde_json::json!({"pid": harness.pid as i64, "window_id": wid, "capture_mode":"som"}));
+    let text = snapshot_text(&post);
+    assert!(text.contains("XAML_POPUP_MARKER_v1"),
+        "XAML popup body did not appear in tree after click. Excerpt: {}",
+        text.chars().take(600).collect::<String>());
+    println!("✅ harness_winui3_xaml_popup_open: popup body visible in UIA tree");
+
+    child.kill().ok();
+}

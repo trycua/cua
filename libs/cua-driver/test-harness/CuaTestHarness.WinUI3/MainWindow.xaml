@@ -11,6 +11,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -38,8 +40,20 @@
                    FontFamily="Consolas" TextWrapping="Wrap"
                    Text="HARNESS_TEXT_MARKER_v1 — WinUI3 text body for get_window_state."/>
 
+        <!-- TextBox + mirror -->
+        <StackPanel Grid.Row="2" Orientation="Vertical" Spacing="4">
+            <TextBox x:Name="TxtInput"
+                     auto:AutomationProperties.AutomationId="txt-input"
+                     Width="300" HorizontalAlignment="Left"
+                     TextChanged="OnInputChanged"/>
+            <TextBlock x:Name="LblInputMirror"
+                       auto:AutomationProperties.AutomationId="lbl-input-mirror"
+                       FontFamily="Consolas"
+                       Text="mirror="/>
+        </StackPanel>
+
         <!-- CommandBarFlyout trigger -->
-        <Button Grid.Row="2"
+        <Button Grid.Row="3"
                 x:Name="BtnOpenFlyout"
                 auto:AutomationProperties.AutomationId="btn-open-flyout"
                 Content="Open CommandBarFlyout"
@@ -56,14 +70,14 @@
         </Button>
 
         <!-- XAML Popup trigger -->
-        <Button Grid.Row="3"
+        <Button Grid.Row="4"
                 x:Name="BtnOpenPopup"
                 auto:AutomationProperties.AutomationId="btn-open-popup"
                 Content="Open XAML Popup"
                 Width="220" HorizontalAlignment="Left"
                 Click="OnOpenPopupClick"/>
 
-        <Popup x:Name="PopXaml" Grid.Row="4"
+        <Popup x:Name="PopXaml" Grid.Row="5"
                HorizontalOffset="40" VerticalOffset="40">
             <Border Background="#202020" Padding="16" CornerRadius="6"
                     BorderBrush="#FFFFFF" BorderThickness="1">
@@ -79,7 +93,7 @@
         </Popup>
 
         <!-- Exit -->
-        <Button Grid.Row="5"
+        <Button Grid.Row="7"
                 x:Name="BtnExit"
                 auto:AutomationProperties.AutomationId="btn-exit"
                 Content="Exit" Width="80" HorizontalAlignment="Right"

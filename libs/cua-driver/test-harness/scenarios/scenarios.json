@@ -84,6 +84,35 @@
         "expected_chord": "ctrl+shift+h"
       },
       {
+        "id": "text_input",
+        "kind": "text_box_mirror",
+        "description": "TextBox whose content is mirrored to a label. Tests type_text via AXSetAttribute / SendKeys to a backgrounded input.",
+        "controls": {
+          "textbox_aid": "txt-input",
+          "mirror_label_aid": "lbl-input-mirror"
+        }
+      },
+      {
+        "id": "click_target",
+        "kind": "right_double_click",
+        "description": "Target Border that records left-click count, double-click, and right-click via separate labels. Tests right_click and double_click tools.",
+        "controls": {
+          "target_aid": "border-click-target",
+          "last_action_label_aid": "lbl-last-action",
+          "click_count_label_aid": "lbl-click-count"
+        }
+      },
+      {
+        "id": "scroll_target",
+        "kind": "scroll_viewer",
+        "description": "ScrollViewer with a tall body and a label that reflects VerticalOffset. Tests scroll tool delivery to a backgrounded window.",
+        "controls": {
+          "scroller_aid": "scroll-tall",
+          "offset_label_aid": "lbl-scroll-offset",
+          "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
+        }
+      },
+      {
         "id": "exit",
         "kind": "exit_button",
         "description": "Exit button for clean teardown.",
@@ -118,6 +147,14 @@
           "text_block_aid": "txt-body"
         },
         "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+      },
+      {
+        "id": "text_input",
+        "kind": "text_box_mirror",
+        "controls": {
+          "textbox_aid": "txt-input",
+          "mirror_label_aid": "lbl-input-mirror"
+        }
       },
       {
         "id": "command_bar_flyout",

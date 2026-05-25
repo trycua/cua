@@ -87,10 +87,17 @@ public enum ScreenshotTool {
             }
 
             do {
+                // Load config so we can apply the same maxImageDimension cap
+                // that get_window_state uses. Without this, screenshot returns
+                // native Retina resolution (2× logical) while click coordinates
+                // are calibrated against the downscaled image — causing every
+                // click to miss its target on Retina displays (issue #1592).
+                let config = await ConfigStore.shared.load()
                 let shot = try await capture.captureWindow(
                     windowID: windowID,
                     format: format,
-                    quality: quality
+                    quality: quality,
+                    maxImageDimension: config.maxImageDimension
                 )
                 let base64 = shot.imageData.base64EncodedString()
                 let mime = format == .png ? "image/png" : "image/jpeg"

@@ -44,8 +44,11 @@ public sealed partial class MainWindow : Window
 
     private void OnExitClick(object sender, RoutedEventArgs e)
     {
-        Close();
-        System.Environment.Exit(0);
+        // Application.Current.Exit() runs the WinUI/WindowsAppSDK
+        // shutdown path so Program.Main's finally block (which calls
+        // Bootstrap.Shutdown) actually executes. Environment.Exit(0)
+        // terminates the process immediately and skips that cleanup.
+        Application.Current.Exit();
     }
 
     private void OnInputChanged(object sender, TextChangedEventArgs e)

@@ -98,9 +98,16 @@ if (Get-Command dotnet -ErrorAction SilentlyContinue) {
     $harnessBuild = Join-Path $wsRoot "..\test-harness\build.ps1"
     if (Test-Path $harnessBuild) {
         Write-Host "`n[BUILD] test-harness (dotnet publish)..." -ForegroundColor Yellow
-        & $harnessBuild
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[WARN] test-harness build failed — harness tests will skip." -ForegroundColor Yellow
+        # build.ps1 sets $ErrorActionPreference=Stop and throws on
+        # `dotnet publish` failure — wrap so the throw doesn't abort
+        # the whole sandbox runner before we can log the skip.
+        try {
+            & $harnessBuild
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[WARN] test-harness build failed (exit $LASTEXITCODE) — harness tests will skip." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[WARN] test-harness build errored: $($_.Exception.Message) — harness tests will skip." -ForegroundColor Yellow
         }
     } else {
         Write-Host "`n[SKIP] test-harness/build.ps1 not found — harness tests will skip." -ForegroundColor Yellow

@@ -81,9 +81,10 @@ impl Harness {
             .stdout(Stdio::null()).stderr(Stdio::null())
             .spawn().ok()?;
         let pid = app.id();
-        // WinUI3 cold-start (especially in sandbox with no cached WinAppSDK)
-        // can take several seconds.
-        std::thread::sleep(Duration::from_secs(5));
+        // Short fixed cold-start settle (window creation + foreground
+        // establishment after spawn). Polling in find_harness_window
+        // handles the variable tail.
+        std::thread::sleep(Duration::from_millis(1500));
         Some(Self { _app: app, pid })
     }
 }
@@ -94,16 +95,27 @@ impl Drop for Harness {
 
 fn find_harness_window(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
                        pid: u32, title_substr: &str) -> Option<(u64, String)> {
-    let resp = tools_call(stdin, stdout, 10, "list_windows",
-        serde_json::json!({ "pid": pid as i64 }));
-    let wins = resp["result"]["structuredContent"]["windows"].as_array()?;
-    for w in wins {
-        let title = w["title"].as_str().unwrap_or("");
-        if title.contains(title_substr) {
-            return Some((w["window_id"].as_u64()?, title.to_string()));
+    // Polls because WinUI3 cold-start (first run, no cached WinAppSDK) can
+    // exceed a fixed 5s wait under sandbox load. Bounded so a genuinely
+    // broken harness still fails the test in ≤20s rather than hanging.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut id = 10u32;
+    loop {
+        let resp = tools_call(stdin, stdout, id, "list_windows",
+            serde_json::json!({ "pid": pid as i64 }));
+        id = id.wrapping_add(1);
+        if let Some(wins) = resp["result"]["structuredContent"]["windows"].as_array() {
+            for w in wins {
+                if w["pid"].as_u64() != Some(pid as u64) { continue; }
+                let title = w["title"].as_str().unwrap_or("");
+                if title.contains(title_substr) {
+                    return Some((w["window_id"].as_u64()?, title.to_string()));
+                }
+            }
         }
+        if std::time::Instant::now() >= deadline { return None; }
+        std::thread::sleep(Duration::from_millis(200));
     }
-    None
 }
 
 #[test]

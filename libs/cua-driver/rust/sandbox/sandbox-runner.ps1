@@ -62,8 +62,16 @@ foreach ($h in $harnessRoots) {
     }
     $dst = Join-Path $env:TEMP (Split-Path $h.Src -Leaf)
     Copy-Item $h.Src $dst -Recurse -Force
-    Set-Item "Env:$($h.EnvVar)" (Join-Path $dst $h.Exe)
-    Log "$($h.Exe) staged to $dst (env $($h.EnvVar))"
+    # Confirm the publish output actually contains the exe before exporting
+    # the env var — a partial publish would otherwise turn an expected skip
+    # into a hard launch failure inside the Rust test.
+    $stagedExe = Join-Path $dst $h.Exe
+    if (-not (Test-Path $stagedExe)) {
+        Log "WARNING: staged harness exe missing at $stagedExe — $($h.EnvVar) tests will skip"
+        continue
+    }
+    Set-Item "Env:$($h.EnvVar)" $stagedExe
+    Log "$($h.Exe) staged to $dst (env $($h.EnvVar)=$stagedExe)"
 }
 
 # ── optional test filter ────────────────────────────────────────────────────

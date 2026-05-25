@@ -106,8 +106,14 @@ impl Harness {
             .stdout(Stdio::null()).stderr(Stdio::null())
             .spawn().ok()?;
         let pid = app.id();
-        // Settle. WPF cold-start in sandbox is slow.
-        std::thread::sleep(Duration::from_secs(3));
+        // Short fixed settle for cold-start (window-creation + initial
+        // foreground hand-off after spawn) — the rest of the readiness
+        // wait happens via polling in find_harness_window. A 200ms-only
+        // wait turned out to be too short for the harness to establish
+        // foreground reliably under test-batch load, which caused
+        // SetForegroundWindow-needing tests (dispatch:foreground) to
+        // fail with a foreground-lock rejection.
+        std::thread::sleep(Duration::from_millis(800));
         Some(Self { _app: app, pid })
     }
 }
@@ -129,22 +135,30 @@ impl Drop for Harness {
 // Look up the harness's main window via list_windows, filtered to the
 // exact spawned pid — defensive against the corner case where a previous
 // test's harness hasn't been fully reaped and there are briefly two
-// CuaTestHarness.Wpf windows on the desktop.
+// CuaTestHarness.Wpf windows on the desktop. Polls with a deadline rather
+// than relying on a fixed pre-sleep, so cold-start in sandbox (where the
+// WPF runtime + harness exe both pay first-launch JIT cost) doesn't time
+// out the harness with a too-short fixed sleep.
 fn find_harness_window(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
                        pid: u32, title_substr: &str) -> Option<(u64, String)> {
-    let resp = tools_call(stdin, stdout, 10, "list_windows",
-        serde_json::json!({ "pid": pid as i64 }));
-    let wins = resp["result"]["structuredContent"]["windows"].as_array()?;
-    for w in wins {
-        // The pid filter above already constrains to our spawned harness,
-        // but verify in-record for safety against a malformed response.
-        if w["pid"].as_u64() != Some(pid as u64) { continue; }
-        let title = w["title"].as_str().unwrap_or("");
-        if title.contains(title_substr) {
-            return Some((w["window_id"].as_u64()?, title.to_string()));
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut id = 10u32;
+    loop {
+        let resp = tools_call(stdin, stdout, id, "list_windows",
+            serde_json::json!({ "pid": pid as i64 }));
+        id = id.wrapping_add(1);
+        if let Some(wins) = resp["result"]["structuredContent"]["windows"].as_array() {
+            for w in wins {
+                if w["pid"].as_u64() != Some(pid as u64) { continue; }
+                let title = w["title"].as_str().unwrap_or("");
+                if title.contains(title_substr) {
+                    return Some((w["window_id"].as_u64()?, title.to_string()));
+                }
+            }
         }
+        if std::time::Instant::now() >= deadline { return None; }
+        std::thread::sleep(Duration::from_millis(150));
     }
-    None
 }
 
 // Get a UIA snapshot's flat element list — used to assert AutomationIds

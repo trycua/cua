@@ -49,7 +49,7 @@ window titles never drift between the two halves.
 
 ## Layout
 
-```
+```text
 test-harness/
 ├── CuaTestHarness.sln
 ├── build.ps1                         # publishes both projects

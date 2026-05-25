@@ -11,8 +11,20 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // Bootstrap the WindowsAppSDK for unpackaged scenarios.
-        Bootstrap.TryInitialize(0x00010006, out _);
+        // Try to bootstrap the system-wide WindowsAppSDK runtime.
+        // We publish self-contained (<WindowsAppSDKSelfContained>true</...>),
+        // so TryInitialize returns false on systems without the user-mode
+        // bootstrap installed — that's expected and the app still runs
+        // from its local copy of the SDK DLLs. Only call Shutdown() if
+        // Init actually succeeded — pairing the calls keeps the
+        // bootstrapper's internal refcount consistent.
+        var initialized = Bootstrap.TryInitialize(0x00010006, out var hresult);
+        if (!initialized)
+        {
+            Console.Error.WriteLine(
+                $"WindowsAppSDK bootstrap not initialized (0x{hresult:X8}); " +
+                "continuing with self-contained runtime.");
+        }
         try
         {
             ComWrappersSupport.InitializeComWrappers();
@@ -26,7 +38,10 @@ public static class Program
         }
         finally
         {
-            Bootstrap.Shutdown();
+            if (initialized)
+            {
+                Bootstrap.Shutdown();
+            }
         }
     }
 }

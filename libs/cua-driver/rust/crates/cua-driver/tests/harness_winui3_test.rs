@@ -326,14 +326,11 @@ fn harness_winui3_radio_select() {
 /// fails on RangeValuePattern-only elements. Real fix: cua-driver should
 /// try RangeValuePattern.SetValue (coercing the string to a double) when
 /// ValuePattern isn't found.
-/// WinUI3 Slider's AutomationId doesn't surface in the flat UIA element
-/// list (same quirk as WPF Slider — SliderAutomationPeer doesn't show up
-/// as an indexed actionable element). Slider sub-parts (Decrease/Increase
-/// thumb) similarly aren't exposed in WinUI3's tree. Together with the
-/// `set_value` tool only trying ValuePatternId (not RangeValuePattern),
-/// driving a WinUI3 Slider via cua-driver isn't currently possible.
-/// Real fix: enumerate Slider's sub-parts in UIA + `set_value` tries
-/// RangeValuePattern when ValuePattern isn't supported.
+/// WinUI3 Slider's parent AutomationId doesn't surface in the flat UIA
+/// element list (SliderAutomationPeer's children are the actionable
+/// elements, not the slider itself). Still document the gap — fixing
+/// the UIA enumeration to expose the slider as an indexed element is
+/// orthogonal to this branch's set_value fix.
 #[test]
 #[ignore]
 fn harness_winui3_slider_DOCUMENTED_unreachable() {
@@ -342,8 +339,8 @@ fn harness_winui3_slider_DOCUMENTED_unreachable() {
             serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
         let idx_opt = find_idx(snapshot_text(&snap), "sld-value");
         assert!(idx_opt.is_none(),
-            "WinUI3 Slider's AutomationId 'sld-value' now appears in the UIA tree — \
-             cua-driver may have fixed the slider-element enumeration gap.");
+            "WinUI3 Slider 'sld-value' now appears in the UIA flat tree — \
+             cua-driver fixed the slider-element enumeration gap. Update this test.");
         println!("⚠️  harness_winui3_slider_DOCUMENTED_unreachable: sld-value not in UIA flat tree");
     });
 }

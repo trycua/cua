@@ -2676,22 +2676,51 @@ impl Tool for SetValueTool {
         };
 
         let state = self.state.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
             let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
                 .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache."))?;
             use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId};
             use windows::core::{Interface, BSTR};
             let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-            let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId)? };
+            // Try ValuePattern first (text inputs, editable combos, etc).
+            if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) } {
+                if let Ok(vp) = pattern.cast::<IUIAutomationValuePattern>() {
+                    if unsafe { vp.SetValue(&BSTR::from(value.as_str())) }.is_ok() {
+                        std::mem::forget(elem);
+                        return Ok("ValuePattern".to_string());
+                    }
+                }
+            }
+            // Fall through to RangeValuePattern for Sliders / ProgressBars /
+            // numeric ranges. RangeValue.SetValue takes a double, so coerce
+            // the string. Documented gap-closer (PR #1699 harness exposed).
+            use windows::Win32::UI::Accessibility::{
+                IUIAutomationRangeValuePattern, UIA_RangeValuePatternId,
+            };
+            if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_RangeValuePatternId) } {
+                if let Ok(rv) = pattern.cast::<IUIAutomationRangeValuePattern>() {
+                    let parsed: f64 = value.parse().map_err(|_| anyhow::anyhow!(
+                        "set_value: target element exposes RangeValuePattern (Slider / \
+                         ProgressBar / numeric range). `value` must be a parseable f64; \
+                         got {value:?}."
+                    ))?;
+                    unsafe { rv.SetValue(parsed)? };
+                    std::mem::forget(elem);
+                    return Ok("RangeValuePattern".to_string());
+                }
+            }
             std::mem::forget(elem);
-            let vp: IUIAutomationValuePattern = pattern.cast()?;
-            unsafe { vp.SetValue(&BSTR::from(value.as_str()))? };
-            Ok(())
+            anyhow::bail!(
+                "set_value: element [{idx}] does not implement ValuePattern or \
+                 RangeValuePattern. For controls with TogglePattern (CheckBox) or \
+                 SelectionItemPattern (RadioButton / ComboBoxItem), use the `click` \
+                 tool instead."
+            );
         }).await;
         match result {
-            // Match Swift's text format 1:1 (default AXValue-write path).
-            // UIA role/title placeholder pending element-cache enrichment.
-            Ok(Ok(())) => ToolResult::text(format!("✅ Set AXValue on [{idx}] (UIA ValuePattern).")),
+            Ok(Ok(pattern_name)) => ToolResult::text(format!(
+                "✅ Set AXValue on [{idx}] (UIA {pattern_name})."
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

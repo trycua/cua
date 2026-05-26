@@ -1,0 +1,27 @@
+[package]
+name = "cua-driver-embedded"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+cua-driver-core = { path = "../cua-driver-core" }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+platform-macos = { path = "../platform-macos" }
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+cursor-overlay = { path = "../cursor-overlay" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-linux = { path = "../platform-linux" }

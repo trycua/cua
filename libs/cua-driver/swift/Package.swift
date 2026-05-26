@@ -10,6 +10,7 @@ let package = Package(
         .executable(name: "cua-driver", targets: ["CuaDriverCLI"]),
         .library(name: "CuaDriverCore", targets: ["CuaDriverCore"]),
         .library(name: "CuaDriverServer", targets: ["CuaDriverServer"]),
+        .library(name: "CuaDriverEmbedded", targets: ["CuaDriverEmbedded"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
@@ -25,6 +26,9 @@ let package = Package(
                 "CuaDriverCore",
                 .product(name: "MCP", package: "swift-sdk"),
             ]
+        ),
+        .target(
+            name: "CuaDriverEmbedded"
         ),
         .executableTarget(
             name: "CuaDriverCLI",

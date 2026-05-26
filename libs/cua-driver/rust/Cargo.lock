@@ -319,6 +319,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-driver-embedded"
+version = "0.2.18"
+dependencies = [
+ "cua-driver-core",
+ "cursor-overlay",
+ "platform-linux",
+ "platform-macos",
+ "platform-windows",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cua-driver-uia"
 version = "0.2.18"
 dependencies = [

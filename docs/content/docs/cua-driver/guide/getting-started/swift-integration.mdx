@@ -7,6 +7,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 `CuaDriverCore` and `CuaDriverServer` are available as Swift library products directly from the `trycua/cua` repository. Use this when you want to embed accessibility automation, window capture, or MCP tool handling into your own macOS Swift app or package — without shelling out to the `cua-driver` CLI.
 
+<Callout type="warn">
+  This page documents the legacy Swift implementation. The maintained driver is now the Rust implementation. For new embedded integrations, use the Rust `cua-driver-embedded` crate and add a thin Swift or C ABI wrapper around its JSON-RPC MCP surface.
+</Callout>
+
 ## Add the dependency
 
 In your `Package.swift`:
@@ -15,7 +19,7 @@ In your `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/trycua/cua.git",
-        from: "cua-driver-v0.1.0"
+        .revision("cua-driver-v0.2.18")
     ),
 ],
 ```

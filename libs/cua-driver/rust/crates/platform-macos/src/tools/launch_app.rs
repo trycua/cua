@@ -143,11 +143,21 @@ impl Tool for LaunchAppTool {
             )
         });
 
+        // Predicate captured BEFORE moving inputs into spawn_blocking.
+        // Same condition that selects the `openURLs:withApplicationAtURL:`
+        // chain over the simpler `openApplicationAtURL:` path. Used after
+        // the spawn returns to size the suppression window — the slow
+        // path triggers a SECOND activation when the file-open delivers,
+        // which lands AFTER the bundle-only-launch activation window.
+        let slow_launch_path = !urls.is_empty()
+            || !additional_arguments.is_empty()
+            || !env.is_empty()
+            || creates_new_instance;
+
         // Move the launch closure inputs into spawn_blocking. The
         // blocking task returns (pid, app_info, windows). Suppression
         // upgrade happens AFTER the blocking call returns (back on the
-        // async runtime), then we sleep 500ms holding the targeted
-        // lease before releasing it.
+        // async runtime), then we sleep holding the targeted lease.
         let launch_result = tokio::task::spawn_blocking(move || {
             let pid = if let Some(ref bid) = bundle_id {
                 if urls.is_empty()
@@ -220,21 +230,49 @@ impl Tool for LaunchAppTool {
                         );
                     // Now safe to drop the wildcard — targeted is armed.
                     drop(wildcard_lease);
-                    // 500ms covers `applicationDidFinishLaunching` plus
-                    // any reflex `NSApp.activate(...)`. Matches Swift
-                    // LaunchAppTool.swift exactly.
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    // Hold the targeted lease long enough to cover the
+                    // ENTIRE post-launch activation window.
+                    //
+                    // - Fast path (bundle-only launch, no urls/args/env):
+                    //   500ms covers `applicationDidFinishLaunching` plus
+                    //   any reflex `NSApp.activate(...)`. Matches Swift
+                    //   LaunchAppTool.swift exactly.
+                    //
+                    // - Slow path (urls / additional_arguments / env /
+                    //   creates_new_instance): 2500ms. The slow-path
+                    //   `openURLs:withApplicationAtURL:` chain triggers a
+                    //   second activation when the file-open delivers to
+                    //   the just-launched app — Electron apps (VSCode,
+                    //   Cursor, Slack) re-`app.focus()` from inside their
+                    //   `open-file` JS handler, AFTER our 500ms window
+                    //   would have already closed. Empirically VSCode's
+                    //   late activation can land anywhere from ~700ms to
+                    //   ~2000ms after the openURLs return. The observer-
+                    //   based lease catches any activation that lands
+                    //   WHILE held, so widening the window converts the
+                    //   late activation from a contract violation into
+                    //   another auto-demote.
+                    let window_ms: u64 = if slow_launch_path { 2500 } else { 500 };
+                    tokio::time::sleep(std::time::Duration::from_millis(window_ms)).await;
                     drop(targeted_lease);
 
-                    // Belt-and-braces: if the target is STILL frontmost
-                    // after the suppression window, the intra-`open()`
-                    // synchronous activation slipped through. Demote
-                    // explicitly by re-activating the prior frontmost.
-                    let frontmost_now = crate::apps::frontmost_pid();
-                    if frontmost_now == Some(*pid) {
+                    // Belt-and-braces LOOP: if the target ever pops back
+                    // to the foreground after the lease drops (rare —
+                    // observer already covered the suppression window —
+                    // but happens when the activation fires literally on
+                    // the same tokio tick the lease dropped), demote it.
+                    // Loop 5x200ms = 1s of post-window coverage. Each
+                    // iteration is cheap (one frontmost_pid + maybe one
+                    // activate_pid call) so this stays well under the
+                    // RPC budget even when the demote keeps working.
+                    let mut demotion_succeeded = true;
+                    for _ in 0..5 {
+                        let frontmost_now = crate::apps::frontmost_pid();
+                        if frontmost_now != Some(*pid) {
+                            // Not frontmost — nothing to do this tick.
+                            continue;
+                        }
                         let activated = crate::apps::activate_pid(prior);
-                        // Re-check; the structured response depends on
-                        // whether the demote actually took.
                         let still_frontmost =
                             crate::apps::frontmost_pid() == Some(*pid);
                         if still_frontmost {
@@ -243,15 +281,94 @@ impl Tool for LaunchAppTool {
                                 launched_pid = *pid,
                                 prior_pid = prior,
                                 activate_pid_returned = activated,
-                                "belt-and-braces demotion failed: launched app \
-                                 is still frontmost after re-activating prior"
+                                "belt-and-braces demotion iteration failed: \
+                                 launched app remained frontmost after \
+                                 re-activating prior — will retry"
                             );
-                            self_activation_suppressed = Some(false);
+                            demotion_succeeded = false;
                         } else {
-                            self_activation_suppressed = Some(true);
+                            demotion_succeeded = true;
                         }
-                    } else {
-                        self_activation_suppressed = Some(true);
+                        tokio::time::sleep(
+                            std::time::Duration::from_millis(200)
+                        ).await;
+                    }
+                    // Final in-call state determines the structured response.
+                    let final_frontmost = crate::apps::frontmost_pid();
+                    self_activation_suppressed = Some(
+                        final_frontmost != Some(*pid) && demotion_succeeded
+                    );
+
+                    // Detached late-activation watchdog (slow path only).
+                    //
+                    // Why: Electron apps with no workspace open (cold-
+                    // launched VSCode / Cursor / Slack with a file URL)
+                    // re-activate AGAIN when their Welcome window
+                    // finishes loading — empirically 4-8 seconds after
+                    // the `openURLs:withApplicationAtURL:` call returns.
+                    // That's well past the in-call suppression window
+                    // and any reasonable extension of it that an agent
+                    // workflow would tolerate as caller latency.
+                    //
+                    // Solution: hold a fresh observer-backed lease in
+                    // the background for ~8s, demoting if the launched
+                    // pid pops back. The caller doesn't wait — the tool
+                    // already returned its honest `self_activation_
+                    // suppressed` for the in-call window. The detached
+                    // task just keeps the no-foreground-steal contract
+                    // honored past the RPC boundary.
+                    //
+                    // Note on process lifecycle: this watchdog only runs
+                    // when the tokio runtime stays alive — i.e. in the
+                    // long-running `cua-driver mcp` / `cua-driver serve`
+                    // daemon modes. The one-shot `cua-driver call` mode
+                    // exits as soon as the tool returns, taking the
+                    // detached task with it. Acceptable because the
+                    // contract is "no foreground steal during a session
+                    // the agent is driving" — `cua-driver call` doesn't
+                    // have a session that outlives the call.
+                    //
+                    // Tradeoffs:
+                    // - Caller latency unchanged (~2.5s for slow path).
+                    // - Total observer coverage: ~10.5s post-launch.
+                    // - CPU: the observer fires per activation event,
+                    //   not per poll; the 250ms tick is just for the
+                    //   manual belt-and-braces demote. Cheap.
+                    // - If a legitimate user click activates Code while
+                    //   the watchdog is alive, we'll demote them. Worst
+                    //   case ~10s of "I clicked Code and it didn't come
+                    //   forward" — acceptable trade for an automation
+                    //   scenario where the agent just launched it.
+                    if slow_launch_path {
+                        let launched_pid = *pid;
+                        let prior_pid = prior;
+                        tokio::spawn(async move {
+                            let _lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
+                                Some(launched_pid),
+                                prior_pid,
+                                "LaunchAppTool.watchdog",
+                            );
+                            let mut late_activations = 0u32;
+                            for _ in 0..32 {  // 32 × 250ms = 8s
+                                tokio::time::sleep(
+                                    std::time::Duration::from_millis(250)
+                                ).await;
+                                if crate::apps::frontmost_pid() == Some(launched_pid) {
+                                    late_activations += 1;
+                                    let _ = crate::apps::activate_pid(prior_pid);
+                                }
+                            }
+                            if late_activations > 0 {
+                                tracing::warn!(
+                                    target: "platform_macos::tools::launch_app",
+                                    launched_pid,
+                                    prior_pid,
+                                    late_activations,
+                                    "watchdog demoted post-RPC late activations \
+                                     — slow-path window may need tuning"
+                                );
+                            }
+                        });
                     }
                 } else {
                     // pid == prior frontmost (re-launch of an already-

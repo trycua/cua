@@ -46,67 +46,11 @@ class TestRunCommand:
         from computer_server.handlers.base import BaseAutomationHandler
 
         class Handler(BaseAutomationHandler):
-            async def mouse_down(self, x=None, y=None, button="left"):
-                pass
+            pass
 
-            async def mouse_up(self, x=None, y=None, button="left"):
-                pass
+        Handler.__abstractmethods__ = frozenset()
 
-            async def left_click(self, x=None, y=None):
-                pass
-
-            async def right_click(self, x=None, y=None):
-                pass
-
-            async def middle_click(self, x=None, y=None):
-                pass
-
-            async def double_click(self, x=None, y=None):
-                pass
-
-            async def move_cursor(self, x, y):
-                pass
-
-            async def drag_to(self, x, y, button="left", duration=0.5):
-                pass
-
-            async def drag(self, path, button="left", duration=0.5):
-                pass
-
-            async def key_down(self, key):
-                pass
-
-            async def key_up(self, key):
-                pass
-
-            async def type_text(self, text):
-                pass
-
-            async def press_key(self, key):
-                pass
-
-            async def hotkey(self, keys):
-                pass
-
-            async def scroll(self, x, y):
-                pass
-
-            async def scroll_down(self, clicks=1):
-                pass
-
-            async def scroll_up(self, clicks=1):
-                pass
-
-            async def screenshot(self, format="png", quality=95):
-                pass
-
-            async def get_screen_size(self):
-                pass
-
-            async def get_cursor_position(self):
-                pass
-
-        result = await Handler().run_command("command -v definitely-not-installed")
+        result = await Handler().run_command("false")
 
         assert result["success"] is False
         assert result["return_code"] != 0

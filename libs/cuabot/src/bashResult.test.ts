@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bashResultFromExecError, buildContainerScript, exitCodeForBashResult } from './bashResult.js';
+import {
+  bashResultFromBackgroundLaunch,
+  bashResultFromExecError,
+  buildContainerScript,
+  buildDockerExecScriptCommand,
+  exitCodeForBashResult,
+} from './bashResult.js';
 
 test('buildContainerScript sets GUI user environment', () => {
   const script = buildContainerScript('firefox');
@@ -59,4 +65,39 @@ test('exitCodeForBashResult propagates failures to CLI exit status', () => {
   assert.equal(exitCodeForBashResult({ success: false, exit_code: 42 }), 42);
   assert.equal(exitCodeForBashResult({ success: false, exit_code: null, timed_out: true }), 124);
   assert.equal(exitCodeForBashResult({ success: false, exit_code: null }), 1);
+});
+
+test('bashResultFromBackgroundLaunch advertises pid only when process is still running', () => {
+  const result = bashResultFromBackgroundLaunch('123\nOUTCOME:RUNNING\n', '');
+
+  assert.equal(result.success, true);
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.pid, 123);
+});
+
+test('bashResultFromBackgroundLaunch reports fast background exit without stale pid', () => {
+  const result = bashResultFromBackgroundLaunch('123\nOUTCOME:EXIT:7\n', 'failure log\n');
+
+  assert.equal(result.success, false);
+  assert.equal(result.exit_code, 7);
+  assert.equal(result.pid, undefined);
+  assert.equal(result.stderr, 'failure log\n');
+});
+
+test('buildDockerExecScriptCommand omits shell timeout for non-positive timeouts', () => {
+  assert.equal(
+    buildDockerExecScriptCommand('container', '/tmp/script.sh', 0),
+    'docker exec container /tmp/script.sh'
+  );
+  assert.equal(
+    buildDockerExecScriptCommand('container', '/tmp/script.sh', -1),
+    'docker exec container /tmp/script.sh'
+  );
+});
+
+test('buildDockerExecScriptCommand wraps positive timeouts with shell timeout', () => {
+  assert.equal(
+    buildDockerExecScriptCommand('container', '/tmp/script.sh', 1500),
+    'docker exec container timeout 1.5s /tmp/script.sh'
+  );
 });

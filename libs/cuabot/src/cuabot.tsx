@@ -308,8 +308,8 @@ Commands:
         }
         const client = await getClient();
         const result = await client.bash(cmd);
-        if (result.stdout) console.log(result.stdout);
-        if (result.stderr) console.error(result.stderr);
+        if (result.stdout) process.stdout.write(result.stdout);
+        if (result.stderr) process.stderr.write(result.stderr);
         process.exit(exitCodeForBashResult(result));
       }
 

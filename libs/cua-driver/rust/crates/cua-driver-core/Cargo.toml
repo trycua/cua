@@ -1,5 +1,5 @@
 [package]
-name = "mcp-server"
+name = "cua-driver-core"
 version.workspace = true
 edition.workspace = true
 

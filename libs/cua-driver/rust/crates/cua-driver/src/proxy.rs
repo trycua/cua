@@ -16,7 +16,7 @@
 //! envelope, same tool semantics.
 //!
 //! Why this lives in `cua-driver` and not `mcp-server`:
-//!   `mcp_server::server::run` already speaks JSON-RPC over stdio
+//!   `cua_driver_core::server::run` already speaks JSON-RPC over stdio
 //!   against an in-process `ToolRegistry`. The proxy speaks the same
 //!   protocol on the client side but the server side is the daemon's
 //!   line-delimited JSON UDS protocol, owned by `crate::serve`.
@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use mcp_server::protocol::{initialize_result, Request, Response};
+use cua_driver_core::protocol::{initialize_result, Request, Response};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
@@ -36,7 +36,7 @@ use crate::serve::{is_daemon_listening, send_request, DaemonRequest};
 /// `socket_path`, and writes the daemon's response back as a proper
 /// JSON-RPC envelope.
 ///
-/// Mirrors `mcp_server::server::run`'s control flow exactly — same
+/// Mirrors `cua_driver_core::server::run`'s control flow exactly — same
 /// EOF + parse-error + notification handling — only the per-method
 /// branches change.
 ///
@@ -171,7 +171,7 @@ fn fetch_tools_list_from_daemon(socket_path: &str) -> anyhow::Result<serde_json:
 }
 
 /// JSON-RPC method dispatcher for the proxy. Mirrors
-/// `mcp_server::server::handle_request`:
+/// `cua_driver_core::server::handle_request`:
 ///   - `initialize`     → static `initialize_result()` (same envelope
 ///                        the in-process path returns; the daemon's
 ///                        identity is hidden from the MCP client).
@@ -209,7 +209,7 @@ async fn handle_proxy_request(
 /// Error mapping:
 ///   - Tool ran and reported failure (`!resp.ok`, including unknown
 ///     tool / bad params) → JSON-RPC success with `result.isError =
-///     true`. Mirrors the in-process `mcp_server::server` path so
+///     true`. Mirrors the in-process `cua_driver_core::server` path so
 ///     MCP clients see identical envelopes either way.
 ///   - Transport failure (UDS unreachable, decode error, blocking
 ///     task panic) → JSON-RPC error (`-32603`), because the MCP
@@ -265,7 +265,7 @@ async fn forward_tool_call(
         // A non-`ok` daemon response means the tool call reached the
         // daemon and the daemon decided the tool returned an error
         // (or rejected the call). That's tool-level, not transport-
-        // level, so the in-process `mcp_server::server` would surface
+        // level, so the in-process `cua_driver_core::server` would surface
         // it as `Response::ok` with `isError: true`. Mirror that
         // shape here so MCP clients see identical envelopes either
         // way — CodeRabbit #2.

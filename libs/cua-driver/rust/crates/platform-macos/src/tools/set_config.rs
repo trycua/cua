@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let mut cfg = self.state.config.write().unwrap();
         if let Some(mode) = args.opt_str("capture_mode") {
             cfg.capture_mode = mode.clone();

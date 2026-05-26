@@ -230,7 +230,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
             Ok((pixels, w, h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&pixels, w, h)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w, h)?,
                     false, // WGC reads target's own pixels — never occluded by definition
                 ));
             }
@@ -246,7 +246,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match screenshot_via_screen_region(hwnd) {
             Ok((pixels, w, h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
                     occluded,
                 ));
             }
@@ -391,7 +391,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
             Ok((alt_pixels, w, h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
                     false,
                 ));
             }
@@ -407,7 +407,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match screenshot_via_screen_region(hwnd) {
             Ok((alt_pixels, alt_w, alt_h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32)?,
                     occluded,
                 ));
             }
@@ -433,21 +433,21 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // PrintWindow itself reads from the target's own DC, so the bitmap
     // we return here is the target's pixels even when occluded — no
     // occluded warning needed on this path.
-    Ok((mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?, false))
+    Ok((cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?, false))
 }
 
 // NOTE: previously this module carried a hand-rolled
 // `write_uncompressed_png` + `write_png_chunk` + `zlib_store` +
 // `adler32` + `crc32_ieee` (~110 lines) plus a local
 // `encode_bgra_to_png` that used them. All of that is replaced by
-// `mcp_server::image_utils::encode_bgra_to_png` which goes through
+// `cua_driver_core::image_utils::encode_bgra_to_png` which goes through
 // the `image` crate's PNG encoder — already a workspace dep,
 // produces ~5x smaller files than the uncompressed-store path.
 //
 // Same extraction applies to the four pub helpers below
 // (`png_bytes_to_jpeg`, `resize_png_if_needed`, `crosshair_png_bytes`,
 // `png_dimensions_pub`). They're now thin re-exports of the shared
-// `mcp_server::image_utils::*` so all three platform crates call the
+// `cua_driver_core::image_utils::*` so all three platform crates call the
 // same code. See `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the full audit.
 
 /// Capture the primary display (full screen), returning raw PNG bytes.
@@ -478,39 +478,39 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
         if ok == 0 { bail!("GetDIBits returned 0"); }
-        mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
+        cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
     }
 }
 
 /// Capture primary display, returning (base64_png, width, height).
 pub fn screenshot_display() -> Result<(String, u32, u32)> {
     let png_bytes = screenshot_display_bytes()?;
-    let (w, h) = mcp_server::image_utils::png_dimensions(&png_bytes)?;
+    let (w, h) = cua_driver_core::image_utils::png_dimensions(&png_bytes)?;
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
 // PNG/JPEG/resize/crosshair helpers — re-exports of the shared
-// `mcp_server::image_utils` module. The previous file-local copies were
+// `cua_driver_core::image_utils` module. The previous file-local copies were
 // near-identical to the macOS and Linux versions; the dedup-audit
 // (2026-05) moved them all to one place.
 
 /// Convert PNG bytes to JPEG at the given quality (1–95).
 pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
-    mcp_server::image_utils::png_bytes_to_jpeg(png_bytes, quality)
+    cua_driver_core::image_utils::png_bytes_to_jpeg(png_bytes, quality)
 }
 
 /// Downscale `png_bytes` so neither dimension exceeds `max_dim`.
 /// If `max_dim == 0` or the image already fits, returns a copy of the
 /// original bytes unchanged.
 pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
-    mcp_server::image_utils::resize_png_if_needed(png_bytes, max_dim)
+    cua_driver_core::image_utils::resize_png_if_needed(png_bytes, max_dim)
 }
 
 /// Draw a red crosshair at pixel (cx, cy) on a PNG image and return
 /// modified PNG bytes. Used by recording's click-marker callback to
 /// produce click.png.
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
-    mcp_server::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
+    cua_driver_core::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
 
 /// Parse width and height from a PNG IHDR chunk.
@@ -518,6 +518,6 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 /// Suffixed `_pub` because an older private `png_dimensions` predated
 /// the `_pub` export; the public alias is what callers use today.
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
-    mcp_server::image_utils::png_dimensions(data)
+    cua_driver_core::image_utils::png_dimensions(data)
 }
 

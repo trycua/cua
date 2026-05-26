@@ -1,7 +1,7 @@
 //! Real Linux tool implementations (compiled only on Linux).
 
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
@@ -294,7 +294,7 @@ impl Tool for ListWindowsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let windows = tokio::task::spawn_blocking(move || crate::x11::list_windows(filter_pid)).await.unwrap_or_default();
         let mut lines = vec![format!("Found {} windows:", windows.len())];
@@ -339,7 +339,7 @@ impl Tool for GetWindowStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let xid = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
         let (default_mode, max_dim) = {
@@ -386,7 +386,7 @@ impl Tool for GetWindowStateTool {
                 if let Some(tr) = tree_opt {
                     let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
                     let header = format!("window_id={xid} pid={pid} elements={count}\n\n");
-                    content.push(mcp_server::protocol::Content::text(header + &tr.tree_markdown));
+                    content.push(cua_driver_core::protocol::Content::text(header + &tr.tree_markdown));
                     state.element_cache.update(pid, xid, &tr.nodes);
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
@@ -398,7 +398,7 @@ impl Tool for GetWindowStateTool {
                     } else {
                         state.resize_registry.clear_ratio(pid);
                     }
-                    content.push(mcp_server::protocol::Content::image_png(b64));
+                    content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
                 }
@@ -436,7 +436,7 @@ impl Tool for LaunchAppTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let launch_path_opt = args.opt_str("launch_path");
         let name_opt = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");
@@ -555,7 +555,7 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;
         let button: u8 = match args.str_or("button", "left").as_str() {
@@ -661,12 +661,12 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
         // Strip trailing agent-protocol closing tags — see
-        // mcp_server::text_sanitize docs for rationale.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        // cua_driver_core::text_sanitize docs for rationale.
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let xid_opt = args.opt_u64("window_id");
 
@@ -717,7 +717,7 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
         let key = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
         let mods: Vec<String> = args.str_array("modifiers");
@@ -775,7 +775,7 @@ impl Tool for HotkeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
         let xid_opt = args.opt_u64("window_id");
 
@@ -844,7 +844,7 @@ impl Tool for SetValueTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let idx = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
         let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
@@ -887,7 +887,7 @@ impl Tool for ScrollTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
@@ -954,7 +954,7 @@ impl Tool for DoubleClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1031,7 +1031,7 @@ impl Tool for RightClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1112,7 +1112,7 @@ impl Tool for DragTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("window_id is required on Linux."),
@@ -1267,7 +1267,7 @@ impl Tool for MoveCursorTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
         let cursor_id = args.str_or("cursor_id", "default");
@@ -1303,7 +1303,7 @@ impl Tool for SetAgentCursorEnabledTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
         let cursor_id = args.str_or("cursor_id", "default");
         self.state.cursor_registry.set_enabled(&cursor_id, enabled);
@@ -1346,7 +1346,7 @@ impl Tool for SetAgentCursorMotionTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = args.str_or("cursor_id", "default");
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.opt_str("cursor_icon") { cfg.cursor_icon = Some(v); }
@@ -1438,7 +1438,7 @@ impl Tool for SetAgentCursorStyleTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = args.str_or("cursor_id", "default");
 
         // image_path
@@ -1637,7 +1637,7 @@ impl Tool for SetConfigTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let mut cfg = self.state.config.write().unwrap();
         let mut parts = Vec::new();
         if let Some(mode) = args.opt_str("capture_mode") {
@@ -1747,7 +1747,7 @@ impl Tool for ZoomTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let xid = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
         let pid = args.opt_u64("pid").map(|v| v as u32);
         let x1 = match args.opt_f64("x1") { Some(v) => v, None => return ToolResult::error("Missing x1") };
@@ -1774,7 +1774,7 @@ impl Tool for ZoomTool {
                 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                 let b64 = B64.encode(&crop.jpeg_bytes);
                 let (w, h) = (crop.out_w, crop.out_h);
-                use mcp_server::protocol::Content;
+                use cua_driver_core::protocol::Content;
                 ToolResult {
                     content: vec![
                         Content::image_jpeg(b64),
@@ -1818,12 +1818,12 @@ impl Tool for TypeTextCharsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
         // Same trailing-protocol-tag scrub as TypeTextTool — see
-        // mcp_server::text_sanitize for rationale.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        // cua_driver_core::text_sanitize for rationale.
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let xid_opt = args.opt_u64("window_id");
@@ -1984,7 +1984,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(TypeTextCharsTool));
     // Cross-platform `page` tool definition lives in mcp-server; Linux plugs
     // in its AT-SPI + CDP backend here.
-    r.register(Box::new(mcp_server::page::PageTool::new(
+    r.register(Box::new(cua_driver_core::page::PageTool::new(
         Arc::new(super::page::LinuxPageBackend::new()),
     )));
     r.register_recording_tools();

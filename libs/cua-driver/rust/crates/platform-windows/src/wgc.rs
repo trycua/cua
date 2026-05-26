@@ -49,7 +49,7 @@ use windows::{
 
 /// Capture a window via WGC, returning BGRA pixels + (width, height).
 /// Caller is responsible for encoding to PNG (or whatever format) via
-/// `mcp_server::image_utils::encode_bgra_to_png`.
+/// `cua_driver_core::image_utils::encode_bgra_to_png`.
 pub fn screenshot_window_via_wgc(hwnd: u64) -> Result<(Vec<u8>, u32, u32)> {
     unsafe { wgc_capture_impl(HWND(hwnd as *mut _)) }
 }

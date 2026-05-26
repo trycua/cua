@@ -10,7 +10,7 @@
 //! "Windows-only" error.
 
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 
 pub struct BringToFrontTool;

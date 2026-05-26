@@ -3,7 +3,7 @@
 //! On Windows, delegates to real win32/uia/input/capture implementations.
 //! On other platforms, returns "not implemented" stubs so the crate still compiles.
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 
 #[cfg(target_os = "windows")]
 mod impl_;

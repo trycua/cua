@@ -247,11 +247,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "cua-driver-core",
  "cursor-overlay",
  "flate2",
  "image",
  "libc",
- "mcp-server",
  "platform-linux",
  "platform-macos",
  "platform-windows",
@@ -270,12 +270,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-driver-core"
+version = "0.2.18"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "image",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "cua-driver-uia"
 version = "0.2.18"
 dependencies = [
  "anyhow",
+ "cua-driver-core",
  "embed-manifest",
- "mcp-server",
  "platform-windows",
  "serde",
  "serde_json",
@@ -865,20 +880,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcp-server"
-version = "0.2.18"
-dependencies = [
- "anyhow",
- "async-trait",
- "image",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1158,10 +1159,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "cua-driver-core",
  "cursor-overlay",
  "image",
  "libc",
- "mcp-server",
  "serde",
  "serde_json",
  "thiserror",
@@ -1181,12 +1182,12 @@ dependencies = [
  "block2",
  "core-foundation",
  "core-graphics",
+ "cua-driver-core",
  "cursor-overlay",
  "foreign-types 0.5.0",
  "futures-util",
  "image",
  "libc",
- "mcp-server",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -1208,9 +1209,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "cua-driver-core",
  "cursor-overlay",
  "image",
- "mcp-server",
  "serde",
  "serde_json",
  "thiserror",

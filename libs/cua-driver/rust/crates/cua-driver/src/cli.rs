@@ -13,7 +13,7 @@
 //! `CursorConfig::from_args()` and are ignored here.
 
 use std::process;
-use mcp_server::{protocol::Content, tool::ToolRegistry};
+use cua_driver_core::{protocol::Content, tool::ToolRegistry};
 
 /// Which CLI command was requested.
 pub enum Command {
@@ -370,7 +370,7 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 pub fn run_list_tools(registry: &ToolRegistry) {
     // Sort alphabetically by name to match Swift's
     // `ListToolsCommand.run()` `tools.sorted(by: { $0.name < $1.name })`.
-    let mut entries: Vec<(&str, &mcp_server::tool::ToolDef)> = registry.iter_defs().collect();
+    let mut entries: Vec<(&str, &cua_driver_core::tool::ToolDef)> = registry.iter_defs().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
     for (name, def) in entries {
         let summary = first_sentence(&def.description);
@@ -1239,7 +1239,7 @@ fn run_recording_render(args: &[String]) {
         }
     }
 
-    let opts = mcp_server::recording_render::RenderOptions {
+    let opts = cua_driver_core::recording_render::RenderOptions {
         no_zoom,
         default_scale: scale,
     };
@@ -1247,7 +1247,7 @@ fn run_recording_render(args: &[String]) {
         input_dir.display(),
         output_path.display(),
         if no_zoom { " (no-zoom baseline)" } else { "" });
-    match mcp_server::recording_render::render(&input_dir, &output_path, &opts) {
+    match cua_driver_core::recording_render::render(&input_dir, &output_path, &opts) {
         Ok(res) => {
             println!("✅ Wrote {}", res.output_path.display());
             println!("   input_duration_ms: {:.0}", res.input_duration_ms);
@@ -1791,7 +1791,7 @@ pub fn run_config_cmd(
             });
             if result.is_error.unwrap_or(false) {
                 for item in &result.content {
-                    if let mcp_server::protocol::Content::Text { text, .. } = item {
+                    if let cua_driver_core::protocol::Content::Text { text, .. } = item {
                         eprintln!("{text}");
                     }
                 }

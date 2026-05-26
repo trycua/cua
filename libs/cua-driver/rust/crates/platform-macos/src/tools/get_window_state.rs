@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use mcp_server::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -58,7 +58,7 @@ impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
         let query = args.opt_str("query");

@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/cua-driver",
     "crates/cua-driver-uia",
-    "crates/mcp-server",
+    "crates/cua-driver-core",
     "crates/platform-macos",
     "crates/platform-windows",
     "crates/platform-linux",

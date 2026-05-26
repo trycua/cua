@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 
 use crate::permissions::status::{
@@ -44,7 +44,7 @@ impl Tool for CheckPermissionsTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         // Default to prompting — same default + rationale as Swift.
         let should_prompt = args.bool_or("prompt", true);
         if should_prompt {

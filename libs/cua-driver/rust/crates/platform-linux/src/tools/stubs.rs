@@ -2,7 +2,7 @@
 //! Schemas match the macOS platform-macos implementations (cross-platform interface).
 
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::Value;
 
 fn not_impl(name: &str) -> ToolResult {
@@ -198,8 +198,8 @@ mod set_enabled_m {
 }
 pub use set_enabled_m::SetAgentCursorEnabledTool;
 
-pub fn build_registry() -> mcp_server::tool::ToolRegistry {
-    let mut r = mcp_server::tool::ToolRegistry::new();
+pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
+    let mut r = cua_driver_core::tool::ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool));

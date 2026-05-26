@@ -2,11 +2,11 @@
 //!
 //! Read paths use AT-SPI via the existing `walk_tree` infrastructure
 //! (`crate::atspi`). `execute_javascript` calls the shared
-//! `mcp_server::cdp` helper — Chromium/Electron must be launched with
+//! `cua_driver_core::cdp` helper — Chromium/Electron must be launched with
 //! `--remote-debugging-port=N` for that to succeed.
 
 use async_trait::async_trait;
-use mcp_server::page::PageBackend;
+use cua_driver_core::page::PageBackend;
 
 pub struct LinuxPageBackend;
 
@@ -124,7 +124,7 @@ impl PageBackend for LinuxPageBackend {
                  `get_text` / `query_dom` for read-only access."
             ),
         };
-        let result = mcp_server::cdp::evaluate(port, javascript, true).await?;
+        let result = cua_driver_core::cdp::evaluate(port, javascript, true).await?;
         Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
 }

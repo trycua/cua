@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 
 pub struct LaunchAppTool;
@@ -79,7 +79,7 @@ impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let bundle_id = args.opt_str("bundle_id");
         let name      = args.opt_str("name");
         let urls: Vec<String> = args.str_array("urls");

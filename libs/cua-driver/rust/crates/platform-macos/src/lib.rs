@@ -31,7 +31,7 @@ pub mod window_change_detector;
 #[cfg(target_os = "macos")]
 pub mod tools;
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 
 /// Register all macOS tools.  For programs that don't restructure `main`
 /// (e.g. test harnesses), the overlay is skipped.

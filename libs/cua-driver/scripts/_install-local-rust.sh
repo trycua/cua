@@ -157,8 +157,27 @@ echo ""
 # --- Prerequisites ------------------------------------------------------
 
 if ! command -v cargo >/dev/null 2>&1; then
+    # Common rustup default install at $HOME/.cargo/bin/cargo — source the
+    # rustup-shipped env script if present so cargo + rustc + the active
+    # toolchain shims all land on PATH for the rest of this script. This
+    # matters because rustup-init writes the PATH-prepending line into the
+    # user's shell rc, which only takes effect in NEW interactive shells —
+    # a fresh post-rustup invocation of `./install-local.sh` in the same
+    # shell as the rustup install would otherwise fail here even though
+    # cargo is on disk.
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck disable=SC1091
+        . "$HOME/.cargo/env"
+    elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+        # Older rustup installs (or non-rustup Cargo installs) may lack
+        # the env script — directly prepend the canonical bin dir.
+        export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+fi
+if ! command -v cargo >/dev/null 2>&1; then
     echo "${RED}Error: cargo not found on PATH.${NORMAL}"
     echo "Install Rust via rustup: https://rustup.rs/"
+    echo "After install, either open a new shell or run: . \$HOME/.cargo/env"
     exit 1
 fi
 

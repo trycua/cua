@@ -51,9 +51,29 @@ no-foreground:
 
 | `dispatch` | Behavior on Windows |
 |---|---|
-| `"background"` (DEFAULT) | PostMessage / UIA path only. If the target's input stack is known to silently drop PostMessage for this event kind (Chromium DOM mouse + key-combos, GTK button widgets), the call returns a structured `background_unavailable` error. **No foreground swap, ever.** |
-| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content or GTK button widgets reliably. Flashes the target visible unless `bring_to_front` was called first. |
+| `"background"` (DEFAULT) | **For pixel clicks**: cua-driver first does a UIA hit-test at the resolved screen position; if the deepest invokable element at that point exposes `InvokePattern`, it's invoked through the accessibility channel (same path as `element_index` mode — no foreground swap, no flash, works on UWP / WinUI3 / Win11 packaged apps). Only if the UIA hit-test misses does the PostMessage(WM_LBUTTONDOWN/UP) fallback run; if that's also known-to-drop for this event kind (Chromium DOM mouse + key-combos, GTK button widgets), the call returns a structured `background_unavailable` error. **No foreground swap, ever.** |
+| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content or GTK button widgets reliably, and the only path for canvas / video / custom-drawn surfaces that have no UIA peer to hit-test against. Flashes the target visible unless `bring_to_front` was called first. |
 | `"auto"` | Historical heuristic: silently falls back to SendInput on known-problematic targets. Opt-in for callers that prefer the old "things just work, sometimes at the cost of focus" behavior. |
+
+### Always try `dispatch:"background"` first
+
+The hit-test fallback above means **`dispatch:"background"` is the correct
+default even when the target is a XAML host whose input stack drops raw
+PostMessage** (UWP Calculator, Win11 Notepad, WinUI3 apps, etc.). cua-driver
+turns the pixel coord into a UIA Invoke at that point and delivers
+through the accessibility channel — no flash, no focus steal. Only
+escalate to `dispatch:"foreground"` when you actually see a
+`background_unavailable` structured error, and only with the
+`bring_to_front` flow described below so the agent pays the flash cost
+once instead of per-call.
+
+Empirical: pixel-clicks via `dispatch:"background"` against the UWP
+Calculator on Win11 (Number-pad buttons + operators) consistently
+resolve through `try_invoke_in_window_at_point` and produce
+`"✅ Performed UIA Invoke at (sx,sy) for pid X."` with zero visible
+flash. `dispatch:"foreground"` on the same coords also works but
+flashes the Calculator window foreground for ~40 ms — it's the
+costlier path; only use it for surfaces with no UIA peer.
 
 `background_unavailable` error shape:
 

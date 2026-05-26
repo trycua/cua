@@ -35,15 +35,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::recording_loader::{load, LoadError};
-use crate::recording_zoom::{
-    generate_zoom_regions, sample_curve, CursorSample, ZoomRegion,
-};
+use crate::recording_zoom::{generate_zoom_regions, ZoomRegion};
 use crate::video::{find_ffmpeg, find_ffprobe};
-
-/// Sampling rate for the zoom curve. ffmpeg reads sendcmd updates at
-/// each timestamp and holds the value until the next one, so 30 Hz
-/// matches the 30 fps capture and yields one update per recorded frame.
-const ZOOM_SAMPLE_HZ: f64 = 30.0;
 
 /// Default zoom magnification.
 const DEFAULT_ZOOM_SCALE: f64 = 2.0;
@@ -106,29 +99,38 @@ pub fn render(
         // Pure transcode path.
         "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p".to_string()
     } else {
-        // Write the sendcmd file alongside the input dir so it's
-        // inspectable after-the-fact. Renamed each render so successive
-        // runs don't stomp each other.
-        let sendcmd_path = input_dir.join("render.sendcmd");
-        write_sendcmd(
-            &sendcmd_path,
+        // **Per-frame** smooth zoom via the `zoompan` filter. Earlier
+        // attempts using `crop`'s `w`/`h` expressions silently failed
+        // because the `crop` filter evaluates w/h **once at init** —
+        // only x/y are evaluated per frame. zoompan was designed for
+        // this exact use case (Ken Burns-style zoom): its `z`, `x`, `y`
+        // expressions all evaluate every output frame.
+        //
+        // Knobs:
+        //   - z (zoom factor): expression from `build_zoom_expression`
+        //   - x, y (top-left of source crop window in input coords):
+        //         expressions from `build_xy_expressions`
+        //   - d=1: produce one output frame per input frame (zoompan's
+        //         default is 90 which is a slideshow assumption)
+        //   - fps=30: target frame rate
+        //   - s=WxH: output size matches input
+        let video_w = traj.metadata.video_width as f64;
+        let video_h = traj.metadata.video_height as f64;
+        let (zoom_expr, x_expr, y_expr) = build_zoompan_expressions(
             &regions,
-            &traj.cursor_samples,
-            in_dur,
-            traj.metadata.video_width as f64,
-            traj.metadata.video_height as f64,
+            video_w,
+            video_h,
             traj.metadata.display_scale_factor,
-        )?;
-        // Filter chain:
-        //   - sendcmd=f=<file>: drives crop@c at timed offsets
-        //   - crop@c: extracts the zoom region (params updated by sendcmd)
-        //   - scale=<outW>:<outH>: stretches the crop back to full frame
-        //   - pad/format: codec-compat tail
+        );
+        let expr_dump = input_dir.join("render.expression.txt");
+        let _ = std::fs::write(
+            &expr_dump,
+            format!("z:\n{zoom_expr}\n\nx:\n{x_expr}\n\ny:\n{y_expr}\n"),
+        );
         format!(
-            "sendcmd=f='{}',crop@c=w={w}:h={h}:x=0:y=0,scale={w}:{h},\
+            "zoompan=z='{z}':x='{x}':y='{y}':d=1:s={w}x{h}:fps=30,\
              pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p",
-            // ffmpeg filter args need backslashes escaped on Windows.
-            sendcmd_path.to_string_lossy().replace('\\', "/").replace(':', "\\:"),
+            z = zoom_expr, x = x_expr, y = y_expr,
             w = traj.metadata.video_width,
             h = traj.metadata.video_height,
         )
@@ -162,51 +164,76 @@ pub fn render(
     })
 }
 
-/// Compose the sendcmd file: at each tick, emit `crop@c w X; crop@c h X;
-/// crop@c x X; crop@c y X;`. ffmpeg holds each value until the next tick.
-fn write_sendcmd(
-    sendcmd_path: &Path,
+/// Build the three `zoompan` expressions (`z`, `x`, `y`) that drive
+/// smooth per-frame zoom. zoompan's `time` variable is seconds-since-
+/// stream-start; per-region branches use it the same way as the old
+/// crop-expression approach.
+///
+/// Per-region math (in seconds — `time` is the stream-presentation
+/// timestamp in seconds; we use `time` because zoompan's `t` variable
+/// is overloaded):
+///
+/// ```text
+///   in_t     = clip((time - START)/ZOOM_IN_SEC,  0, 1)
+///   out_t    = clip((END - time)/ZOOM_OUT_SEC,   0, 1)
+///   phase    = (during zoom-in) in_t → (during hold) 1 → (during zoom-out) out_t
+///   ease     = 1 - (1-phase)^5         // quintic ease-out
+///   z        = 1 + ease * (SCALE - 1)  // zoompan zoom factor
+///   x        = clip(focus_x - iw/(2*z),  0, iw - iw/z)
+///   y        = clip(focus_y - ih/(2*z),  0, ih - ih/z)
+/// ```
+///
+/// zoompan semantics: `z` is the zoom factor (1 = no zoom, 2 = 2×),
+/// `x` / `y` are the top-left of the source crop window in INPUT
+/// coords, source crop size is `iw/z`-by-`ih/z`. Output is always
+/// `s=WxH` (set in the filter args).
+fn build_zoompan_expressions(
     regions: &[ZoomRegion],
-    cursor_samples: &[CursorSample],
-    duration_ms: f64,
     video_w: f64,
     video_h: f64,
     points_to_pixels: f64,
-) -> anyhow::Result<()> {
-    let mut buf = String::new();
-    let tick_ms = 1000.0 / ZOOM_SAMPLE_HZ;
-    let mut t = 0.0;
-    while t <= duration_ms + tick_ms {
-        let (scale, fx_pts, fy_pts) = sample_curve(t, regions, cursor_samples);
-        // Convert cursor-space points → video pixels (Retina factor).
-        let fx_px = fx_pts * points_to_pixels;
-        let fy_px = fy_pts * points_to_pixels;
-        let safe_scale = scale.max(1.0);
-        let crop_w = (video_w / safe_scale).max(2.0);
-        let crop_h = (video_h / safe_scale).max(2.0);
-        let half_w = crop_w / 2.0;
-        let half_h = crop_h / 2.0;
-        // Slide the crop in so we don't run off the edge.
-        let crop_x = (fx_px - half_w).clamp(0.0, video_w - crop_w);
-        let crop_y = (fy_px - half_h).clamp(0.0, video_h - crop_h);
+) -> (String, String, String) {
+    // Outside-region defaults: no zoom, anchored at origin (since the
+    // crop window IS the full frame at z=1).
+    let mut z_expr = "1".to_string();
+    let mut x_expr = "0".to_string();
+    let mut y_expr = "0".to_string();
 
-        // ffmpeg sendcmd timestamp is in seconds.
-        let t_sec = t / 1000.0;
-        // One line per tick with all four updates. Using integer pixel
-        // values keeps ffmpeg's parser happy (its filter args don't
-        // accept arbitrary decimal precision in expression-free mode).
-        buf.push_str(&format!(
-            "{t_sec:.4} crop@c w {cw}, crop@c h {ch}, crop@c x {cx}, crop@c y {cy};\n",
-            cw = crop_w.round() as i64,
-            ch = crop_h.round() as i64,
-            cx = crop_x.round() as i64,
-            cy = crop_y.round() as i64,
-        ));
-        t += tick_ms;
+    // Iterate in REVERSE — outer `if` covers the FIRST region, nested
+    // `else` branches cover later ones, final fallthrough = no-zoom.
+    for region in regions.iter().rev() {
+        let start_s = region.start_ms / 1000.0;
+        let end_s = region.end_ms / 1000.0;
+        let (zoom_in_ms, zoom_out_ms) = region.effective_durations();
+        let zoom_in_s = (zoom_in_ms / 1000.0).max(1e-3);
+        let zoom_out_s = (zoom_out_ms / 1000.0).max(1e-3);
+        let in_end_s = start_s + zoom_in_s;
+        let out_start_s = end_s - zoom_out_s;
+
+        // Focus in pixels.
+        let fx_px = region.focus_x * points_to_pixels;
+        let fy_px = region.focus_y * points_to_pixels;
+        let peak_scale = region.scale;
+
+        // Phase + ease + scale_at_t expressed in zoompan's `time` var.
+        let in_t  = format!("max(0,min(1,(time-{start_s})/{zoom_in_s}))");
+        let out_t = format!("max(0,min(1,({end_s}-time)/{zoom_out_s}))");
+        let phase = format!(
+            "if(lt(time,{in_end_s}),{in_t},if(gt(time,{out_start_s}),{out_t},1))");
+        let ease = format!("(1-pow(1-({phase}),5))");
+        let region_z = format!("(1+{ease}*({peak_scale}-1))");
+        // x = clip(focus - iw/(2*z), 0, iw - iw/z)
+        let region_x = format!(
+            "max(0,min({video_w}-{video_w}/{region_z},{fx_px}-{video_w}/(2*{region_z})))");
+        let region_y = format!(
+            "max(0,min({video_h}-{video_h}/{region_z},{fy_px}-{video_h}/(2*{region_z})))");
+
+        z_expr = format!("if(between(time,{start_s},{end_s}),{region_z},{z_expr})");
+        x_expr = format!("if(between(time,{start_s},{end_s}),{region_x},{x_expr})");
+        y_expr = format!("if(between(time,{start_s},{end_s}),{region_y},{y_expr})");
     }
 
-    std::fs::write(sendcmd_path, buf.as_bytes())?;
-    Ok(())
+    (z_expr, x_expr, y_expr)
 }
 
 /// Use ffprobe to get the input video duration in ms. Falls back to 0

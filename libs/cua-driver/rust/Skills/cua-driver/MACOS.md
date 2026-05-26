@@ -172,6 +172,33 @@ genuinely needs frontmost state, fall through to the activate
 fallback. Always name the focus steal in your response ("I'll
 briefly bring Chrome to the front because …").
 
+### Verifying actions: prefer `som` over `ax`
+
+When verifying that an action **landed** (a click registered, a text
+input took, a menu pick changed selection), default to `get_window_state({
+capture_mode: "som"})`. `"ax"` is cheaper (no PNG in the response), but
+the AX tree **lies** for two common surface types:
+
+- **Canvas-backed editors** — Monaco (VSCode, Cursor), xterm, Figma,
+  WebGL apps. The AX tree shows the surrounding chrome but reports
+  nothing for the canvas content. A snapshot can look unchanged after a
+  successful text edit.
+- **Catalyst / iOS-on-Mac text views** — see "Known text-input limits"
+  above. The AX `AXValue` can lag the rendered pixels, or report the
+  placeholder string when the field is actually populated.
+
+`"som"` returns both the AX tree AND a PNG screenshot in a single call.
+Pay the extra tokens; the screenshot is the ground truth for both of
+the cases above, and you avoid the "type → AX-check succeeds → think
+the action landed → discover the lie three calls later" loop.
+
+Rule of thumb:
+- **`som`** — verifying an action landed (default).
+- **`ax`** — cheap element lookup before a click (you don't need the
+  pixels, you need the `[N]` index).
+- **`vision`** — pure visual inspection (e.g. asking the model to read
+  a chart). Skip the AX walk entirely.
+
 ### Self-check pattern
 
 Before every `Bash` call whose command line touches any macOS app
@@ -292,6 +319,38 @@ There is no backgrounded path that reaches these apps today.
   every non-HID-tap synthesis path. For context menus on
   AX-addressable elements (links, buttons, toolbar items), use
   `right_click({pid, element_index})` instead.
+
+### Known text-input limits (Catalyst + Electron)
+
+`type_text` returns `✅ Inserted N char(s)` against **Catalyst** apps
+(WhatsApp, Reminders, Notes-via-Catalyst, anything in `/Applications`
+that's actually `iOSAppOnMac.app`) and **Electron** apps (VSCode's
+Monaco editor, Slack composer, Discord, Linear) but the characters
+don't reach the rendered text view. The AX path (`AXSetAttribute` on
+`kAXSelectedText`) reports success because the API call succeeds on
+the AX shim, but the UIKit/Chromium text view that owns the actual
+input doesn't observe the AX value change. The CGEvent fallback path
+runs, but the renderer's focused-process check drops the keystrokes
+when the app isn't WindowServer-frontmost.
+
+Workaround — clipboard + windowed `Cmd+V`:
+
+1. Put the string on the macOS clipboard externally (e.g. shell
+   `pbcopy`, or `NSPasteboard.general.setString:forType:` from your
+   own helper).
+2. Dispatch `hotkey({pid, window_id, keys: ["cmd", "v"]})`. **The
+   `window_id` matters**: the NSMenu key-equivalent path briefly
+   foregrounds the app via `SLPSSetFrontProcessWithOptions(kCPSNoWindows)`
+   for ~1 ms — enough for `paste:` to deliver — then restores prior
+   frontmost. Without `window_id`, the auth-message envelope path
+   runs and hits the same drop as `type_text`.
+3. Verify with a `get_window_state({capture_mode: "som"})` snapshot.
+   Both the AX value and the rendered pixels should show the pasted
+   text. (See the verify-with-som pattern below.)
+
+This costs one round-trip of clipboard pollution. Restore the user's
+prior clipboard if your workflow cares — store via `pbpaste` before,
+write back via `pbcopy` after.
 
 ## Navigating native menu bars (AXMenuBar)
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # macOS cua-driver per-tool smoke test.
 #
-# Spawns the AppKit harness app from libs/cua-driver/test-harness/apps/macos,
+# Spawns the built AppKit harness app from libs/cua-driver/rust/test-apps/harness-appkit
+# (source lives under libs/cua-driver/test-harness/apps/macos),
 # runs every cua-driver tool against it with sensible JSON args, and reports
 # PASS / FAIL / SKIP in a sorted table.
 #

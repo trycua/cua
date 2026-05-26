@@ -9,7 +9,7 @@
     "build": "electron-builder --win portable --x64"
   },
   "devDependencies": {
-    "electron": "31.6.0",
+    "electron": "39.8.5",
     "electron-builder": "25.0.5"
   },
   "build": {

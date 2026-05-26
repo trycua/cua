@@ -7,11 +7,19 @@ import Foundation
 /// Result of an SSH command execution
 public struct SSHResult: Sendable {
     public let exitCode: Int32
+    public let outputData: Data
     public let output: String
 
     public init(exitCode: Int32, output: String) {
         self.exitCode = exitCode
+        self.outputData = Data(output.utf8)
         self.output = output
+    }
+
+    public init(exitCode: Int32, outputData: Data) {
+        self.exitCode = exitCode
+        self.outputData = outputData
+        self.output = String(decoding: outputData, as: UTF8.self)
     }
 }
 
@@ -310,13 +318,13 @@ private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendabl
         // Complete when we have exit status (some servers close channel before sending exit status)
         if let status = exitStatus {
             resultPromise = nil
-            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
-            promise.succeed(SSHResult(exitCode: status, output: output))
+            let outputData = outputBuffer.readData(length: outputBuffer.readableBytes) ?? Data()
+            promise.succeed(SSHResult(exitCode: status, outputData: outputData))
         } else if channelClosed {
             // Channel closed without exit status - assume success with exit code 0
             resultPromise = nil
-            let output = outputBuffer.readString(length: outputBuffer.readableBytes) ?? ""
-            promise.succeed(SSHResult(exitCode: 0, output: output))
+            let outputData = outputBuffer.readData(length: outputBuffer.readableBytes) ?? Data()
+            promise.succeed(SSHResult(exitCode: 0, outputData: outputData))
         }
     }
 

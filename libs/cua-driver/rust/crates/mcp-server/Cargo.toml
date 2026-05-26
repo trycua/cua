@@ -15,3 +15,9 @@ async-trait = "0.1"
 # helpers extracted from `platform-{macos,windows,linux}/src/capture.rs` so
 # all three platforms call the same code path.
 image = { workspace = true }
+
+# Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
+# during video recording. Same version as platform-windows uses to avoid
+# a duplicate crate version.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

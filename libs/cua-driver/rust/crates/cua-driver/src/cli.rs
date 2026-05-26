@@ -1065,6 +1065,14 @@ pub fn run_call(
 /// Requires a running daemon (`cua-driver serve`) because recording
 /// state lives in-process.
 pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>) {
+    // `render` is pure file-to-file work that doesn't need the daemon;
+    // dispatch it before the daemon-running check so it works without
+    // a running `cua-driver serve`.
+    if subcommand == "render" {
+        run_recording_render(args);
+        return;
+    }
+
     let socket_path = socket
         .map(str::to_owned)
         .unwrap_or_else(crate::serve::default_socket_path);
@@ -1183,8 +1191,71 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         }
 
         other => {
-            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status");
+            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <dir> --output <out.mp4>");
             process::exit(64);
+        }
+    }
+}
+
+/// `cua-driver recording render <input-dir> <out.mp4> [--no-zoom] [--scale N]`
+/// Pure file-to-file work — does NOT go through the daemon.
+///
+/// Note on flag parsing: the global cua-driver CLI parser strips
+/// recognised flags before this subcommand sees them, leaving only
+/// positionals. So instead of `--output <out>` (which the parser
+/// would consume and lose) we accept the output path as the second
+/// positional. `--no-zoom` and `--scale N` survive because their
+/// values are inline (no separate value token).
+fn run_recording_render(args: &[String]) {
+    // First positional = input dir, second positional = output mp4.
+    let positionals: Vec<&String> = args.iter().filter(|s| !s.starts_with("--")).collect();
+    let input_dir = match positionals.get(0) {
+        Some(s) if !s.is_empty() => std::path::PathBuf::from(s),
+        _ => {
+            eprintln!("Usage: cua-driver recording render <input-dir> <out.mp4> [--no-zoom] [--scale N]");
+            process::exit(64);
+        }
+    };
+    let output_path = match positionals.get(1) {
+        Some(s) if !s.is_empty() => std::path::PathBuf::from(s),
+        _ => {
+            eprintln!("Usage: cua-driver recording render <input-dir> <out.mp4> [--no-zoom] [--scale N]");
+            eprintln!("(second positional argument is the output path)");
+            process::exit(64);
+        }
+    };
+    let mut no_zoom = false;
+    let mut scale: f64 = 2.0;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--no-zoom" => no_zoom = true,
+            "--scale" => {
+                if let Some(v) = iter.next() {
+                    if let Ok(f) = v.parse::<f64>() { scale = f; }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let opts = mcp_server::recording_render::RenderOptions {
+        no_zoom,
+        default_scale: scale,
+    };
+    println!("Rendering {} -> {}{}",
+        input_dir.display(),
+        output_path.display(),
+        if no_zoom { " (no-zoom baseline)" } else { "" });
+    match mcp_server::recording_render::render(&input_dir, &output_path, &opts) {
+        Ok(res) => {
+            println!("✅ Wrote {}", res.output_path.display());
+            println!("   input_duration_ms: {:.0}", res.input_duration_ms);
+            println!("   zoom_region_count: {}", res.zoom_region_count);
+        }
+        Err(e) => {
+            eprintln!("Render failed: {e}");
+            process::exit(1);
         }
     }
 }

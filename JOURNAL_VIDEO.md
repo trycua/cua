@@ -235,3 +235,129 @@ actually call start_recording and inspect `last_error`.
 **Committed locally on branch `cua-driver-rs-recording-rename-video`.**
 No PR per instructions.
 
+---
+
+## Phase 2 — zoom-on-click renderer (later, after the user noticed it
+was missing)
+
+The user looked at the captured mp4 and immediately spotted "I don't
+see any zoom in/out effect like we had in swift." Right — Swift had a
+two-stage pipeline (capture + render) and I'd only ported the capture
+half. Phase 2 ports the render.
+
+### Why mcp-server (not cua-driver) — quick layering note
+
+Mirrors the Swift layout 1:1:
+- `mcp-server` = the **library** (math, loader, renderer, types)
+- `cua-driver` = the **binary** (CLI subcommand wiring, daemon)
+
+Three reasons the renderer lives in the library:
+1. It reads what the `RecordingSession` writes — refactors stay in one
+   place.
+2. A future MCP tool (`render_recording`) can call it without a new dep.
+3. The CLI stays thin: parse args → call library function → print result.
+
+### What landed
+
+| Concern | Rust | Swift it ports |
+|---|---|---|
+| Zoom math (clamp01, lerp, cubic_bezier, easeOutExpo) + types | `recording_zoom.rs` | `Zoom/ZoomMath.swift` + types |
+| Zoom region generation + curve sampling | `recording_zoom.rs::generate_zoom_regions` / `sample_curve` | `Zoom/ZoomRegion.swift` |
+| Cursor sample lookup (binary-search + lerp) | `recording_zoom.rs::position_at` | `Zoom/CursorTelemetry.swift` |
+| Action span generation + variable-speed PTS remap | `recording_zoom.rs::generate_action_spans` / `map_pts` | `Zoom/ActionSpan.swift` |
+| Cross-platform cursor sampler (30 Hz mouse poll) | `cursor_sampler.rs` | `Recording/CursorSampler.swift` |
+| Trajectory loader (session.json + cursor.jsonl + turn-*/action.json) | `recording_loader.rs` | `Render/TrajectoryLoader.swift` |
+| Renderer (build ffmpeg filter graph, run it) | `recording_render.rs` | `Render/RecordingRenderer.swift` |
+| CLI subcommand | `cua-driver/src/cli.rs::run_recording_render` | `RecordingRenderCommand.swift` |
+
+9 unit tests in `recording_zoom` cover the math (cubic bezier endpoint
+behavior, click → region mapping, chained-merge logic, span PTS
+monotonicity, cursor lerp at endpoints + midpoint).
+
+### Pivotal design choice: sendcmd file instead of giant expression
+
+The "obvious" approach is to fold the whole zoom timeline into one big
+`crop=…:if(between(t,t1,t2),…)` filter expression. ffmpeg's parser has
+practical depth limits and debugging a stringified curve is a nightmare.
+
+Cleaner: pre-compute per-frame `(scale, focus_x, focus_y)` in Rust,
+write timed `crop@c w X; crop@c h Y; crop@c x …; crop@c y …;` updates
+into a sendcmd file at 30 Hz (matching capture framerate), and let
+ffmpeg apply them in sequence. The sendcmd file lands as
+`<input-dir>/render.sendcmd` for verification.
+
+### Cross-platform cursor sampler
+
+`cursor_sampler.rs` runs a background thread at 30 Hz polling the OS
+mouse position, writes `{t_ms, x, y}` JSON lines to `cursor.jsonl`.
+Per-platform polls:
+- **Windows:** `GetCursorPos` via the `windows` crate
+- **macOS:** `CGEventCreate` + `CGEventGetLocation` via inline extern "C"
+- **Linux X11:** stub (returns None) — needs the `x11` crate, deferred
+- **Linux Wayland:** no portable API exists; renderer falls back to
+  click-point-only zoom (no smooth cursor pan between actions)
+
+### Coordinate recovery for element-indexed clicks
+
+A gotcha: the current Rust `RecordingSession` doesn't write `click_point`
+for element-indexed clicks — only for pixel-clicks. That made the first
+render produce zero zoom regions (clicks looked coord-less to the
+loader). The Swift impl writes click_point for both paths; that's a
+follow-up for the recording session.
+
+Quick fix: parse the screen coords out of `result_summary` — every UIA
+Invoke surfaces `"...(screen (X,Y))..."` in the result text, which the
+loader's `parse_screen_from_summary` peels back to numbers. Functional
+parity until the recorder is updated to write click_point directly.
+
+### Verified end-to-end
+
+Fresh capture: 5 clicks (launch + 4 calc buttons), 621 cursor samples
+in cursor.jsonl over 20.8 s.
+
+Render: `cua-driver recording render <dir> <out.mp4>` →
+```
+✅ Wrote C:/Users/cuademo/Desktop/calc-demo-rendered.mp4
+   input_duration_ms: 20667
+   zoom_region_count: 2
+```
+
+(4 clicks → 2 chained regions because adjacent clicks within 1.5 s
+merge into pan-between-foci regions; matches Swift behavior.)
+
+Visual verification by frame extraction at t=1s (no zoom — full
+desktop) and t=9s (peak zoom — calc's number row enlarged, agent
+cursor visible on the "5" button about to be clicked). The
+`render.sendcmd` file shows the crop window collapsing from 1512×950
+at t=0 down to ~784×492 around the click moments (≈2× zoom centered
+on click point), then easing back.
+
+### Now done
+
+- ✅ Phase 1 (capture): tool rename, default-on video, ffmpeg subprocess
+- ✅ Phase 2 (render): cursor sampler, loader, zoom math, sendcmd-driven
+     renderer, CLI subcommand
+- ✅ Cross-platform by construction: only OS deps are
+     - the `windows` crate for Windows mouse poll (already used elsewhere)
+     - extern "C" CGEventCreate/CGEventGetLocation on macOS
+     - ffmpeg subprocess (cross-platform binary)
+
+### Still not done
+
+- `RecordingSession` should write `click_point` for element-indexed
+  clicks (currently only pixel-clicks get it). Workaround: loader
+  parses screen coords out of `result_summary`. Real fix is a small
+  edit in `recording.rs::write_turn`.
+- Linux X11 cursor polling stub — needs `x11` crate. Renderer
+  degrades gracefully to no cursor data when stub returns nothing.
+- Linux Wayland cursor polling — no portable API. Hard requirement to
+  ship Wayland cursor data is "use libei" which is much bigger work.
+- macOS / Linux end-to-end render not validated from this Windows host.
+  Math is cross-platform pure-Rust so it should work; ffmpeg subprocess
+  args are platform-keyed and validated for input device only (not
+  output, which is the same everywhere).
+- The 4-click → 2-region merge is correct per the Swift algorithm but
+  could surprise users who expect 1 region per click. Documenting in
+  the CLI help would be a small follow-up.
+
+

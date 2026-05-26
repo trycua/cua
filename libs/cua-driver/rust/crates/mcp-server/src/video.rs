@@ -201,10 +201,26 @@ impl VideoRecorder {
     }
 }
 
+/// Locate `ffprobe` using the same PATH + package-manager fallback the
+/// `find_ffmpeg` lookup uses. ffprobe ships next to ffmpeg in every
+/// build I've seen, so we just transform the resolved ffmpeg path.
+pub fn find_ffprobe() -> Option<PathBuf> {
+    let ffmpeg = find_ffmpeg()?;
+    // PATH lookup form returns just "ffmpeg" — assume "ffprobe" is on
+    // the same PATH.
+    if ffmpeg.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
+        return Some(PathBuf::from("ffprobe"));
+    }
+    // File-path form: swap the filename.
+    let mut p = ffmpeg.clone();
+    p.set_file_name(if cfg!(target_os = "windows") { "ffprobe.exe" } else { "ffprobe" });
+    if p.exists() { Some(p) } else { None }
+}
+
 /// Locate the ffmpeg binary. Tries `ffmpeg` (PATH lookup) first, then a
 /// few well-known package-manager install paths so a freshly winget /
 /// brew / apt-installed ffmpeg works without a shell restart.
-fn find_ffmpeg() -> Option<PathBuf> {
+pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
     // 1. On PATH via the OS resolver.
     if Command::new("ffmpeg").arg("-version")
         .stdout(Stdio::null()).stderr(Stdio::null())

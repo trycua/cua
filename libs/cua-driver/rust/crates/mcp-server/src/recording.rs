@@ -13,8 +13,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::time::Instant;
+
 use serde_json::Value;
 
+use crate::cursor_sampler::CursorSampler;
 use crate::video::{VideoMetadata, VideoRecorder};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
@@ -56,6 +59,9 @@ struct RecordingInner {
     output_dir: Option<PathBuf>,
     next_turn: u32,
     session_start_ms: u64,
+    /// Monotonic clock anchor for the cursor sampler so its `t_ms`
+    /// matches the action-timeline anchor in `action.json`.
+    session_monotonic_start: Option<Instant>,
     last_error: Option<String>,
     /// Live ffmpeg subprocess when video capture is active. Recreated
     /// per session.
@@ -64,6 +70,14 @@ struct RecordingInner {
     /// `current_state()` so callers can read the finalized video info
     /// after stopping.
     last_video: Option<VideoMetadata>,
+    /// Cursor sampler thread. Runs alongside video so the renderer has
+    /// per-frame cursor positions for smooth pan-between-clicks
+    /// behavior. Stopped on `stop()` along with video.
+    cursor: Option<CursorSampler>,
+    /// Sample count from the last finalized cursor sampler; exposed in
+    /// `session.json` after stop so the renderer can confirm the
+    /// sampler ran.
+    last_cursor_samples: usize,
 }
 
 /// Snapshot of the current recording state (cheap to clone).
@@ -88,9 +102,12 @@ impl RecordingSession {
                 output_dir: None,
                 next_turn: 1,
                 session_start_ms: 0,
+                session_monotonic_start: None,
                 last_error: None,
                 video: None,
                 last_video: None,
+                cursor: None,
+                last_cursor_samples: 0,
             }),
         }
     }
@@ -111,9 +128,17 @@ impl RecordingSession {
         if let Some(rec) = inner.video.take() {
             let _ = rec.stop();
         }
+        if let Some(cur) = inner.cursor.take() {
+            let _ = cur.stop();
+        }
 
         let dir = expand_tilde(output_dir);
         std::fs::create_dir_all(&dir)?;
+
+        // Single monotonic anchor shared by video, cursor sampler, and
+        // per-turn `t_ms_from_session_start` math in `record()` — so all
+        // three timelines line up at the millisecond.
+        let monotonic_start = Instant::now();
 
         let mut video_present = false;
         let mut video_error: Option<String> = None;
@@ -133,6 +158,21 @@ impl RecordingSession {
             }
         }
 
+        // Cursor sampler always runs alongside video. Cheap (30 Hz
+        // GetCursorPos / CGEventGetLocation poll) and the renderer
+        // wants the data for smooth pan-between-clicks. When video is
+        // off (record_video=false), the sampler is still useful for
+        // post-hoc analysis, so we run it anyway — the cost is one
+        // background thread + a small jsonl file.
+        let cursor_path = dir.join("cursor.jsonl");
+        match CursorSampler::start(cursor_path, monotonic_start) {
+            Ok(s) => { inner.cursor = Some(s); }
+            Err(e) => {
+                tracing::warn!(target: "recording",
+                    "Cursor sampler failed to start: {e}");
+            }
+        }
+
         // Write initial session.json — final video metadata is rewritten on
         // stop. We mark `present` based on whether ffmpeg actually started,
         // not just whether the caller asked for video.
@@ -140,7 +180,7 @@ impl RecordingSession {
             "schema_version": 1,
             "started_at_monotonic_ms": now_ms(),
             "video": video_session_payload(video_present, video_error.as_deref(), None),
-            "cursor": { "present": false }
+            "cursor": { "present": inner.cursor.is_some(), "sample_count": 0 }
         });
         let _ = write_json_atomic(
             &dir.join("session.json"),
@@ -151,8 +191,10 @@ impl RecordingSession {
         inner.output_dir = Some(dir);
         inner.next_turn = 1;
         inner.session_start_ms = now_ms();
+        inner.session_monotonic_start = Some(monotonic_start);
         inner.last_error = video_error;
         inner.last_video = None;
+        inner.last_cursor_samples = 0;
         Ok(())
     }
 
@@ -167,26 +209,33 @@ impl RecordingSession {
         }
         let dir = inner.output_dir.clone();
         let video_meta = inner.video.take().and_then(|rec| rec.stop().ok());
+        let cursor_samples = inner.cursor.take().map(|c| c.stop()).unwrap_or(0);
 
         inner.enabled = false;
         inner.output_dir = None;
         inner.next_turn = 1;
         inner.session_start_ms = 0;
-        // Don't clobber a video-start error if it's still relevant — but
-        // when the stop completed cleanly, clear it.
+        inner.session_monotonic_start = None;
         if video_meta.is_some() {
             inner.last_error = None;
         }
         inner.last_video = video_meta.clone();
+        inner.last_cursor_samples = cursor_samples;
 
-        // Rewrite session.json with final video metadata so the on-disk
-        // record reflects what actually got captured.
-        if let (Some(dir), Some(meta)) = (dir, video_meta) {
+        // Rewrite session.json with final video metadata + cursor count
+        // so the renderer (and any external analysis) sees what actually
+        // landed.
+        if let Some(dir) = dir {
+            let video_block = if let Some(ref m) = video_meta {
+                video_session_payload(true, None, Some(m))
+            } else {
+                video_session_payload(false, None, None)
+            };
             let session_payload = serde_json::json!({
                 "schema_version": 1,
                 "started_at_monotonic_ms": now_ms(),
-                "video": video_session_payload(true, None, Some(&meta)),
-                "cursor": { "present": false }
+                "video": video_block,
+                "cursor": { "present": cursor_samples > 0, "sample_count": cursor_samples }
             });
             let _ = write_json_atomic(
                 &dir.join("session.json"),

@@ -1,11 +1,11 @@
 //! Integration test against the CuaTestHarness.AppKit Swift app.
 //!
 //! Mirror of `harness_wpf_test.rs` for the macOS AppKit hosting pattern.
-//! The harness app lives at `libs/cua-driver/test-harness/CuaTestHarness.AppKit`
+//! The harness app lives at `libs/cua-driver/test-harness/apps/macos/appkit`
 //! and is published into `libs/cua-driver/rust/test-apps/harness-appkit/`
-//! by `libs/cua-driver/test-harness/build.sh`.
+//! by `libs/cua-driver/test-harness/build/macos.sh`.
 //!
-//! Scenarios (see `libs/cua-driver/test-harness/scenarios/scenarios.json`
+//! Scenarios (see `libs/cua-driver/test-harness/shared/scenarios.json`
 //! `appkit` section):
 //!   - counter        : NSButton AXPress invocation increments counter
 //!   - text_body      : get_window_state extracts known marker text
@@ -14,7 +14,7 @@
 //!   - scroll_target  : scroll updates VerticalOffset label
 //!   - ns_menubar     : main menubar item enumerable (Mac-specific)
 //!
-//! Run locally (after `libs/cua-driver/test-harness/build.sh`):
+//! Run locally (after `libs/cua-driver/test-harness/build/macos.sh`):
 //!   cargo test --test harness_appkit_test -- --ignored --nocapture
 //!
 //! Tests are `#[ignore]` so they don't run in plain `cargo test`.
@@ -98,7 +98,7 @@ impl Harness {
         let exe = harness_exe();
         if !exe.exists() {
             eprintln!("harness exe not found at {exe:?} \
-                — run libs/cua-driver/test-harness/build.sh first");
+                — run libs/cua-driver/test-harness/build/macos.sh first");
             return None;
         }
         // Launch the binary directly (not via `open`) so we control the pid
@@ -371,7 +371,7 @@ fn harness_appkit_type_text_keystroke() {
 /// changes (it mirrors the clip view's documentVisibleRect.origin.y).
 ///
 /// **Status:** EXPECTED-FAIL today (see notes below). The `scroll` tool
-/// itself works at the API level — `scripts/mac-smoke.sh` confirms it
+/// itself works at the API level — `libs/cua-driver/test-harness/smoke/macos.sh` confirms it
 /// PASSes against the same harness window. What this test would
 /// verify additionally is that the scroll event actually moved the
 /// scroll view's bounds (state-change observation, not just API

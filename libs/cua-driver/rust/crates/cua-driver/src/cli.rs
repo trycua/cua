@@ -1059,7 +1059,8 @@ pub fn run_call(
 }
 
 /// `cua-driver recording <start|stop|status>` — wrapper around
-/// `set_recording` / `get_recording_state` tools on the running daemon.
+/// `start_recording` / `stop_recording` / `get_recording_state` tools
+/// on the running daemon.
 ///
 /// Requires a running daemon (`cua-driver serve`) because recording
 /// state lives in-process.
@@ -1102,9 +1103,8 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
             let req = crate::serve::DaemonRequest {
                 method: "call".into(),
-                name: Some("set_recording".into()),
+                name: Some("start_recording".into()),
                 args: Some(serde_json::json!({
-                    "enabled": true,
                     "output_dir": output_dir
                 })),
             };
@@ -1138,8 +1138,8 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         "stop" => {
             let req = crate::serve::DaemonRequest {
                 method: "call".into(),
-                name: Some("set_recording".into()),
-                args: Some(serde_json::json!({ "enabled": false })),
+                name: Some("stop_recording".into()),
+                args: Some(serde_json::json!({})),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),

@@ -21,5 +21,6 @@ pub mod server;
 pub mod text_sanitize;
 pub mod tool;
 pub mod tool_args;
+pub mod video;
 
 pub use recording::RecordingSession;

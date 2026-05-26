@@ -324,7 +324,7 @@ fn test_all_expected_tools_registered() {
         "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
         "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
         "get_accessibility_tree",
-        "set_recording", "get_recording_state", "replay_trajectory",
+        "start_recording", "stop_recording", "get_recording_state", "replay_trajectory",
         "page",
     ];
     for name in &expected {
@@ -754,10 +754,10 @@ fn test_recording_session() {
     // Enable recording.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":true,"output_dir":tmp_str}}
+        "params":{"name":"start_recording","arguments":{"output_dir":tmp_str,"record_video":false}}
     }));
     let resp = read_response(&mut stdout);
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "set_recording failed: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "start_recording failed: {resp:?}");
     assert!(resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(false));
 
     // Invoke move_cursor — should be recorded.
@@ -779,7 +779,7 @@ fn test_recording_session() {
     // Disable recording.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":false}}
+        "params":{"name":"stop_recording","arguments":{}}
     }));
     let resp = read_response(&mut stdout);
     assert!(!resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(true));
@@ -842,10 +842,10 @@ fn test_recording_screenshot_capture() {
     // Enable recording.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":true,"output_dir":tmp_str}}
+        "params":{"name":"start_recording","arguments":{"output_dir":tmp_str,"record_video":false}}
     }));
     let resp = read_response(&mut stdout);
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "set_recording failed: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "start_recording failed: {resp:?}");
 
     // Invoke click (non-read-only) with window_id + pid — recording should capture screenshot.
     send_request(stdin, &serde_json::json!({
@@ -857,7 +857,7 @@ fn test_recording_screenshot_capture() {
     // Disable recording.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":false}}
+        "params":{"name":"stop_recording","arguments":{}}
     }));
     read_response(&mut stdout);
     child.kill().ok();
@@ -1930,12 +1930,18 @@ fn test_zoom_from_zoom_click_round_trip() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn test_set_recording_video_experimental_accepted() {
-    //! video_experimental is a valid schema parameter — must be accepted without error.
+fn test_start_recording_record_video_flag_accepted() {
+    //! `record_video` is the new on/off flag (replaces the old
+    //! `video_experimental`). Default is true. This test passes
+    //! `record_video: false` to bypass the ffmpeg dependency in CI;
+    //! we only verify that the schema accepts the call and the
+    //! session enters the enabled state. Full video lifecycle is
+    //! covered by the manual demo + the per-platform smoke when
+    //! ffmpeg is installed.
     let binary = binary_path();
     if !binary.exists() { return; }
 
-    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-videxp-{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-recvid-{}", std::process::id()));
     let tmp_str = tmp_dir.to_string_lossy().to_string();
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
@@ -1948,24 +1954,20 @@ fn test_set_recording_video_experimental_accepted() {
     send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     read_response(&mut stdout);
 
-    // Enable recording with video_experimental=true — must not return a schema error.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{
-            "enabled": true, "output_dir": tmp_str, "video_experimental": true
+        "params":{"name":"start_recording","arguments":{
+            "output_dir": tmp_str, "record_video": false
         }}
     }));
     let resp = read_response(&mut stdout);
-    // Must not be a JSON-RPC protocol error.
     assert!(resp["error"].is_null(), "Expected no JSON-RPC error, got: {resp:?}");
-    // Tool result may note the feature is not implemented, but must not be a schema validation error.
     let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
-    assert!(!is_err, "set_recording with video_experimental should succeed (note-only): {resp:?}");
+    assert!(!is_err, "start_recording with record_video:false should succeed: {resp:?}");
 
-    // Disable recording.
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":false}}
+        "params":{"name":"stop_recording","arguments":{}}
     }));
     read_response(&mut stdout);
     child.kill().ok();
@@ -2126,7 +2128,7 @@ fn test_all_expected_tools_registered_windows() {
         "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
         "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
         "get_accessibility_tree",
-        "set_recording", "get_recording_state", "replay_trajectory",
+        "start_recording", "stop_recording", "get_recording_state", "replay_trajectory",
         "page",
     ];
     for name in &expected {
@@ -2925,10 +2927,10 @@ fn test_recording_session_windows() {
 
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":true,"output_dir":tmp_str}}
+        "params":{"name":"start_recording","arguments":{"output_dir":tmp_str,"record_video":false}}
     }));
     let resp = read_response(&mut stdout);
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "set_recording failed: {resp:?}");
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "start_recording failed: {resp:?}");
     assert!(resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(false));
 
     send_request(stdin, &serde_json::json!({
@@ -2947,7 +2949,7 @@ fn test_recording_session_windows() {
 
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":false}}
+        "params":{"name":"stop_recording","arguments":{}}
     }));
     let resp = read_response(&mut stdout);
     assert!(!resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(true));
@@ -3155,11 +3157,13 @@ fn test_zoom_from_zoom_click_round_trip_windows() {
 
 #[test]
 #[cfg(target_os = "windows")]
-fn test_set_recording_video_experimental_accepted_windows() {
+fn test_start_recording_record_video_flag_accepted_windows() {
+    //! `record_video` is the new on/off flag. Pass false here so the test
+    //! doesn't depend on ffmpeg being installed in CI.
     let binary = binary_path_windows();
     if !binary.exists() { return; }
 
-    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-videxp-{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-recvid-{}", std::process::id()));
     let tmp_str = tmp_dir.to_string_lossy().to_string();
     std::fs::create_dir_all(&tmp_dir).unwrap();
 
@@ -3174,18 +3178,18 @@ fn test_set_recording_video_experimental_accepted_windows() {
 
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{
-            "enabled":true,"output_dir":tmp_str,"video_experimental":true
+        "params":{"name":"start_recording","arguments":{
+            "output_dir":tmp_str,"record_video":false
         }}
     }));
     let resp = read_response(&mut stdout);
     assert!(resp["error"].is_null(), "Expected no JSON-RPC error: {resp:?}");
     assert!(!resp["result"]["isError"].as_bool().unwrap_or(false),
-        "set_recording with video_experimental should succeed: {resp:?}");
+        "start_recording with record_video:false should succeed: {resp:?}");
 
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"set_recording","arguments":{"enabled":false}}
+        "params":{"name":"stop_recording","arguments":{}}
     }));
     read_response(&mut stdout);
     child.kill().ok();

@@ -10,7 +10,8 @@ use crate::{
     protocol::{Content, ToolResult},
     recording::{now_ms, RecordingSession},
     recording_tools::{
-        GetRecordingStateTool, ReplayTrajectoryTool, SetRecordingTool,
+        GetRecordingStateTool, ReplayTrajectoryTool, StartRecordingTool,
+        StopRecordingTool,
         init_replay_registry,
     },
 };
@@ -74,11 +75,12 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
-    /// Register the three platform-independent recording/replay tools.
+    /// Register the four platform-independent recording/replay tools.
     /// Call this after all platform tools have been registered.
     pub fn register_recording_tools(&mut self) {
         let session = self.recording.clone();
-        self.register(Box::new(SetRecordingTool::new(session.clone())));
+        self.register(Box::new(StartRecordingTool::new(session.clone())));
+        self.register(Box::new(StopRecordingTool::new(session.clone())));
         self.register(Box::new(GetRecordingStateTool::new(session)));
         self.register(Box::new(ReplayTrajectoryTool));
     }
@@ -139,13 +141,16 @@ impl ToolRegistry {
         // as a distinct call site.
         let name = resolved_name;
 
-        // Record non-read-only, non-recording tool calls.
+        // Record non-read-only, non-recording tool calls. The recording-
+        // control tools themselves are excluded so the recorded turn
+        // stream stays the actual user-action sequence (not the meta
+        // start/stop frames).
         let should_record = self.tools.get(name)
             .map(|t| !t.def().read_only)
             .unwrap_or(false)
             && !matches!(
                 name,
-                "set_recording" | "get_recording_state" | "replay_trajectory"
+                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
 
         if should_record {

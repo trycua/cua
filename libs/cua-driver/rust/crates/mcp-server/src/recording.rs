@@ -15,6 +15,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+use crate::video::{VideoMetadata, VideoRecorder};
+
 // ── Platform screenshot callback ─────────────────────────────────────────────
 //
 // Registered once at startup by each platform crate. Takes (window_id, pid)
@@ -55,6 +57,13 @@ struct RecordingInner {
     next_turn: u32,
     session_start_ms: u64,
     last_error: Option<String>,
+    /// Live ffmpeg subprocess when video capture is active. Recreated
+    /// per session.
+    video: Option<VideoRecorder>,
+    /// Recorded after `stop()` until the next start — exposed in
+    /// `current_state()` so callers can read the finalized video info
+    /// after stopping.
+    last_video: Option<VideoMetadata>,
 }
 
 /// Snapshot of the current recording state (cheap to clone).
@@ -64,6 +73,11 @@ pub struct RecordingState {
     pub output_dir: Option<String>,
     pub next_turn: u32,
     pub last_error: Option<String>,
+    /// Whether a video subprocess is currently running.
+    pub video_active: bool,
+    /// Path to the most recently finalized video file, if any. Populated
+    /// after a stop; cleared on next start.
+    pub last_video_path: Option<String>,
 }
 
 impl RecordingSession {
@@ -75,32 +89,57 @@ impl RecordingSession {
                 next_turn: 1,
                 session_start_ms: 0,
                 last_error: None,
+                video: None,
+                last_video: None,
             }),
         }
     }
 
-    /// Enable or disable recording. `output_dir` is required when `enabled=true`.
-    pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
+    /// Enable recording at `output_dir`, optionally with video capture.
+    /// Counterpart to `stop()`. Returns the resulting state.
+    ///
+    /// `record_video=true` (the default for callers that don't opt out)
+    /// spawns ffmpeg writing `<output_dir>/recording.mp4` for the lifetime
+    /// of the session. If ffmpeg isn't on PATH the start still succeeds —
+    /// the per-turn capture (action.json + screenshot.png) is independent
+    /// of video — but the structured state carries the ffmpeg error so
+    /// the caller can surface it.
+    pub fn start(&self, output_dir: &str, record_video: bool) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        if !enabled {
-            inner.enabled = false;
-            inner.output_dir = None;
-            inner.next_turn = 1;
-            inner.session_start_ms = 0;
-            inner.last_error = None;
-            return Ok(());
+        // If a previous session is still open, gracefully tear it down
+        // first so the caller doesn't accidentally leak an ffmpeg process.
+        if let Some(rec) = inner.video.take() {
+            let _ = rec.stop();
         }
 
-        let dir_str = output_dir
-            .ok_or_else(|| anyhow::anyhow!("output_dir is required when enabling recording"))?;
-        let dir = expand_tilde(dir_str);
+        let dir = expand_tilde(output_dir);
         std::fs::create_dir_all(&dir)?;
 
-        // Write initial session.json.
+        let mut video_present = false;
+        let mut video_error: Option<String> = None;
+        if record_video {
+            let path = dir.join("recording.mp4");
+            match VideoRecorder::start(&path) {
+                Ok(rec) => {
+                    inner.video = Some(rec);
+                    video_present = true;
+                }
+                Err(e) => {
+                    video_error = Some(e.to_string());
+                    tracing::warn!(target: "recording",
+                        "Video capture failed to start; per-turn recording will \
+                         continue without video: {e}");
+                }
+            }
+        }
+
+        // Write initial session.json — final video metadata is rewritten on
+        // stop. We mark `present` based on whether ffmpeg actually started,
+        // not just whether the caller asked for video.
         let session_payload = serde_json::json!({
             "schema_version": 1,
             "started_at_monotonic_ms": now_ms(),
-            "video": { "present": false },
+            "video": video_session_payload(video_present, video_error.as_deref(), None),
             "cursor": { "present": false }
         });
         let _ = write_json_atomic(
@@ -112,8 +151,62 @@ impl RecordingSession {
         inner.output_dir = Some(dir);
         inner.next_turn = 1;
         inner.session_start_ms = now_ms();
-        inner.last_error = None;
+        inner.last_error = video_error;
+        inner.last_video = None;
         Ok(())
+    }
+
+    /// Disable recording. Idempotent — calling stop on an already-stopped
+    /// session is a no-op. If a video subprocess is running, it's
+    /// gracefully terminated and the finalized metadata is folded into
+    /// `session.json`.
+    pub fn stop(&self) -> anyhow::Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.enabled {
+            return Ok(());
+        }
+        let dir = inner.output_dir.clone();
+        let video_meta = inner.video.take().and_then(|rec| rec.stop().ok());
+
+        inner.enabled = false;
+        inner.output_dir = None;
+        inner.next_turn = 1;
+        inner.session_start_ms = 0;
+        // Don't clobber a video-start error if it's still relevant — but
+        // when the stop completed cleanly, clear it.
+        if video_meta.is_some() {
+            inner.last_error = None;
+        }
+        inner.last_video = video_meta.clone();
+
+        // Rewrite session.json with final video metadata so the on-disk
+        // record reflects what actually got captured.
+        if let (Some(dir), Some(meta)) = (dir, video_meta) {
+            let session_payload = serde_json::json!({
+                "schema_version": 1,
+                "started_at_monotonic_ms": now_ms(),
+                "video": video_session_payload(true, None, Some(&meta)),
+                "cursor": { "present": false }
+            });
+            let _ = write_json_atomic(
+                &dir.join("session.json"),
+                &session_payload,
+            );
+        }
+        Ok(())
+    }
+
+    /// Legacy toggle API kept as a thin shim over `start()`/`stop()` so
+    /// existing callers (CLI subcommand, tests) keep compiling during the
+    /// rename window. Defaults `record_video` to true to match the new
+    /// surface.
+    pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
+        if !enabled {
+            return self.stop();
+        }
+        let dir = output_dir
+            .ok_or_else(|| anyhow::anyhow!("output_dir is required when enabling recording"))?;
+        self.start(dir, true)
     }
 
     /// Return a snapshot of the current state (non-blocking).
@@ -124,6 +217,9 @@ impl RecordingSession {
             output_dir: inner.output_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
             next_turn: inner.next_turn,
             last_error: inner.last_error.clone(),
+            video_active: inner.video.is_some(),
+            last_video_path: inner.last_video.as_ref()
+                .map(|m| m.path.to_string_lossy().into_owned()),
         }
     }
 
@@ -250,6 +346,37 @@ fn iso_now() -> String {
         .unwrap_or_default();
     // Format as fractional Unix seconds (simple, unambiguous, machine-readable).
     format!("{:.3}", d.as_secs_f64())
+}
+
+/// Build the `session.json` `video` field. Three shapes:
+///   - not requested or ffmpeg missing: `{ present: false, error?: "..." }`
+///   - in-flight session before stop: `{ present: true, path: "recording.mp4" }`
+///   - finalized session after stop: full metadata
+fn video_session_payload(
+    present: bool,
+    error: Option<&str>,
+    meta: Option<&VideoMetadata>,
+) -> Value {
+    if !present {
+        let mut o = serde_json::json!({ "present": false });
+        if let Some(err) = error {
+            o["error"] = serde_json::Value::String(err.to_owned());
+        }
+        return o;
+    }
+    if let Some(meta) = meta {
+        return serde_json::json!({
+            "present": true,
+            "path": "recording.mp4",
+            "absolute_path": meta.path.to_string_lossy(),
+            "duration_ms": meta.duration_ms,
+            "finalized": meta.finalized,
+        });
+    }
+    serde_json::json!({
+        "present": true,
+        "path": "recording.mp4",
+    })
 }
 
 fn expand_tilde(path: &str) -> PathBuf {

@@ -1,11 +1,9 @@
 # Recording & replaying trajectories
 
-> **Platform: macOS-only today.** Trajectory recording / replay is
-> currently implemented on the macOS backend only. On Windows, `cua-driver
-> recording {start,stop,status}` is registered but returns "Recording is
-> currently macOS-only". On Linux (BETA): not supported. See `WINDOWS.md`
-> / `LINUX.md` for capture-state alternatives via `screenshot` and
-> `get_window_state`.
+> **Cross-platform.** Recording is available on macOS (native
+> ScreenCaptureKit), Windows (ffmpeg + `gdigrab`), and Linux (ffmpeg +
+> `x11grab`). Replay is cross-platform as long as the recorded artifacts
+> are present.
 
 Session-scoped capture of action sequences + pre/post state, suitable
 for demos, regression diffs, and training data. Invoked only when the
@@ -20,12 +18,22 @@ permission probes, agent-cursor getters / setters, and the recording
 controls themselves) are not recorded.
 
 **Video on by default.** `start_recording` also captures the main
-display to `<output_dir>/recording.mp4` (H.264 / yuv420p / 30 fps) via
-an ffmpeg subprocess for the lifetime of the session. The mp4 is
-finalized on `stop_recording`. Opt out with `record_video: false` when
-you don't want video. Requires ffmpeg on PATH; when missing, the per-
-turn capture continues without video and `last_error` carries the
-install hint.
+display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
+lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
+out with `record_video: false` when you don't want video.
+
+**macOS — native ScreenCaptureKit, zero-config.** On macOS the
+recorder uses an in-process `SCStream` + `SCRecordingOutput`, so it
+inherits cua-driver's own Screen Recording grant — no separate
+subprocess prompt, no fast-fail, no second TCC dance. Requires macOS
+15.0+ (SCRecordingOutput introduced in macOS 15). No ffmpeg needed.
+
+**Windows / Linux — ffmpeg subprocess.** Outside macOS the recorder
+shells to ffmpeg with `gdigrab` (Windows) or `x11grab` (Linux). The
+binary needs to be on PATH (`winget install Gyan.FFmpeg` /
+`apt install ffmpeg`); when missing, the per-turn capture continues
+without video and `last_error` carries the install hint. ffmpeg
+startup failures fast-fail with a stderr tail in the error.
 
 ## Start / stop
 
@@ -59,22 +67,26 @@ daemon restart resets to disabled.
 
 Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
-- `app_state.json` — post-action AX snapshot for the target pid, same
-  shape `get_window_state` returns (tree_markdown, element_count,
-  turn_id, etc.) minus the screenshot fields. The recorder resolves a
-  frontmost window internally (visible + on-current-Space preferred,
-  max-area fallback) since individual action tools carry a
-  window_id but the recorder has no caller-supplied anchor.
-- `screenshot.png` — post-action capture of the same window the
-  recorder just snapshotted. Omitted when the pid has no visible
-  window.
+- `app_state.json` — post-action AX/UIA snapshot for the target
+  `(pid, window_id)` carrying the same `tree_markdown` +
+  `element_count` shape `get_window_state` returns (minus the
+  screenshot fields — those live in `screenshot.png`). On macOS the
+  recorder resolves a frontmost window internally when the action's
+  args don't carry one; on Windows it uses the first window of the
+  target pid. **Omitted on Linux** — ATSPI doesn't expose a cheap
+  whole-tree snapshot, and the file is left out rather than faked.
+- `screenshot.png` — post-action capture of the target window.
+  Omitted when the pid has no visible window.
 - `action.json` — the tool name, full input arguments, result
   summary, pid, click point (when applicable), ISO-8601 timestamp.
-- `click.png` — only for click-family actions (`click`,
+- `click.png` — for click-family actions (`click`, `double_click`,
   `right_click`): a copy of `screenshot.png` with a red dot drawn at
-  the click point (screen-absolute point → window-local pixels via
-  the screenshot's `scale_factor`). Absent for other tools and for
-  clicks whose point falls outside the captured window.
+  the click point. **Both addressing modes are covered:** explicit
+  `x, y` clicks use the supplied coordinates directly, and
+  `element_index`-addressed clicks resolve to the element's center
+  via the live AX/UIA cache, then convert to window-local screenshot
+  pixels. Absent for non-click tools and for clicks whose resolved
+  point falls outside the captured window.
 
 ## When to use it
 

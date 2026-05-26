@@ -69,12 +69,18 @@ impl Tool for StartRecordingTool {
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is on by default** — the main display is captured to \
-                `<output_dir>/recording.mp4` (H.264 / yuv420p / 30 fps) via an ffmpeg \
-                subprocess for the lifetime of the session. Pass `record_video: false` \
-                to opt out. Requires ffmpeg on PATH (winget install Gyan.FFmpeg / \
-                brew install ffmpeg / apt install ffmpeg); when ffmpeg is missing the \
-                per-turn capture (screenshots + action.json) still runs and the \
-                session's `last_error` field carries the ffmpeg-not-found message.\n\n\
+                `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of \
+                the session. Pass `record_video: false` to opt out.\n\n\
+                **macOS uses native ScreenCaptureKit** (in-process SCStream + \
+                SCRecordingOutput) so video inherits cua-driver's own Screen \
+                Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
+                Requires macOS 15.0+.\n\n\
+                **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
+                `x11grab` + libx264). Requires ffmpeg on PATH (winget install \
+                Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or \
+                fails on startup the per-turn capture (screenshots + \
+                action.json) still runs and the session's `last_error` field \
+                carries the diagnostic.\n\n\
                 State persists for the life of the daemon / MCP session; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
                 disable + finalize the mp4.".into(),
@@ -91,7 +97,9 @@ impl Tool for StartRecordingTool {
                         "type": "boolean",
                         "description": "Capture the main display to <output_dir>/recording.mp4. \
                             Default: true. Set to false to record only the per-turn \
-                            screenshots + JSON. Requires ffmpeg on PATH."
+                            screenshots + JSON. On macOS this uses native \
+                            ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
+                            Windows + Linux it requires ffmpeg on PATH."
                     }
                 },
                 "additionalProperties": false
@@ -114,11 +122,17 @@ impl Tool for StartRecordingTool {
         match self.session.start(output_dir.as_deref().unwrap(), record_video) {
             Ok(()) => {
                 let state = self.session.current_state();
+                // When the caller asked for video and it failed (e.g. macOS
+                // ffmpeg TCC prompt deadlock), surface the actual error
+                // prominently — the per-turn capture still runs, but the
+                // caller deserves to know the mp4 won't materialize.
+                let video_failed = record_video && !state.video_active;
                 let video_note = if record_video && state.video_active {
-                    " (video → recording.mp4)"
-                } else if record_video && !state.video_active {
-                    " (video requested but ffmpeg not available — see last_error)"
-                } else { "" };
+                    " (video → recording.mp4)".to_string()
+                } else if video_failed {
+                    let err = state.last_error.clone().unwrap_or_else(|| "unknown".into());
+                    format!("\n\n⚠️ Video capture failed (per-turn JSON+screenshot still running):\n{err}")
+                } else { String::new() };
                 let msg = format!("✅ Recording started -> {}{}",
                     state.output_dir.as_deref().unwrap_or("?"),
                     video_note);

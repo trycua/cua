@@ -125,7 +125,7 @@ fn load_session_metadata(
 /// absolute last resort.
 fn probe_video_dimensions(video_path: &Path) -> Option<(u32, u32)> {
     use std::process::Command;
-    let ffprobe = crate::video::find_ffprobe()?;
+    let ffprobe = crate::video_ffmpeg::find_ffprobe()?;
     let out = Command::new(ffprobe)
         .args(["-v", "error",
                "-select_streams", "v:0",

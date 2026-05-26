@@ -14,6 +14,7 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod tools;
 pub mod overlay;
 pub mod diagnostics;
+pub mod recording_hooks;
 
 #[cfg(target_os = "windows")]
 pub mod win32;

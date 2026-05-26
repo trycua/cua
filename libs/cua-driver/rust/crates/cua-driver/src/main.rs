@@ -122,6 +122,15 @@ fn main() {
             cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
                 platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
             });
+            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+            });
+            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+            });
+            cua_driver_core::video::set_video_backend_factory(
+                Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+            );
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
@@ -163,6 +172,15 @@ fn main() {
             cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
                 platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
             });
+            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+            });
+            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+            });
+            cua_driver_core::video::set_video_backend_factory(
+                Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+            );
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -287,6 +305,15 @@ fn main() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
         platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
     });
+    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    });
+    cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+        platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+    });
+    cua_driver_core::video::set_video_backend_factory(
+        Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+    );
 
     std::thread::Builder::new()
         .name("cua-mcp".into())
@@ -522,6 +549,15 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_windows::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(target_os = "linux")]
@@ -541,6 +577,9 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_linux::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -575,6 +614,15 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_windows::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }
     #[cfg(target_os = "linux")]
@@ -594,6 +642,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_linux::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]

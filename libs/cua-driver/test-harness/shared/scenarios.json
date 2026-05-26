@@ -182,7 +182,7 @@
       "title": "CuaTestHarness WebView",
       "automation_id": "wnd-main"
     },
-    "description": "WPF host with Microsoft.Edge.WebView2 control. Loads ../shared-web/index.html. Exposes Chromium DevTools Protocol at default_cdp_port for cua-driver's `page` tool.",
+    "description": "WPF host with Microsoft.Edge.WebView2 control. Loads shared/web/index.html. Exposes Chromium DevTools Protocol at default_cdp_port for cua-driver's `page` tool.",
     "shared_dom_aids": [
       "btn-increment", "btn-reset", "lbl-counter",
       "txt-input", "lbl-input-mirror",
@@ -200,7 +200,7 @@
     "main_window": {
       "title": "CuaTestHarness Electron"
     },
-    "description": "Electron host loading the same ../shared-web/index.html as the WebView harness. Exposes CDP at default_cdp_port via --remote-debugging-port."
+    "description": "Electron host loading the same shared/web/index.html as the WebView harness. Exposes CDP at default_cdp_port via --remote-debugging-port."
   },
   "winui3": {
     "process_name": "CuaTestHarness.WinUI3",

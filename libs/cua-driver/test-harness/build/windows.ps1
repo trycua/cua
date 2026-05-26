@@ -1,14 +1,14 @@
-# build.ps1 - publish the cua-driver test harness binaries.
+# windows.ps1 - publish the cua-driver test harness binaries.
 #
-# Outputs land in libs/cua-driver/rust/test-apps/harness-{wpf,winui3}/ so
-# the existing sandbox runner picks them up via its mapped folder.
+# Outputs land in libs/cua-driver/rust/test-apps/harness-{wpf,winui3,webview,electron}/
+# so the existing sandbox runner picks them up via its mapped folder.
 #
 # Usage:
-#   .\build.ps1            # build both
-#   .\build.ps1 -Skip wpf  # build only WinUI3
-#   .\build.ps1 -Skip winui3
+#   .\windows.ps1            # build all Windows-runnable apps
+#   .\windows.ps1 -Skip wpf  # skip WPF
+#   .\windows.ps1 -Skip winui3
 #
-# Requires: .NET 8 SDK on PATH.
+# Requires: .NET 8 SDK on PATH (Node.js + npm for the Electron app).
 
 param(
     [ValidateSet("none","wpf","winui3","webview","electron")]
@@ -18,7 +18,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$harnessDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$buildDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$harnessDir = Split-Path -Parent $buildDir
 $cuaDriverDir = Split-Path -Parent $harnessDir
 $testAppsDir = Join-Path $cuaDriverDir "rust\test-apps"
 
@@ -53,10 +54,10 @@ function Publish-Project {
 }
 
 if ($Skip -ne "wpf") {
-    Publish-Project (Join-Path $harnessDir "CuaTestHarness.Wpf\CuaTestHarness.Wpf.csproj") "harness-wpf"
+    Publish-Project (Join-Path $harnessDir "apps\windows\wpf\CuaTestHarness.Wpf.csproj") "harness-wpf"
 }
 if ($Skip -ne "winui3") {
-    $winuiProj = Join-Path $harnessDir "CuaTestHarness.WinUI3\CuaTestHarness.WinUI3.csproj"
+    $winuiProj = Join-Path $harnessDir "apps\windows\winui3\CuaTestHarness.WinUI3.csproj"
     if (Test-Path $winuiProj) {
         Publish-Project $winuiProj "harness-winui3"
     } else {
@@ -64,7 +65,7 @@ if ($Skip -ne "winui3") {
     }
 }
 if ($Skip -ne "webview") {
-    $webProj = Join-Path $harnessDir "CuaTestHarness.WebView\CuaTestHarness.WebView.csproj"
+    $webProj = Join-Path $harnessDir "apps\windows\webview2\CuaTestHarness.WebView.csproj"
     if (Test-Path $webProj) {
         Publish-Project $webProj "harness-webview"
     } else {
@@ -72,10 +73,10 @@ if ($Skip -ne "webview") {
     }
 }
 if ($Skip -ne "electron") {
-    $elecBuild = Join-Path $harnessDir "CuaTestHarness.Electron\build.ps1"
+    $elecBuild = Join-Path $harnessDir "apps\cross-platform\electron\build.ps1"
     if (Test-Path $elecBuild) {
         Write-Host ""
-        Write-Host "[BUILD] CuaTestHarness.Electron -> $testAppsDir\harness-electron\" -ForegroundColor Cyan
+        Write-Host "[BUILD] electron -> $testAppsDir\harness-electron\" -ForegroundColor Cyan
         # Electron build sets $ErrorActionPreference=Stop internally and
         # throws on npm install / publish failure. Wrap so a throw degrades
         # to a warning rather than aborting the whole harness build.

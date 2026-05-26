@@ -2,11 +2,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.Wpf", "CuaTestHarness.Wpf\CuaTestHarness.Wpf.csproj", "{A1B2C3D4-E5F6-4789-ABCD-EF0123456789}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.Wpf", "apps\windows\wpf\CuaTestHarness.Wpf.csproj", "{A1B2C3D4-E5F6-4789-ABCD-EF0123456789}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.WinUI3", "CuaTestHarness.WinUI3\CuaTestHarness.WinUI3.csproj", "{B2C3D4E5-F6A7-489B-CDEF-012345678901}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.WinUI3", "apps\windows\winui3\CuaTestHarness.WinUI3.csproj", "{B2C3D4E5-F6A7-489B-CDEF-012345678901}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.WebView", "CuaTestHarness.WebView\CuaTestHarness.WebView.csproj", "{C3D4E5F6-A7B8-49CD-EF01-234567890123}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.WebView", "apps\windows\webview2\CuaTestHarness.WebView.csproj", "{C3D4E5F6-A7B8-49CD-EF01-234567890123}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

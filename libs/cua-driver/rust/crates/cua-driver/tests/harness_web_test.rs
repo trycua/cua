@@ -1,6 +1,6 @@
 //! Integration tests against the CuaTestHarness.WebView (WPF + WebView2)
 //! and CuaTestHarness.Electron hosts. Both load the same
-//! `test-harness/shared-web/index.html`, so the same `page` tool flows
+//! `test-harness/shared/web/index.html`, so the same `page` tool flows
 //! are exercised against two Chromium-based hosts.
 //!
 //! Run via:
@@ -125,7 +125,7 @@ where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) {
         eprintln!("cua-driver.exe not built — run `cargo build` first"); return;
     }
     if !host_exe.exists() {
-        eprintln!("{label} host exe not found at {host_exe:?} — run test-harness/build.ps1"); return;
+        eprintln!("{label} host exe not found at {host_exe:?} — run test-harness/build/windows.ps1"); return;
     }
     // Set the CDP port the host should use so the daemon can find it.
     let env_var = if label == "webview" { "CUA_WEBVIEW_CDP_PORT" } else { "CUA_ELECTRON_CDP_PORT" };

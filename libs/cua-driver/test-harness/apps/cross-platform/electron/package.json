@@ -1,7 +1,7 @@
 {
   "name": "cua-test-harness-electron",
   "version": "1.0.0",
-  "description": "cua-driver Electron test harness — loads the same shared-web/index.html as CuaTestHarness.WebView",
+  "description": "cua-driver Electron test harness — loads the same shared/web/index.html as CuaTestHarness.WebView",
   "private": true,
   "main": "main.js",
   "scripts": {

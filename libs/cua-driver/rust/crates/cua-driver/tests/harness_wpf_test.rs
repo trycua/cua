@@ -19,7 +19,7 @@
 //! Run via the sandbox runner:
 //!   .\sandbox\run-tests-in-sandbox.ps1 harness_wpf
 //!
-//! Or locally (requires .NET 8 SDK + `test-harness/build.ps1`):
+//! Or locally (requires .NET 8 SDK + `test-harness/build/windows.ps1`):
 //!   cargo test --test harness_wpf_test -- --ignored --nocapture
 //!
 //! Tests are `#[ignore]` so they don't run in plain `cargo test`. The
@@ -99,7 +99,7 @@ impl Harness {
     fn launch() -> Option<Self> {
         let exe = harness_exe();
         if !exe.exists() {
-            eprintln!("harness exe not found at {exe:?} — run test-harness/build.ps1 first");
+            eprintln!("harness exe not found at {exe:?} — run test-harness/build/windows.ps1 first");
             return None;
         }
         let app = Command::new(&exe)

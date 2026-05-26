@@ -74,7 +74,7 @@ impl Harness {
     fn launch() -> Option<Self> {
         let exe = harness_exe();
         if !exe.exists() {
-            eprintln!("WinUI3 harness exe not found at {exe:?} — run test-harness/build.ps1");
+            eprintln!("WinUI3 harness exe not found at {exe:?} — run test-harness/build/windows.ps1");
             return None;
         }
         let app = Command::new(&exe)

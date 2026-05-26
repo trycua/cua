@@ -13,6 +13,7 @@ node_modules/*
 build/
 !libs/lume/scripts/build/
 !libs/cua-driver/scripts/build/
+!libs/cua-driver/test-harness/build/
 develop-eggs/
 dist/
 downloads/

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # macOS cua-driver per-tool smoke test.
 #
-# Spawns the AppKit harness app from libs/cua-driver/test-harness, runs
-# every cua-driver tool against it with sensible JSON args, and reports
+# Spawns the AppKit harness app from libs/cua-driver/test-harness/apps/macos,
+# runs every cua-driver tool against it with sensible JSON args, and reports
 # PASS / FAIL / SKIP in a sorted table.
 #
 # Mirror of scripts/linux-smoke.sh — same shape, classified the same way.
@@ -13,14 +13,14 @@
 # surface in ~30 seconds.
 #
 # Prereqs:
-#   - libs/cua-driver/test-harness/build.sh must have been run
+#   - libs/cua-driver/test-harness/build/macos.sh must have been run
 #   - cua-driver binary built (this script uses target/release if present)
 #   - TCC Accessibility permission granted to the cua-driver binary
 #     (otherwise AX-using tools return empty trees, which scores as PASS
 #     because the call exits cleanly — flagged in output)
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 DRIVER="$ROOT/libs/cua-driver/rust/target/release/cua-driver"
 [[ -x "$DRIVER" ]] || DRIVER="$ROOT/libs/cua-driver/rust/target/debug/cua-driver"
 HARNESS_APP="$ROOT/libs/cua-driver/rust/test-apps/harness-appkit/CuaTestHarness.AppKit.app"
@@ -78,7 +78,7 @@ fi
 
 if [[ ! -x "$HARNESS_EXE" ]]; then
     echo "ERROR: AppKit harness not built at $HARNESS_EXE" >&2
-    echo "       Run: libs/cua-driver/test-harness/build.sh" >&2
+    echo "       Run: libs/cua-driver/test-harness/build/macos.sh" >&2
     exit 1
 fi
 

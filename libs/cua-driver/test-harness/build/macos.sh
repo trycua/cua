@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Build the macOS test-harness apps (AppKit + SwiftUI) into .app bundles
-# under ../rust/test-apps/harness-{appkit,swiftui}/ — matching the
-# convention used by build.ps1 for the Windows WPF + WinUI3 apps.
+# under ../../rust/test-apps/harness-{appkit,swiftui}/ — matching the
+# convention used by windows.ps1 for the Windows WPF + WinUI3 apps.
 #
 # Usage:
-#   ./build.sh                # build both
-#   ./build.sh --skip swiftui # AppKit only
-#   ./build.sh --skip appkit  # SwiftUI only
-#   ./build.sh --clean        # remove staged outputs first
+#   ./macos.sh                # build both
+#   ./macos.sh --skip swiftui # AppKit only
+#   ./macos.sh --skip appkit  # SwiftUI only
+#   ./macos.sh --clean        # remove staged outputs first
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STAGE_DIR="$(cd "$SCRIPT_DIR/../rust/test-apps" && pwd)"
+HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STAGE_DIR="$(cd "$HARNESS_DIR/../rust/test-apps" && pwd)"
 
 SKIP=""
 CLEAN=0
@@ -76,14 +77,14 @@ EOF
 
 if [[ "$SKIP" != "appkit" ]]; then
     build_app "CuaTestHarness.AppKit" \
-        "$SCRIPT_DIR/CuaTestHarness.AppKit" \
+        "$HARNESS_DIR/apps/macos/appkit" \
         "" \
         "harness-appkit"
 fi
 
 if [[ "$SKIP" != "swiftui" ]]; then
     build_app "CuaTestHarness.SwiftUI" \
-        "$SCRIPT_DIR/CuaTestHarness.SwiftUI" \
+        "$HARNESS_DIR/apps/macos/swiftui" \
         "" \
         "harness-swiftui"
 fi

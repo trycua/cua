@@ -9,25 +9,32 @@
 //! ## Tests in this file
 //!
 //! 1. **`harness_lo_vcl_font_color_split_button_exposes_expand`** —
-//!    positive guard for the MSAA fallback (see `platform-windows/src/msaa.rs`,
-//!    landed alongside this file). Asserts the toolbar "Font Color"
-//!    SplitButton now reports `actions=[invoke,expand]` via the MSAA
-//!    walker (UIA's MSAA→UIA proxy collapsed it to bare `[invoke]`
-//!    before — guarded by an inverted assertion until cua-driver
-//!    gained the MSAA path).
+//!    Font Color SplitButton reports `actions=[invoke,expand]`.
 //!
-//! 2. **`harness_lo_vcl_font_color_expand_opens_picker`** — end-to-end
-//!    guard for the `action:"expand"` dispatch. Calls
-//!    `click(element_index=<Font Color>, action:"expand")` and
-//!    asserts a new top-level `SALTMPSUBFRAME` titled "Font Color"
-//!    appears (the picker popup). This is the workflow the MSAA
-//!    fallback was built to unlock.
+//! 2. **`harness_lo_vcl_font_color_expand_opens_picker`** — click
+//!    with `action:"expand"` opens a SALTMPSUBFRAME picker.
 //!
-//! 3. **`harness_lo_vcl_modal_input_roundtrip_works`** — confirms
-//!    SAL/VCL modal dialogs (SALSUBFRAME class) DO accept
-//!    SendInput-injected input. Opens Find & Replace via Ctrl+H,
-//!    closes via Escape. Catches regressions in SALFRAME accelerator
-//!    dispatch and SALSUBFRAME key handling.
+//! 3. **`harness_lo_vcl_modal_input_roundtrip_works`** — SAL/VCL
+//!    modal (Find & Replace) accepts SendInput, snapshot has actionable
+//!    elements (no more skip stub).
+//!
+//! 4. **`harness_lo_vcl_all_toolbar_split_buttons_expose_expand`** —
+//!    *every* toolbar SplitButton in Writer has `expand` (not just
+//!    Font Color). Guards `msaa::actions_for` BUTTONDROPDOWN family.
+//!
+//! 5. **`harness_lo_vcl_color_pick_green_end_to_end`** — full
+//!    workflow: type text → select → open Font Color → click Green →
+//!    picker closes (proves color landed).
+//!
+//! 6. **`harness_lo_vcl_recovery_dialog_walks_via_msaa`** — Document
+//!    Recovery dialog (SALFRAME class) still walks via MSAA, exposes
+//!    "Discard All" + "Recover Selected" buttons. Guards the
+//!    routing change for the pre-existing Recovery-dialog flow.
+//!
+//! 7. **`harness_lo_vcl_calc_msaa_smoke`** — LO Calc (different app
+//!    surface on the same VCL base) also walks via MSAA with ≥15
+//!    SplitButtons exposing `expand`. Confirms the path generalizes
+//!    beyond Writer.
 //!
 //! ## How to run
 //!
@@ -63,6 +70,22 @@ fn swriter_exe() -> Option<PathBuf> {
     for candidate in [
         r"C:\Program Files\LibreOffice\program\swriter.exe",
         r"C:\Program Files (x86)\LibreOffice\program\swriter.exe",
+    ] {
+        let pb = PathBuf::from(candidate);
+        if pb.exists() { return Some(pb); }
+    }
+    None
+}
+
+/// LO Calc executable, same probe shape as `swriter_exe()`.
+fn scalc_exe() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("LO_SCALC_EXE") {
+        let pb = PathBuf::from(p);
+        if pb.exists() { return Some(pb); }
+    }
+    for candidate in [
+        r"C:\Program Files\LibreOffice\program\scalc.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\scalc.exe",
     ] {
         let pb = PathBuf::from(candidate);
         if pb.exists() { return Some(pb); }
@@ -442,4 +465,404 @@ fn harness_lo_vcl_modal_input_roundtrip_works() {
             "pid": pid as i64
         }));
     });
+}
+
+// ── Test 4: All toolbar SplitButtons expose `expand` ────────────────────────
+
+/// Confirms the MSAA fallback exposes `actions=[invoke,expand]` on EVERY
+/// toolbar SplitButton in LO Writer — not just Font Color.
+///
+/// Pre-MSAA, the UIA→MSAA proxy collapsed every BUTTONDROPDOWN to a
+/// featureless `SplitButton actions=[invoke]`. Post-MSAA, ALL of them
+/// (Save, Open, Undo, Redo, Paste, Table, Field, Symbol, Show Tracked
+/// Changes, Record, Basic Shapes, Underline, Font Color, Character
+/// Highlighting Color, Background Color, Unordered List, Ordered List,
+/// Outline Format, Line Spacing, Character Spacing — plus the "System"
+/// menu button) report `expand`. Guards against accidental regressions
+/// in `msaa::actions_for` (e.g. dropping one of the BUTTONDROPDOWN
+/// variants from the role match).
+///
+/// Asserts ≥15 SplitButtons report `expand` (current count is 20-21
+/// depending on toolbar config; floor at 15 to absorb minor LO updates).
+#[test]
+#[ignore]
+fn harness_lo_vcl_all_toolbar_split_buttons_expose_expand() {
+    let mut fx = match setup() { Some(s) => s, None => return };
+    with_session(&mut fx, |stdin, stdout, pid, wid| {
+        let snap = call(stdin, stdout, 30, "get_window_state", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "capture_mode": "ax"
+        }));
+        let text = snapshot_text(&snap);
+        let splitbutton_lines: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("SplitButton") && l.contains("actions=["))
+            .collect();
+        let with_expand: Vec<&&str> = splitbutton_lines.iter()
+            .filter(|l| l.contains("expand"))
+            .collect();
+        assert!(splitbutton_lines.len() >= 15,
+            "Expected ≥15 SplitButtons in LO Writer toolbar tree, got {}. \
+             Possible MSAA walker regression. Full snapshot first 1500 chars: {}",
+            splitbutton_lines.len(),
+            &text.chars().take(1500).collect::<String>());
+        assert_eq!(with_expand.len(), splitbutton_lines.len(),
+            "{}/{} SplitButtons report `expand`. The MSAA role→actions \
+             mapping may have dropped one of BUTTONDROPDOWN / BUTTONMENU / \
+             BUTTONDROPDOWNGRID / SPLITBUTTON. Missing-expand lines:\n{}",
+            with_expand.len(), splitbutton_lines.len(),
+            splitbutton_lines.iter()
+                .filter(|l| !l.contains("expand"))
+                .map(|l| l.trim())
+                .collect::<Vec<_>>()
+                .join("\n"));
+    });
+}
+
+// ── Test 5: End-to-end color-pick ───────────────────────────────────────────
+
+/// End-to-end regression for the headline workflow: type text, select it,
+/// open the Font Color picker via `action:"expand"`, click a named color,
+/// verify the picker closes (the canonical signal that LO applied the
+/// color).
+///
+/// Failure points:
+///   - MSAA walker can't find Font Color → `msaa.rs` role match broken.
+///   - click(action:"expand") doesn't open picker → right-edge dispatch
+///     offset wrong for current LO version's toolbar scale.
+///   - Picker MSAA walk doesn't find "Green" → walker depth/budget
+///     truncating the color grid.
+///   - Picker doesn't close after picking → click on color cell isn't
+///     landing (offset / role mismatch on ListItem).
+#[test]
+#[ignore]
+fn harness_lo_vcl_color_pick_green_end_to_end() {
+    let mut fx = match setup() { Some(s) => s, None => return };
+    with_session(&mut fx, |stdin, stdout, pid, wid| {
+        // Foreground first so type_text + Ctrl+A land on Writer.
+        let _ = call(stdin, stdout, 30, "bring_to_front", serde_json::json!({
+            "pid": pid as i64, "window_id": wid
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+
+        let _ = call(stdin, stdout, 31, "type_text", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "text": "color pick regression"
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+
+        let _ = call(stdin, stdout, 32, "hotkey", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "keys": ["ctrl", "a"], "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+
+        // Locate Font Color element_index in Writer's MSAA tree.
+        let snap = call(stdin, stdout, 33, "get_window_state", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "capture_mode": "ax", "query": "Font Color"
+        }));
+        let snap_text = snapshot_text(&snap);
+        let fc_line = snap_text.lines()
+            .find(|l| l.contains("\"Font Color\"") && l.contains("expand"))
+            .unwrap_or_else(|| panic!("Font Color with `expand` not found in tree: {snap_text:?}"));
+        let s = fc_line.find('[').expect("[ in fc_line");
+        let e = fc_line[s..].find(']').expect("] in fc_line") + s;
+        let fc_idx: u64 = fc_line[s+1..e].trim().parse().expect("fc element_index");
+
+        // Snapshot which windows existed BEFORE opening the picker so
+        // we can isolate the picker on appearance.
+        let before = call(stdin, stdout, 34, "list_windows", serde_json::json!({
+            "pid": pid as i64
+        }));
+        let before_ids: std::collections::HashSet<u64> = before
+            ["result"]["structuredContent"]["windows"].as_array()
+            .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
+            .unwrap_or_default();
+
+        // Open the dropdown.
+        let open_resp = call(stdin, stdout, 35, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "element_index": fc_idx, "action": "expand"
+        }));
+        let open_text = open_resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(open_text.contains("dropdown half"),
+            "click(action:expand) did not dispatch via MSAA dropdown path: {open_text:?}");
+        std::thread::sleep(Duration::from_millis(900));
+
+        // Find the picker window.
+        let after = call(stdin, stdout, 36, "list_windows", serde_json::json!({
+            "pid": pid as i64
+        }));
+        let picker_wid = after["result"]["structuredContent"]["windows"]
+            .as_array()
+            .and_then(|a| a.iter().find_map(|w| {
+                let id = w["window_id"].as_u64();
+                let title = w["title"].as_str().unwrap_or("");
+                if id.map(|i| !before_ids.contains(&i)).unwrap_or(false)
+                   && title.contains("Font Color")
+                { id } else { None }
+            }))
+            .unwrap_or_else(|| panic!("No new 'Font Color' picker window appeared"));
+
+        // Walk the picker tree to find a green color cell.
+        let psnap = call(stdin, stdout, 37, "get_window_state", serde_json::json!({
+            "pid": pid as i64, "window_id": picker_wid, "capture_mode": "ax"
+        }));
+        let psnap_text = snapshot_text(&psnap);
+        let green_line = psnap_text.lines()
+            .find(|l| l.contains("\"Green\"") && l.contains("[") && l.contains("actions=[invoke"))
+            .unwrap_or_else(|| panic!(
+                "No 'Green' ListItem in picker tree. The MSAA walker may have \
+                 truncated the color grid or LO's locale renamed the color. \
+                 First 1500 chars: {}",
+                &psnap_text.chars().take(1500).collect::<String>()));
+        let s = green_line.find('[').expect("[ in green");
+        let e = green_line[s..].find(']').expect("] in green") + s;
+        let green_idx: u64 = green_line[s+1..e].trim().parse().expect("green element_index");
+
+        // Pick it. Default action (invoke) clicks center via MSAA dispatch.
+        let pick_resp = call(stdin, stdout, 38, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": picker_wid,
+            "element_index": green_idx
+        }));
+        let pick_text = pick_resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(pick_text.starts_with("✅"),
+            "click on Green color cell failed: {pick_text:?}");
+        std::thread::sleep(Duration::from_millis(700));
+
+        // Verify the picker closed (LO closes the popup after a color is
+        // selected — the canonical "color applied" signal). If it
+        // didn't, the click didn't actually land on the cell.
+        let after2 = call(stdin, stdout, 39, "list_windows", serde_json::json!({
+            "pid": pid as i64
+        }));
+        let still_open = after2["result"]["structuredContent"]["windows"]
+            .as_array()
+            .map(|a| a.iter().any(|w| w["window_id"].as_u64() == Some(picker_wid)))
+            .unwrap_or(false);
+        assert!(!still_open,
+            "Picker stayed open after click on Green — the cell click \
+             didn't land. LO didn't apply the color.");
+    });
+}
+
+// ── Test 6: Recovery dialog walks via MSAA ──────────────────────────────────
+
+/// Confirms that the LibreOffice Document Recovery dialog (which used to
+/// be walked via UIA) is still walkable after the MSAA-routes-all-SAL
+/// change. Pre-MSAA: UIA path returned a walkable tree with "Discard
+/// All" / "Recover Selected" buttons addressable. Post-MSAA: same flow
+/// must continue to work through the MSAA walker.
+///
+/// Triggering Recovery requires a previous LO session that exited
+/// ungracefully — this test creates that condition by typing into a
+/// fresh writer and then `kill_app`-ing it, then re-launches. If the
+/// Recovery dialog doesn't appear (LO can't always be coaxed into
+/// recovery state, e.g. when the recovery feature is disabled in
+/// user config), the test logs and returns OK rather than panicking —
+/// it's a regression guard for the post-MSAA Recovery walk, not for
+/// LO's recovery-trigger behavior.
+#[test]
+#[ignore]
+fn harness_lo_vcl_recovery_dialog_walks_via_msaa() {
+    // First: launch Writer WITHOUT -norestore (we WANT recovery
+    // behavior), type something, then force-kill so LO marks the
+    // session as crashed.
+    let writer = match swriter_exe() { Some(p) => p, None => return };
+    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    std::thread::sleep(Duration::from_millis(800));
+
+    // Launch (no -norestore, no -nologo flag → default behavior).
+    let mut crash_proc = match Command::new(&writer)
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+    std::thread::sleep(Duration::from_secs(5));
+    let _ = crash_proc.kill();
+    let _ = crash_proc.wait();
+    // Force-kill the actual soffice.bin worker too (the launcher is what
+    // we just killed; the real LO process is a fork).
+    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    std::thread::sleep(Duration::from_secs(2));
+
+    // Re-launch Writer — Recovery dialog should appear.
+    let driver = driver_binary();
+    if !driver.exists() { return; }
+    let mut writer_proc = match Command::new(&writer)
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+    std::thread::sleep(Duration::from_secs(5));
+
+    let mut driver_c = match Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn() {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = writer_proc.kill();
+                return;
+            }
+        };
+    let mut stdin = driver_c.stdin.take().unwrap();
+    let mut stdout_raw = driver_c.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut stdout_raw);
+
+    init(&mut stdin, &mut stdout);
+
+    // Poll for the Recovery dialog.
+    let recovery_wid_pid: Option<(u64, u32)> = {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut found = None;
+        while std::time::Instant::now() < deadline {
+            let resp = call(&mut stdin, &mut stdout, 1, "list_windows", serde_json::json!({}));
+            if let Some(wins) = resp["result"]["structuredContent"]["windows"].as_array() {
+                if let Some(w) = wins.iter().find(|w| {
+                    w["title"].as_str().map(|t| t.contains("Recovery")).unwrap_or(false)
+                }) {
+                    let id = w["window_id"].as_u64();
+                    let pid = w["pid"].as_u64().map(|p| p as u32);
+                    if let (Some(i), Some(p)) = (id, pid) {
+                        found = Some((i, p));
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        found
+    };
+
+    match recovery_wid_pid {
+        None => {
+            eprintln!("Recovery dialog did not appear — LO didn't enter recovery \
+                       state (possibly disabled in user config, or our crash \
+                       trigger didn't take effect). Test cannot assert MSAA \
+                       walk on a dialog that doesn't exist; logging and \
+                       returning OK.");
+        }
+        Some((rwid, rpid)) => {
+            let snap = call(&mut stdin, &mut stdout, 2, "get_window_state",
+                serde_json::json!({
+                    "pid": rpid as i64, "window_id": rwid, "capture_mode": "ax"
+                }));
+            let text = snapshot_text(&snap);
+            assert!(!text.contains("SAL/VCL target, UIA walk skipped"),
+                "Recovery dialog returned the old SAL-skip stub — MSAA fallback \
+                 isn't engaging on SALFRAME Recovery dialogs.");
+            assert!(text.contains("Button \"Discard All\""),
+                "Recovery dialog tree should expose `Discard All` Button via MSAA. \
+                 Got: {text:?}");
+            assert!(text.contains("Button \"Recover Selected\""),
+                "Recovery dialog tree should expose `Recover Selected` Button via MSAA. \
+                 Got: {text:?}");
+        }
+    }
+
+    // Cleanup.
+    let _ = driver_c.kill(); let _ = driver_c.wait();
+    let _ = writer_proc.kill(); let _ = writer_proc.wait();
+    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    std::thread::sleep(Duration::from_millis(800));
+}
+
+// ── Test 7: LO Calc smoke ──────────────────────────────────────────────────
+
+/// Confirms the MSAA fallback generalizes beyond Writer. Launches LO
+/// Calc, walks the main SALFRAME, asserts ≥15 SplitButtons with `expand`
+/// — Calc has Calc-specific dropdowns (Select Function, Row, Column,
+/// Freeze Panes) on top of the standard ones (Save, Open, Undo, Redo,
+/// Paste, Font Color, etc.).
+///
+/// Skips cleanly if scalc.exe isn't installed (set LO_SCALC_EXE for
+/// non-default paths).
+#[test]
+#[ignore]
+fn harness_lo_vcl_calc_msaa_smoke() {
+    let scalc = match scalc_exe() { Some(p) => p, None => return };
+    let driver = driver_binary();
+    if !driver.exists() { return; }
+
+    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    std::thread::sleep(Duration::from_millis(800));
+
+    let mut calc_proc = match Command::new(&scalc)
+        .args(["-norestore", "-nologo"])
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+    std::thread::sleep(Duration::from_secs(5));
+
+    let mut driver_c = match Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn() {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = calc_proc.kill();
+                return;
+            }
+        };
+    let mut stdin_drv = driver_c.stdin.take().unwrap();
+    let mut stdout_raw = driver_c.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut stdout_raw);
+    init(&mut stdin_drv, &mut stdout);
+
+    // Poll for the Calc window.
+    let calc_wid_pid: Option<(u64, u32)> = {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut found = None;
+        while std::time::Instant::now() < deadline {
+            let r = call(&mut stdin_drv, &mut stdout, 1, "list_windows", serde_json::json!({}));
+            if let Some(wins) = r["result"]["structuredContent"]["windows"].as_array() {
+                if let Some(w) = wins.iter().find(|w| {
+                    w["title"].as_str().map(|t| t.contains("LibreOffice Calc")).unwrap_or(false)
+                }) {
+                    let id = w["window_id"].as_u64();
+                    let pid = w["pid"].as_u64().map(|p| p as u32);
+                    if let (Some(i), Some(p)) = (id, pid) {
+                        found = Some((i, p));
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        found
+    };
+
+    let (cwid, cpid) = calc_wid_pid.unwrap_or_else(|| {
+        let _ = driver_c.kill();
+        let _ = calc_proc.kill();
+        let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+        panic!("LO Calc window did not appear within 20 s");
+    });
+
+    let snap = call(&mut stdin_drv, &mut stdout, 2, "get_window_state",
+        serde_json::json!({
+            "pid": cpid as i64, "window_id": cwid, "capture_mode": "ax"
+        }));
+    let text = snapshot_text(&snap);
+    assert!(!text.contains("SAL/VCL target, UIA walk skipped"),
+        "Calc returned the old SAL-skip stub — MSAA didn't engage.");
+    let sb_with_expand = text.lines()
+        .filter(|l| l.contains("SplitButton") && l.contains("expand"))
+        .count();
+    assert!(sb_with_expand >= 15,
+        "Expected ≥15 SplitButtons with `expand` in Calc toolbar (proves MSAA \
+         generalizes beyond Writer). Got {sb_with_expand}. The MSAA role \
+         mapping may differ in Calc, or the toolbar config is unexpectedly slim.");
+
+    // Cleanup.
+    let _ = call(&mut stdin_drv, &mut stdout, 3, "kill_app", serde_json::json!({
+        "pid": cpid as i64
+    }));
+    let _ = driver_c.kill(); let _ = driver_c.wait();
+    let _ = calc_proc.kill(); let _ = calc_proc.wait();
+    let _ = Command::new("taskkill").args(["/F", "/IM", "soffice.bin"]).output();
+    std::thread::sleep(Duration::from_millis(800));
 }

@@ -1,0 +1,37 @@
+{
+  "name": "cua-test-harness-electron",
+  "version": "1.0.0",
+  "description": "cua-driver Electron test harness — loads the same shared-web/index.html as CuaTestHarness.WebView",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "31.6.0",
+    "electron-builder": "25.0.5"
+  },
+  "build": {
+    "appId": "com.trycua.harness.electron",
+    "productName": "CuaTestHarness.Electron",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "web/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [{
+        "target": "portable",
+        "arch": ["x64"]
+      }]
+    },
+    "portable": {
+      "artifactName": "CuaTestHarness.Electron.exe"
+    }
+  }
+}

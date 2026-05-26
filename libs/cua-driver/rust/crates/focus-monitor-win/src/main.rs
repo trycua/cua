@@ -32,10 +32,14 @@ mod win {
 
     // ── global loss counters ─────────────────────────────────────────────────
     static ACTIVATE_LOSSES: AtomicU32 = AtomicU32::new(0);
+    static ACTIVATE_GAINS:  AtomicU32 = AtomicU32::new(0);
     static KEY_LOSSES:      AtomicU32 = AtomicU32::new(0);
+    static KEY_GAINS:       AtomicU32 = AtomicU32::new(0);
 
     fn loss_file()     -> std::path::PathBuf { loss_path("focus_monitor_losses.txt") }
+    fn gain_file()     -> std::path::PathBuf { loss_path("focus_monitor_gains.txt") }
     fn key_loss_file() -> std::path::PathBuf { loss_path("focus_monitor_key_losses.txt") }
+    fn key_gain_file() -> std::path::PathBuf { loss_path("focus_monitor_key_gains.txt") }
 
     fn loss_path(name: &str) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
@@ -56,26 +60,35 @@ mod win {
     ) -> LRESULT {
         match msg {
             WM_ACTIVATE => {
-                // WA_INACTIVE == 0 in the low word of wParam
+                // WA_INACTIVE == 0 in the low word of wParam; WA_ACTIVE == 1, WA_CLICKACTIVE == 2
                 if (wparam.0 & 0xFFFF) == 0 {
                     let n = ACTIVATE_LOSSES.fetch_add(1, Ordering::SeqCst) + 1;
                     write_count(&loss_file(), n);
-                    // Repaint to show updated count
-                    let _ = InvalidateRect(hwnd, None, true);
+                } else {
+                    let n = ACTIVATE_GAINS.fetch_add(1, Ordering::SeqCst) + 1;
+                    write_count(&gain_file(), n);
                 }
+                let _ = InvalidateRect(hwnd, None, true);
             }
             WM_KILLFOCUS => {
                 let n = KEY_LOSSES.fetch_add(1, Ordering::SeqCst) + 1;
                 write_count(&key_loss_file(), n);
                 let _ = InvalidateRect(hwnd, None, true);
             }
+            WM_SETFOCUS => {
+                let n = KEY_GAINS.fetch_add(1, Ordering::SeqCst) + 1;
+                write_count(&key_gain_file(), n);
+                let _ = InvalidateRect(hwnd, None, true);
+            }
             WM_PAINT => {
                 let mut ps = PAINTSTRUCT::default();
                 let hdc = BeginPaint(hwnd, &mut ps);
-                let act = ACTIVATE_LOSSES.load(Ordering::SeqCst);
-                let key = KEY_LOSSES.load(Ordering::SeqCst);
+                let act_l = ACTIVATE_LOSSES.load(Ordering::SeqCst);
+                let act_g = ACTIVATE_GAINS.load(Ordering::SeqCst);
+                let key_l = KEY_LOSSES.load(Ordering::SeqCst);
+                let key_g = KEY_GAINS.load(Ordering::SeqCst);
                 let text = wide(&format!(
-                    "act_losses: {act}   key_losses: {key}   (should stay 0)"
+                    "act: {act_l}L / {act_g}G   key: {key_l}L / {key_g}G   (should stay net 0)"
                 ));
                 TextOutW(hdc, 10, 10, &text);
                 EndPaint(hwnd, &ps);
@@ -116,9 +129,11 @@ mod win {
             ShowWindow(hwnd, SW_SHOWNORMAL);
             UpdateWindow(hwnd).ok();
 
-            // Write initial zeros so tests can read even before any loss.
+            // Write initial zeros so tests can read even before any event.
             write_count(&loss_file(), 0);
+            write_count(&gain_file(), 0);
             write_count(&key_loss_file(), 0);
+            write_count(&key_gain_file(), 0);
 
             // Signal the test harness via temp files (avoids pipe-blocking issues
             // when stdout is captured by the test runner in sandbox environments).

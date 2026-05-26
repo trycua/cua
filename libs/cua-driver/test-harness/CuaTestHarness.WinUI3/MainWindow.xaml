@@ -5,20 +5,11 @@
     xmlns:auto="using:Microsoft.UI.Xaml.Automation"
     Title="CuaTestHarness WinUI3">
 
-    <Grid Padding="16" RowSpacing="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <ScrollViewer>
+    <StackPanel Padding="16" Spacing="10">
 
         <!-- Counter -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+        <StackPanel Orientation="Horizontal" Spacing="8">
             <Button x:Name="BtnIncrement"
                     auto:AutomationProperties.AutomationId="btn-increment"
                     Content="Increment" Width="100"
@@ -34,14 +25,12 @@
                        Text="counter=0"/>
         </StackPanel>
 
-        <!-- Text body -->
-        <TextBlock Grid.Row="1"
-                   auto:AutomationProperties.AutomationId="txt-body"
+        <TextBlock auto:AutomationProperties.AutomationId="txt-body"
                    FontFamily="Consolas" TextWrapping="Wrap"
                    Text="HARNESS_TEXT_MARKER_v1 — WinUI3 text body for get_window_state."/>
 
         <!-- TextBox + mirror -->
-        <StackPanel Grid.Row="2" Orientation="Vertical" Spacing="4">
+        <StackPanel Orientation="Vertical" Spacing="4">
             <TextBox x:Name="TxtInput"
                      auto:AutomationProperties.AutomationId="txt-input"
                      Width="300" HorizontalAlignment="Left"
@@ -52,9 +41,64 @@
                        Text="mirror="/>
         </StackPanel>
 
+        <!-- Slider -->
+        <StackPanel Spacing="4">
+            <Slider x:Name="SldValue"
+                    auto:AutomationProperties.AutomationId="sld-value"
+                    Minimum="0" Maximum="100" Value="0"
+                    Width="320" HorizontalAlignment="Left"
+                    ValueChanged="OnSliderChanged"/>
+            <TextBlock x:Name="LblSliderValue"
+                       auto:AutomationProperties.AutomationId="lbl-slider-value"
+                       FontFamily="Consolas"
+                       Text="slider_value=0"/>
+        </StackPanel>
+
+        <!-- CheckBox + RadioButton group -->
+        <StackPanel Spacing="4">
+            <CheckBox x:Name="ChkAgreed"
+                      auto:AutomationProperties.AutomationId="chk-agreed"
+                      Content="I agree"
+                      Checked="OnChkChanged" Unchecked="OnChkChanged"/>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <RadioButton x:Name="RdoLow"  Content="Low"
+                             auto:AutomationProperties.AutomationId="rdo-low"
+                             GroupName="prio" IsChecked="True"
+                             Checked="OnRadioChanged"/>
+                <RadioButton x:Name="RdoMed"  Content="Medium"
+                             auto:AutomationProperties.AutomationId="rdo-med"
+                             GroupName="prio"
+                             Checked="OnRadioChanged"/>
+                <RadioButton x:Name="RdoHigh" Content="High"
+                             auto:AutomationProperties.AutomationId="rdo-high"
+                             GroupName="prio"
+                             Checked="OnRadioChanged"/>
+            </StackPanel>
+            <TextBlock x:Name="LblChkState"
+                       auto:AutomationProperties.AutomationId="lbl-chk-state"
+                       FontFamily="Consolas"
+                       Text="agreed=False, prio=Low"/>
+        </StackPanel>
+
+        <!-- ComboBox -->
+        <StackPanel Spacing="4">
+            <ComboBox x:Name="CboColor"
+                      auto:AutomationProperties.AutomationId="cbo-color"
+                      Width="180" HorizontalAlignment="Left"
+                      SelectionChanged="OnComboChanged">
+                <ComboBoxItem Content="red"    auto:AutomationProperties.AutomationId="cbo-item-red"/>
+                <ComboBoxItem Content="green"  auto:AutomationProperties.AutomationId="cbo-item-green" IsSelected="True"/>
+                <ComboBoxItem Content="blue"   auto:AutomationProperties.AutomationId="cbo-item-blue"/>
+                <ComboBoxItem Content="orange" auto:AutomationProperties.AutomationId="cbo-item-orange"/>
+            </ComboBox>
+            <TextBlock x:Name="LblComboValue"
+                       auto:AutomationProperties.AutomationId="lbl-combo-value"
+                       FontFamily="Consolas"
+                       Text="color=green"/>
+        </StackPanel>
+
         <!-- CommandBarFlyout trigger -->
-        <Button Grid.Row="3"
-                x:Name="BtnOpenFlyout"
+        <Button x:Name="BtnOpenFlyout"
                 auto:AutomationProperties.AutomationId="btn-open-flyout"
                 Content="Open CommandBarFlyout"
                 Width="220" HorizontalAlignment="Left"
@@ -70,14 +114,13 @@
         </Button>
 
         <!-- XAML Popup trigger -->
-        <Button Grid.Row="4"
-                x:Name="BtnOpenPopup"
+        <Button x:Name="BtnOpenPopup"
                 auto:AutomationProperties.AutomationId="btn-open-popup"
                 Content="Open XAML Popup"
                 Width="220" HorizontalAlignment="Left"
                 Click="OnOpenPopupClick"/>
 
-        <Popup x:Name="PopXaml" Grid.Row="5"
+        <Popup x:Name="PopXaml"
                HorizontalOffset="40" VerticalOffset="40">
             <Border Background="#202020" Padding="16" CornerRadius="6"
                     BorderBrush="#FFFFFF" BorderThickness="1">
@@ -93,10 +136,11 @@
         </Popup>
 
         <!-- Exit -->
-        <Button Grid.Row="7"
-                x:Name="BtnExit"
+        <Button x:Name="BtnExit"
                 auto:AutomationProperties.AutomationId="btn-exit"
                 Content="Exit" Width="80" HorizontalAlignment="Right"
                 Click="OnExitClick"/>
-    </Grid>
+
+    </StackPanel>
+    </ScrollViewer>
 </Window>

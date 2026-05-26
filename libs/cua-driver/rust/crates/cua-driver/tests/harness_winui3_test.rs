@@ -254,3 +254,125 @@ fn harness_winui3_xaml_popup_open() {
 
     child.kill().ok();
 }
+
+// ── Session helper for the additional control tests ──────────────────────────
+
+fn winui3_with_session<F>(f: F)
+where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) {
+    let driver = driver_binary();
+    if !driver.exists() { eprintln!("cua-driver.exe not built"); return; }
+    let harness = match Harness::launch() { Some(h) => h, None => return };
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WinUI3")
+        .expect("WinUI3 main window");
+    f(harness.pid, wid, &mut stdin, &mut stdout);
+    drop(stdout);
+    drop(stdin);
+    child.kill().ok();
+}
+
+/// Regression guard for the click → TogglePattern dispatch fix.
+/// cua-driver `click` now tries Invoke → Toggle → SelectionItem →
+/// ExpandCollapse before falling through to PostMessage, so WinUI3
+/// CheckBox toggles correctly via UIA without needing dispatch:foreground.
+#[test]
+#[ignore]
+fn harness_winui3_checkbox_toggle() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "chk-agreed").expect("chk-agreed");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("agreed=True"),
+            "WinUI3 CheckBox didn't toggle: TogglePattern dispatch may have regressed.");
+        println!("✅ harness_winui3_checkbox_toggle: agreed=True via UIA Toggle");
+    });
+}
+
+/// Regression guard for SelectionItem.Select dispatch on RadioButton.
+#[test]
+#[ignore]
+fn harness_winui3_radio_select() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "rdo-high").expect("rdo-high");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("prio=High"),
+            "WinUI3 radio didn't select High via SelectionItem.Select.");
+        println!("✅ harness_winui3_radio_select: prio=High via UIA SelectionItem");
+    });
+}
+
+/// Documents cua-driver gap: WinUI3 Slider implements
+/// `RangeValuePattern`, not `ValuePattern`. cua-driver's `set_value` tool
+/// queries `ValuePatternId` specifically (impl_.rs:2640), so it silently
+/// fails on RangeValuePattern-only elements. Real fix: cua-driver should
+/// try RangeValuePattern.SetValue (coercing the string to a double) when
+/// ValuePattern isn't found.
+/// WinUI3 Slider's parent AutomationId doesn't surface in the flat UIA
+/// element list (SliderAutomationPeer's children are the actionable
+/// elements, not the slider itself). Still document the gap — fixing
+/// the UIA enumeration to expose the slider as an indexed element is
+/// orthogonal to this branch's set_value fix.
+#[test]
+#[ignore]
+fn harness_winui3_slider_DOCUMENTED_unreachable() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx_opt = find_idx(snapshot_text(&snap), "sld-value");
+        assert!(idx_opt.is_none(),
+            "WinUI3 Slider 'sld-value' now appears in the UIA flat tree — \
+             cua-driver fixed the slider-element enumeration gap. Update this test.");
+        println!("⚠️  harness_winui3_slider_DOCUMENTED_unreachable: sld-value not in UIA flat tree");
+    });
+}
+
+/// Regression guard for ExpandCollapse.Expand + SelectionItem.Select on
+/// WinUI3 ComboBox.
+#[test]
+#[ignore]
+fn harness_winui3_combo_select() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let combo_idx = find_idx(snapshot_text(&snap), "cbo-color").expect("cbo-color");
+        // Expand the dropdown via ExpandCollapse.
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": combo_idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        // Re-snapshot — items materialize after expand.
+        let snap2 = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let item_idx = find_idx(snapshot_text(&snap2), "cbo-item-orange")
+            .expect("cbo-item-orange after expand");
+        // Select the item via SelectionItem.Select.
+        let _ = tools_call(stdin, stdout, 32, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": item_idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 33, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("color=orange"),
+            "WinUI3 combo didn't switch to orange via ExpandCollapse + SelectionItem.Select.");
+        println!("✅ harness_winui3_combo_select: color=orange via UIA Expand + Select");
+    });
+}

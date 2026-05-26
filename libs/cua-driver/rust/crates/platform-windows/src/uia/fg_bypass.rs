@@ -65,10 +65,18 @@ impl Drop for DisabledHwndGuard {
 /// UIA element. When it identifies as an XAML host (`is_xaml_host_hwnd`), the
 /// HWND is disabled for the duration of `action`. For non-XAML / classic
 /// Win32 hosts the closure runs unmodified — empirically those don't
-/// self-foreground.
+/// self-foreground via the input-queue path that EnableWindow gates.
 ///
-/// The guard restores the previous enabled-state at Drop, so a panic in
-/// `action` still leaves the window in a usable state.
+/// **Known limitation, WPF Buttons / TextBoxes:** WPF's automation peers
+/// call `UIElement.Focus()` synchronously during the UIA Invoke /
+/// ValuePattern.SetValue handler. `Focus()` routes through
+/// `SetForegroundWindow`, which is NOT gated by EnableWindow. The bypass
+/// has no effect there, and the daemon WILL transiently steal foreground
+/// from the user. Restoring foreground from a non-UIAccess process is
+/// blocked by the foreground-lock, so the only mitigation is to spawn
+/// cua-driver-uia.exe (UIAccess-manifested worker) and route UIA
+/// activations through it. See PR #1699 bg-modality tests for the
+/// regression guards.
 pub fn run_with_uwp_bypass<T>(host_hwnd: isize, action: impl FnOnce() -> T) -> T {
     let _guard = make_guard(host_hwnd);
     action()

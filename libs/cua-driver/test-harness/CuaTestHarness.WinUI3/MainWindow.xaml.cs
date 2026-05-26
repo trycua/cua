@@ -55,4 +55,31 @@ public sealed partial class MainWindow : Window
     {
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
     }
+
+    private void OnSliderChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (LblSliderValue is null) return;
+        LblSliderValue.Text = $"slider_value={(int)e.NewValue}";
+    }
+
+    private void UpdateChkState()
+    {
+        if (ChkAgreed is null || RdoLow is null || LblChkState is null) return;
+        var prio = RdoLow.IsChecked == true ? "Low"
+                 : RdoMed?.IsChecked == true ? "Medium"
+                 : RdoHigh?.IsChecked == true ? "High"
+                 : "?";
+        LblChkState.Text = $"agreed={ChkAgreed.IsChecked == true}, prio={prio}";
+    }
+    private void OnChkChanged(object sender, RoutedEventArgs e) => UpdateChkState();
+    private void OnRadioChanged(object sender, RoutedEventArgs e) => UpdateChkState();
+
+    private void OnComboChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LblComboValue is null) return;
+        if (CboColor?.SelectedItem is ComboBoxItem item)
+        {
+            LblComboValue.Text = $"color={item.Content}";
+        }
+    }
 }

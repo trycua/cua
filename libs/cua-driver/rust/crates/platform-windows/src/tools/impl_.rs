@@ -1788,40 +1788,85 @@ impl Tool for ClickTool {
                 if use_uia_invoke {
                     if let Some(ptr) = state_clone.element_cache.get_element_ptr(pid, hwnd, idx) {
                         use windows::Win32::UI::Accessibility::{
-                            IUIAutomationElement, IUIAutomationInvokePattern, UIA_InvokePatternId,
+                            IUIAutomationElement, IUIAutomationInvokePattern,
+                            IUIAutomationTogglePattern, IUIAutomationSelectionItemPattern,
+                            IUIAutomationExpandCollapsePattern,
+                            UIA_InvokePatternId, UIA_TogglePatternId,
+                            UIA_SelectionItemPatternId, UIA_ExpandCollapsePatternId,
                         };
                         use windows::core::Interface;
-                        // Reconstruct without consuming the cache's AddRef;
-                        // forget after we extract the pattern so Drop doesn't
-                        // double-Release the cached pointer.
                         let elem: IUIAutomationElement =
                             unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+
+                        // Try patterns in order of click-semantics specificity:
+                        //   1. Invoke      - buttons / hyperlinks (canonical)
+                        //   2. Toggle      - checkboxes (no Invoke)
+                        //   3. SelectionItem - radio buttons, listbox items
+                        //   4. ExpandCollapse - combo boxes, tree nodes
+                        // Each call is wrapped in the UWP foreground-steal bypass.
+                        //
+                        // Why this order: PR #1699's WinUI3 control parity tests
+                        // surfaced these pattern-dispatch gaps. Without these
+                        // fallthroughs, cua-driver couldn't drive WinUI3
+                        // CheckBox / RadioButton / ComboBox because PostMessage
+                        // doesn't reach their handlers (CoreInput dispatcher).
                         let invoke_result = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) };
-                        std::mem::forget(elem);
                         if let Ok(pattern) = invoke_result {
                             if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
-                                // UWP foreground-steal bypass: wrap Invoke so
-                                // XAML hosts don't self-foreground and steal
-                                // user focus. See crate::uia::fg_bypass.
-                                let invoke_outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
-                                    hwnd as isize,
-                                    || unsafe { inv.Invoke() },
-                                );
-                                match invoke_outcome {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { inv.Invoke() });
+                                match outcome {
                                     Ok(()) => {
+                                        std::mem::forget(elem);
                                         return Ok(format!(
                                             "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
                                         ));
                                     }
-                                    Err(e) => {
-                                        tracing::debug!(
-                                            target: "click",
-                                            "UIA Invoke failed for [{idx}]: {e}; falling back to PostMessage"
-                                        );
-                                    }
+                                    Err(e) => tracing::debug!(target: "click",
+                                        "UIA Invoke on [{idx}]: {e}, trying Toggle"),
                                 }
                             }
                         }
+                        let toggle_result = unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) };
+                        if let Ok(pattern) = toggle_result {
+                            if let Ok(tg) = pattern.cast::<IUIAutomationTogglePattern>() {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { tg.Toggle() });
+                                if outcome.is_ok() {
+                                    std::mem::forget(elem);
+                                    return Ok(format!(
+                                        "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
+                                    ));
+                                }
+                            }
+                        }
+                        let sel_result = unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) };
+                        if let Ok(pattern) = sel_result {
+                            if let Ok(si) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { si.Select() });
+                                if outcome.is_ok() {
+                                    std::mem::forget(elem);
+                                    return Ok(format!(
+                                        "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
+                                    ));
+                                }
+                            }
+                        }
+                        let exp_result = unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) };
+                        if let Ok(pattern) = exp_result {
+                            if let Ok(ec) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { ec.Expand() });
+                                if outcome.is_ok() {
+                                    std::mem::forget(elem);
+                                    return Ok(format!(
+                                        "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
+                                    ));
+                                }
+                            }
+                        }
+                        std::mem::forget(elem);
                     }
                 }
                 // PostMessage fallback (legacy Win32 + non-Invokable elements).
@@ -2631,22 +2676,51 @@ impl Tool for SetValueTool {
         };
 
         let state = self.state.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
             let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
                 .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache."))?;
             use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId};
             use windows::core::{Interface, BSTR};
             let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-            let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId)? };
+            // Try ValuePattern first (text inputs, editable combos, etc).
+            if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) } {
+                if let Ok(vp) = pattern.cast::<IUIAutomationValuePattern>() {
+                    if unsafe { vp.SetValue(&BSTR::from(value.as_str())) }.is_ok() {
+                        std::mem::forget(elem);
+                        return Ok("ValuePattern".to_string());
+                    }
+                }
+            }
+            // Fall through to RangeValuePattern for Sliders / ProgressBars /
+            // numeric ranges. RangeValue.SetValue takes a double, so coerce
+            // the string. Documented gap-closer (PR #1699 harness exposed).
+            use windows::Win32::UI::Accessibility::{
+                IUIAutomationRangeValuePattern, UIA_RangeValuePatternId,
+            };
+            if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_RangeValuePatternId) } {
+                if let Ok(rv) = pattern.cast::<IUIAutomationRangeValuePattern>() {
+                    let parsed: f64 = value.parse().map_err(|_| anyhow::anyhow!(
+                        "set_value: target element exposes RangeValuePattern (Slider / \
+                         ProgressBar / numeric range). `value` must be a parseable f64; \
+                         got {value:?}."
+                    ))?;
+                    unsafe { rv.SetValue(parsed)? };
+                    std::mem::forget(elem);
+                    return Ok("RangeValuePattern".to_string());
+                }
+            }
             std::mem::forget(elem);
-            let vp: IUIAutomationValuePattern = pattern.cast()?;
-            unsafe { vp.SetValue(&BSTR::from(value.as_str()))? };
-            Ok(())
+            anyhow::bail!(
+                "set_value: element [{idx}] does not implement ValuePattern or \
+                 RangeValuePattern. For controls with TogglePattern (CheckBox) or \
+                 SelectionItemPattern (RadioButton / ComboBoxItem), use the `click` \
+                 tool instead."
+            );
         }).await;
         match result {
-            // Match Swift's text format 1:1 (default AXValue-write path).
-            // UIA role/title placeholder pending element-cache enrichment.
-            Ok(Ok(())) => ToolResult::text(format!("✅ Set AXValue on [{idx}] (UIA ValuePattern).")),
+            Ok(Ok(pattern_name)) => ToolResult::text(format!(
+                "✅ Set AXValue on [{idx}] (UIA {pattern_name})."
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

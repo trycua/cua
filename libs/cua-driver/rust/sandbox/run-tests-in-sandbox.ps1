@@ -87,6 +87,14 @@ try {
     Write-Host "`n[BUILD] cargo test --no-run (harness_winui3_test)..." -ForegroundColor Yellow
     cargo test --test harness_winui3_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_winui3_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (harness_web_test)..." -ForegroundColor Yellow
+    cargo test --test harness_web_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_web_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (harness_bg_modality_test)..." -ForegroundColor Yellow
+    cargo test --test harness_bg_modality_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_bg_modality_test) failed" }
 } finally { Pop-Location }
 
 # ── 1.5. Build the .NET test-harness if dotnet is on PATH ────────────────────

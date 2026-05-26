@@ -3414,19 +3414,36 @@ impl Tool for DragTool {
         {
             return background_unavailable_error(hwnd, EventKind::MouseClick);
         }
-        // dispatch:"foreground" — no SendInput-based drag helper yet. The
-        // PostMessage drag works for the GTK-canvas + plain-Win32 cases we
-        // care about today; Chromium DOM dragstart will need a real
-        // SendInput-MOUSE-MOVE sequence, tracked as TODO.
+        // dispatch:"foreground" — SendInput-based drag. Required for WPF
+        // Slider thumbs (and any framework that polls GetKeyState during
+        // its drag handler — PostMessage doesn't update per-thread input
+        // state, so those targets see a button-up world during the drag
+        // and never start tracking). Subject to the same UIAccess
+        // foreground-lock constraint as send_click_synthesized.
         if dispatch == DispatchMode::Foreground {
-            return ToolResult::error(
-                "dispatch:\"foreground\" is not yet implemented for the drag tool. \
-                 Use bring_to_front to activate the target first, then retry with \
-                 dispatch:\"auto\" (PostMessage WM_MOUSEMOVE works against an \
-                 already-foreground window in most cases). TODO: add a \
-                 send_drag_synthesized helper analogous to send_click_synthesized."
-                    .to_string(),
-            );
+            let btn_fg = button.clone();
+            let prev_fg_addr = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+            };
+            let send_result = tokio::task::spawn_blocking(move || {
+                crate::input::mouse::send_drag_synthesized(
+                    hwnd,
+                    sx_from, sy_from,
+                    sx_to,   sy_to,
+                    duration_ms, steps, &btn_fg,
+                )
+            }).await;
+            tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+            let button_suffix = if button == "left" { String::new() } else { format!(" ({} button)", button) };
+            return match send_result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Sent drag{button_suffix} via SendInput on pid {raw_pid} \
+                     from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
+                     in {duration_ms}ms / {steps} steps (dispatch:foreground)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
         }
 
         // Pin the agent-cursor overlay above the drag target so the synthetic

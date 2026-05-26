@@ -326,22 +326,36 @@ fn harness_winui3_radio_select() {
 /// fails on RangeValuePattern-only elements. Real fix: cua-driver should
 /// try RangeValuePattern.SetValue (coercing the string to a double) when
 /// ValuePattern isn't found.
-/// WinUI3 Slider's parent AutomationId doesn't surface in the flat UIA
-/// element list (SliderAutomationPeer's children are the actionable
-/// elements, not the slider itself). Still document the gap — fixing
-/// the UIA enumeration to expose the slider as an indexed element is
-/// orthogonal to this branch's set_value fix.
+/// Regression guard for Slider element enumeration + RangeValuePattern
+/// set_value. cua-driver's UIA cache now pre-fetches RangeValuePattern,
+/// and `detect_cached_actions` reports `set_value` when present — so
+/// Slider parents get an `[N]` flat-tree index. The `set_value` tool
+/// already falls back to RangeValuePattern, so writing the value works
+/// end-to-end against a WinUI3 Slider.
 #[test]
 #[ignore]
-fn harness_winui3_slider_DOCUMENTED_unreachable() {
+fn harness_winui3_slider_set_value() {
     winui3_with_session(|pid, wid, stdin, stdout| {
         let snap = tools_call(stdin, stdout, 20, "get_window_state",
             serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
-        let idx_opt = find_idx(snapshot_text(&snap), "sld-value");
-        assert!(idx_opt.is_none(),
-            "WinUI3 Slider 'sld-value' now appears in the UIA flat tree — \
-             cua-driver fixed the slider-element enumeration gap. Update this test.");
-        println!("⚠️  harness_winui3_slider_DOCUMENTED_unreachable: sld-value not in UIA flat tree");
+        let idx = find_idx(snapshot_text(&snap), "sld-value")
+            .expect("sld-value should now be in the UIA flat tree after RangeValuePattern detection fix");
+        let resp = tools_call(stdin, stdout, 30, "set_value", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx,
+            "value": "42"
+        }));
+        println!("set_value sld-value=42: {}", resp["result"]["content"][0]["text"]);
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let text = snapshot_text(&post);
+        let advanced = text.lines().any(|l|
+            l.contains("slider_value=") && !l.contains("slider_value=0\""));
+        assert!(advanced,
+            "WinUI3 Slider didn't move via RangeValuePattern.SetValue. Lines: {}",
+            text.lines().filter(|l| l.contains("slider_value"))
+                .collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_winui3_slider_set_value: value moved via UIA RangeValuePattern.SetValue");
     });
 }
 

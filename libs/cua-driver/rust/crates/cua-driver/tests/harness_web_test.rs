@@ -154,17 +154,62 @@ where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) {
     drop(session);
 }
 
-// ── WebView2 structural ──────────────────────────────────────────────────────
+// ── WebView2 structural + page tool ─────────────────────────────────────────
 
 #[test]
 #[ignore]
 fn harness_webview_window_discoverable() {
-    // Smoke test: WebView2 harness launches, window appears via list_windows.
-    // Behavioural page-tool tests are deferred until WebView2 actually opens
-    // its CDP listener — see the module docstring TODO.
     run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
         |pid, wid, _stdin, _stdout| {
         println!("✅ harness_webview_window_discoverable: pid={pid} wid={wid}");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_webview_page_tool() {
+    // Regression guard for WebView2 CDP exposure via
+    // CoreWebView2EnvironmentOptions.AdditionalBrowserArguments.
+    // Combined with the `/json` Content-Length fix in mcp-server/src/cdp.rs,
+    // the page tool now reaches WebView2's DOM via CDP just like Electron.
+    run_with_session("webview", webview_exe(), "CuaTestHarness WebView", 9222,
+        |pid, wid, stdin, stdout| {
+
+        let marker_resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.querySelector('[data-cua-id=\"page-marker\"]').textContent"
+        }));
+        let marker = marker_resp.get("result")
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.get(0))
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        assert!(marker.contains("WEB_HARNESS_MARKER_v1"),
+            "WebView2 CDP execute_javascript marker fetch: {marker:?}");
+
+        // click_element via DOM selector + counter readback.
+        let _ = tools_call(stdin, stdout, 31, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "click_element",
+            "selector": "#btn-increment"
+        }));
+        std::thread::sleep(Duration::from_millis(500));
+
+        let counter_resp = tools_call(stdin, stdout, 32, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('lbl-counter').textContent"
+        }));
+        let post = counter_resp.get("result")
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.get(0))
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        assert!(post.contains("counter=1"),
+            "WebView2 counter didn't advance via page.click_element: {post:?}");
+        println!("✅ harness_webview_page_tool: CDP+execute_javascript+click_element green");
     });
 }
 
@@ -217,25 +262,24 @@ fn harness_electron_page_tool() {
     });
 }
 
-/// Documents a separate gap in page.click_element: its CDP probe runs JS
-/// that returns a JSON object (vx/vy/sx/sy/dpr) but the result is wrapped
-/// as a CDP `runtime.evaluate.user_gesture` string by the time the page
-/// tool's JSON parser sees it — causing "probe JSON missing required
-/// field 'vx'". Fix: unwrap the CDP result's `.value` before parsing,
-/// or send the probe with `returnByValue:true` in the Runtime.evaluate
-/// params. Manually unwrapping the harness's verified JSON string works.
+/// Regression guard for the page.click_element double-encode fix.
+///
+/// Originally the CDP runtime.evaluate response for the probe JS came
+/// back as a JSON-encoded string containing the actual `{vx,vy,...}`
+/// object. The page tool's `serde_json::from_str(&probe_json).or_else(...)`
+/// only fell into the inner-decode branch on a hard parse error, but
+/// `from_str` happily parses a JSON-string into a `Value::String`, so the
+/// inner-decode branch never ran and `parsed.get("vx")` returned None.
+/// Fix: match on Value::String and re-decode explicitly.
 #[test]
 #[ignore]
-fn harness_electron_click_element_DOCUMENTED_wrapper_bug() {
+fn harness_electron_click_element() {
     run_with_session("electron", electron_exe(), "CuaTestHarness Electron", 9223,
         |pid, wid, stdin, stdout| {
         let resp = tools_call(stdin, stdout, 30, "page", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "action": "click_element",
             "selector": "#btn-increment"
         }));
-        // Safe traversal — error responses from `page` can vary in shape
-        // (sometimes `result.isError: true` + `content[0].text`, sometimes
-        // `error.message`). Don't blow up on a missing array entry.
         let text = resp.get("result")
             .and_then(|r| r.get("content"))
             .and_then(|c| c.as_array())
@@ -244,12 +288,24 @@ fn harness_electron_click_element_DOCUMENTED_wrapper_bug() {
             .and_then(|t| t.as_str())
             .or_else(|| resp.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()))
             .unwrap_or("");
-        // Expect the gap: parser fails on the CDP-wrapped probe response.
-        let expected_gap = text.contains("probe JSON missing") || text.contains("required field");
-        assert!(expected_gap,
-            "Expected click_element probe-wrapper gap. Got: {text:?}. \
-             If this asserts on a success message, the wrapper-unwrap fix is in — \
-             flip this assertion to assert success.");
-        println!("⚠️  harness_electron_click_element_DOCUMENTED_wrapper_bug: probe JSON parse gap present");
+        assert!(!text.contains("probe JSON missing") && !text.contains("required field"),
+            "click_element probe parse regressed: {text:?}");
+        std::thread::sleep(Duration::from_millis(400));
+
+        // Verify the click actually fired in the DOM.
+        let counter_resp = tools_call(stdin, stdout, 31, "page", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "action": "execute_javascript",
+            "javascript": "document.getElementById('lbl-counter').textContent"
+        }));
+        let post = counter_resp.get("result")
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.get(0))
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        assert!(post.contains("counter=1"),
+            "Counter didn't advance after page.click_element: {post:?}");
+        println!("✅ harness_electron_click_element: probe parsed, click fired, counter=1");
     });
 }

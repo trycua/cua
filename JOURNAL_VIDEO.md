@@ -317,7 +317,7 @@ in cursor.jsonl over 20.8 s.
 
 Render: `cua-driver recording render <dir> <out.mp4>` →
 ```
-✅ Wrote C:/Users/cuademo/Desktop/calc-demo-rendered.mp4
+✅ Wrote &lt;output-dir&gt;/calc-demo-rendered.mp4
    input_duration_ms: 20667
    zoom_region_count: 2
 ```

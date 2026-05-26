@@ -205,6 +205,24 @@ mkdir -p "$VERSIONED_DIR"
 cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver"
 chmod +x "$VERSIONED_DIR/cua-driver"
 
+# Re-sign with a fresh ad-hoc signature.
+#
+# macOS 26+ Taskgated rejects the linker-emitted ad-hoc signature once
+# the binary has been copied (the kernel's cached signature for the new
+# inode doesn't match the embedded one strictly enough for the newer
+# CODESIGNING namespace). Result is `SIGKILL (Code Signature Invalid)
+# — Taskgated Invalid Signature` on first run, no stderr output, exit
+# code 137 — extremely confusing without a diagnostic-report dig. The
+# fix: re-sign in place. `codesign --force --sign -` emits a fresh
+# ad-hoc signature keyed to the new on-disk bytes, which Taskgated
+# accepts. Cheap (~50ms on a 40MB binary). macOS-only — no-op on Linux.
+if [ "$OS" = "Darwin" ]; then
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --sign - "$VERSIONED_DIR/cua-driver" 2>/dev/null \
+            || echo "${YELLOW}warning: codesign --force --sign - failed; first run may fail with SIGKILL on macOS 26+${NORMAL}" >&2
+    fi
+fi
+
 # Skill pack — stage from the repo so the `current` symlink below
 # transparently exposes it to agents. Mirrors what install.sh does
 # from a release tarball.
@@ -217,12 +235,24 @@ if [ -d "$SOURCE_SKILLS" ]; then
     echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
 fi
 
-# Atomic-ish swap of the `current` symlink.
+# Atomically point `current` at the new versioned release dir.
+#
+# Previous version used `ln -s … current.new` + `mv -Tf current.new current`
+# with a BSD `mv -f` fallback. The BSD fallback path is broken: when the
+# destination is a symlink-to-directory, BSD `mv` *follows* it and drops
+# the temp symlink INSIDE the directory as `current/current.new`, leaving
+# stale `current.new` orphans at both levels and the actual `current`
+# symlink untouched. macOS doesn't ship GNU `mv` so the `-Tf` path never
+# fires on this host.
+#
+# `ln -sfn` is the POSIX primitive that does what we wanted from the
+# start: replace the existing symlink atomically, without dereferencing.
+# Works the same on macOS BSD and Linux GNU coreutils. No temp file
+# means no orphan to clean up on partial failure.
 mkdir -p "$HOME_DIR/packages"
-TMP_LINK="$CURRENT_LINK.new"
-rm -f "$TMP_LINK"
-ln -s "$VERSIONED_DIR" "$TMP_LINK"
-mv -Tf "$TMP_LINK" "$CURRENT_LINK" 2>/dev/null || mv -f "$TMP_LINK" "$CURRENT_LINK"
+# Sweep any orphan temp from a previous (pre-fix) run before re-creating.
+rm -f "$CURRENT_LINK.new"
+ln -sfn "$VERSIONED_DIR" "$CURRENT_LINK"
 echo "${GREEN}current -> $VERSIONED_DIR${NORMAL}"
 echo ""
 

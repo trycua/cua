@@ -158,6 +158,34 @@ public enum TypeTextTool {
                 } else {
                     do {
                         let element = try AXInput.focusedElement(pid: pid)
+
+                        // Guard against stale focus on non-text containers.
+                        // In modal sheet contexts (e.g. macOS Open dialog with
+                        // a "Go to Folder" sheet), AX focus tracking can lag —
+                        // the previous focused element (sidebar AXOutline,
+                        // AXTable, AXList) retains focus status even after the
+                        // sheet appears. Writing to these containers silently
+                        // succeeds but inserts nothing useful.
+                        // See: https://github.com/trycua/cua/issues/1592 (Bug 3)
+                        let focusedRole = AXInput.describe(element).role ?? ""
+                        let nonTextRoles: Set<String> = [
+                            "AXOutline", "AXTable", "AXList",
+                            "AXBrowser", "AXScrollArea", "AXSplitGroup",
+                        ]
+                        if nonTextRoles.contains(focusedRole) {
+                            return CallTool.Result(
+                                content: [.text(
+                                    text: "⚠️ Focused element is \(focusedRole) — not a text input. "
+                                        + "AX focus may be stale (e.g. a modal sheet appeared after "
+                                        + "the last interaction). Use element_index targeting: call "
+                                        + "get_window_state to find the text field's index, then "
+                                        + "pass element_index to type_text.",
+                                    annotations: nil, _meta: nil
+                                )],
+                                isError: true
+                            )
+                        }
+
                         // Animate the cursor to the focused element before writing.
                         if let center = AXInput.screenCenter(of: element) {
                             await MainActor.run { AgentCursor.shared.pinAbove(pid: pid) }

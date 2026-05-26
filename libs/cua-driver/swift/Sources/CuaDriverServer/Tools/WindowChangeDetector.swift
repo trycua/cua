@@ -186,9 +186,14 @@ public enum WindowChangeDetector {
             var newEvents: [WindowEvent] = []
             if !newIds.isEmpty {
                 // Resolve app names / titles from the live window list.
+                // Filter out windows owned by the cua-driver daemon itself
+                // (e.g. AgentCursorOverlayWindow) so the overlay never
+                // appears as a "new window" side-effect in tool results.
+                // See: https://github.com/trycua/cua/issues/1592 (Bug 2)
+                let daemonPid = ProcessInfo.processInfo.processIdentifier
                 let allVisible = WindowEnumerator.visibleWindows().filter { $0.layer == 0 }
                 newEvents = allVisible
-                    .filter { newIds.contains($0.id) }
+                    .filter { newIds.contains($0.id) && $0.pid != daemonPid }
                     .map { WindowEvent(
                         windowId: $0.id,
                         pid: $0.pid,

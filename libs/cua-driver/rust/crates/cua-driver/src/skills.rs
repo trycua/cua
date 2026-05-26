@@ -175,6 +175,14 @@ enum AgentParent {
     /// `<HOME or USERPROFILE>/<segment>`.
     Home(&'static str),
     /// `<APPDATA>/<segment>` (Windows roaming app config).
+    ///
+    /// `#[allow(dead_code)]`: constructed only inside `#[cfg(windows)]`
+    /// AGENTS entries (OpenCode on Windows reads from `%APPDATA%`) and
+    /// matched only inside `#[cfg(windows)]` arms of `parent_path`. The
+    /// enum variant itself sits in cross-platform code so rustc's
+    /// post-cfg-strip dead-code pass flags it on macOS/Linux even though
+    /// the Windows build uses it.
+    #[allow(dead_code)]
     AppData(&'static str),
 }
 

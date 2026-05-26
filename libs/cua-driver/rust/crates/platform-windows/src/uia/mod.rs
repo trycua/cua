@@ -19,7 +19,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_ProcessIdPropertyId, UIA_ValueValuePropertyId,
     UIA_InvokePatternId, UIA_SelectionItemPatternId,
     UIA_TogglePatternId, UIA_ExpandCollapsePatternId, UIA_TextPatternId,
-    UIA_ValuePatternId, UIA_ScrollPatternId,
+    UIA_ValuePatternId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
     TreeScope_Children, TreeScope_Subtree,
 };
 
@@ -100,6 +100,7 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
         UIA_SelectionItemPatternId,
         UIA_ExpandCollapsePatternId,
         UIA_ValuePatternId,
+        UIA_RangeValuePatternId,
         UIA_TextPatternId,
         UIA_ScrollPatternId,
     ] {
@@ -520,6 +521,13 @@ fn detect_cached_actions(element: &IUIAutomationElement, is_enabled: bool) -> Ve
             actions.push("expand".into());
         }
         if element.GetCachedPattern(UIA_ValuePatternId).is_ok() {
+            actions.push("set_value".into());
+        }
+        // RangeValuePattern is exposed by Sliders, ProgressBars, and other
+        // numeric-range controls. Without this entry the slider parent
+        // gets actions=[] → marked non-actionable → no `[N]` index in the
+        // flat tree, making the slider unaddressable by AutomationId.
+        if element.GetCachedPattern(UIA_RangeValuePatternId).is_ok() {
             actions.push("set_value".into());
         }
         if element.GetCachedPattern(UIA_TextPatternId).is_ok() {

@@ -676,37 +676,55 @@ fn harness_wpf_layered_popup_capture() {
 
 #[test]
 #[ignore]
-fn harness_wpf_slider_drag_tool_returns() {
-    // Coverage note for the drag tool against a WPF Slider thumb.
+fn harness_wpf_slider_drag() {
+    // Regression guard for the SendInput drag path. PostMessage drag
+    // doesn't update GetKeyState, so WPF's Thumb-drag handler (which
+    // polls Mouse.LeftButton via GetKeyState) never sees the button
+    // held — the thumb stays put. dispatch:"foreground" routes through
+    // send_drag_synthesized which goes via the system input queue and
+    // DOES update GetKeyState, so the thumb actually tracks.
     //
-    // PostMessage WM_LBUTTONDOWN / WM_MOUSEMOVE / WM_LBUTTONUP doesn't
-    // update the OS keyboard/mouse state visible to GetKeyState. WPF's
-    // Slider Thumb relies on Mouse.LeftButton (which polls GetKeyState)
-    // to recognise an in-progress drag — so a PostMessage drag never
-    // moves a WPF thumb, even when from/to are correctly on the thumb
-    // in client coords. The companion `harness_wpf_slider_increase_large`
-    // test covers the slider via UIA Invoke on its internal IncreaseLarge
-    // sub-button, which is what an agent SHOULD use for slider
-    // manipulation on a backgrounded window.
-    //
-    // We still exercise the drag tool against the slider so its codepath
-    // (coord translation, dispatch policy, message synthesis) is on the
-    // critical-path test list — we just don't assert on the value moving.
-    // TODO: add a SendInput-based drag path so dispatch:"foreground" can
-    // drive the thumb, then enable a behavioral assertion here.
+    // Foreground-lock caveat: SetForegroundWindow can be rejected from
+    // non-UIAccess processes during the daemon-process foreground swap.
+    // bring_to_front first to make the harness foreground (via
+    // AttachThreadInput), then SendInput's own SetForegroundWindow is a
+    // no-op success.
     with_session(|pid, wid, stdin, stdout| {
         focus_harness(stdin, stdout, pid, wid);
+        let pre = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&pre).contains("slider_value=0"),
+            "initial slider_value=0 missing");
+
         let resp = tools_call(stdin, stdout, 30, "drag", serde_json::json!({
             "pid": pid as i64, "window_id": wid,
+            // drag screen-coords path: send_drag_synthesized takes screen
+            // coords directly. The harness window is centered at
+            // (517, 66) with the slider track at client (50-330, 275);
+            // convert to screen via ClientToScreen approximation by
+            // offsetting by window position + non-client chrome
+            // (title bar + border ~30,8). screen coords here are
+            // re-derived in window-local form by the tool's existing
+            // ClientToScreen step.
             "from_x": 50.0, "from_y": 275.0,
             "to_x": 330.0,  "to_y": 275.0,
-            "duration_ms": 600, "steps": 30
+            "duration_ms": 700, "steps": 40,
+            "dispatch": "foreground"
         }));
         let msg = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-        println!("drag slider: {msg}");
+        println!("drag slider (foreground): {msg}");
         assert!(msg.starts_with("✅"),
             "drag tool returned non-success: {msg}");
-        println!("✅ harness_wpf_slider_drag_tool_returns: PostMessage drag emitted (known no-op vs WPF Thumb)");
+        std::thread::sleep(Duration::from_millis(500));
+
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        let text = snapshot_text(&post);
+        let advanced = text.lines().any(|l|
+            l.contains("slider_value=") && !l.contains("slider_value=0\""));
+        assert!(advanced,
+            "Slider value did not advance via SendInput drag. Lines: {}",
+            text.lines().filter(|l| l.contains("slider_value"))
+                .collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_slider_drag: thumb tracked via SendInput drag");
     });
 }
 

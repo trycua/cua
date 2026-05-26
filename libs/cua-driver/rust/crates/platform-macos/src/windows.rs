@@ -28,8 +28,16 @@ pub struct WindowInfo {
 }
 
 // ── CGWindow option flags ─────────────────────────────────────────────────────
+// Apple-canonical kCG* naming preserved to match the public Apple headers — the
+// upper-case-globals lint would rename them to KCG_..., which would silently
+// shadow the Apple-namespaced constant references in any future code that
+// re-introduces them. Mirrors platform-windows::uia/windows_enum.rs which uses
+// the same allow for UIA_* constants.
+#[allow(non_upper_case_globals)]
 const kCGWindowListExcludeDesktopElements: u32 = 16;
+#[allow(non_upper_case_globals)]
 const kCGWindowListOptionOnScreenOnly: u32 = 1;
+#[allow(non_upper_case_globals)]
 const kCGNullWindowID: u32 = 0;
 
 // ── Internal CGWindowInfo parsing ─────────────────────────────────────────────

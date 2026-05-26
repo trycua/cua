@@ -7,7 +7,7 @@
 
 use core_foundation::{
     array::CFArrayRef,
-    base::{CFIndex, CFRelease, CFRetain, CFTypeID, CFTypeRef},
+    base::{CFRelease, CFRetain, CFTypeID, CFTypeRef},
     string::CFStringRef,
 };
 use std::os::raw::{c_int, c_void};

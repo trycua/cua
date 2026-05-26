@@ -10,7 +10,6 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use super::ToolState;
-use crate::cursor::state::CursorConfig;
 
 // ── SetAgentCursorEnabled ─────────────────────────────────────────────────────
 

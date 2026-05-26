@@ -669,7 +669,16 @@ impl Tool for GetWindowStateTool {
                     let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
                     let header = format!("window_id={hwnd} pid={pid} elements={count}\n\n");
                     content.push(mcp_server::protocol::Content::text(header + &tr.tree_markdown));
-                    state.element_cache.update(pid, hwnd, &tr.nodes);
+                    // Route the cache to the matching dispatch path: any
+                    // node whose msaa_role is Some came from the MSAA
+                    // walker, so the entire snapshot must Drop via
+                    // IAccessible and click must dispatch through MSAA.
+                    let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
+                    if is_msaa {
+                        state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
+                    } else {
+                        state.element_cache.update(pid, hwnd, &tr.nodes);
+                    }
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
                 }
@@ -1775,6 +1784,7 @@ impl Tool for ClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::uia::cache::SnapshotKind;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
@@ -1783,6 +1793,13 @@ impl Tool for ClickTool {
         let button = args.str_or("button", "left");
         let count = args.u64_or("count", 1) as usize;
         let dispatch = DispatchMode::from_args(&args);
+        // Optional `action` arg picks among the actions exposed in the
+        // accessibility tree. Today this only changes behavior for MSAA
+        // BUTTONDROPDOWN: `"expand"` clicks the right-edge (dropdown arrow
+        // half) instead of the center (press half). Defaults to first
+        // action in the element's `actions=[...]` list, which preserves
+        // existing semantics for UIA elements.
+        let action_req = args.get("action").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         // Resolve HWND: explicit, or auto from pid.
         let hwnd = match hwnd_opt {
@@ -1797,6 +1814,84 @@ impl Tool for ClickTool {
         };
 
         if let Some(idx) = elem_idx {
+            // ── MSAA dispatch (SAL/VCL targets) ────────────────────────────
+            // For MSAA elements, route by role:
+            //   - `action:"expand"` on BUTTONDROPDOWN → SendInput at the
+            //     cached rect's right-edge (the dropdown arrow half).
+            //     Opens the picker (e.g. LO Writer Font Color → SALTMPSUBFRAME).
+            //   - default action / `"invoke"` → SendInput at center
+            //     (matches `accDoDefaultAction` semantics for VCL controls
+            //     and works through dispatch:"foreground"). We DO NOT call
+            //     `accDoDefaultAction` here because LO's MSAA impl applies
+            //     the change asynchronously and returns S_OK either way,
+            //     so the visible behavior is the same as a center click.
+            if let Some((SnapshotKind::Msaa, role)) =
+                self.state.element_cache.get_element_kind_and_role(pid, hwnd, idx)
+            {
+                const ROLE_BUTTONDROPDOWN: i32 = 0x38;
+                const ROLE_BUTTONMENU: i32 = 0x39;
+                const ROLE_BUTTONDROPDOWNGRID: i32 = 0x3A;
+                const ROLE_SPLITBUTTON: i32 = 0x3E;
+                let want_expand = action_req.as_deref() == Some("expand");
+                let is_dropdown_role = matches!(
+                    role,
+                    Some(ROLE_BUTTONDROPDOWN | ROLE_BUTTONMENU | ROLE_BUTTONDROPDOWNGRID | ROLE_SPLITBUTTON)
+                );
+                let (tx, ty) = if want_expand && is_dropdown_role {
+                    match self.state.element_cache.get_element_rect(pid, hwnd, idx) {
+                        Some((_l, t, r, b)) => {
+                            // Right-edge of the SplitButton — the dropdown
+                            // arrow half. -4 puts the click safely inside
+                            // the arrow region for the typical ~12-16 px
+                            // arrow width VCL uses.
+                            (r - 4, (t + b) / 2)
+                        }
+                        None => {
+                            return ToolResult::error(format!(
+                                "MSAA element [{idx}] has no cached rect — \
+                                 cannot dispatch action:\"expand\". Re-run \
+                                 get_window_state to refresh the cache."
+                            ));
+                        }
+                    }
+                } else if want_expand && !is_dropdown_role {
+                    return ToolResult::error(format!(
+                        "action:\"expand\" requested for MSAA element [{idx}] \
+                         but its role ({role:?}) is not a dropdown button. \
+                         Use action:\"invoke\" or omit the action arg."
+                    ));
+                } else {
+                    match self.state.element_cache.get_element_center(pid, hwnd, idx) {
+                        Some(v) => v,
+                        None => return ToolResult::error(format!(
+                            "MSAA element [{idx}] not in cache for hwnd={hwnd}. \
+                             Call get_window_state first."
+                        )),
+                    }
+                };
+                pin_overlay_above(hwnd);
+                overlay_glide_to(tx as f64, ty as f64).await;
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                    x: tx as f64, y: ty as f64,
+                });
+                let btn_fg = button.clone();
+                let prev_fg_addr = unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+                };
+                let send_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_click_synthesized(hwnd, tx, ty, count, &btn_fg)
+                }).await;
+                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                let half = if want_expand { "dropdown" } else { "press" };
+                return match send_result {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Performed SendInput click on MSAA [{idx}] {half} half at ({tx},{ty})."
+                    )),
+                    Ok(Err(e)) => ToolResult::error(e.to_string()),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
+            }
+
             // UIA path: get cached center (no COM call needed — captured at walk time).
             let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
                 Some(v) => v,

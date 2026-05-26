@@ -233,7 +233,17 @@ fn harness_electron_click_element_DOCUMENTED_wrapper_bug() {
             "pid": pid as i64, "window_id": wid, "action": "click_element",
             "selector": "#btn-increment"
         }));
-        let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        // Safe traversal — error responses from `page` can vary in shape
+        // (sometimes `result.isError: true` + `content[0].text`, sometimes
+        // `error.message`). Don't blow up on a missing array entry.
+        let text = resp.get("result")
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.get(0))
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .or_else(|| resp.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()))
+            .unwrap_or("");
         // Expect the gap: parser fails on the CDP-wrapped probe response.
         let expected_gap = text.contains("probe JSON missing") || text.contains("required field");
         assert!(expected_gap,

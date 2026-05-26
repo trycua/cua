@@ -76,9 +76,16 @@ if ($Skip -ne "electron") {
     if (Test-Path $elecBuild) {
         Write-Host ""
         Write-Host "[BUILD] CuaTestHarness.Electron -> $testAppsDir\harness-electron\" -ForegroundColor Cyan
-        & $elecBuild
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[WARN] Electron build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        # Electron build sets $ErrorActionPreference=Stop internally and
+        # throws on npm install / publish failure. Wrap so a throw degrades
+        # to a warning rather than aborting the whole harness build.
+        try {
+            & $elecBuild
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[WARN] Electron build failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[WARN] Electron build errored: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     } else {
         Write-Host "[SKIP] Electron project not present yet - skipping." -ForegroundColor Yellow

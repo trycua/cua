@@ -48,7 +48,14 @@ fn focus_pid_file()  -> PathBuf { std::env::temp_dir().join("focus_monitor_pid.t
 fn focus_hwnd_file() -> PathBuf { std::env::temp_dir().join("focus_monitor_hwnd.txt") }
 
 fn read_count(p: &std::path::Path) -> u32 {
-    std::fs::read_to_string(p).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+    // Surface read / parse errors instead of swallowing them as 0 — a silent
+    // 0 would mask actual focus-steal regressions by making delta computation
+    // look "no change" when really the sentinel file is unreadable.
+    let raw = std::fs::read_to_string(p)
+        .unwrap_or_else(|e| panic!("failed reading sentinel counter {p:?}: {e}"));
+    raw.trim()
+        .parse::<u32>()
+        .unwrap_or_else(|e| panic!("failed parsing sentinel counter {p:?} as u32: {e}"))
 }
 
 // ── JSON-RPC ─────────────────────────────────────────────────────────────────
@@ -140,7 +147,7 @@ fn setup() -> Option<BgFixture> {
     let _ = std::fs::remove_file(focus_pid_file());
     let _ = std::fs::remove_file(focus_hwnd_file());
 
-    let harness = Command::new(&h_exe)
+    let mut harness = Command::new(&h_exe)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().ok()?;
     let harness_pid = harness.id();
@@ -148,11 +155,22 @@ fn setup() -> Option<BgFixture> {
 
     // Launch sentinel. focus-monitor-win activates its own window which
     // displaces the harness.
-    let fm = Command::new(&fm_bin)
+    let mut fm = match Command::new(&fm_bin)
         .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().ok()?;
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("focus-monitor-win spawn failed: {e}");
+            // Reap the harness we already spawned so it doesn't leak.
+            let _ = harness.kill();
+            let _ = harness.wait();
+            return None;
+        }
+    };
     // Wait for sentinel to publish its pid+hwnd files (so we know it's
-    // up and has claimed foreground).
+    // up and has claimed foreground). On timeout we MUST reap both child
+    // processes so they don't poison subsequent tests.
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         let pid_ok = std::fs::read_to_string(focus_pid_file()).ok()
@@ -162,6 +180,10 @@ fn setup() -> Option<BgFixture> {
         if pid_ok && hwnd_ok { break; }
         if std::time::Instant::now() > deadline {
             eprintln!("focus-monitor sentinel never published pid/hwnd files");
+            let _ = harness.kill();
+            let _ = harness.wait();
+            let _ = fm.kill();
+            let _ = fm.wait();
             return None;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -176,9 +198,18 @@ fn setup() -> Option<BgFixture> {
     let _ = std::fs::write(key_loss_file(), "0");
     let _ = std::fs::write(key_gain_file(), "0");
 
-    let mut driver = Command::new(&driver_bin)
+    let mut driver = match Command::new(&driver_bin)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().ok()?;
+        .spawn()
+    {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cua-driver spawn failed: {e}");
+            let _ = harness.kill(); let _ = harness.wait();
+            let _ = fm.kill();      let _ = fm.wait();
+            return None;
+        }
+    };
     let mut driver_stdin = driver.stdin.take().unwrap();
     let driver_stdout_raw = driver.stdout.take().unwrap();
     let mut driver_stdout = driver_stdout_raw;

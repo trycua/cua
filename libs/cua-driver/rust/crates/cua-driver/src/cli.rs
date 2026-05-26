@@ -13,7 +13,7 @@
 //! `CursorConfig::from_args()` and are ignored here.
 
 use std::process;
-use mcp_server::{protocol::Content, tool::ToolRegistry};
+use cua_driver_core::{protocol::Content, tool::ToolRegistry};
 
 /// Which CLI command was requested.
 pub enum Command {
@@ -370,7 +370,7 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 pub fn run_list_tools(registry: &ToolRegistry) {
     // Sort alphabetically by name to match Swift's
     // `ListToolsCommand.run()` `tools.sorted(by: { $0.name < $1.name })`.
-    let mut entries: Vec<(&str, &mcp_server::tool::ToolDef)> = registry.iter_defs().collect();
+    let mut entries: Vec<(&str, &cua_driver_core::tool::ToolDef)> = registry.iter_defs().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
     for (name, def) in entries {
         let summary = first_sentence(&def.description);
@@ -1059,11 +1059,20 @@ pub fn run_call(
 }
 
 /// `cua-driver recording <start|stop|status>` — wrapper around
-/// `set_recording` / `get_recording_state` tools on the running daemon.
+/// `start_recording` / `stop_recording` / `get_recording_state` tools
+/// on the running daemon.
 ///
 /// Requires a running daemon (`cua-driver serve`) because recording
 /// state lives in-process.
 pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>) {
+    // `render` is pure file-to-file work that doesn't need the daemon;
+    // dispatch it before the daemon-running check so it works without
+    // a running `cua-driver serve`.
+    if subcommand == "render" {
+        run_recording_render(args);
+        return;
+    }
+
     let socket_path = socket
         .map(str::to_owned)
         .unwrap_or_else(crate::serve::default_socket_path);
@@ -1102,9 +1111,8 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
             let req = crate::serve::DaemonRequest {
                 method: "call".into(),
-                name: Some("set_recording".into()),
+                name: Some("start_recording".into()),
                 args: Some(serde_json::json!({
-                    "enabled": true,
                     "output_dir": output_dir
                 })),
             };
@@ -1138,8 +1146,8 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         "stop" => {
             let req = crate::serve::DaemonRequest {
                 method: "call".into(),
-                name: Some("set_recording".into()),
-                args: Some(serde_json::json!({ "enabled": false })),
+                name: Some("stop_recording".into()),
+                args: Some(serde_json::json!({})),
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),
@@ -1183,8 +1191,71 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         }
 
         other => {
-            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status");
+            eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <dir> --output <out.mp4>");
             process::exit(64);
+        }
+    }
+}
+
+/// `cua-driver recording render <input-dir> <out.mp4> [--no-zoom] [--scale N]`
+/// Pure file-to-file work — does NOT go through the daemon.
+///
+/// Note on flag parsing: the global cua-driver CLI parser strips
+/// recognised flags before this subcommand sees them, leaving only
+/// positionals. So instead of `--output <out>` (which the parser
+/// would consume and lose) we accept the output path as the second
+/// positional. `--no-zoom` and `--scale N` survive because their
+/// values are inline (no separate value token).
+fn run_recording_render(args: &[String]) {
+    // First positional = input dir, second positional = output mp4.
+    let positionals: Vec<&String> = args.iter().filter(|s| !s.starts_with("--")).collect();
+    let input_dir = match positionals.get(0) {
+        Some(s) if !s.is_empty() => std::path::PathBuf::from(s),
+        _ => {
+            eprintln!("Usage: cua-driver recording render <input-dir> <out.mp4> [--no-zoom] [--scale N]");
+            process::exit(64);
+        }
+    };
+    let output_path = match positionals.get(1) {
+        Some(s) if !s.is_empty() => std::path::PathBuf::from(s),
+        _ => {
+            eprintln!("Usage: cua-driver recording render <input-dir> <out.mp4> [--no-zoom] [--scale N]");
+            eprintln!("(second positional argument is the output path)");
+            process::exit(64);
+        }
+    };
+    let mut no_zoom = false;
+    let mut scale: f64 = 2.0;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--no-zoom" => no_zoom = true,
+            "--scale" => {
+                if let Some(v) = iter.next() {
+                    if let Ok(f) = v.parse::<f64>() { scale = f; }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let opts = cua_driver_core::recording_render::RenderOptions {
+        no_zoom,
+        default_scale: scale,
+    };
+    println!("Rendering {} -> {}{}",
+        input_dir.display(),
+        output_path.display(),
+        if no_zoom { " (no-zoom baseline)" } else { "" });
+    match cua_driver_core::recording_render::render(&input_dir, &output_path, &opts) {
+        Ok(res) => {
+            println!("✅ Wrote {}", res.output_path.display());
+            println!("   input_duration_ms: {:.0}", res.input_duration_ms);
+            println!("   zoom_region_count: {}", res.zoom_region_count);
+        }
+        Err(e) => {
+            eprintln!("Render failed: {e}");
+            process::exit(1);
         }
     }
 }
@@ -1720,7 +1791,7 @@ pub fn run_config_cmd(
             });
             if result.is_error.unwrap_or(false) {
                 for item in &result.content {
-                    if let mcp_server::protocol::Content::Text { text, .. } = item {
+                    if let cua_driver_core::protocol::Content::Text { text, .. } = item {
                         eprintln!("{text}");
                     }
                 }

@@ -93,7 +93,7 @@ async fn overlay_glide_to(sx: f64, sy: f64) {
     }
     crate::overlay::animate_cursor_to(sx, sy).await;
 }
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
@@ -423,7 +423,7 @@ impl Tool for ListWindowsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let _on_screen_only = args.bool_or("on_screen_only", false);
         let (windows, pid_to_name) = tokio::task::spawn_blocking(move || {
@@ -600,7 +600,7 @@ impl Tool for GetWindowStateTool {
             let cfg = self.state.config.read().unwrap();
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let capture_mode = args.str_or("capture_mode", &default_mode);
         let query = args.opt_str("query");
 
@@ -668,7 +668,7 @@ impl Tool for GetWindowStateTool {
                 if let Some(tr) = tree_opt {
                     let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
                     let header = format!("window_id={hwnd} pid={pid} elements={count}\n\n");
-                    content.push(mcp_server::protocol::Content::text(header + &tr.tree_markdown));
+                    content.push(cua_driver_core::protocol::Content::text(header + &tr.tree_markdown));
                     // Route the cache to the matching dispatch path: any
                     // node whose msaa_role is Some came from the MSAA
                     // walker, so the entire snapshot must Drop via
@@ -689,7 +689,7 @@ impl Tool for GetWindowStateTool {
                     } else {
                         state.resize_registry.clear_ratio(pid);
                     }
-                    content.push(mcp_server::protocol::Content::image_png(b64));
+                    content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
                 }
@@ -1782,7 +1782,7 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         use crate::uia::cache::SnapshotKind;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
@@ -2302,7 +2302,7 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
@@ -2312,7 +2312,7 @@ impl Tool for TypeTextTool {
         // invocation tags into the text param (see text_sanitize docs).
         // Returns Cow::Borrowed on the no-match fast path so the common
         // case is allocation-free.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index");
@@ -2471,7 +2471,7 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
@@ -2596,7 +2596,7 @@ impl Tool for HotkeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
@@ -2936,7 +2936,7 @@ impl Tool for ScrollTool {
             Some(d) => d.to_owned(),
             None    => return ToolResult::error("Missing required string field direction."),
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let by = args.str_or("by", "line");
         let direction_display = direction.clone();
         let by_display = by.clone();
@@ -3123,7 +3123,7 @@ impl Tool for DoubleClickTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
         let x = args.opt_f64("x");
@@ -3314,7 +3314,7 @@ impl Tool for RightClickTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
         let x = args.opt_f64("x");
@@ -3494,7 +3494,7 @@ impl Tool for DragTool {
         let pid = raw_pid as u32;
         let dispatch = DispatchMode::from_args(&args);
 
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
@@ -3720,7 +3720,7 @@ impl Tool for MoveCursorTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
         let cursor_id_owned = args.str_or("cursor_id", "default");
@@ -3772,7 +3772,7 @@ impl Tool for SetAgentCursorEnabledTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id_owned = args.str_or("cursor_id", "default");
         let cursor_id = cursor_id_owned.as_str();
         self.state.cursor_registry.set_enabled(cursor_id, enabled);
@@ -4513,7 +4513,7 @@ impl Tool for ZoomTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required integer field window_id."),
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let coerce = |k: &str| args.opt_f64(k).or_else(|| args.opt_i64(k).map(|i| i as f64));
         let (x1, y1, x2, y2) = match (coerce("x1"), coerce("y1"), coerce("x2"), coerce("y2")) {
             (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
@@ -4547,7 +4547,7 @@ impl Tool for ZoomTool {
                 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                 let b64 = B64.encode(&crop.jpeg_bytes);
                 let (w, h) = (crop.out_w, crop.out_h);
-                use mcp_server::protocol::Content;
+                use cua_driver_core::protocol::Content;
                 // Match Swift's text format 1:1.
                 let summary = "✅ Zoomed region captured at native resolution. \
                     To click a target in this image, use \
@@ -4597,12 +4597,12 @@ impl Tool for TypeTextCharsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
         // Same trailing-protocol-tag scrub as the main TypeTextTool — see
-        // mcp_server::text_sanitize for rationale.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        // cua_driver_core::text_sanitize for rationale.
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let hwnd_opt = args.opt_u64("window_id");
@@ -4684,7 +4684,7 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let hwnd_opt = args.opt_u64("window_id");
 
@@ -5172,7 +5172,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     let _: &TypeTextCharsTool = &TypeTextCharsTool { _state: state.clone() }; // touch struct so it stays in this crate for now
     // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
     // in its UIA TextPattern + FindAll backend (CDP for execute_javascript).
-    r.register(Box::new(mcp_server::page::PageTool::new(
+    r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
     r.register_recording_tools();

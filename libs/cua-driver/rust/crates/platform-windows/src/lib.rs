@@ -9,7 +9,7 @@
 //!
 //! Reference: /tmp/trope-cua/src/CuaDriver.Win/
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;

@@ -10,7 +10,7 @@
 //! Wayland: falls back to xdg-output and virtual-keyboard protocols when
 //! running under a Wayland compositor with XWayland support.
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;

@@ -16,7 +16,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-mcp-server = { path = "../mcp-server" }
+cua-driver-core = { path = "../cua-driver-core" }
 cursor-overlay = { path = "../cursor-overlay" }
 async-trait = "0.1"
 base64 = { workspace = true }

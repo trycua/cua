@@ -8,13 +8,13 @@
 //! an extra AddRef from `clone()+forget()` in the walker. `CachedSnapshot::Drop`
 //! calls `Release()` via the kind-appropriate vtable to balance.
 //!
-//! The locked-HashMap plumbing lives in `mcp_server::element_cache` — see
+//! The locked-HashMap plumbing lives in `cua_driver_core::element_cache` — see
 //! `docs/dedup-audit.md` item #3. This module owns the Windows-specific
 //! `CacheKey`, `CachedSnapshot`, and the `Drop` impl that fires COM `Release`
 //! when an entry is replaced or removed.
 
 use super::UiaNode;
-use mcp_server::element_cache::ElementCacheCore;
+use cua_driver_core::element_cache::ElementCacheCore;
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 

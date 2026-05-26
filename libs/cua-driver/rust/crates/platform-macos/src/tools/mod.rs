@@ -32,7 +32,7 @@ mod zoom;
 mod type_text_chars;
 mod page;
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -251,7 +251,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     let _: &type_text_chars::TypeTextCharsTool = &type_text_chars::TypeTextCharsTool::new(state.clone());
     // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
     // its Apple-Events / CDP / AX-tree backend here.
-    registry.register(Box::new(mcp_server::page::PageTool::new(
+    registry.register(Box::new(cua_driver_core::page::PageTool::new(
         Arc::new(page::MacOsPageBackend::new(state.clone())),
     )));
     // Recording / replay tools are platform-independent — live in mcp-server.

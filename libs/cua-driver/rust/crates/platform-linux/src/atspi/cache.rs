@@ -1,13 +1,13 @@
 //! AT-SPI element cache for Linux.
 //! Stores element keys (u64 hash) indexed by (pid, xid) → element_index.
 //!
-//! The locked-HashMap plumbing lives in `mcp_server::element_cache` — see
+//! The locked-HashMap plumbing lives in `cua_driver_core::element_cache` — see
 //! `docs/dedup-audit.md` item #3. This module owns the Linux-specific
 //! `CacheKey` and `CachedSnapshot` (no Drop needed — `Vec<u64>` frees
 //! itself).
 
 use super::AtspiNode;
-use mcp_server::element_cache::ElementCacheCore;
+use cua_driver_core::element_cache::ElementCacheCore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CacheKey { pub pid: u32, pub xid: u64 }

@@ -11,33 +11,41 @@ Session-scoped capture of action sequences + pre/post state, suitable
 for demos, regression diffs, and training data. Invoked only when the
 user explicitly asks to record — the skill does not auto-enable this.
 
-`set_recording` turns on a session-scoped trajectory recorder. While
+`start_recording` turns on a session-scoped trajectory recorder. While
 enabled, every action-tool call (`click`, `right_click`, `scroll`,
-`type_text`, `press_key`, `hotkey`, `set_value`)
-writes a numbered turn folder under a caller-chosen output
-directory. Read-only tools (`get_window_state`, `list_windows`,
-`screenshot`, `list_apps`, permission probes, agent-cursor getters /
-setters, and `set_recording` itself) are not recorded.
+`type_text`, `press_key`, `hotkey`, `set_value`) writes a numbered
+turn folder under a caller-chosen output directory. Read-only tools
+(`get_window_state`, `list_windows`, `screenshot`, `list_apps`,
+permission probes, agent-cursor getters / setters, and the recording
+controls themselves) are not recorded.
 
-## Enable / disable
+**Video on by default.** `start_recording` also captures the main
+display to `<output_dir>/recording.mp4` (H.264 / yuv420p / 30 fps) via
+an ffmpeg subprocess for the lifetime of the session. The mp4 is
+finalized on `stop_recording`. Opt out with `record_video: false` when
+you don't want video. Requires ffmpeg on PATH; when missing, the per-
+turn capture continues without video and `last_error` carries the
+install hint.
 
-Two equivalent surfaces: the `set_recording` MCP tool, or the
-friendlier `cua-driver recording` subcommand group (wraps
-`set_recording` + `get_recording_state` with human-readable output).
+## Start / stop
+
+Two equivalent surfaces: the `start_recording` / `stop_recording` MCP
+tools, or the friendlier `cua-driver recording` subcommand group
+(wraps both with human-readable output).
 
 ```
 cua-driver recording start ~/cua-trajectories/run-1
 # … run the workflow …
 cua-driver recording status    # -> enabled / disabled, next_turn, output_dir
-cua-driver recording stop      # -> "Recording disabled (N turns captured in …)"
+cua-driver recording stop      # -> "Recording stopped. (video → recording.mp4)"
 ```
 
 Raw-tool equivalent:
 
 ```
-cua-driver set_recording '{"enabled":true,"output_dir":"~/cua-trajectories/run-1"}'
+cua-driver start_recording '{"output_dir":"~/cua-trajectories/run-1"}'
 cua-driver get_recording_state
-cua-driver set_recording '{"enabled":false}'
+cua-driver stop_recording '{}'
 ```
 
 The `recording` subcommands require a running daemon (`cua-driver
@@ -80,10 +88,11 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 ## When to invoke it
 
 This skill does **not** auto-enable recording. The client invokes
-`set_recording` explicitly when the user asks to capture a session.
+`start_recording` explicitly when the user asks to capture a session.
 If the user says "record this session" or similar, call
-`set_recording({enabled:true, output_dir:…})` before the first
-action, and `set_recording({enabled:false})` when done.
+`start_recording({output_dir:…})` before the first action (video on
+by default; pass `record_video: false` to opt out), and
+`stop_recording({})` when done.
 
 ## Replaying a recorded trajectory
 

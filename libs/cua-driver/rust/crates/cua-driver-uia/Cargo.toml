@@ -26,7 +26,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-mcp-server = { path = "../mcp-server" }
+cua-driver-core = { path = "../cua-driver-core" }
 platform-windows = { path = "../platform-windows" }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

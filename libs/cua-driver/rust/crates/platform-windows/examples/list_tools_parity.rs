@@ -35,7 +35,7 @@ fn main() {
         "get_screen_size", "launch_app", "move_cursor", "set_agent_cursor_enabled",
         "set_agent_cursor_motion", "get_agent_cursor_state", "set_value",
         "get_config", "set_config", "check_permissions", "get_recording_state",
-        "set_recording",
+        "start_recording", "stop_recording",
     ];
     for tool in expected {
         assert!(names.iter().any(|n| *n == tool), "missing tool `{tool}` in list-tools output");

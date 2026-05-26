@@ -11,7 +11,7 @@
 //!   tree::walk_element retains each actionable element before storing its ptr.
 //!   CachedSnapshot::drop releases those retains so we have no AX leaks.
 //!
-//! The locked-HashMap plumbing lives in `mcp_server::element_cache` — see
+//! The locked-HashMap plumbing lives in `cua_driver_core::element_cache` — see
 //! `docs/dedup-audit.md` item #3. This module owns the macOS-specific
 //! `CacheKey`, `CachedSnapshot`, and the `Drop` impl that fires `CFRelease`
 //! when an entry is replaced or removed.
@@ -19,7 +19,7 @@
 use super::bindings::AXUIElementRef;
 use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFTypeRef};
-use mcp_server::element_cache::ElementCacheCore;
+use cua_driver_core::element_cache::ElementCacheCore;
 
 /// Key for the element cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

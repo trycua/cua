@@ -3,7 +3,7 @@
 //! On Linux: delegates to real x11/atspi/input/capture implementations.
 //! On other platforms: returns "not implemented" stubs so the crate compiles.
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 
 #[cfg(target_os = "linux")]
 mod impl_;

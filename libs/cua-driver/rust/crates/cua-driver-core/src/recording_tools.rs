@@ -2,9 +2,16 @@
 //!
 //! Registered on all platforms via `ToolRegistry::register_recording_tools()`.
 //!
-//! - `set_recording`       — enable/disable trajectory recording to disk
+//! - `start_recording`     — enable trajectory recording to disk (+ optional video)
+//! - `stop_recording`      — disable trajectory recording, finalize video
 //! - `get_recording_state` — query current recording state
 //! - `replay_trajectory`   — replay a previously recorded trajectory
+//!
+//! Renamed from the older `set_recording(enabled: bool)` toggle in
+//! `02f1f033..` — see `JOURNAL_VIDEO.md` for rationale. The split makes
+//! the verbs match the CLI subcommand names (`cua-driver recording start|
+//! stop|status`) and removes the "is this a setting write?" ambiguity of
+//! the old `set_*` name.
 
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -32,27 +39,26 @@ fn get_replay_registry() -> Option<Arc<ToolRegistry>> {
     REPLAY_REGISTRY.get()?.upgrade()
 }
 
-// ── set_recording ─────────────────────────────────────────────────────────────
+// ── start_recording ──────────────────────────────────────────────────────────
 
-pub struct SetRecordingTool {
+pub struct StartRecordingTool {
     session: Arc<RecordingSession>,
 }
 
-impl SetRecordingTool {
+impl StartRecordingTool {
     pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
 }
 
-static SET_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
+static START_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
 
 #[async_trait]
-impl Tool for SetRecordingTool {
+impl Tool for StartRecordingTool {
     fn def(&self) -> &ToolDef {
-        SET_REC_DEF.get_or_init(|| ToolDef {
-            name: "set_recording".into(),
-            // Description ported from Swift `SetRecordingTool.swift`.
-            description: "Toggle trajectory recording. When enabled, every subsequent \
-                action-tool invocation (click, right_click, scroll, type_text, press_key, \
-                hotkey, set_value) writes a turn folder under `output_dir`:\n\n\
+        START_REC_DEF.get_or_init(|| ToolDef {
+            name: "start_recording".into(),
+            description: "Start trajectory recording. Every subsequent action-tool \
+                invocation (click, right_click, scroll, type_text, press_key, hotkey, \
+                set_value) writes a turn folder under `output_dir`:\n\n\
                 - `app_state.json` — post-action AX/UIA snapshot for the target pid.\n\
                 - `screenshot.png` — post-action per-window screenshot of the target's \
                   frontmost on-screen window.\n\
@@ -61,61 +67,113 @@ impl Tool for SetRecordingTool {
                 - `click.png` — for click-family actions only, `screenshot.png` with a \
                   red dot drawn at the click point.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
-                numbering restarts at 1 each time recording is (re-)enabled.\n\n\
-                Required when `enabled=true`: `output_dir`.  Ignored when \
-                `enabled=false`.\n\n\
+                numbering restarts at 1 each time recording is (re-)started.\n\n\
+                **Video is on by default** — the main display is captured to \
+                `<output_dir>/recording.mp4` (H.264 / yuv420p / 30 fps) via an ffmpeg \
+                subprocess for the lifetime of the session. Pass `record_video: false` \
+                to opt out. Requires ffmpeg on PATH (winget install Gyan.FFmpeg / \
+                brew install ffmpeg / apt install ffmpeg); when ffmpeg is missing the \
+                per-turn capture (screenshots + action.json) still runs and the \
+                session's `last_error` field carries the ffmpeg-not-found message.\n\n\
                 State persists for the life of the daemon / MCP session; a restart \
-                resets to disabled with no on-disk state.".into(),
+                resets to disabled with no on-disk state. Call `stop_recording` to \
+                disable + finalize the mp4.".into(),
             input_schema: json!({
                 "type": "object",
-                "required": ["enabled"],
+                "required": ["output_dir"],
                 "properties": {
-                    "enabled":    { "type": "boolean", "description": "True to start recording subsequent action tool calls; false to stop." },
-                    "output_dir": { "type": "string",  "description": "Absolute or ~-rooted directory where turn folders are written. Required when enabled=true." },
-                    "video_experimental": {
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Absolute or ~-rooted directory where turn folders \
+                            and (when enabled) the video file are written."
+                    },
+                    "record_video": {
                         "type": "boolean",
-                        "description": "Experimental: capture main display to <output_dir>/recording.mp4. Off by default. Ignored when enabled=false."
+                        "description": "Capture the main display to <output_dir>/recording.mp4. \
+                            Default: true. Set to false to record only the per-turn \
+                            screenshots + JSON. Requires ffmpeg on PATH."
                     }
                 },
                 "additionalProperties": false
             }),
             read_only: false,
             destructive: false,
-            // Swift annotation: idempotentHint: true.
             idempotent: true,
             open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // Swift error wording 1:1.
-        let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
-            Some(v) => v,
-            None    => return ToolResult::error("Missing required boolean field `enabled`."),
-        };
         use crate::tool_args::ArgsExt;
         let output_dir = args.opt_str("output_dir");
-        if enabled && output_dir.as_deref().map(str::is_empty).unwrap_or(true) {
-            return ToolResult::error("`output_dir` is required when enabling recording.");
+        if output_dir.as_deref().map(str::is_empty).unwrap_or(true) {
+            return ToolResult::error("`output_dir` is required.");
         }
-        let video_experimental = args.bool_or("video_experimental", false);
+        let record_video = args.bool_or("record_video", true);
 
-        match self.session.configure(enabled, output_dir.as_deref()) {
+        match self.session.start(output_dir.as_deref().unwrap(), record_video) {
             Ok(()) => {
                 let state = self.session.current_state();
-                let msg = if state.enabled {
-                    let video_note = if video_experimental {
-                        " (video_experimental is not yet implemented on this platform)"
-                    } else { "" };
-                    // Match Swift text format 1:1: `"✅ Recording enabled -> <path>"`.
-                    format!("✅ Recording enabled -> {}{video_note}",
-                        state.output_dir.as_deref().unwrap_or("?"))
-                } else {
-                    "✅ Recording disabled.".to_owned()
-                };
+                let video_note = if record_video && state.video_active {
+                    " (video → recording.mp4)"
+                } else if record_video && !state.video_active {
+                    " (video requested but ffmpeg not available — see last_error)"
+                } else { "" };
+                let msg = format!("✅ Recording started -> {}{}",
+                    state.output_dir.as_deref().unwrap_or("?"),
+                    video_note);
                 ToolResult::text(msg).with_structured(recording_state_json(&state))
             }
-            Err(e) => ToolResult::error(format!("Failed to enable recording: {e}")),
+            Err(e) => ToolResult::error(format!("Failed to start recording: {e}")),
+        }
+    }
+}
+
+// ── stop_recording ───────────────────────────────────────────────────────────
+
+pub struct StopRecordingTool {
+    session: Arc<RecordingSession>,
+}
+
+impl StopRecordingTool {
+    pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
+}
+
+static STOP_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
+
+#[async_trait]
+impl Tool for StopRecordingTool {
+    fn def(&self) -> &ToolDef {
+        STOP_REC_DEF.get_or_init(|| ToolDef {
+            name: "stop_recording".into(),
+            description: "Stop trajectory recording. Disables further per-turn capture \
+                and, when video was enabled, gracefully terminates the ffmpeg subprocess \
+                so the mp4's moov atom is finalized (the file is playable). Calling \
+                stop on an already-stopped session is a no-op. The response carries \
+                `last_video_path` pointing at the finalized mp4 (when video was on).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, _args: Value) -> ToolResult {
+        match self.session.stop() {
+            Ok(()) => {
+                let state = self.session.current_state();
+                let video_note = state.last_video_path.as_deref()
+                    .map(|p| format!(" (video → {p})"))
+                    .unwrap_or_default();
+                ToolResult::text(format!("✅ Recording stopped.{video_note}"))
+                    .with_structured(recording_state_json(&state))
+            }
+            Err(e) => ToolResult::error(format!("Failed to stop recording: {e}")),
         }
     }
 }
@@ -186,7 +244,7 @@ impl Tool for ReplayTrajectoryTool {
             // during-replay semantics.
             description: "Replay a recorded trajectory by re-invoking every turn's tool call \
                 in lexical order. `dir` must point at a directory previously written by \
-                `set_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the \
+                `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the \
                 recorded tool is called with its recorded `arguments` via the same dispatch \
                 path an MCP / CLI call uses.\n\n\
                 Caveats:\n\
@@ -366,6 +424,8 @@ fn recording_state_json(state: &RecordingState) -> Value {
         "output_dir": state.output_dir,
         "next_turn": state.next_turn,
         "last_error": state.last_error,
+        "video_active": state.video_active,
+        "last_video_path": state.last_video_path,
     })
 }
 

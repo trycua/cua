@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use mcp_server::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ impl Tool for ZoomTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
         let pid = args.opt_i64("pid").map(|v| v as i32);
         let x1 = match args.require_f64("x1") { Ok(v) => v, Err(e) => return e };

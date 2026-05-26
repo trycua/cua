@@ -14,7 +14,7 @@ base64 = { workspace = true }
 image = { workspace = true }
 async-trait = "0.1"
 uuid = { workspace = true }
-mcp-server = { path = "../mcp-server" }
+cua-driver-core = { path = "../cua-driver-core" }
 cursor-overlay = { path = "../cursor-overlay" }
 
 [target.'cfg(target_os = "macos")'.dependencies]

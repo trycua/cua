@@ -21,6 +21,56 @@ fn pin_overlay_above(hwnd: u64) {
     crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(wid));
 }
 
+/// Convert (px, py) — "window-local screenshot pixels, top-left origin
+/// of the PNG returned by `get_window_state`" — to screen coordinates.
+///
+/// The capture path (`crate::capture::screenshot_window`) takes the
+/// PrintWindow buffer (sized to `GetWindowRect`) and crops it to
+/// `DWMWA_EXTENDED_FRAME_BOUNDS` with a 1-pixel inset on each side
+/// (`DWM_CROP_INSET_PX`). So the bitmap's top-left in screen coords is
+/// `(dwm_frame.left + 1, dwm_frame.top + 1)` — and CALLER coordinates
+/// `(px, py)` are offsets relative to that origin.
+///
+/// Pre-PR-#1697 the click / right_click / double_click / drag impls
+/// called `ClientToScreen(px, py)`, which interprets the offsets as
+/// CLIENT-area relative — so the screen click landed ~30 px BELOW the
+/// bitmap location the agent intended (the title-bar height got added).
+/// This helper aligns the screen mapping with what the screenshot
+/// actually shows.
+///
+/// Fallbacks: if the DWM call fails (very old Windows / shell-extension
+/// hook) we degrade to `GetWindowRect.top-left + (px, py)` — matches
+/// the capture fallback which also keeps the full PrintWindow bitmap
+/// without crop.
+fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    // Keep this constant in sync with `capture::DWM_CROP_INSET_PX`.
+    const DWM_CROP_INSET_PX: i32 = 1;
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        let mut dwm = RECT::default();
+        let hr = DwmGetWindowAttribute(
+            h,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut dwm as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        if hr.is_ok() {
+            return (dwm.left + DWM_CROP_INSET_PX + px,
+                    dwm.top  + DWM_CROP_INSET_PX + py);
+        }
+        // Fallback path — capture also keeps the full bitmap when DWM
+        // bounds aren't available, so the bitmap origin IS GetWindowRect
+        // top-left in that branch.
+        let mut wr = RECT::default();
+        let _ = GetWindowRect(h, &mut wr);
+        (wr.left + px, wr.top + py)
+    }
+}
+
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
@@ -1680,11 +1730,22 @@ impl Tool for ClickTool {
                 is scoped per (pid, window_id) and is replaced by the next snapshot of the \
                 same window.\n\n\
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
-                returned by `get_window_state`) — synthesizes mouse events via \
-                PostMessage(WM_LBUTTONDOWN/UP) and delivers them to the deepest child \
-                window under that point. `count: 2` posts two down/up pairs for a \
-                double-click. Pixel clicks need a visible on-screen window to anchor the \
-                coordinate conversion (errors with `pid X has no on-screen window` otherwise).\n\n\
+                returned by `get_window_state`). On `dispatch:\"background\"` (default) and \
+                `dispatch:\"auto\"`, cua-driver FIRST does a UIA hit-test at the resolved \
+                screen position: if the deepest invokable element under that point exposes \
+                `InvokePattern`, it's invoked through the accessibility channel — same \
+                background-safe path as the `element_index` mode, no foreground swap, no \
+                visible flash. **This makes pixel clicks on UWP / WinUI3 / Win11 packaged \
+                apps work flash-free out of the box** — agents should default to \
+                `dispatch:\"background\"` even on XAML hosts whose CoreInput dispatcher \
+                drops raw PostMessage. The PostMessage(WM_LBUTTONDOWN/UP) fallback only \
+                runs when the UIA hit-test misses (canvas / video / WebGL / custom-drawn \
+                surfaces with no UIA peer), and on those targets `dispatch:\"background\"` \
+                returns a structured `background_unavailable` error if PostMessage is \
+                known to drop too — at which point you switch to `dispatch:\"foreground\"`. \
+                `count: 2` posts two down/up pairs for a double-click. Pixel clicks need \
+                a visible on-screen window to anchor the coordinate conversion (errors \
+                with `pid X has no on-screen window` otherwise).\n\n\
                 Exactly one of `element_index` or (`x` AND `y`) must be provided. \
                 `pid` is required in both modes. `window_id` is required when \
                 `element_index` is used (scopes the cache lookup). After a `zoom` call, \
@@ -1907,14 +1968,10 @@ impl Tool for ClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            // px/py are window-client coords. Convert to screen for the overlay.
-            let (sx, sy) = unsafe {
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                let mut pt = POINT { x: px as i32, y: py as i32 };
-                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
-                (pt.x as f64, pt.y as f64)
-            };
+            // px/py are bitmap pixels — see `bitmap_to_screen` for the
+            // mapping (DWM-frame top-left + 1-px inset, NOT ClientToScreen).
+            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(hwnd);
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
@@ -2073,8 +2130,10 @@ impl Tool for ClickTool {
                 }
             }
 
+            // bitmap pixels -> screen (DWM-frame origin + inset). Use
+            // post_click_screen so we don't double-ClientToScreen.
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
+                crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
             }).await;
             match result {
                 Ok(Ok(())) => {
@@ -3061,13 +3120,10 @@ impl Tool for DoubleClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            let (sx, sy) = unsafe {
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                let mut pt = POINT { x: px as i32, y: py as i32 };
-                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
-                (pt.x as f64, pt.y as f64)
-            };
+            // bitmap pixels -> screen via DWM-frame origin (see
+            // `bitmap_to_screen` doc for why ClientToScreen is wrong).
+            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(hwnd);
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
@@ -3083,26 +3139,24 @@ impl Tool for DoubleClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, 2, "left")
+                    crate::input::send_click_synthesized(hwnd, sx_i, sy_i, 2, "left")
                 }).await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent double-click via SendInput to pid {pid} at screen ({},{}) (dispatch:foreground).",
-                        sx as i32, sy as i32
+                        "✅ Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (dispatch:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
-            let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 2, "left")).await;
+            let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 2, "left")).await;
             match result {
                 Ok(Ok(())) => {
                     // Match Swift's pixel-path text 1:1.
                     ToolResult::text(format!(
-                        "✅ Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({}, {}).",
-                        sx as i32, sy as i32))
+                        "✅ Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -3256,13 +3310,10 @@ impl Tool for RightClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            let (sx, sy) = unsafe {
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                let mut pt = POINT { x: px as i32, y: py as i32 };
-                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
-                (pt.x as f64, pt.y as f64)
-            };
+            // bitmap pixels -> screen via DWM-frame origin (see
+            // `bitmap_to_screen` doc).
+            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(hwnd);
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
@@ -3276,26 +3327,24 @@ impl Tool for RightClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, 1, "right")
+                    crate::input::send_click_synthesized(hwnd, sx_i, sy_i, 1, "right")
                 }).await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent right-click via SendInput to pid {pid} at screen ({},{}) (dispatch:foreground).",
-                        sx as i32, sy as i32
+                        "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (dispatch:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
-            let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 1, "right")).await;
+            let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 1, "right")).await;
             match result {
                 Ok(Ok(())) => {
                     // Swift pixel-path text 1:1.
                     ToolResult::text(format!(
-                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({}, {}).",
-                        sx as i32, sy as i32))
+                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -3397,16 +3446,11 @@ impl Tool for DragTool {
             }
         };
 
-        // Compute screen-coord endpoints for Swift's text format.
-        let (sx_from, sy_from, sx_to, sy_to) = unsafe {
-            use windows::Win32::Foundation::{HWND, POINT};
-            use windows::Win32::Graphics::Gdi::ClientToScreen;
-            let mut p1 = POINT { x: from_x as i32, y: from_y as i32 };
-            let mut p2 = POINT { x: to_x   as i32, y: to_y   as i32 };
-            let _ = ClientToScreen(HWND(hwnd as *mut _), &mut p1);
-            let _ = ClientToScreen(HWND(hwnd as *mut _), &mut p2);
-            (p1.x, p1.y, p2.x, p2.y)
-        };
+        // Compute screen-coord endpoints. Same correction as the click
+        // tools — bitmap pixels are anchored to the DWM-frame top-left,
+        // not the client area top-left (see `bitmap_to_screen` doc).
+        let (sx_from, sy_from) = bitmap_to_screen(hwnd, from_x as i32, from_y as i32);
+        let (sx_to,   sy_to)   = bitmap_to_screen(hwnd, to_x   as i32, to_y   as i32);
 
         // dispatch:"background" — refuse if PostMessage drag would silently drop.
         if dispatch == DispatchMode::Background

@@ -32,6 +32,8 @@ pub mod window_change_detector;
 pub mod tools;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;
+#[cfg(target_os = "macos")]
+pub mod video_sckit;
 
 use cua_driver_core::tool::ToolRegistry;
 

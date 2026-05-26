@@ -20,24 +20,22 @@ permission probes, agent-cursor getters / setters, and the recording
 controls themselves) are not recorded.
 
 **Video on by default.** `start_recording` also captures the main
-display to `<output_dir>/recording.mp4` (H.264 / yuv420p / 30 fps) via
-an ffmpeg subprocess for the lifetime of the session. The mp4 is
-finalized on `stop_recording`. Opt out with `record_video: false` when
-you don't want video. Requires ffmpeg on PATH; when missing, the per-
-turn capture continues without video and `last_error` carries the
-install hint.
+display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
+lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
+out with `record_video: false` when you don't want video.
 
-**macOS gotcha — ffmpeg needs its own Screen Recording grant.** TCC on
-macOS is per-binary, not per-process-tree. Even when cua-driver has
-Screen Recording permission, the ffmpeg subprocess does not inherit
-that grant — and when run from a daemon there's no UI thread to
-surface the consent prompt, so ffmpeg blocks forever on the request.
-The recorder fast-fails this case after ~2 s, kills the subprocess,
-and surfaces an actionable error. Fix: add your ffmpeg binary
-(`/opt/homebrew/bin/ffmpeg` for Homebrew on Apple Silicon) to System
-Settings → Privacy & Security → Screen & System Audio Recording, then
-restart cua-driver. A future PR will replace ffmpeg+avfoundation with
-a native ScreenCaptureKit binding so video works zero-config on macOS.
+**macOS — native ScreenCaptureKit, zero-config.** On macOS the
+recorder uses an in-process `SCStream` + `SCRecordingOutput`, so it
+inherits cua-driver's own Screen Recording grant — no separate
+subprocess prompt, no fast-fail, no second TCC dance. Requires macOS
+15.0+ (SCRecordingOutput introduced in macOS 15). No ffmpeg needed.
+
+**Windows / Linux — ffmpeg subprocess.** Outside macOS the recorder
+shells to ffmpeg with `gdigrab` (Windows) or `x11grab` (Linux). The
+binary needs to be on PATH (`winget install Gyan.FFmpeg` /
+`apt install ffmpeg`); when missing, the per-turn capture continues
+without video and `last_error` carries the install hint. ffmpeg
+startup failures fast-fail with a stderr tail in the error.
 
 ## Start / stop
 

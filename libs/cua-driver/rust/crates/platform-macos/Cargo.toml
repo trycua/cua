@@ -43,6 +43,12 @@ objc2-app-kit = { version = "0.2", features = [
 # QuartzCore for CALayer
 objc2-quartz-core = { version = "0.2", features = ["CALayer"] }
 
+# Native ScreenCaptureKit bindings — used by `video_sckit` to replace the
+# ffmpeg subprocess on macOS. `macos_15_0` enables the `SCRecordingOutput`
+# convenience that finalises an mp4 in-process, removing the per-binary
+# Screen Recording TCC prompt that subprocess capture would otherwise trip.
+screencapturekit = { version = "6", features = ["macos_15_0"] }
+
 # tiny-skia for cursor rendering
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 

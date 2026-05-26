@@ -36,7 +36,7 @@ use std::process::{Command, Stdio};
 
 use crate::recording_loader::{load, LoadError};
 use crate::recording_zoom::{generate_zoom_regions, ZoomRegion};
-use crate::video::{find_ffmpeg, find_ffprobe};
+use crate::video_ffmpeg::{find_ffmpeg, find_ffprobe};
 
 /// Default zoom magnification.
 const DEFAULT_ZOOM_SCALE: f64 = 2.0;

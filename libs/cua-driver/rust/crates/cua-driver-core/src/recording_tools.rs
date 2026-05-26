@@ -69,20 +69,18 @@ impl Tool for StartRecordingTool {
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is on by default** — the main display is captured to \
-                `<output_dir>/recording.mp4` (H.264 / yuv420p / 30 fps) via an ffmpeg \
-                subprocess for the lifetime of the session. Pass `record_video: false` \
-                to opt out. Requires ffmpeg on PATH (winget install Gyan.FFmpeg / \
-                brew install ffmpeg / apt install ffmpeg); when ffmpeg is missing the \
-                per-turn capture (screenshots + action.json) still runs and the \
-                session's `last_error` field carries the ffmpeg-not-found message.\n\n\
-                **macOS extra requirement:** the ffmpeg binary itself needs Screen \
-                Recording permission (System Settings → Privacy & Security → Screen & \
-                System Audio Recording → add /opt/homebrew/bin/ffmpeg or equivalent). \
-                TCC is per-binary on macOS — cua-driver having Screen Recording is NOT \
-                sufficient for the ffmpeg subprocess. If the grant is missing, video \
-                start fast-fails after ~2 s and the error surfaces in the response; \
-                per-turn JSON+screenshot capture continues. A future PR will replace \
-                ffmpeg with a native ScreenCaptureKit binding to remove this gate.\n\n\
+                `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of \
+                the session. Pass `record_video: false` to opt out.\n\n\
+                **macOS uses native ScreenCaptureKit** (in-process SCStream + \
+                SCRecordingOutput) so video inherits cua-driver's own Screen \
+                Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
+                Requires macOS 15.0+.\n\n\
+                **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
+                `x11grab` + libx264). Requires ffmpeg on PATH (winget install \
+                Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or \
+                fails on startup the per-turn capture (screenshots + \
+                action.json) still runs and the session's `last_error` field \
+                carries the diagnostic.\n\n\
                 State persists for the life of the daemon / MCP session; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
                 disable + finalize the mp4.".into(),

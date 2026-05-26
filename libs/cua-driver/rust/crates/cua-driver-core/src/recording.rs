@@ -18,7 +18,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cursor_sampler::CursorSampler;
-use crate::video::{VideoMetadata, VideoRecorder};
+use crate::video::{self, VideoBackend, VideoMetadata};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
 //
@@ -92,9 +92,10 @@ struct RecordingInner {
     /// matches the action-timeline anchor in `action.json`.
     session_monotonic_start: Option<Instant>,
     last_error: Option<String>,
-    /// Live ffmpeg subprocess when video capture is active. Recreated
-    /// per session.
-    video: Option<VideoRecorder>,
+    /// Live video backend when capture is active. Recreated per
+    /// session. The concrete type is platform-determined (SCKit on
+    /// macOS, ffmpeg subprocess elsewhere).
+    video: Option<Box<dyn VideoBackend>>,
     /// Recorded after `stop()` until the next start — exposed in
     /// `current_state()` so callers can read the finalized video info
     /// after stopping.
@@ -173,7 +174,7 @@ impl RecordingSession {
         let mut video_error: Option<String> = None;
         if record_video {
             let path = dir.join("recording.mp4");
-            match VideoRecorder::start(&path) {
+            match video::start_video(&path) {
                 Ok(rec) => {
                     inner.video = Some(rec);
                     video_present = true;

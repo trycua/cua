@@ -659,8 +659,8 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
 
 /// Print the MCP server config snippet or a client-specific install command.
 ///
-/// `--client <name>` selects one of: claude, codex, cursor, hermes, openclaw,
-/// opencode. Omit for the generic JSON snippet.
+/// `--client <name>` selects one of: claude, codex, cursor, hermes,
+/// antigravity, openclaw, opencode, pi. Omit for the generic JSON snippet.
 pub fn run_mcp_config(client: Option<&str>) {
     let binary = std::env::current_exe()
         .ok()
@@ -755,6 +755,58 @@ pub fn run_mcp_config(client: Option<&str>) {
             println!("    command: \"{binary}\"");
             println!("    args: [\"mcp\"]");
         }
+        Some("antigravity") | Some("gemini") => {
+            // Google Antigravity CLI (the `agy` binary, successor to Gemini
+            // CLI as of May 2026 — Gemini CLI support sunsets 2026-06-18 for
+            // consumers per the developers.googleblog.com transition post)
+            // has no `agy mcp add` subcommand: MCP servers are registered by
+            // editing JSON directly. Both Antigravity CLI and Antigravity
+            // IDE read from the SAME mcp_config.json at:
+            //
+            //   Unix:    ~/.gemini/config/mcp_config.json
+            //   Windows: %USERPROFILE%\.gemini\config\mcp_config.json
+            //
+            // (Antigravity inherited the `.gemini` directory tree from the
+            // old Gemini CLI install path on purpose — same config carries
+            // over.) An additional CLI-only path at
+            // ~/.gemini/antigravity-cli/mcp_config.json takes precedence
+            // for CLI when present; we register at the shared path so the
+            // IDE picks the same server up.
+            //
+            // Reload after edit: restart `agy` (Antigravity CLI has no
+            // mid-session config-reload hook).
+            //
+            // The `gemini` client alias points at the same instructions
+            // so anyone with old muscle memory typing `--client gemini`
+            // gets the right (forward-compatible) config.
+            let normalised = binary.replace('\\', "/");
+            // Emit the full mcp_config.json envelope so the user can paste
+            // it verbatim into a fresh file (or merge under "mcpServers" in
+            // an existing one). Single pretty-printed JSON object keeps
+            // both shapes — full file and merge fragment — useful.
+            let full = serde_json::json!({
+                "mcpServers": {
+                    "cua-driver": {
+                        "command": normalised,
+                        "args": ["mcp"],
+                    }
+                }
+            });
+            let pretty = serde_json::to_string_pretty(&full)
+                .unwrap_or_else(|_| full.to_string());
+            println!(
+                "# Antigravity CLI (the `agy` binary) reads MCP server configs from:\n\
+                 #   ~/.gemini/config/mcp_config.json   (Unix)\n\
+                 #   %USERPROFILE%\\.gemini\\config\\mcp_config.json   (Windows)\n\
+                 #\n\
+                 # No `agy` subcommand for this — drop the JSON below into that file (or\n\
+                 # merge under the existing top-level \"mcpServers\" object if it already\n\
+                 # exists), then restart `agy` to pick up the change.\n\
+                 #\n\
+                 # The same file is shared with the Antigravity IDE.\n\
+                 {pretty}",
+            );
+        }
         Some("pi") => {
             println!(
                 "Pi (badlogic/pi-mono) does not support MCP natively — the author\n\
@@ -768,7 +820,7 @@ pub fn run_mcp_config(client: Option<&str>) {
             );
         }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, openclaw, opencode, hermes, pi.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi.");
             process::exit(2);
         }
     }

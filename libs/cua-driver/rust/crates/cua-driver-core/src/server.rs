@@ -30,23 +30,22 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
         }
         debug!(raw = trimmed, "→ request");
 
-        let response = match serde_json::from_str::<Request>(trimmed) {
+        let Some(response) = (match serde_json::from_str::<Request>(trimmed) {
             Err(e) => {
                 error!("JSON parse error: {e}");
-                Response::parse_error()
+                Some(Response::parse_error())
             }
-            Ok(req) if req.is_notification() => {
-                // Notifications are silently dropped.
-                continue;
-            }
-            Ok(req) => {
-                let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_request(req, id, &registry).await
-            }
+            Ok(req) => handle_request(req, &registry).await,
+        }) else {
+            // Notifications are silently dropped.
+            continue;
         };
 
-        let serialized = serde_json::to_string(&response)
-            .unwrap_or_else(|e| format!(r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"serialize error: {e}"}}}}"#));
+        let serialized = serde_json::to_string(&response).unwrap_or_else(|e| {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"serialize error: {e}"}}}}"#
+            )
+        });
         debug!(raw = %serialized, "← response");
 
         writer.write_all(serialized.as_bytes()).await?;
@@ -57,7 +56,24 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<ToolRegistry>) -> Response {
+/// Handle one parsed MCP JSON-RPC request against a registry.
+///
+/// Returns `None` for notifications, matching the stdio server behavior.
+/// Embedders can use this to expose cua-driver over an in-process transport
+/// without going through stdin/stdout or launching the standalone driver.
+pub async fn handle_request(req: Request, registry: &Arc<ToolRegistry>) -> Option<Response> {
+    if req.is_notification() {
+        return None;
+    }
+    let id = req.id.clone().unwrap_or(serde_json::Value::Null);
+    Some(dispatch_request(req, id, registry).await)
+}
+
+async fn dispatch_request(
+    req: Request,
+    id: serde_json::Value,
+    registry: &Arc<ToolRegistry>,
+) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
 

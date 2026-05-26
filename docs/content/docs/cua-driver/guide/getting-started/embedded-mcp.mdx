@@ -1,0 +1,182 @@
+---
+title: Embedded MCP
+description: Run cua-driver inside your app process and handle MCP requests without a separate driver executable
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver-embedded` is the Rust-native entry point for hosting cua-driver inside another application process. It builds the same platform tool registry used by `cua-driver mcp`, but it does not read from stdio, start the daemon proxy, or launch `CuaDriver.app`.
+
+Use this when your application wants to expose the cua-driver MCP tools internally and keep macOS TCC authorization attached to your own app bundle.
+
+<Callout type="info">
+  This is the supported direction for embedded integrations. The older Swift integration page documents the legacy Swift package products; new embedding work should use the Rust driver core and add a thin host-language wrapper where needed.
+</Callout>
+
+## Why embedding helps on macOS
+
+macOS Privacy and Security grants are attributed to the responsible app or process that calls protected APIs. If a Swift, Objective-C, Electron, or Rust app links cua-driver and calls the driver in-process, Accessibility and Screen Recording prompts are for the host app.
+
+That avoids the common two-prompt failure mode:
+
+```text
+YourApp.app
+  links cua-driver-embedded
+  calls AX / ScreenCaptureKit in-process
+  TCC grant: YourApp.app
+```
+
+instead of:
+
+```text
+YourApp.app
+  spawns cua-driver mcp
+    launches CuaDriver.app or a shell binary
+    TCC grant: CuaDriver.app or the spawning terminal
+```
+
+The rule is simple: protected API calls must stay in the host process if you want the host app's existing authorization to apply. Do not spawn `cua-driver mcp`, `cua-driver serve`, or another helper process for the actual AX and screen-capture work.
+
+## Rust usage
+
+Add the crate from the workspace:
+
+```toml
+[dependencies]
+cua-driver-embedded = { path = "libs/cua-driver/rust/crates/cua-driver-embedded" }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+```
+
+Create a driver and call tools directly:
+
+```rust
+use cua_driver_embedded::EmbeddedDriver;
+use serde_json::json;
+
+let driver = EmbeddedDriver::new();
+
+let tools = driver.tools_list();
+let apps = driver.call_tool("list_apps", json!({})).await;
+```
+
+Or pass MCP JSON-RPC messages through an in-process transport:
+
+```rust
+use cua_driver_embedded::{EmbeddedDriver, EmbeddedOptions};
+use serde_json::json;
+
+let driver = EmbeddedDriver::with_options(EmbeddedOptions {
+    claude_code_compat: true,
+});
+
+let response = driver
+    .handle_mcp_request_value(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list"
+    }))
+    .await;
+```
+
+`handle_mcp_request_value` and `handle_mcp_request_json` return `None` for JSON-RPC notifications, matching the stdio MCP server.
+
+## C ABI for non-Rust hosts
+
+Non-Rust apps can use the C ABI exported by the same crate instead of shelling out to the standalone driver.
+
+Header:
+
+```c
+#include "cua_driver_embedded.h"
+
+CuaDriver *driver = cua_driver_embedded_new(false);
+
+char *response = cua_driver_embedded_handle_mcp_json(
+    driver,
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
+);
+
+if (response != NULL) {
+    // Parse JSON response in the host language.
+    cua_driver_embedded_string_free(response);
+}
+
+cua_driver_embedded_free(driver);
+```
+
+The header lives at:
+
+```text
+libs/cua-driver/rust/crates/cua-driver-embedded/include/cua_driver_embedded.h
+```
+
+Build the Rust crate as a static library or cdylib:
+
+```bash
+cd libs/cua-driver/rust
+cargo build -p cua-driver-embedded --release
+```
+
+The build emits `libcua_driver_embedded.a` and `libcua_driver_embedded.dylib` under `target/release`. Link one of them into the host app and sign only the host app. The ABI is intentionally JSON-in/JSON-out: Rust structs, MCP protocol structs, and tool result internals do not become part of the Swift or C ABI.
+
+## Swift Package usage
+
+Swift projects can import the thin Swift wrapper from the root package:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/trycua/cua.git", .revision("cua-driver-v0.2.18")),
+]
+```
+
+Then add the product to your app target:
+
+```swift
+.product(name: "CuaDriverEmbedded", package: "cua")
+```
+
+The Swift product declares the wrapper API. It does not build Rust for you. Your app target must also link the Rust `libcua_driver_embedded` static library, dylib, or a packaged xcframework.
+
+Use it from Swift:
+
+```swift
+import CuaDriverEmbedded
+
+let driver = try CuaDriverEmbedded()
+
+let response = driver.handleMCPJSON(
+    #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#
+)
+
+if let response {
+    // Decode JSON response.
+}
+```
+
+In a GUI app, do not call `handleMCPJSON` from the main thread for arbitrary tool calls. Route MCP requests through a worker queue and keep the app's main run loop alive for AppKit. This mirrors how a normal Swift or Objective-C app should host blocking native work.
+
+## Current behavior
+
+- Builds the same platform registry as `cua-driver mcp`.
+- Supports direct tool calls with `call_tool`.
+- Supports MCP `initialize`, `tools/list`, and `tools/call` through JSON-RPC request handlers.
+- Exports a C ABI for non-Rust hosts.
+- Exposes a root Swift Package product named `CuaDriverEmbedded`.
+- Registers the same recording screenshot and click-marker callbacks as the standalone driver.
+- Does not start the daemon proxy, stdio server, or `CuaDriver.app`.
+- Does not initialize the visual cursor overlay. Host apps own their main thread and AppKit run loop.
+
+## Constraints
+
+- The host app still needs Accessibility and Screen Recording grants. Embedding changes which bundle gets authorized; it does not bypass TCC.
+- Keep one embedded driver registry per process unless you have a reason to isolate state. Recording callbacks are process-global.
+- Sandboxed Mac App Store apps are not the primary target. Some automation APIs are fundamentally constrained by sandboxing and user consent.
+- If a tool launches a browser automation bridge or another external process, that subprocess has its own system-level behavior. The core AX and screen-capture operations should remain in-process for TCC attribution.
+- On macOS today, `list_apps` still uses `osascript`/System Events internally and can require Automation permission from the host app. This is separate from the embedded driver process model and should be replaced with a fully native implementation before treating every tool as helper-free.
+
+## See also
+
+- App-bundle smoke test: `libs/cua-driver/rust/crates/cua-driver-embedded/examples/macos-app-smoke/run.sh`
+- [MCP process model](./process-model) - when the standalone CLI stays in-process vs daemon-proxy mode.
+- [Swift Integration](./swift-integration) - legacy Swift package products.

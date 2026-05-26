@@ -280,8 +280,8 @@ public actor AppStateEngine {
         // indefinitely via XPC. The walk runs on a detached task so the timeout
         // can cancel it; the main snapshot task throws axWalkTimedOut if the
         // deadline is exceeded.
-        let (snapshotMarkdown, snapshotElements, snapshotVisited) = try await withThrowingTaskGroup(
-            of: (String, [Int: AXUIElement], Int).self
+        let (snapshotMarkdown, snapshotElements, snapshotDidTruncate) = try await withThrowingTaskGroup(
+            of: (String, [Int: AXUIElement], Bool).self
         ) { group in
             group.addTask {
                 let root = AXUIElementCreateApplication(pid)
@@ -289,6 +289,7 @@ public actor AppStateEngine {
                 var idx = 0
                 var md = ""
                 var visited = 0
+                var didTruncate = false
                 let layer0WindowIds: Set<CGWindowID> = Set(
                     WindowEnumerator.allWindows()
                         .filter { $0.layer == 0 }
@@ -302,9 +303,10 @@ public actor AppStateEngine {
                     elements: &els,
                     nextIndex: &idx,
                     output: &md,
-                    visitedCount: &visited
+                    visitedCount: &visited,
+                    didTruncate: &didTruncate
                 )
-                return (md, els, visited)
+                return (md, els, didTruncate)
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: 30_000_000_000)
@@ -318,7 +320,7 @@ public actor AppStateEngine {
         var markdown = snapshotMarkdown
         let elements = snapshotElements
 
-        if snapshotVisited >= AppStateEngine.maxElements {
+        if snapshotDidTruncate {
             markdown += "\n⚠️  AX tree truncated at \(AppStateEngine.maxElements) nodes"
                 + " (app has a very large accessibility tree — Arc, Electron, or similar)."
                 + " Element indices above are still valid. Use pixel clicks for elements"
@@ -565,10 +567,16 @@ public actor AppStateEngine {
         elements: inout [Int: AXUIElement],
         nextIndex: inout Int,
         output: inout String,
-        visitedCount: inout Int
+        visitedCount: inout Int,
+        didTruncate: inout Bool
     ) {
         guard depth <= AppStateEngine.maxDepth else { return }
-        guard visitedCount < AppStateEngine.maxElements else { return }
+        guard visitedCount < AppStateEngine.maxElements else {
+            // Set the flag only when we actually stop early due to the cap —
+            // avoids a false-positive when the tree naturally ends on exactly maxElements.
+            didTruncate = true
+            return
+        }
         visitedCount += 1
 
         let role = attributeString(element, "AXRole") ?? "?"
@@ -664,7 +672,8 @@ public actor AppStateEngine {
                 elements: &elements,
                 nextIndex: &nextIndex,
                 output: &output,
-                visitedCount: &visitedCount
+                visitedCount: &visitedCount,
+                didTruncate: &didTruncate
             )
         }
     }

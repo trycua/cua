@@ -99,8 +99,7 @@ impl Tool for GetWindowStateTool {
                          The app (likely Arc, Electron, or Safari with many tabs) has a \
                          pathologically large accessibility tree. \
                          Workarounds: switch to capture_mode=vision for pixel-click \
-                         workflows, or use capture_mode=ax with a query filter to \
-                         limit the walk scope."
+                         workflows, or use capture_mode=ax with a depth-limited scan."
                     ));
                 }
             }

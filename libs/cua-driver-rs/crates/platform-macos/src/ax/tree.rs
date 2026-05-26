@@ -73,6 +73,9 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
     let mut index_counter = 0usize;
     // Shared visited-node counter passed into walk_element to enforce MAX_ELEMENTS.
     let mut visited_count = 0usize;
+    // Set to true only when walk_element actually stops early due to the cap —
+    // avoids a false-positive when the tree naturally ends on exactly MAX_ELEMENTS.
+    let mut truncated = false;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -113,7 +116,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 
         // Walk each top-level child at depth 0.
         for child in walk_these {
-            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter, &mut visited_count);
+            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter, &mut visited_count, &mut truncated);
         }
 
         // Release all top-level elements (copy_children / copy_ax_windows both retain).
@@ -124,7 +127,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         CFRelease(app_elem as CFTypeRef);
     }
 
-    let truncated = visited_count >= MAX_ELEMENTS;
+    let truncated_flag = truncated;
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
         filter_tree(&raw_markdown, q)
@@ -132,7 +135,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         raw_markdown
     };
 
-    if truncated {
+    if truncated_flag {
         tree_markdown.push_str(&format!(
             "\n⚠️  AX tree truncated at {MAX_ELEMENTS} nodes \
              (app has a very large accessibility tree — Arc, Electron, or similar). \
@@ -141,7 +144,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         ));
     }
 
-    TreeWalkResult { tree_markdown, nodes, truncated }
+    TreeWalkResult { tree_markdown, nodes, truncated: truncated_flag }
 }
 
 unsafe fn walk_element(
@@ -151,10 +154,15 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     visited_count: &mut usize,
+    truncated: &mut bool,
 ) {
     if depth > MAX_DEPTH { return; }
     // Enforce total-node cap — mirrors Swift's maxElements guard.
-    if *visited_count >= MAX_ELEMENTS { return; }
+    // Set the truncated flag only when we actually stop early.
+    if *visited_count >= MAX_ELEMENTS {
+        *truncated = true;
+        return;
+    }
     *visited_count += 1;
 
     let role = copy_string_attr(element, "AXRole")
@@ -165,7 +173,7 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting.
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth, nodes, lines, counter, visited_count);
+            walk_element(child, depth, nodes, lines, counter, visited_count, truncated);
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -198,7 +206,7 @@ unsafe fn walk_element(
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth + 1, nodes, lines, counter, visited_count);
+            walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -242,7 +250,7 @@ unsafe fn walk_element(
 
     let children = copy_children(element);
     for child in children {
-        walk_element(child, depth + 1, nodes, lines, counter, visited_count);
+        walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
         CFRelease(child as CFTypeRef);
     }
 }

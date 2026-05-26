@@ -368,10 +368,24 @@ fn structured_launch_error(
     message: String,
     details: serde_json::Value,
 ) -> ToolResult {
-    ToolResult::error(message).with_structured(serde_json::json!({
+    let mut payload = serde_json::json!({
         "error": code,
-        "details": details,
-    }))
+    });
+
+    match details {
+        serde_json::Value::Object(details) => {
+            if let serde_json::Value::Object(payload) = &mut payload {
+                payload.extend(details);
+            }
+        }
+        details => {
+            if let serde_json::Value::Object(payload) = &mut payload {
+                payload.insert("details".to_string(), details);
+            }
+        }
+    }
+
+    ToolResult::error(message).with_structured(payload)
 }
 
 fn preflight_file_urls(urls: &[String]) -> Option<ToolResult> {
@@ -402,7 +416,8 @@ fn local_file_target(raw: &str) -> Option<PathBuf> {
     }
     if let Some(rest) = raw.strip_prefix("file://") {
         let path = rest.strip_prefix("localhost").unwrap_or(rest);
-        return Some(expand_tilde(path));
+        let decoded = percent_decode_path(path);
+        return Some(expand_tilde(&decoded));
     }
     let looks_like_url = raw.contains(':') && !raw.starts_with('/') && !raw.starts_with('~');
     if looks_like_url {
@@ -422,6 +437,36 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+fn percent_decode_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                decoded.push((high << 4) | low);
+                i += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -455,5 +500,19 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         let structured = result.structured_content.expect("structured error");
         assert_eq!(structured["error"], "FILE_NOT_FOUND");
+        assert_eq!(structured["path"], "/tmp/cua-driver-definitely-missing-file-for-test.md");
+        assert!(structured.get("details").is_none());
+    }
+
+    #[test]
+    fn local_file_target_percent_decodes_file_urls_before_path_checks() {
+        assert_eq!(
+            local_file_target("file:///tmp/My%20Doc.txt"),
+            Some(PathBuf::from("/tmp/My Doc.txt"))
+        );
+        assert_eq!(
+            local_file_target("file://localhost/tmp/%E2%9C%93.txt"),
+            Some(PathBuf::from("/tmp/✓.txt"))
+        );
     }
 }

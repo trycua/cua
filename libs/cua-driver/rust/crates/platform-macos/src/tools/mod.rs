@@ -5,6 +5,7 @@ mod list_windows;
 mod get_window_state;
 mod launch_app;
 mod kill_app;
+mod bring_to_front;
 mod click;
 mod double_click;
 mod right_click;
@@ -14,8 +15,11 @@ mod press_key;
 mod hotkey;
 mod set_value;
 mod scroll;
-mod screenshot;
-mod screenshot_compat;
+// `screenshot` / `screenshot_compat` modules removed in PR #1692 —
+// `get_window_state` capture_mode:"vision" is the canonical screenshot
+// path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
+// etc.) live elsewhere under CuaDriverCore::Capture and are reached
+// through GetWindowStateTool.
 mod get_screen_size;
 mod get_cursor_position;
 mod move_cursor;
@@ -211,6 +215,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(state.clone())));
     registry.register(Box::new(launch_app::LaunchAppTool));
     registry.register(Box::new(kill_app::KillAppTool));
+    registry.register(Box::new(bring_to_front::BringToFrontTool));
     registry.register(Box::new(click::ClickTool::new(state.clone())));
     registry.register(Box::new(double_click::DoubleClickTool::new(state.clone())));
     registry.register(Box::new(right_click::RightClickTool::new(state.clone())));
@@ -220,11 +225,10 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(hotkey::HotkeyTool::new(state.clone())));
     registry.register(Box::new(set_value::SetValueTool::new(state.clone())));
     registry.register(Box::new(scroll::ScrollTool::new(state.clone())));
-    if compat {
-        registry.register(Box::new(screenshot_compat::ClaudeCodeCompatScreenshotTool::new(state.clone())));
-    } else {
-        registry.register(Box::new(screenshot::ScreenshotTool { state: state.clone() }));
-    }
+    // `screenshot` removed - see the matching comment in
+    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
+    // screenshot path is `get_window_state` with `capture_mode:"vision"`.
+    let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));

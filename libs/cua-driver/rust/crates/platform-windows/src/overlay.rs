@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use cursor_overlay::{
-    CursorConfig, MotionConfig, OverlayCommand, RenderStateCore,
+    CursorConfig, MotionConfig, OverlayCommand, RenderStateCore, ZOrderEnforcer,
 };
 
 // ── Global channel ────────────────────────────────────────────────────────
@@ -30,6 +30,14 @@ use cursor_overlay::{
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayCommand>> = OnceLock::new();
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayCommand>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderState>> = Mutex::new(None);
+
+// ── Arrival-signal channel ────────────────────────────────────────────────
+//
+// `animate_cursor_to` installs a oneshot sender here, the render thread's
+// `WM_TIMER` handler fires it the tick the planned path ends.  Mirrors
+// macOS so click handlers can `.await` until the cursor visually lands
+// before dispatching the actual UIA / PostMessage action.
+static ARRIVAL_TX: Mutex<Option<tokio::sync::oneshot::Sender<()>>> = Mutex::new(None);
 
 pub fn init(cfg: CursorConfig) {
     let (tx, rx) = std::sync::mpsc::sync_channel(4096);
@@ -82,6 +90,52 @@ pub fn is_at_initial_position() -> bool {
     RENDER.lock().ok()
         .and_then(|g| g.as_ref().map(|rs| rs.core.pos.0 < 0.0 && rs.core.pos.1 < 0.0))
         .unwrap_or(true)
+}
+
+/// Animate the overlay cursor to `(x, y)` and suspend until the planned
+/// path completes (the spring-settle phase that follows is allowed to keep
+/// running — we only wait for the visible glide to land).
+///
+/// Mirrors `platform_macos::cursor::overlay::animate_cursor_to`. Returns
+/// immediately (no animation, no wait) when:
+/// - the overlay is disabled, or
+/// - the cursor is still at the off-screen sentinel `(-200, -200)` — in
+///   that case the caller should rely on `ClickPulse` to snap the cursor.
+pub async fn animate_cursor_to(x: f64, y: f64) {
+    let should_animate = {
+        let guard = RENDER.lock().unwrap();
+        match guard.as_ref() {
+            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
+            _ => false,
+        }
+    };
+    if !should_animate {
+        return;
+    }
+
+    // Install the oneshot sender BEFORE issuing MoveTo, so the render
+    // thread's arrival-fire can never lose a race against an immediate
+    // path-end (e.g. zero-length glide).
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut guard = ARRIVAL_TX.lock().unwrap();
+        // A previous in-flight animation gets superseded by this one —
+        // unblock its waiter so it doesn't hang forever.
+        if let Some(old_tx) = guard.take() {
+            let _ = old_tx.send(());
+        }
+        *guard = Some(tx);
+    }
+
+    send_command(OverlayCommand::MoveTo {
+        x,
+        y,
+        // Arrive pointing upper-left (45°) — same convention as macOS /
+        // Swift reference (`endAngleDegrees: 45`).
+        end_heading_radians: std::f64::consts::FRAC_PI_4,
+    });
+
+    let _ = rx.await;
 }
 
 /// Spin up the overlay on a dedicated thread (STA for Win32 message loop).
@@ -144,8 +198,11 @@ impl RenderState {
         }
     }
 
-    fn tick(&mut self, dt: f64) {
-        self.core.tick_motion(dt);
+    /// Advance the motion state by `dt`.  Returns `true` the tick the
+    /// planned path completes, so the WM_TIMER handler can fire the
+    /// arrival oneshot that unblocks `animate_cursor_to`.
+    fn tick(&mut self, dt: f64) -> bool {
+        self.core.tick_motion(dt)
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
@@ -244,6 +301,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
     *CMD_RX_WIN.lock().unwrap() = Some(rx);
     LAST_ZTICK.store(0, std::sync::atomic::Ordering::Relaxed);
+    let _ = Z_ORDER.set(WinZOrderEnforcer { hwnd_isize: hwnd.0 as isize });
 
     // Standard Win32 message loop.
     let mut msg = MSG::default();
@@ -267,6 +325,7 @@ static OVERLAY_HWND: std::sync::atomic::AtomicIsize =
 static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayCommand>>> = Mutex::new(None);
 static LAST_ZTICK: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 
 // ── Window procedure ──────────────────────────────────────────────────────
 
@@ -290,7 +349,7 @@ unsafe extern "system" fn wnd_proc(
             // Drain commands and tick animation.  Measure real dt from last
             // tick — Windows timer resolution defaults to 15ms so the
             // hardcoded 8ms was running the animation at half speed.
-            let pixmap = {
+            let (pixmap, fire_arrival) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(rs) = guard.as_mut() {
                     // Drain the channel.
@@ -304,17 +363,17 @@ unsafe extern "system" fn wnd_proc(
                     let now = std::time::Instant::now();
                     let dt = now.duration_since(rs.last_tick).as_secs_f64().clamp(0.0, 0.05);
                     rs.last_tick = now;
-                    rs.tick(dt);
-                    Some(cursor_overlay::render_frame(
+                    let arrived = rs.tick(dt);
+                    (Some(cursor_overlay::render_frame(
                         &rs.core,
                         rs.virt_w.max(1) as u32,
                         rs.virt_h.max(1) as u32,
                         rs.virt_x as f64,
                         rs.virt_y as f64,
                         None, // focus-rect is macOS-only
-                    ))
+                    )), arrived)
                 } else {
-                    None
+                    (None, false)
                 }
             };
 
@@ -322,11 +381,28 @@ unsafe extern "system" fn wnd_proc(
                 update_layered_window(hwnd, &pm);
             }
 
-            // Z-order maintenance every 80ms.
+            // Fire arrival oneshot the tick the path just ended — unblocks
+            // any `animate_cursor_to(...).await` so the click action only
+            // dispatches once the cursor has visually landed.
+            if fire_arrival {
+                if let Ok(mut guard) = ARRIVAL_TX.lock() {
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(());
+                    }
+                }
+            }
+
+            // Z-order maintenance every 80ms — delegate to the cross-platform
+            // ZOrderEnforcer so the contract for "z+1 of the application under
+            // test" is documented once in `cursor_overlay::z_order`.
             let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
             if now_ms.wrapping_sub(last) >= 80 {
                 LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-                reapply_z_order(hwnd);
+                let pinned_wid = RENDER.lock().ok()
+                    .and_then(|g| g.as_ref().and_then(|rs| rs.core.pinned_wid));
+                if let Some(enforcer) = Z_ORDER.get() {
+                    enforcer.reassert(pinned_wid);
+                }
             }
 
             LRESULT(0)
@@ -434,54 +510,81 @@ unsafe fn update_layered_window(
     ReleaseDC(None, hdc_screen);
 }
 
-#[cfg(target_os = "windows")]
-unsafe fn reapply_z_order(hwnd: windows::Win32::Foundation::HWND) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::*;
+// ── Z-order enforcer (Windows impl of cursor_overlay::ZOrderEnforcer) ────
 
-    // Read pinned_wid from render state (RENDER lock released before this is called).
-    let pinned_wid = {
-        let guard = RENDER.lock().unwrap();
-        guard.as_ref().and_then(|rs| rs.core.pinned_wid)
-    };
+/// Win32 implementation of [`cursor_overlay::ZOrderEnforcer`].
+///
+/// Stores the overlay HWND as an `isize` (HWND is `*mut c_void` and not
+/// `Send`/`Sync`) and rehydrates it inside `reassert`. Driven by the
+/// `WM_TIMER` branch in `wnd_proc` on the overlay STA thread.
+struct WinZOrderEnforcer {
+    hwnd_isize: isize,
+}
 
-    let pinned_target = pinned_wid.and_then(|wid| {
-        let h = HWND(wid as *mut _);
-        if IsWindow(h).as_bool() { Some(h) } else { None }
-    });
+impl ZOrderEnforcer for WinZOrderEnforcer {
+    fn reassert(&self, target: Option<u64>) {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::*;
 
-    // The overlay must sit JUST above the pinned target window so the
-    // user's foreground app (a different non-topmost window — say their
-    // terminal) renders on top of the overlay. Two pitfalls:
-    //
-    //   1. HWND_TOPMOST was the previous fallback. Once Windows promotes
-    //      a window into the topmost band (sets WS_EX_TOPMOST), a later
-    //      SetWindowPos with a normal target_hwnd does NOT drop it back
-    //      out — the overlay stays above EVERYTHING non-topmost (incl.
-    //      the user's foreground). That was the symptom in #1688-style
-    //      reports: overlay sticks visible over a terminal even when
-    //      the pinned window (Calculator) is behind it.
-    //   2. To drop out of the topmost band, we need an explicit
-    //      SetWindowPos(hwnd, HWND_NOTOPMOST, …) call. Then we can
-    //      issue a second SetWindowPos with the real target_hwnd so
-    //      the overlay lands ABOVE the pin but BELOW any window
-    //      currently above the pin (the user's foreground).
-    //
-    // Fallback when there's no live pin: HWND_TOP — top of non-topmost
-    // band, NOT the topmost band. So a "no pin" overlay still respects
-    // the user's foreground stack.
-    let _ = SetWindowPos(
-        hwnd,
-        HWND_NOTOPMOST,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
-    );
+            let hwnd = HWND(self.hwnd_isize as *mut _);
 
-    let insert_after = pinned_target.unwrap_or(HWND_TOP);
-    let _ = SetWindowPos(
-        hwnd,
-        insert_after,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER,
-    );
+            let pinned_target = target.and_then(|wid| {
+                let h = HWND(wid as *mut _);
+                if IsWindow(h).as_bool() { Some(h) } else { None }
+            });
+
+            // The overlay must sit JUST above the pinned target window so the
+            // user's foreground app (a different non-topmost window — say their
+            // terminal) renders on top of the overlay. Three Win32 pitfalls:
+            //
+            //   1. HWND_TOPMOST was the previous fallback. Once Windows promotes
+            //      a window into the topmost band (sets WS_EX_TOPMOST), a later
+            //      SetWindowPos with a normal target_hwnd does NOT drop it back
+            //      out — the overlay stays above EVERYTHING non-topmost (incl.
+            //      the user's foreground). That was the symptom in #1688-style
+            //      reports.
+            //   2. To drop out of the topmost band, we need an explicit
+            //      SetWindowPos(hwnd, HWND_NOTOPMOST, …) call before the real
+            //      z-order placement.
+            //   3. `SetWindowPos(hwnd, target_hwnd, …)` does NOT mean "put hwnd
+            //      above target_hwnd" — Win32 semantics are "insert hwnd
+            //      *after* target_hwnd in z-order" (i.e. one slot BELOW
+            //      target). To land overlay *above* target we have to insert
+            //      it after target's previous sibling instead — the window
+            //      currently just above target. `GetWindow(target, GW_HWNDPREV)`
+            //      returns that (or null when target is already the topmost
+            //      non-topmost window, in which case HWND_TOP raises overlay
+            //      to the top and pushes target one slot down). This is the
+            //      pitfall macOS / Linux dodge by virtue of their explicit
+            //      `orderWindow:above:` / `StackMode::ABOVE` APIs.
+            //
+            // Fallback when there's no live pin: HWND_TOP — top of non-topmost
+            // band, NOT the topmost band. So a "no pin" overlay still respects
+            // the user's foreground stack.
+            let _ = SetWindowPos(
+                hwnd,
+                HWND_NOTOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
+
+            let insert_after = match pinned_target {
+                Some(target) => {
+                    let prev = GetWindow(target, GW_HWNDPREV).unwrap_or(HWND(std::ptr::null_mut()));
+                    if !prev.0.is_null() { prev } else { HWND_TOP }
+                }
+                None => HWND_TOP,
+            };
+            let _ = SetWindowPos(
+                hwnd,
+                insert_after,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER,
+            );
+
+            let _ = target;
+        }
+    }
 }

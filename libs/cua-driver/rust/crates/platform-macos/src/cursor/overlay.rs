@@ -34,7 +34,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{
-    CursorConfig, FocusRect, MotionConfig, OverlayCommand, RenderStateCore,
+    CursorConfig, FocusRect, MotionConfig, OverlayCommand, RenderStateCore, ZOrderEnforcer,
 };
 
 // ── Arrival-signal channel ────────────────────────────────────────────────
@@ -358,14 +358,15 @@ fn render_loop(
         }
 
         // Repin: immediately on target change, then defensive every ~1 s.
+        // Delegate to the cross-platform ZOrderEnforcer so the contract for
+        // "z+1 of the application under test" is documented once in
+        // `cursor_overlay::z_order`.
         repin_frames += 1;
         let pin_changed = pinned_wid != last_pinned;
         last_pinned = pinned_wid;
-        if let Some(wid) = pinned_wid {
-            if pin_changed || repin_frames >= 60 {
-                dispatch_pin_above(win_ptr, wid);
-                repin_frames = 0;
-            }
+        if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
+            MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
+            repin_frames = 0;
         } else if repin_frames >= 60 {
             repin_frames = 0;
         }
@@ -484,6 +485,33 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
             Box::into_raw(payload) as *mut c_void,
             reorder_cb,
         );
+    }
+}
+
+// ── Z-order enforcer (macOS impl of cursor_overlay::ZOrderEnforcer) ──────
+
+/// macOS implementation of [`cursor_overlay::ZOrderEnforcer`].
+///
+/// Holds the NSWindow pointer as a `usize` and dispatches the
+/// `orderWindow:relativeTo:` call to the main queue (AppKit must run on
+/// the main thread).
+///
+/// `target = None` is treated as a no-op here rather than raising to the
+/// front: macOS creates the overlay at `NSNormalWindowLevel` and never
+/// promotes it into an "always-on-top" level the way Windows does with
+/// `HWND_TOPMOST`, so there is no topmost band to escape. Letting the
+/// overlay stay where the user's activations have left it keeps it out
+/// of the way when no agent action is in flight.
+struct MacZOrderEnforcer {
+    win_ptr: usize,
+}
+
+impl ZOrderEnforcer for MacZOrderEnforcer {
+    fn reassert(&self, target: Option<u64>) {
+        if let Some(wid) = target {
+            dispatch_pin_above(self.win_ptr, wid);
+        }
+        // target = None → no-op; see struct doc comment.
     }
 }
 

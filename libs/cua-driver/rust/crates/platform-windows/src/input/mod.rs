@@ -11,6 +11,7 @@
 
 pub mod mouse;
 pub mod keyboard;
+pub mod dispatch;
 
 pub use mouse::{is_chromium_target_window, post_click, post_click_screen, send_click_synthesized};
 pub use keyboard::{

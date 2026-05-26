@@ -663,7 +663,11 @@ impl Tool for TypeTextTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Strip trailing agent-protocol closing tags — see
+        // mcp_server::text_sanitize docs for rationale.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let xid_opt = args.opt_u64("window_id");
 
         // Resolve XID: use window_id if given, else first window for pid.
@@ -917,178 +921,11 @@ impl Tool for ScrollTool {
     }
 }
 
-// ── screenshot ────────────────────────────────────────────────────────────────
-
-pub struct ScreenshotTool {
-    state: Arc<ToolState>,
-}
-static SS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[async_trait]
-impl Tool for ScreenshotTool {
-    fn def(&self) -> &ToolDef {
-        SS_DEF.get_or_init(|| ToolDef {
-            name: "screenshot".into(),
-            description: "Capture a screenshot via XGetImage or `import` (ImageMagick). \
-                Returns base64-encoded image data in the requested format (default `jpeg`, \
-                quality `85`). The long edge is downscaled to fit the `max_image_dimension` \
-                config (default `1568` px — matches Anthropic's multimodal-vision input size, \
-                so a click-coord picked off this PNG addresses the same pixels the model \
-                reasoned over).\n\n\
-                **Prefer `get_window_state` for UI work** — it returns the AT-SPI tree \
-                alongside the same screenshot in one call, populates the element_index cache \
-                the click / type_text / scroll tools resolve against, and is the only path to \
-                backgrounded accessibility actions. `screenshot` is for when you just need \
-                pixels (vision grounding, debugging, attaching to a report).\n\n\
-                Without window_id captures the full primary display.".into(),
-            input_schema: json!({
-                "type":"object","properties":{
-                    "window_id":{"type":"integer"},
-                    "format":{"type":"string","enum":["png","jpeg"],"description":"Image format. Default: jpeg."},
-                    "quality":{"type":"integer","minimum":1,"maximum":95,"description":"JPEG quality 1-95; ignored for png. Default: 85."}
-                },"additionalProperties":false
-            }),
-            read_only: true, destructive: false, idempotent: true, open_world: false,
-        })
-    }
-
-    async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
-        let xid_opt = args.opt_u64("window_id");
-        let format = args.str_or("format", "jpeg");
-        let quality = args.u64_or("quality", 85) as u8;
-        let is_jpeg = format == "jpeg";
-        let max_dim = self.state.config.read().unwrap().max_image_dimension;
-
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u32, u32)> {
-            let raw = match xid_opt {
-                Some(xid) => crate::capture::screenshot_window_bytes(xid)?,
-                None      => crate::capture::screenshot_display_bytes()?,
-            };
-            let png_bytes = crate::capture::resize_png_if_needed(&raw, max_dim)?;
-            if is_jpeg {
-                let jpeg = crate::capture::png_bytes_to_jpeg(&png_bytes, quality)?;
-                let (w, h) = crate::capture::png_dimensions_pub(&png_bytes)?;
-                use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-                Ok((B64.encode(&jpeg), w, h))
-            } else {
-                let (w, h) = crate::capture::png_dimensions_pub(&png_bytes)?;
-                use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-                Ok((B64.encode(&png_bytes), w, h))
-            }
-        }).await;
-
-        match result {
-            Ok(Ok((b64, w, h))) => {
-                let label = if is_jpeg { "JPEG" } else { "PNG" };
-                let scope = if xid_opt.is_some() { "window" } else { "display" };
-                let mut tr = ToolResult::text(format!("Screenshot ({scope}): {w}×{h} {label}."));
-                let img = if is_jpeg {
-                    mcp_server::protocol::Content::image_jpeg(b64)
-                } else {
-                    mcp_server::protocol::Content::image_png(b64)
-                };
-                tr.content.push(img);
-                tr.structured_content = Some(json!({ "width": w, "height": h, "format": label }));
-                tr
-            }
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
-        }
-    }
-}
-
-// ── screenshot (Claude Code computer-use compat) ─────────────────────────────
-//
-// Drop-in replacement for `ScreenshotTool` selected via the
-// `--claude-code-computer-use-compat` flag. Same shape as the Windows /
-// macOS compat tools — see those files / SwiftCompatTools.swift for the
-// rationale.
-
-pub struct ScreenshotCompatTool {
-    state: Arc<ToolState>,
-}
-static SS_COMPAT_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[async_trait]
-impl Tool for ScreenshotCompatTool {
-    fn def(&self) -> &ToolDef {
-        SS_COMPAT_DEF.get_or_init(|| ToolDef {
-            name: "screenshot".into(),
-            description:
-                "Capture a target window and return a JPEG image. Coordinates accepted by \
-                 CuaDriver's pixel tools are pixels in this window screenshot's coordinate space.\n\n\
-                 This is the compatibility anchor for Claude Code vision flows: CuaDriver remains \
-                 window-scoped, and all other tools are the normal CuaDriver tools.".into(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["pid", "window_id"],
-                "properties": {
-                    "pid":       {"type":"integer","description":"Target process ID from list_windows or launch_app."},
-                    "window_id": {"type":"integer","description":"Target X11 XID from list_windows or launch_app."}
-                },
-                "additionalProperties": false
-            }),
-            read_only: true, destructive: false, idempotent: false, open_world: false,
-        })
-    }
-
-    async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
-        let pid       = match args.require_u32("pid")       { Ok(v) => v, Err(e) => return e };
-        let window_id = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
-
-        // Validate: window must exist + belong to pid.
-        let window = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid))
-                .into_iter()
-                .find(|w| w.xid == window_id)
-        }).await.unwrap_or(None);
-
-        let window = match window {
-            Some(w) => w,
-            None => return ToolResult::error(format!(
-                "No visible window {window_id} found for pid {pid}. \
-                 Use list_windows to choose an on-screen target window."
-            )),
-        };
-
-        let max_dim = self.state.config.read().unwrap().max_image_dimension;
-
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u32, u32)> {
-            let raw = crate::capture::screenshot_window_bytes(window_id)?;
-            let png_bytes = crate::capture::resize_png_if_needed(&raw, max_dim)?;
-            let (w, h) = crate::capture::png_dimensions_pub(&png_bytes)?;
-            let jpeg = crate::capture::png_bytes_to_jpeg(&png_bytes, 85)?;
-            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-            Ok((B64.encode(&jpeg), w, h))
-        }).await;
-
-        match result {
-            Ok(Ok((b64, w, h))) => {
-                let title = if window.title.is_empty() { "(untitled)".into() } else { window.title };
-                let summary = format!(
-                    "Captured window screenshot {w}x{h} for {title} \
-                     [pid: {pid}, window_id: {window_id}]. \
-                     Use CuaDriver pixel tools with this window-local coordinate space."
-                );
-                ToolResult {
-                    content: vec![
-                        mcp_server::protocol::Content::image_jpeg(b64),
-                        mcp_server::protocol::Content::text(summary),
-                    ],
-                    is_error: None,
-                    structured_content: Some(json!({
-                        "pid": pid, "window_id": window_id,
-                        "width": w, "height": h, "format": "jpeg"
-                    })),
-                }
-            }
-            Ok(Err(e)) => ToolResult::error(format!("Screenshot failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
-        }
-    }
-}
+// `ScreenshotTool` and `ScreenshotCompatTool` removed in PR #1692 — see the
+// matching note in platform-windows/src/tools/impl_.rs. `get_window_state`
+// with `capture_mode:"vision"` is the canonical screenshot path; the
+// underlying capture machinery (XGetImage / `import` shell-out / etc.)
+// stays reachable through GetWindowStateTool.
 
 // ── double_click ──────────────────────────────────────────────────────────────
 
@@ -1983,7 +1820,11 @@ impl Tool for TypeTextCharsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Same trailing-protocol-tag scrub as TypeTextTool — see
+        // mcp_server::text_sanitize for rationale.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let xid_opt = args.opt_u64("window_id");
         let xid = match xid_opt {
@@ -2051,6 +1892,59 @@ impl Tool for KillAppTool {
     }
 }
 
+// ── bring_to_front (Linux stub) ──────────────────────────────────────────────
+
+pub struct BringToFrontTool;
+
+static BTF_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for BringToFrontTool {
+    fn def(&self) -> &ToolDef {
+        BTF_DEF.get_or_init(|| ToolDef {
+            name: "bring_to_front".into(),
+            description:
+                "Activate a window so subsequent input tools land on it. **Windows-only \
+                 today:** on Linux this stub returns an error; the X11/Wayland equivalents \
+                 (`wmctrl -a`, `xdotool windowactivate`) aren't wired up because the Linux \
+                 input tools deliver via AT-SPI / X11 input injection which already reaches \
+                 backgrounded windows without needing activation."
+                .into(),
+            input_schema: serde_json::json!({
+                "type":"object","required":["pid"],"properties":{
+                    "pid":{"type":"integer"},
+                    "window_id":{"type":"integer"}
+                },"additionalProperties":false
+            }),
+            read_only: false, destructive: false, idempotent: true, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, _args: Value) -> ToolResult {
+        ToolResult::error(
+            "bring_to_front is Windows-only today. On Linux the input tools deliver via \
+             AT-SPI / X11 input injection which already reaches backgrounded windows. If \
+             you need explicit activation for your own UX reasons, shell out to \
+             `wmctrl -a` or `xdotool windowactivate` from outside cua-driver."
+                .to_string(),
+        )
+        .with_structured(serde_json::json!({
+            "code": "bring_to_front_unsupported_on_platform",
+            "platform": "linux",
+            // Machine-readable remediation hint — mirrors the macOS
+            // bring_to_front stub's structured `suggestion` field so
+            // cross-platform clients can dispatch on a uniform key.
+            "suggestion":
+                "Linux input tools (click / type_text / press_key / hotkey) already \
+                 reach backgrounded windows via AT-SPI / X11 input injection — \
+                 there is no equivalent need to bring a window to the foreground. \
+                 If you need explicit window activation for UX reasons, shell out \
+                 to `wmctrl -a <title>` or `xdotool windowactivate <wid>` from \
+                 outside cua-driver.",
+        }))
+    }
+}
+
 // ── registry ─────────────────────────────────────────────────────────────────
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
@@ -2061,6 +1955,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
+    r.register(Box::new(BringToFrontTool));
     r.register(Box::new(ClickTool { state: state.clone() }));
     r.register(Box::new(DoubleClickTool { state: state.clone() }));
     r.register(Box::new(RightClickTool { state: state.clone() }));
@@ -2070,11 +1965,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
     r.register(Box::new(ScrollTool));
-    if compat {
-        r.register(Box::new(ScreenshotCompatTool { state: state.clone() }));
-    } else {
-        r.register(Box::new(ScreenshotTool { state: state.clone() }));
-    }
+    // `screenshot` removed - see the matching comment in
+    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
+    // screenshot path is `get_window_state` with `capture_mode:"vision"`.
+    let _ = compat;
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool { state: state.clone() }));

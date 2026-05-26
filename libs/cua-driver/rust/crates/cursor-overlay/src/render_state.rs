@@ -123,9 +123,14 @@ impl RenderStateCore {
     /// speed switches from `min_start_speed` to `min_end_speed` at the
     /// midpoint so the cursor decelerates as it approaches the target.
     /// Spring overshoot is `0.5` (Windows/Linux convention).
-    pub fn tick_motion(&mut self, dt: f64) {
+    ///
+    /// Returns `true` when the planned path just ended (so the caller can
+    /// fire an arrival oneshot to unblock `animate_cursor_to`).
+    pub fn tick_motion(&mut self, dt: f64) -> bool {
         let spring_k = self.motion.spring * 400.0;
         let spring_c = self.motion.spring * 20.0;
+
+        let mut fire_arrival = false;
 
         if let Some(ref p) = self.path {
             let path_frac = (self.dist / p.length.max(1.0)).clamp(0.0, 1.0);
@@ -155,6 +160,7 @@ impl RenderStateCore {
                 self.heading = end_heading;
                 self.path = None;
                 self.dist = 0.0;
+                fire_arrival = true;
             } else {
                 let s: PathState = p.sample(self.dist);
                 self.pos = (s.x, s.y);
@@ -189,6 +195,8 @@ impl RenderStateCore {
         }
 
         self.tick_idle(dt);
+
+        fire_arrival
     }
 
     /// Advance the animation by `dt` seconds using the hardcoded Swift

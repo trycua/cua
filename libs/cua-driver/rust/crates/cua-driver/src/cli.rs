@@ -903,7 +903,17 @@ pub fn run_call(
             }
             Err(e) => {
                 // Daemon became unreachable mid-call — fall through to in-process.
-                tracing::debug!("Daemon forwarding failed ({e}), running in-process");
+                // Promoted from `tracing::debug!` to `eprintln!` so callers see
+                // the degradation: in-process execution gets a FRESH ToolState,
+                // which means state-dependent tools (`click`, `type_text`,
+                // `set_value` — anything that reads the element_index cache)
+                // will fail with "Element N not in cache" even when a prior
+                // `get_window_state` populated the daemon's cache, because the
+                // daemon's cache and the in-process cache are different.
+                eprintln!(
+                    "[cua-driver] WARNING: daemon proxy to {socket_path} failed ({e}); \
+                     running '{tool}' in-process. State-dependent tools may misbehave."
+                );
             }
         }
     }

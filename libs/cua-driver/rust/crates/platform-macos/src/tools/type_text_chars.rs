@@ -48,7 +48,11 @@ impl Tool for TypeTextCharsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use mcp_server::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let text = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        // Same trailing-protocol-tag scrub as TypeTextTool — see
+        // mcp_server::text_sanitize for rationale.
+        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+            .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let element_index = args.opt_u64("element_index").map(|v| v as usize);
         let window_id = args.opt_u64("window_id").map(|v| v as u32);

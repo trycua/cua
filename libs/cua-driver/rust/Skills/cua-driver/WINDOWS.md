@@ -26,6 +26,66 @@ driver gives you (no cursor warp, no taskbar flash, no window
 restore-and-raise) stops mattering — you just shipped a `SendInput`
 wrapper with extra steps.
 
+### Cursor feedback for JS-driven browser actions: prefer `click_element`
+
+The `page` tool gained a fourth action: `click_element`. It takes a CSS
+selector, animates the agent cursor to the element's on-screen center,
+fires a click-pulse, then runs `el.click()`. Prefer this over
+`execute_javascript('document.querySelector(...).click()')` whenever you
+want the user to see what the agent is doing — raw `execute_javascript`
+will perform the click but leaves the cursor frozen.
+
+```json
+{ "action": "click_element", "pid": <int>, "window_id": <int>, "selector": "button.submit" }
+```
+
+Returns the resolved screen coords in `structuredContent` so callers can
+chain subsequent operations against the same point.
+
+### How the contract is enforced per call: the `dispatch` field
+
+Every Windows input tool (`click`, `double_click`, `right_click`,
+`drag`, `scroll`, `press_key`, `hotkey`, `type_text`) accepts an
+optional `dispatch` field. The default is `"background"` — strict
+no-foreground:
+
+| `dispatch` | Behavior on Windows |
+|---|---|
+| `"background"` (DEFAULT) | PostMessage / UIA path only. If the target's input stack is known to silently drop PostMessage for this event kind (Chromium DOM mouse + key-combos, GTK button widgets), the call returns a structured `background_unavailable` error. **No foreground swap, ever.** |
+| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content or GTK button widgets reliably. Flashes the target visible unless `bring_to_front` was called first. |
+| `"auto"` | Historical heuristic: silently falls back to SendInput on known-problematic targets. Opt-in for callers that prefer the old "things just work, sometimes at the cost of focus" behavior. |
+
+`background_unavailable` error shape:
+
+```json
+{
+  "isError": true,
+  "structuredContent": {
+    "code": "background_unavailable",
+    "target_class": "Chrome_WidgetWin_1",
+    "event_kind": "mouse_click",
+    "suggestion": "Either call bring_to_front then retry with dispatch:\"foreground\", or accept the foreground swap by setting dispatch:\"foreground\" directly."
+  }
+}
+```
+
+The recommended flow when an agent gets that error:
+
+1. `bring_to_front(pid)` — activates the target ONCE (visible flicker).
+2. Subsequent input calls with `dispatch:"foreground"` deliver via
+   SendInput WITHOUT a per-call flash (the SetForegroundWindow swap
+   inside SendInput is a no-op because the target is already frontmost).
+3. When done, leave the target as the user's foreground or call
+   `hotkey({pid: original_fg_pid, keys: ["alt","tab"]})` to put their
+   prior window back. **There is no "restore" tool** — you brought
+   the target forward deliberately; restoring is your responsibility.
+
+The `bring_to_front` tool uses an `AttachThreadInput` trick so the
+foreground swap succeeds even when the daemon isn't at UIAccess
+integrity (the same trick that powers `send_key_synthesized`).
+Returns `{previous_fg_hwnd, now_fg_hwnd, landed_on_target}`.
+
+
 Before running any shell command, ask: **"does this raise, activate,
 foreground, or steal focus from any app?"** If yes, don't run it.
 Every one of the commands below activates the target on Windows and

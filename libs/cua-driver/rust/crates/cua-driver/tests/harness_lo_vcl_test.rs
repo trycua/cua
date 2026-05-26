@@ -6,29 +6,28 @@
 //! loudly if cua-driver later closes the underlying gap, prompting
 //! a flip of the assertion.
 //!
-//! ## Documented gap under regression guard
+//! ## Tests in this file
 //!
-//! **VCL toolbar SplitButtons expose only InvokePattern, no
-//! ExpandCollapse.** The "Font Color" button in the Formatting
-//! toolbar is a SplitButton (apply-current-color on the left half,
-//! open-color-picker on the right). UIA reports it as a single
-//! element with `actions=[invoke]` — no separate child for the
-//! dropdown arrow, no ExpandCollapsePattern. Pixel-clicking either
-//! half resolves through cua-driver's `try_invoke_in_window_at_point`
-//! fallback to the parent's `Invoke()`, which applies the current
-//! color — there is **no way to open the color picker** through the
-//! toolbar SplitButton at all. The agent has to go through Format →
-//! Character instead.
+//! 1. **`harness_lo_vcl_font_color_split_button_exposes_expand`** —
+//!    positive guard for the MSAA fallback (see `platform-windows/src/msaa.rs`,
+//!    landed alongside this file). Asserts the toolbar "Font Color"
+//!    SplitButton now reports `actions=[invoke,expand]` via the MSAA
+//!    walker (UIA's MSAA→UIA proxy collapsed it to bare `[invoke]`
+//!    before — guarded by an inverted assertion until cua-driver
+//!    gained the MSAA path).
 //!
-//! ## Gaps explored that turned out NOT to reproduce
+//! 2. **`harness_lo_vcl_font_color_expand_opens_picker`** — end-to-end
+//!    guard for the `action:"expand"` dispatch. Calls
+//!    `click(element_index=<Font Color>, action:"expand")` and
+//!    asserts a new top-level `SALTMPSUBFRAME` titled "Font Color"
+//!    appears (the picker popup). This is the workflow the MSAA
+//!    fallback was built to unlock.
 //!
-//! During the exploration we suspected VCL modal dialogs (SALSUBFRAME
-//! class) might silently drop SendInput-injected keystrokes. A
-//! repro attempt against Find & Replace (Ctrl+H) showed Escape
-//! foreground-dispatch closes the dialog cleanly. The earlier
-//! Character-dialog observation that motivated the suspicion was
-//! likely confounded by the SplitButton miscalc + general flake; it
-//! is not stable enough to guard against here.
+//! 3. **`harness_lo_vcl_modal_input_roundtrip_works`** — confirms
+//!    SAL/VCL modal dialogs (SALSUBFRAME class) DO accept
+//!    SendInput-injected input. Opens Find & Replace via Ctrl+H,
+//!    closes via Escape. Catches regressions in SALFRAME accelerator
+//!    dispatch and SALSUBFRAME key handling.
 //!
 //! ## How to run
 //!
@@ -201,22 +200,27 @@ where F: FnOnce(&mut ChildStdin, &mut BufReader<&mut ChildStdout>, u32, u64) -> 
     f(&mut fx.driver_stdin, &mut stdout, fx.writer_pid, fx.writer_wid)
 }
 
-// ── Gap #1: FontColor SplitButton exposes only InvokePattern ─────────────────
+// ── Test 1: Font Color SplitButton exposes `expand` via MSAA fallback ───────
 
-/// Documents that the LO Writer "Font Color" toolbar SplitButton has no
-/// ExpandCollapse pattern exposed in the UIA tree — only `Invoke`. So
-/// the agent can apply the current color but can't programmatically
-/// open the color picker through the toolbar at all (has to go via
-/// Format → Character).
+/// Confirms the MSAA fallback (`platform-windows/src/msaa.rs`) lets
+/// cua-driver see VCL toolbar SplitButtons' dropdown halves.
 ///
-/// If this assertion flips (the SplitButton now reports `expand`), the
-/// underlying VCL SalToolBox.AddElement code path was updated to expose
-/// a child for the dropdown arrow — at which point flip this test to
-/// the positive assertion and a follow-up test can drive picker-open
-/// → pick-color.
+/// Before the MSAA fallback landed: UIA's MSAA→UIA proxy collapsed
+/// `ROLE_SYSTEM_BUTTONDROPDOWN` (0x38) to a featureless `SplitButton`
+/// with `actions=[invoke]` — agents could re-fire the press half but
+/// not open the picker. After the MSAA fallback: SAL-class windows
+/// walk via oleacc's `AccessibleObjectFromWindow`, which preserves
+/// the BUTTONDROPDOWN role, and cua-driver maps it to
+/// `actions=[invoke,expand]`. The `click` tool's `action:"expand"`
+/// case clicks the right-edge of the cached rect (the dropdown arrow
+/// half) via SendInput.
+///
+/// If this fails: either the MSAA path stopped applying to SALFRAME
+/// (check `uia/mod.rs` SAL class detection), or LO changed its
+/// toolbar role (no longer ROLE_SYSTEM_BUTTONDROPDOWN).
 #[test]
 #[ignore]
-fn harness_lo_vcl_font_color_split_button_DOCUMENTED_no_expand() {
+fn harness_lo_vcl_font_color_split_button_exposes_expand() {
     let mut fx = match setup() { Some(s) => s, None => return };
     with_session(&mut fx, |stdin, stdout, pid, wid| {
         let snap = call(stdin, stdout, 30, "get_window_state", serde_json::json!({
@@ -225,52 +229,133 @@ fn harness_lo_vcl_font_color_split_button_DOCUMENTED_no_expand() {
         }));
         let text = snapshot_text(&snap);
         assert!(text.contains("SplitButton \"Font Color\""),
-            "Font Color SplitButton not found in UIA tree: {text:?}");
-        // Inspect the actions=[...] list on the Font Color line. The
-        // documented gap is that ONLY `invoke` is reported — no
-        // `expand`. When VCL exposes the dropdown child, `expand` will
-        // appear.
-        let line = text.lines().find(|l| l.contains("Font Color")).unwrap_or("");
-        assert!(line.contains("actions=[invoke]"),
-            "Expected `actions=[invoke]` ONLY on the Font Color SplitButton — \
-             got {line:?}. If `expand` is in the list now, cua-driver may have \
-             gained ExpandCollapse on VCL SplitButtons; flip the assertion.");
-        assert!(!line.contains("expand"),
-            "Font Color SplitButton now reports ExpandCollapse — VCL gap closed?");
-        println!("⚠️  harness_lo_vcl_font_color_split_button_DOCUMENTED_no_expand: \
-                  Font Color SplitButton actions=[invoke] only (no expand) — \
-                  no programmatic way to open the color picker via the toolbar.");
+            "Font Color SplitButton not found in tree: {text:?}");
+        let line = text.lines().find(|l| l.contains("\"Font Color\"")).unwrap_or("");
+        assert!(line.contains("expand"),
+            "Expected `expand` in actions on Font Color SplitButton — got {line:?}. \
+             The MSAA fallback may not be running for SALFRAME (check uia/mod.rs \
+             SAL class detection — should route ALL SAL* classes through msaa.rs).");
+        assert!(line.contains("invoke"),
+            "Expected `invoke` to remain in actions alongside `expand` — got {line:?}. \
+             MSAA walker should expose both press and dropdown halves.");
+    });
+}
+
+// ── Test 2: action:"expand" actually opens the color picker ─────────────────
+
+/// End-to-end test that the `click(element_index, action:"expand")`
+/// dispatch on a MSAA BUTTONDROPDOWN actually opens the dropdown.
+///
+/// Asserts:
+///   1. `get_window_state` finds Font Color by name and yields an
+///      element_index.
+///   2. `click(element_index=X, action:"expand")` returns success.
+///   3. A new top-level window appears under the LO pid with title
+///      "Font Color" (the SALTMPSUBFRAME color picker).
+///
+/// Failures point at:
+///   - (1) MSAA walker not finding Font Color (check msaa.rs walker
+///         budget / depth, or LO renamed the button).
+///   - (2) cua-driver click tool's MSAA dispatch broke (check
+///         `tools/impl_.rs` BUTTONDROPDOWN branch).
+///   - (3) Right-edge offset wrong for current LO version's toolbar
+///         scale (check `rect.right - 4` heuristic in
+///         `tools/impl_.rs`).
+#[test]
+#[ignore]
+fn harness_lo_vcl_font_color_expand_opens_picker() {
+    let mut fx = match setup() { Some(s) => s, None => return };
+    with_session(&mut fx, |stdin, stdout, pid, wid| {
+        // Bring Writer to foreground so SendInput click lands on it.
+        let _ = call(stdin, stdout, 30, "bring_to_front", serde_json::json!({
+            "pid": pid as i64, "window_id": wid
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+
+        let snap = call(stdin, stdout, 31, "get_window_state", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "capture_mode": "ax", "query": "Font Color"
+        }));
+        let text = snapshot_text(&snap);
+        let line = text.lines()
+            .find(|l| l.contains("\"Font Color\"") && l.contains("expand"))
+            .unwrap_or_else(|| panic!("Font Color SplitButton with `expand` action not found: {text:?}"));
+        let s = line.find('[').expect("element_index bracket open");
+        let e = line[s..].find(']').expect("element_index bracket close") + s;
+        let idx: u64 = line[s+1..e].trim().parse()
+            .unwrap_or_else(|_| panic!("could not parse element_index from line {line:?}"));
+
+        // Snapshot windows under our pid BEFORE the click.
+        let before = call(stdin, stdout, 32, "list_windows", serde_json::json!({
+            "pid": pid as i64
+        }));
+        let before_ids: std::collections::HashSet<u64> = before
+            ["result"]["structuredContent"]["windows"].as_array()
+            .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
+            .unwrap_or_default();
+
+        let resp = call(stdin, stdout, 33, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            "element_index": idx, "action": "expand"
+        }));
+        let resp_text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(resp_text.starts_with("✅"),
+            "click(action:expand) failed: {resp_text:?}");
+        assert!(resp_text.contains("dropdown half"),
+            "Expected response to mention dropdown half — got {resp_text:?}. \
+             The MSAA dispatch path may not have triggered.");
+
+        // Let the picker spawn.
+        std::thread::sleep(Duration::from_millis(900));
+
+        let after = call(stdin, stdout, 34, "list_windows", serde_json::json!({
+            "pid": pid as i64
+        }));
+        let new_wins: Vec<&serde_json::Value> = after
+            ["result"]["structuredContent"]["windows"].as_array()
+            .map(|a| a.iter()
+                .filter(|w| {
+                    let id = w["window_id"].as_u64();
+                    id.map(|i| !before_ids.contains(&i)).unwrap_or(false)
+                })
+                .collect())
+            .unwrap_or_default();
+        let picker = new_wins.iter().find(|w| {
+            w["title"].as_str().map(|t| t.contains("Font Color")).unwrap_or(false)
+        });
+        assert!(picker.is_some(),
+            "No new window titled 'Font Color' appeared after click(action:expand). \
+             new_windows={new_wins:?}. The right-edge dispatch may have hit the \
+             wrong pixel (LO's toolbar scaled differently?) or the picker spawned \
+             as a child window instead of a top-level.");
     });
 }
 
 // ── Working path: SALSUBFRAME modal dialogs accept SendInput input ─────────
 
-/// Confirms that VCL/SAL modal dialogs (SALSUBFRAME class) DO accept
-/// SendInput-injected keyboard input, despite an earlier hypothesis to
-/// the contrary that came up during the vision-only LO exploration.
+/// Confirms the MSAA fallback gives a walkable tree on SALSUBFRAME
+/// modal dialogs too (was the "SAL/VCL target, UIA walk skipped" stub
+/// before the MSAA path landed), AND that the dialog accepts
+/// SendInput-injected keyboard input.
 ///
 /// Specifically:
 ///   - `hotkey(ctrl+h, foreground)` against the main Writer SALFRAME
 ///     opens the Find & Replace dialog (a SALSUBFRAME).
-///   - The dialog snapshot via `get_window_state(capture_mode:"ax")`
-///     returns the documented SAL-skip stub (UIA walk would hang on
-///     `TreeScope.Subtree` from the daemon's MTA pool, so cua-driver
-///     short-circuits — `uia/mod.rs`).
+///   - `get_window_state(capture_mode:"ax")` on the dialog returns a
+///     full element tree via the MSAA walker — includes the "Close"
+///     button and the Find/Replace edit fields as addressable
+///     element_indices (a recent capability — the pre-MSAA stub had
+///     zero actionable elements).
 ///   - `press_key(escape, foreground)` against the SALSUBFRAME closes
 ///     it cleanly.
 ///
 /// If this test ever fails, one of three things regressed:
 ///   (a) Ctrl+H accelerator on the main Writer window stopped firing
 ///       under SendInput (foreground key dispatch broken on SALFRAME).
-///   (b) The SAL-skip stub message changed wording (`uia/mod.rs`).
-///   (c) Foreground Escape stopped reaching the SALSUBFRAME (SAL filter
-///       changed in a newer LO).
-///
-/// Background dispatch is intentionally NOT tested here for the open
-/// step — cua-driver explicitly rejects `dispatch:"background"` for
-/// `key_combo` on SALFRAME with a structured error (see
-/// `platform-windows/src/tools/impl_.rs`). Probing it would just
-/// confirm that error, which the unit tests already cover.
+///   (b) MSAA walker stopped finding actionable elements in
+///       SALSUBFRAME (check `msaa.rs` budget / depth).
+///   (c) Foreground Escape stopped reaching the SALSUBFRAME (SAL
+///       filter changed in a newer LO).
 #[test]
 #[ignore]
 fn harness_lo_vcl_modal_input_roundtrip_works() {
@@ -310,15 +395,26 @@ fn harness_lo_vcl_modal_input_roundtrip_works() {
             }
         };
 
-        // Snapshot the dialog — should return the SAL-skip stub.
+        // Snapshot the dialog — MSAA walker should produce a real tree
+        // with the dialog's buttons and edit fields, NOT the old skip
+        // stub.
         let dialog_ax = call(stdin, stdout, 32, "get_window_state", serde_json::json!({
             "pid": pid as i64, "window_id": dialog_wid, "capture_mode": "ax"
         }));
         let dialog_text = snapshot_text(&dialog_ax);
-        assert!(dialog_text.contains("SAL/VCL target, UIA walk skipped"),
-            "Expected SAL-skip stub for SALSUBFRAME dialog, got: {dialog_text:?}. \
-             If this assertion flips, cua-driver may have a working UIA walk on \
-             SAL dialogs now — celebrate and update the test.");
+        assert!(!dialog_text.contains("SAL/VCL target, UIA walk skipped"),
+            "Got the old skip-stub message — MSAA fallback did not engage on \
+             this SALSUBFRAME. Snapshot was: {dialog_text:?}");
+        assert!(dialog_text.contains("Button \"Close\""),
+            "Expected MSAA walker to expose a 'Close' Button in the Find & Replace \
+             dialog tree (it's a documented child via accChild). Snapshot was: {dialog_text:?}");
+        // Sanity: should have several actionable element_indices, not zero.
+        let actionable_count = dialog_text.lines()
+            .filter(|l| l.contains("actions=[invoke"))
+            .count();
+        assert!(actionable_count >= 4,
+            "Expected ≥4 actionable elements in Find & Replace via MSAA walker, \
+             got {actionable_count}. Tree: {dialog_text:?}");
 
         // Foreground Escape should close the dialog.
         let esc_resp = call(stdin, stdout, 33, "press_key", serde_json::json!({

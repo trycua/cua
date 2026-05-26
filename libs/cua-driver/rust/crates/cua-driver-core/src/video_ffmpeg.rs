@@ -52,7 +52,12 @@ impl FfmpegVideoBackend {
         };
 
         if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to create recording output directory {}: {e}",
+                    parent.display()
+                )
+            })?;
         }
 
         let mut cmd = Command::new(&ffmpeg);

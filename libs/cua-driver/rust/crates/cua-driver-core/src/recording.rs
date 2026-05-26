@@ -372,7 +372,9 @@ fn write_turn(
         match (args.opt_f64("x"), args.opt_f64("y")) {
             (Some(x), Some(y)) => Some((x, y)),
             _ => match (window_id, pid, element_index, ELEMENT_BOUNDS_FN.get()) {
-                (Some(wid), Some(p), Some(idx), Some(f)) => f(wid, p, idx as u32),
+                (Some(wid), Some(p), Some(idx), Some(f)) => {
+                    u32::try_from(idx).ok().and_then(|idx32| f(wid, p, idx32))
+                }
                 _ => None,
             },
         }

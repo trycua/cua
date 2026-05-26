@@ -97,7 +97,9 @@ impl Tool for StartRecordingTool {
                         "type": "boolean",
                         "description": "Capture the main display to <output_dir>/recording.mp4. \
                             Default: true. Set to false to record only the per-turn \
-                            screenshots + JSON. Requires ffmpeg on PATH."
+                            screenshots + JSON. On macOS this uses native \
+                            ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
+                            Windows + Linux it requires ffmpeg on PATH."
                     }
                 },
                 "additionalProperties": false

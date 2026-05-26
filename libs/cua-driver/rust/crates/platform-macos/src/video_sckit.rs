@@ -57,11 +57,25 @@ pub struct SckitVideoBackend {
 impl SckitVideoBackend {
     fn start(output_path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            std::fs::create_dir_all(parent).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to create recording output directory {}: {e}",
+                    parent.display()
+                )
+            })?;
         }
         // SCRecordingOutput appends-or-fails on an existing file; match the
         // Swift impl by clearing any stale recording.mp4 from a prior run.
-        let _ = std::fs::remove_file(output_path);
+        match std::fs::remove_file(output_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                anyhow::bail!(
+                    "failed to remove stale recording file {}: {e}",
+                    output_path.display()
+                );
+            }
+        }
 
         let content = SCShareableContent::get()
             .map_err(|e| anyhow::anyhow!("SCShareableContent::get failed: {e}"))?;

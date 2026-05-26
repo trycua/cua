@@ -25,9 +25,9 @@ pub fn set_element_cache(cache: Arc<ElementCache>) {
 /// (pid, window_id) and emits the same shape `get_window_state` returns
 /// (minus screenshot fields — those live in `screenshot.png`).
 pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
-    let pid = pid? as i32;
+    let pid = i32::try_from(pid?).ok()?;
     let resolved_wid = match window_id {
-        Some(w) => w as u32,
+        Some(w) => u32::try_from(w).ok()?,
         None => crate::windows::resolve_main_window_id(pid).ok()?,
     };
     let result = crate::ax::tree::walk_tree(pid, Some(resolved_wid), None);
@@ -47,13 +47,15 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 /// screenshot's pixels-per-point scale.
 pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> Option<(f64, f64)> {
     let cache = ELEMENT_CACHE.get()?;
-    let ptr = cache.get_element_ptr(pid as i32, window_id as u32, element_index as usize)?;
+    let pid_i32 = i32::try_from(pid).ok()?;
+    let window_id_u32 = u32::try_from(window_id).ok()?;
+    let ptr = cache.get_element_ptr(pid_i32, window_id_u32, element_index as usize)?;
     let (sx, sy) = unsafe { element_screen_center(ptr as AXUIElementRef)? };
 
-    let bounds = crate::windows::window_bounds_by_id(window_id as u32)?;
+    let bounds = crate::windows::window_bounds_by_id(window_id_u32)?;
     // Probe the captured PNG's width to derive the Retina scale — the
     // screenshot is in physical pixels, the window bounds are in points.
-    let scale = if let Ok(png) = crate::capture::screenshot_window_bytes(window_id as u32) {
+    let scale = if let Ok(png) = crate::capture::screenshot_window_bytes(window_id_u32) {
         if png.len() >= 24 {
             let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
             if bounds.width > 0.0 && pw > bounds.width { pw / bounds.width } else { 1.0 }

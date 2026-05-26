@@ -5117,6 +5117,9 @@ impl Tool for DebugWindowInfoTool {
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
+    // Share the element cache with the recording-hook layer so it can
+    // resolve element_index → window-local screenshot coords for click.png.
+    crate::recording_hooks::set_element_cache(state.element_cache.clone());
     let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));

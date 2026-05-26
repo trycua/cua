@@ -75,6 +75,14 @@ impl Tool for StartRecordingTool {
                 brew install ffmpeg / apt install ffmpeg); when ffmpeg is missing the \
                 per-turn capture (screenshots + action.json) still runs and the \
                 session's `last_error` field carries the ffmpeg-not-found message.\n\n\
+                **macOS extra requirement:** the ffmpeg binary itself needs Screen \
+                Recording permission (System Settings → Privacy & Security → Screen & \
+                System Audio Recording → add /opt/homebrew/bin/ffmpeg or equivalent). \
+                TCC is per-binary on macOS — cua-driver having Screen Recording is NOT \
+                sufficient for the ffmpeg subprocess. If the grant is missing, video \
+                start fast-fails after ~2 s and the error surfaces in the response; \
+                per-turn JSON+screenshot capture continues. A future PR will replace \
+                ffmpeg with a native ScreenCaptureKit binding to remove this gate.\n\n\
                 State persists for the life of the daemon / MCP session; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
                 disable + finalize the mp4.".into(),
@@ -114,11 +122,17 @@ impl Tool for StartRecordingTool {
         match self.session.start(output_dir.as_deref().unwrap(), record_video) {
             Ok(()) => {
                 let state = self.session.current_state();
+                // When the caller asked for video and it failed (e.g. macOS
+                // ffmpeg TCC prompt deadlock), surface the actual error
+                // prominently — the per-turn capture still runs, but the
+                // caller deserves to know the mp4 won't materialize.
+                let video_failed = record_video && !state.video_active;
                 let video_note = if record_video && state.video_active {
-                    " (video → recording.mp4)"
-                } else if record_video && !state.video_active {
-                    " (video requested but ffmpeg not available — see last_error)"
-                } else { "" };
+                    " (video → recording.mp4)".to_string()
+                } else if video_failed {
+                    let err = state.last_error.clone().unwrap_or_else(|| "unknown".into());
+                    format!("\n\n⚠️ Video capture failed (per-turn JSON+screenshot still running):\n{err}")
+                } else { String::new() };
                 let msg = format!("✅ Recording started -> {}{}",
                     state.output_dir.as_deref().unwrap_or("?"),
                     video_note);

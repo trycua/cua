@@ -49,6 +49,35 @@ pub fn set_click_marker_fn(f: impl Fn(&[u8], f64, f64) -> Option<Vec<u8>> + Send
     let _ = CLICK_MARKER_FN.set(Box::new(f));
 }
 
+// ── Platform AX-snapshot callback ────────────────────────────────────────────
+//
+// Takes (window_id, pid) and returns JSON bytes for `app_state.json` (the
+// post-action AX/UIA snapshot), or None if no snapshot is available on this
+// platform.
+
+type AxSnapshotFnBox = Box<dyn Fn(Option<u64>, Option<i64>) -> Option<Vec<u8>> + Send + Sync>;
+static AX_SNAPSHOT_FN: OnceLock<AxSnapshotFnBox> = OnceLock::new();
+
+/// Register the platform-specific AX/UIA snapshot callback. Call once at startup.
+pub fn set_ax_snapshot_fn(f: impl Fn(Option<u64>, Option<i64>) -> Option<Vec<u8>> + Send + Sync + 'static) {
+    let _ = AX_SNAPSHOT_FN.set(Box::new(f));
+}
+
+// ── Platform element-bounds callback ─────────────────────────────────────────
+//
+// Resolves an element_index to its center point in window-local screenshot
+// pixels (the same coordinate space as the existing `(cx, cy)` arg to
+// `CLICK_MARKER_FN`). Used so click.png is also written on element-indexed
+// clicks, not just pixel-addressed ones.
+
+type ElementBoundsFnBox = Box<dyn Fn(u64, i64, u32) -> Option<(f64, f64)> + Send + Sync>;
+static ELEMENT_BOUNDS_FN: OnceLock<ElementBoundsFnBox> = OnceLock::new();
+
+/// Register the platform-specific element-bounds resolver. Args: (window_id, pid, element_index).
+pub fn set_element_bounds_fn(f: impl Fn(u64, i64, u32) -> Option<(f64, f64)> + Send + Sync + 'static) {
+    let _ = ELEMENT_BOUNDS_FN.set(Box::new(f));
+}
+
 /// Persistent recording session state (singleton per process).
 pub struct RecordingSession {
     inner: Mutex<RecordingInner>,
@@ -330,14 +359,21 @@ fn write_turn(
     // Extract window_id and pid from args for screenshot capture.
     let window_id = args.opt_u64("window_id");
     let pid       = args.opt_i64("pid");
+    let element_index = args.opt_u64("element_index");
 
-    // Extract click point for click-family tools.
+    // Extract click point for click-family tools. Falls back to the
+    // platform element_index → window-local-pixels resolver when the call
+    // used `element_index` instead of explicit `x, y`, so click.png is
+    // written for AX-indexed clicks too.
     let click_point: Option<(f64, f64)> = if matches!(
         tool_name, "click" | "double_click" | "right_click"
     ) {
         match (args.opt_f64("x"), args.opt_f64("y")) {
             (Some(x), Some(y)) => Some((x, y)),
-            _ => None,
+            _ => match (window_id, pid, element_index, ELEMENT_BOUNDS_FN.get()) {
+                (Some(wid), Some(p), Some(idx), Some(f)) => f(wid, p, idx as u32),
+                _ => None,
+            },
         }
     } else {
         None
@@ -355,6 +391,14 @@ fn write_turn(
         payload["click_point"] = serde_json::json!({"x": cx, "y": cy});
     }
     write_json_atomic(&turn_dir.join("action.json"), &payload)?;
+
+    // Post-action AX/UIA snapshot — omitted on platforms that don't expose
+    // a cheap snapshot helper (today: Linux ATSPI).
+    if let Some(ax_fn) = AX_SNAPSHOT_FN.get() {
+        if let Some(json_bytes) = ax_fn(window_id, pid) {
+            let _ = std::fs::write(turn_dir.join("app_state.json"), &json_bytes);
+        }
+    }
 
     // Capture screenshot if a callback is registered.
     if let Some(screenshot_fn) = SCREENSHOT_FN.get() {

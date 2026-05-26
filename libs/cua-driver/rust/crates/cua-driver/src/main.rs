@@ -122,6 +122,12 @@ fn main() {
             cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
                 platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
             });
+            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+            });
+            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+            });
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
@@ -162,6 +168,12 @@ fn main() {
             });
             cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
                 platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
+            });
+            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+            });
+            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
             });
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
@@ -286,6 +298,12 @@ fn main() {
     // Register click-marker callback for recording (click.png with red crosshair).
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
         platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
+    });
+    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    });
+    cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+        platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
     });
 
     std::thread::Builder::new()
@@ -522,6 +540,12 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
         platform_windows::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(target_os = "linux")]
@@ -574,6 +598,12 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         });
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
+        });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
         });
         platform_windows::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }

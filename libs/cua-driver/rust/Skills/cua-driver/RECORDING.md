@@ -27,6 +27,18 @@ you don't want video. Requires ffmpeg on PATH; when missing, the per-
 turn capture continues without video and `last_error` carries the
 install hint.
 
+**macOS gotcha — ffmpeg needs its own Screen Recording grant.** TCC on
+macOS is per-binary, not per-process-tree. Even when cua-driver has
+Screen Recording permission, the ffmpeg subprocess does not inherit
+that grant — and when run from a daemon there's no UI thread to
+surface the consent prompt, so ffmpeg blocks forever on the request.
+The recorder fast-fails this case after ~2 s, kills the subprocess,
+and surfaces an actionable error. Fix: add your ffmpeg binary
+(`/opt/homebrew/bin/ffmpeg` for Homebrew on Apple Silicon) to System
+Settings → Privacy & Security → Screen & System Audio Recording, then
+restart cua-driver. A future PR will replace ffmpeg+avfoundation with
+a native ScreenCaptureKit binding so video works zero-config on macOS.
+
 ## Start / stop
 
 Two equivalent surfaces: the `start_recording` / `stop_recording` MCP
@@ -59,22 +71,26 @@ daemon restart resets to disabled.
 
 Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
-- `app_state.json` — post-action AX snapshot for the target pid, same
-  shape `get_window_state` returns (tree_markdown, element_count,
-  turn_id, etc.) minus the screenshot fields. The recorder resolves a
-  frontmost window internally (visible + on-current-Space preferred,
-  max-area fallback) since individual action tools carry a
-  window_id but the recorder has no caller-supplied anchor.
-- `screenshot.png` — post-action capture of the same window the
-  recorder just snapshotted. Omitted when the pid has no visible
-  window.
+- `app_state.json` — post-action AX/UIA snapshot for the target
+  `(pid, window_id)` carrying the same `tree_markdown` +
+  `element_count` shape `get_window_state` returns (minus the
+  screenshot fields — those live in `screenshot.png`). On macOS the
+  recorder resolves a frontmost window internally when the action's
+  args don't carry one; on Windows it uses the first window of the
+  target pid. **Omitted on Linux** — ATSPI doesn't expose a cheap
+  whole-tree snapshot, and the file is left out rather than faked.
+- `screenshot.png` — post-action capture of the target window.
+  Omitted when the pid has no visible window.
 - `action.json` — the tool name, full input arguments, result
   summary, pid, click point (when applicable), ISO-8601 timestamp.
-- `click.png` — only for click-family actions (`click`,
+- `click.png` — for click-family actions (`click`, `double_click`,
   `right_click`): a copy of `screenshot.png` with a red dot drawn at
-  the click point (screen-absolute point → window-local pixels via
-  the screenshot's `scale_factor`). Absent for other tools and for
-  clicks whose point falls outside the captured window.
+  the click point. **Both addressing modes are covered:** explicit
+  `x, y` clicks use the supplied coordinates directly, and
+  `element_index`-addressed clicks resolve to the element's center
+  via the live AX/UIA cache, then convert to window-local screenshot
+  pixels. Absent for non-click tools and for clicks whose resolved
+  point falls outside the captured window.
 
 ## When to use it
 

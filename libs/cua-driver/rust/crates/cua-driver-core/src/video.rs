@@ -129,6 +129,67 @@ impl VideoRecorder {
             })
         });
 
+        // Fast-fail probe. ffmpeg failures we care about:
+        //  1. immediate exit (bad input device, missing codec) — surface stderr
+        //  2. macOS: silent hang waiting on a TCC Screen Recording prompt that
+        //     can't be displayed (subprocess of a daemon) — detected via
+        //     no-frame-progress after 2 s.
+        let probe_deadline = Instant::now() + Duration::from_millis(1500);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let tail = stderr_thread
+                        .map(|h| h.join().unwrap_or_default())
+                        .unwrap_or_default();
+                    let tail_str = String::from_utf8_lossy(&tail);
+                    let _ = child.kill();
+                    anyhow::bail!(
+                        "ffmpeg exited immediately ({status}). stderr tail:\n{tail_str}"
+                    );
+                }
+                Ok(None) => {
+                    if Instant::now() >= probe_deadline {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => anyhow::bail!("ffmpeg try_wait failed: {e}"),
+            }
+        }
+
+        // macOS-specific: ffmpeg + avfoundation Screen Recording permission
+        // is per-binary, NOT inherited from the parent process. When a
+        // daemon spawns ffmpeg the OS can't surface the consent dialog and
+        // the subprocess blocks forever. Detect via no-output-file-grew
+        // 2 s in, kill the child, return an actionable error.
+        #[cfg(target_os = "macos")]
+        {
+            std::thread::sleep(Duration::from_millis(500));
+            let progressed = std::fs::metadata(&output_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false);
+            if !progressed {
+                let _ = child.kill();
+                let _ = child.wait();
+                let tail = stderr_thread
+                    .map(|h| h.join().unwrap_or_default())
+                    .unwrap_or_default();
+                let tail_str = String::from_utf8_lossy(&tail);
+                anyhow::bail!(
+                    "ffmpeg appears to be blocked on the macOS Screen Recording TCC \
+                     prompt. Open System Settings → Privacy & Security → Screen & \
+                     System Audio Recording and grant access to your ffmpeg binary \
+                     (e.g. /opt/homebrew/bin/ffmpeg), then restart cua-driver. Note: \
+                     cua-driver itself having Screen Recording permission is NOT \
+                     sufficient — the ffmpeg subprocess needs its own grant. A \
+                     follow-up PR will replace ffmpeg with ScreenCaptureKit on macOS \
+                     to remove this requirement. ffmpeg path: {ffmpeg_path}. stderr \
+                     tail:\n{tail_str}",
+                    ffmpeg_path = ffmpeg.display()
+                );
+            }
+        }
+
         Ok(VideoRecorder {
             child,
             output_path,

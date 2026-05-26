@@ -30,6 +30,8 @@ pub mod focus_guard;
 pub mod window_change_detector;
 #[cfg(target_os = "macos")]
 pub mod tools;
+#[cfg(target_os = "macos")]
+pub mod recording_hooks;
 
 use cua_driver_core::tool::ToolRegistry;
 

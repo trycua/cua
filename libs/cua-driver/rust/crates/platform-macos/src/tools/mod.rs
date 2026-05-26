@@ -209,6 +209,9 @@ impl Default for ToolState {
 /// note telling the caller to use pixel-addressed tools.
 pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     let state = Arc::new(ToolState::default());
+    // Share the element cache with the recording-hook layer so it can
+    // resolve element_index → window-local screenshot coords for click.png.
+    crate::recording_hooks::set_element_cache(state.element_cache.clone());
 
     registry.register(Box::new(list_apps::ListAppsTool));
     registry.register(Box::new(list_windows::ListWindowsTool));

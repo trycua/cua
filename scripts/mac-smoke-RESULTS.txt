@@ -1,8 +1,8 @@
 ============================================================
 macOS cua-driver smoke test
-Driver: /Users/francesco/cua/libs/cua-driver/rust/target/release/cua-driver
+Driver: ~/cua/libs/cua-driver/rust/target/release/cua-driver
 Version: cua-driver 0.2.18
-Harness: /Users/francesco/cua/libs/cua-driver/rust/test-apps/harness-appkit/CuaTestHarness.AppKit.app
+Harness: ~/cua/libs/cua-driver/rust/test-apps/harness-appkit/CuaTestHarness.AppKit.app
 Date: Tue May 26 01:00:13 CEST 2026
 ============================================================
 
@@ -24,7 +24,7 @@ Date: Tue May 26 01:00:13 CEST 2026
 === group 6: aliases + special ===
 
 ==> cleanup
-/Users/francesco/cua/scripts/mac-smoke.sh: line 184: 52884 Killed: 9               "$HARNESS_EXE" > /dev/null 2>&1
+~/cua/scripts/mac-smoke.sh: line 184: 52884 Killed: 9               "$HARNESS_EXE" > /dev/null 2>&1
 
 ============================================================
 SUMMARY

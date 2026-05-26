@@ -160,6 +160,18 @@ Paste the output into `~/.hermes/config.yaml`.
 cua-driver mcp-config --client openclaw
 ```
 
+## Antigravity CLI (and Antigravity IDE)
+
+Google's [Antigravity CLI](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) — the `agy` binary that replaced Gemini CLI on May 19, 2026 — reads MCP server configs from `~/.gemini/config/mcp_config.json` (Unix) or `%USERPROFILE%\.gemini\config\mcp_config.json` (Windows). The same file is read by Antigravity IDE.
+
+```bash
+cua-driver mcp-config --client antigravity
+```
+
+Output is a snippet to paste under the top-level `mcpServers` object in that file. If the file doesn't exist yet, create it with `{"mcpServers": {}}` first. Antigravity CLI has no in-shell `mcp add` subcommand — edit the JSON file directly, then restart `agy` to pick up the change.
+
+`--client gemini` is accepted as a legacy alias and emits the same instructions — Antigravity inherited the `~/.gemini/` config tree from the old Gemini CLI install on purpose, so existing setups carry over without re-registration.
+
 ## Other clients
 
 For any client that accepts the standard `mcpServers` shape:

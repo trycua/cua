@@ -310,6 +310,9 @@ fi
 #   - OpenCode  : scans ~/.config/opencode/skills/ (also reads ~/.claude/skills/
 #                 natively, so the Claude Code symlink covers OpenCode for users
 #                 who have both)
+#   - Antigravity (CLI + IDE): scans ~/.gemini/skills/ — the dir Google
+#                              inherited from Gemini CLI in May 2026, so
+#                              existing setups carry over unchanged.
 #
 # Not auto-wired (different file format / would clobber user state):
 #   - Cursor: rules use a different frontmatter shape (description/globs/
@@ -363,6 +366,15 @@ if [[ -d "$HOME/.config/opencode" ]] && [[ ! -d "$HOME/.config/opencode/skills" 
     mkdir -p "$HOME/.config/opencode/skills"
 fi
 link_skill_into "$HOME/.config/opencode/skills" "OpenCode"
+
+# Antigravity CLI (`agy`) + Antigravity IDE — both surfaces read from
+# ~/.gemini/skills (the dir inherited from Gemini CLI on 2026-05-19).
+# Create it if either Antigravity surface is installed but the skills
+# subdir hasn't been initialized yet, then link.
+if [[ -d "$HOME/.gemini" ]] && [[ ! -d "$HOME/.gemini/skills" ]]; then
+    mkdir -p "$HOME/.gemini/skills"
+fi
+link_skill_into "$HOME/.gemini/skills" "Antigravity"
 
 # --- PATH setup ---------------------------------------------------------
 #
@@ -462,10 +474,11 @@ Next steps:
             }
             Or inside gh copilot chat: /mcp add → type=STDIO, command=$BIN_LINK, args=mcp
 
-        • Cursor / OpenCode / Hermes (no add CLI — paste config):
-            cua-driver mcp-config --client cursor     # JSON for ~/.cursor/mcp.json
-            cua-driver mcp-config --client opencode   # JSON for opencode.json
-            cua-driver mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
+        • Cursor / OpenCode / Hermes / Antigravity (no add CLI — paste config):
+            cua-driver mcp-config --client cursor       # JSON for ~/.cursor/mcp.json
+            cua-driver mcp-config --client opencode     # JSON for opencode.json
+            cua-driver mcp-config --client hermes       # YAML for ~/.hermes/config.yaml
+            cua-driver mcp-config --client antigravity  # JSON for ~/.gemini/config/mcp_config.json (shared with Antigravity IDE)
 
         For other clients accepting the generic mcpServers shape:
             cua-driver mcp-config

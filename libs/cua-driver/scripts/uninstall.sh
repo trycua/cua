@@ -361,9 +361,9 @@ def invokes_cua_driver_rs(server):
     # explicit ".cua-driver-rs" segment. Plain "cua-driver" alone is
     # ambiguous (the Swift binary uses the same filename). The shared
     # /Applications/CuaDriver.app path is ALSO ambiguous (Rust took
-    # over Swift's bundle id) — only count it as Rust when a Rust
-    # install marker is on disk; otherwise it's almost certainly a
-    # Swift registration we shouldn't scrub.
+    # over the Swift bundle id) — only count it as Rust when a Rust
+    # install marker is on disk; otherwise it is almost certainly a
+    # Swift registration we should not scrub.
     if home_dir and home_dir in joined:
         return True
     if "CuaDriverRs.app" in joined or ".cua-driver-rs" in joined or "cua-driver-rs" in joined:

@@ -23,11 +23,16 @@
 #
 # Linux layout produced (matches install.sh):
 #
-#   ${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}/packages/
+#   ${CUA_DRIVER_HOME:-$HOME/.cua-driver}/packages/
 #       releases/<version>-local-<config>-<target>/cua-driver
 #       current/cua-driver  -> ../releases/<active>/cua-driver
-#   ${CUA_DRIVER_RS_INSTALL_DIR:-$HOME/.local/bin}/cua-driver
+#   ${CUA_DRIVER_INSTALL_DIR:-$HOME/.local/bin}/cua-driver
 #       -> ../current/cua-driver
+#
+# Legacy env vars `CUA_DRIVER_RS_HOME` / `CUA_DRIVER_RS_INSTALL_DIR` /
+# `CUA_DRIVER_RS_BIN_DIR` are still accepted for backwards compat
+# (rename from v0.2.16 per PR #1644; this helper was missed in the
+# initial rename and ported in PR #1717).
 #
 # macOS layout produced:
 #   /Applications/CuaDriver.app/Contents/MacOS/cua-driver  (bundle replaced wholesale)
@@ -120,10 +125,23 @@ case "$OS" in
     *)      echo "${RED}Unsupported OS: $OS${NORMAL}"; exit 1 ;;
 esac
 
-HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
-BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
+# Canonical home is `~/.cua-driver/` (renamed from `~/.cua-driver-rs/`
+# in v0.2.16 — PR #1644). Accept the legacy `CUA_DRIVER_RS_HOME` env var
+# too so any dev scripts that still set it keep working.
+HOME_DIR="${CUA_DRIVER_HOME:-${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}}"
+BIN_DIR="${CUA_DRIVER_INSTALL_DIR:-${CUA_DRIVER_BIN_DIR:-${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}}}"
 RELEASES_DIR="$HOME_DIR/packages/releases"
 CURRENT_LINK="$HOME_DIR/packages/current"
+
+# Best-effort sweep: if a previous install left a stale `~/.cua-driver-rs/`
+# (the pre-v0.2.16 home), remove it. The runtime sweeps it on first call
+# too (see telemetry.rs::migrate_legacy_telemetry_home) so this is belt-
+# and-braces — keeps the home dir layout single-rooted for the user.
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+if [ -d "$LEGACY_HOME_DIR" ] && [ "$HOME_DIR" != "$LEGACY_HOME_DIR" ]; then
+    echo "  Sweeping legacy install dir $LEGACY_HOME_DIR"
+    rm -rf "$LEGACY_HOME_DIR"
+fi
 
 VERSION_TAG="0.0.0-local-$BUILD_CONFIG"
 VERSIONED_DIR="$RELEASES_DIR/$VERSION_TAG-$TARGET_TRIPLE"
@@ -218,7 +236,14 @@ echo ""
 
 if [ "$INSTALL_AUTOSTART" = true ]; then
     if [ "$OS" = "Darwin" ]; then
-        PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
+        # Unload + remove any stale LaunchAgent from the pre-rename install
+        # so the new label doesn't race the old one.
+        LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
+        if [ -f "$LEGACY_PLIST_PATH" ]; then
+            launchctl unload "$LEGACY_PLIST_PATH" 2>/dev/null || true
+            rm -f "$LEGACY_PLIST_PATH"
+        fi
+        PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver.plist"
         echo "${BOLD}Writing LaunchAgent → $PLIST_PATH${NORMAL}"
         mkdir -p "$(dirname "$PLIST_PATH")"
         cat >"$PLIST_PATH" <<EOF
@@ -226,7 +251,7 @@ if [ "$INSTALL_AUTOSTART" = true ]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.trycua.cua-driver-rs</string>
+  <key>Label</key><string>com.trycua.cua-driver</string>
   <key>ProgramArguments</key>
   <array>
     <string>$INSTALLED_BIN</string>
@@ -243,12 +268,19 @@ EOF
         launchctl load "$PLIST_PATH"
         echo "${GREEN}Loaded.${NORMAL} Manage with launchctl load / unload \"$PLIST_PATH\"."
     elif [ "$OS" = "Linux" ]; then
-        UNIT_PATH="$HOME/.config/systemd/user/cua-driver-rs.service"
+        # Stop + remove any pre-rename systemd unit so the new one doesn't
+        # race the old one.
+        LEGACY_UNIT_PATH="$HOME/.config/systemd/user/cua-driver-rs.service"
+        if [ -f "$LEGACY_UNIT_PATH" ]; then
+            systemctl --user disable --now cua-driver-rs.service 2>/dev/null || true
+            rm -f "$LEGACY_UNIT_PATH"
+        fi
+        UNIT_PATH="$HOME/.config/systemd/user/cua-driver.service"
         echo "${BOLD}Writing systemd user unit → $UNIT_PATH${NORMAL}"
         mkdir -p "$(dirname "$UNIT_PATH")"
         cat >"$UNIT_PATH" <<EOF
 [Unit]
-Description=cua-driver-rs serve daemon
+Description=cua-driver serve daemon
 After=graphical-session.target
 
 [Service]
@@ -260,8 +292,8 @@ RestartSec=2
 WantedBy=default.target
 EOF
         systemctl --user daemon-reload
-        systemctl --user enable --now cua-driver-rs.service
-        echo "${GREEN}Enabled.${NORMAL} Manage with systemctl --user {start|stop|status} cua-driver-rs."
+        systemctl --user enable --now cua-driver.service
+        echo "${GREEN}Enabled.${NORMAL} Manage with systemctl --user {start|stop|status} cua-driver."
     fi
     echo ""
 fi

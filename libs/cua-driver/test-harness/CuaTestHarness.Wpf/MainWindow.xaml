@@ -5,7 +5,7 @@
         xmlns:auto="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
         Title="CuaTestHarness WPF"
         AutomationProperties.AutomationId="wnd-main"
-        Width="900" Height="700"
+        Width="900" Height="900"
         WindowStartupLocation="CenterScreen">
     <Window.InputBindings>
         <!-- F5 (no modifiers) — chosen for automated testing. WPF's
@@ -77,6 +77,135 @@
                                    AutomationProperties.AutomationId="lbl-click-count"
                                    FontFamily="Consolas"
                                    Text="clicks=0"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Slider (drives `drag` tool — thumb at left end, label
+                     tracks Value. ValuePattern also surfaced so the cua-driver
+                     `set_value` tool can be exercised too.) -->
+                <GroupBox Header="slider" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Slider x:Name="SldValue"
+                                AutomationProperties.AutomationId="sld-value"
+                                Minimum="0" Maximum="100" Value="0"
+                                Width="320" HorizontalAlignment="Left"
+                                IsSnapToTickEnabled="False"
+                                ValueChanged="OnSliderChanged"/>
+                        <TextBlock x:Name="LblSliderValue"
+                                   AutomationProperties.AutomationId="lbl-slider-value"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="slider_value=0"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- CheckBox + RadioButton group -->
+                <GroupBox Header="checkable_controls" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <CheckBox x:Name="ChkAgreed"
+                                  AutomationProperties.AutomationId="chk-agreed"
+                                  Content="I agree" Margin="0,0,0,4"
+                                  Checked="OnChkChanged" Unchecked="OnChkChanged"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="RdoLow"
+                                         AutomationProperties.AutomationId="rdo-low"
+                                         GroupName="prio" Content="Low" IsChecked="True"
+                                         Margin="0,0,12,0" Checked="OnRadioChanged"/>
+                            <RadioButton x:Name="RdoMed"
+                                         AutomationProperties.AutomationId="rdo-med"
+                                         GroupName="prio" Content="Medium"
+                                         Margin="0,0,12,0" Checked="OnRadioChanged"/>
+                            <RadioButton x:Name="RdoHigh"
+                                         AutomationProperties.AutomationId="rdo-high"
+                                         GroupName="prio" Content="High"
+                                         Checked="OnRadioChanged"/>
+                        </StackPanel>
+                        <TextBlock x:Name="LblChkState"
+                                   AutomationProperties.AutomationId="lbl-chk-state"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="agreed=False, prio=Low"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- ComboBox -->
+                <GroupBox Header="combo_box" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <ComboBox x:Name="CboColor"
+                                  AutomationProperties.AutomationId="cbo-color"
+                                  Width="180" HorizontalAlignment="Left"
+                                  SelectionChanged="OnComboChanged">
+                            <ComboBoxItem Content="red"   AutomationProperties.AutomationId="cbo-item-red"/>
+                            <ComboBoxItem Content="green" AutomationProperties.AutomationId="cbo-item-green" IsSelected="True"/>
+                            <ComboBoxItem Content="blue"  AutomationProperties.AutomationId="cbo-item-blue"/>
+                            <ComboBoxItem Content="orange" AutomationProperties.AutomationId="cbo-item-orange"/>
+                        </ComboBox>
+                        <TextBlock x:Name="LblComboValue"
+                                   AutomationProperties.AutomationId="lbl-combo-value"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="color=green"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- ListBox with selection -->
+                <GroupBox Header="list_box" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <ListBox x:Name="LstItems"
+                                 AutomationProperties.AutomationId="lst-items"
+                                 Width="220" Height="80" HorizontalAlignment="Left"
+                                 SelectionChanged="OnListChanged">
+                            <ListBoxItem Content="apple"  AutomationProperties.AutomationId="lst-apple"/>
+                            <ListBoxItem Content="banana" AutomationProperties.AutomationId="lst-banana"/>
+                            <ListBoxItem Content="cherry" AutomationProperties.AutomationId="lst-cherry"/>
+                            <ListBoxItem Content="date"   AutomationProperties.AutomationId="lst-date"/>
+                        </ListBox>
+                        <TextBlock x:Name="LblListValue"
+                                   AutomationProperties.AutomationId="lbl-list-value"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="selected=none"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Menu + ContextMenu (a Button with attached ContextMenu) -->
+                <GroupBox Header="menus" Padding="10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Menu Background="Transparent" HorizontalAlignment="Left">
+                            <MenuItem Header="_File"
+                                      AutomationProperties.AutomationId="menu-file">
+                                <MenuItem Header="_New"
+                                          AutomationProperties.AutomationId="menu-file-new"
+                                          Click="OnMenuFileNew"/>
+                                <MenuItem Header="_Open"
+                                          AutomationProperties.AutomationId="menu-file-open"
+                                          Click="OnMenuFileOpen"/>
+                            </MenuItem>
+                            <MenuItem Header="_Edit"
+                                      AutomationProperties.AutomationId="menu-edit">
+                                <MenuItem Header="_Copy"
+                                          AutomationProperties.AutomationId="menu-edit-copy"
+                                          Click="OnMenuEditCopy"/>
+                            </MenuItem>
+                        </Menu>
+                        <Button x:Name="BtnContextTarget"
+                                AutomationProperties.AutomationId="btn-context-target"
+                                Content="Right-click for context menu"
+                                Width="260" Margin="0,8,0,0" HorizontalAlignment="Left">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="_Cut"
+                                              AutomationProperties.AutomationId="ctx-cut"
+                                              Click="OnCtxAction"/>
+                                    <MenuItem Header="C_opy"
+                                              AutomationProperties.AutomationId="ctx-copy"
+                                              Click="OnCtxAction"/>
+                                    <MenuItem Header="_Paste"
+                                              AutomationProperties.AutomationId="ctx-paste"
+                                              Click="OnCtxAction"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <TextBlock x:Name="LblMenuAction"
+                                   AutomationProperties.AutomationId="lbl-menu-action"
+                                   Margin="0,6,0,0" FontFamily="Consolas"
+                                   Text="menu_action=none"/>
                     </StackPanel>
                 </GroupBox>
 

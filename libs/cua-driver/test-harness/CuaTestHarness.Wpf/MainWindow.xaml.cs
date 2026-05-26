@@ -179,4 +179,55 @@ public partial class MainWindow : Window
             LblScrollOffset.Text = $"scroll_offset={(int)sv.VerticalOffset}";
         }
     }
+
+    private void OnSliderChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        LblSliderValue.Text = $"slider_value={(int)e.NewValue}";
+    }
+
+    private void UpdateChkState()
+    {
+        // XAML init fires Checked on the IsChecked="True" RadioButton before
+        // sibling named controls are wired up — guard against the partial
+        // construction.
+        if (ChkAgreed is null || RdoLow is null || LblChkState is null) return;
+        var prio = RdoLow.IsChecked == true ? "Low"
+                 : RdoMed?.IsChecked == true ? "Medium"
+                 : RdoHigh?.IsChecked == true ? "High"
+                 : "?";
+        LblChkState.Text = $"agreed={ChkAgreed.IsChecked == true}, prio={prio}";
+    }
+    private void OnChkChanged(object sender, RoutedEventArgs e) => UpdateChkState();
+    private void OnRadioChanged(object sender, RoutedEventArgs e) => UpdateChkState();
+
+    private void OnComboChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LblComboValue is null) return;
+        if (CboColor?.SelectedItem is ComboBoxItem item)
+        {
+            LblComboValue.Text = $"color={item.Content}";
+        }
+    }
+
+    private void OnListChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LblListValue is null) return;
+        if (LstItems?.SelectedItem is ListBoxItem item)
+        {
+            LblListValue.Text = $"selected={item.Content}";
+        }
+    }
+
+    private void OnMenuFileNew(object sender, RoutedEventArgs e)  => LblMenuAction.Text = "menu_action=file_new";
+    private void OnMenuFileOpen(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=file_open";
+    private void OnMenuEditCopy(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=edit_copy";
+
+    private void OnCtxAction(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem mi)
+        {
+            var label = mi.Header?.ToString()?.Replace("_", "").ToLowerInvariant() ?? "?";
+            LblMenuAction.Text = $"menu_action=ctx_{label}";
+        }
+    }
 }

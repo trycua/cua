@@ -13,3 +13,5 @@
 # (several thousand files, ~150 MB). Always rebuilt locally.
 harness-wpf/
 harness-winui3/
+harness-webview/
+harness-electron/

@@ -103,6 +103,58 @@
         }
       },
       {
+        "id": "slider",
+        "kind": "slider_drag",
+        "description": "WPF Slider with ValuePattern. Drives the drag tool (from thumb to a target X) and set_value tool (UIA RangeValue / Value).",
+        "controls": {
+          "slider_aid": "sld-value",
+          "value_label_aid": "lbl-slider-value"
+        }
+      },
+      {
+        "id": "checkable_controls",
+        "kind": "checkbox_radio",
+        "description": "CheckBox + RadioButton group. Drives click via UIA Invoke / TogglePattern. State mirrored to a label.",
+        "controls": {
+          "checkbox_aid": "chk-agreed",
+          "radio_low_aid": "rdo-low",
+          "radio_med_aid": "rdo-med",
+          "radio_high_aid": "rdo-high",
+          "state_label_aid": "lbl-chk-state"
+        }
+      },
+      {
+        "id": "combo_box",
+        "kind": "selection",
+        "description": "ComboBox with named items. Drives selection via click + set_value.",
+        "controls": {
+          "combo_aid": "cbo-color",
+          "value_label_aid": "lbl-combo-value"
+        }
+      },
+      {
+        "id": "list_box",
+        "kind": "list_selection",
+        "description": "ListBox with named items. Tests UIA SelectionPattern.",
+        "controls": {
+          "list_aid": "lst-items",
+          "value_label_aid": "lbl-list-value"
+        }
+      },
+      {
+        "id": "menus",
+        "kind": "menu_and_context",
+        "description": "Top-level Menu + a Button with ContextMenu. Drives MenuItem invocation via click; right-click target for ContextMenu opening.",
+        "controls": {
+          "menu_file_aid": "menu-file",
+          "menu_file_new_aid": "menu-file-new",
+          "menu_edit_copy_aid": "menu-edit-copy",
+          "context_target_aid": "btn-context-target",
+          "ctx_copy_aid": "ctx-copy",
+          "action_label_aid": "lbl-menu-action"
+        }
+      },
+      {
         "id": "scroll_target",
         "kind": "scroll_viewer",
         "description": "ScrollViewer with a tall body and a label that reflects VerticalOffset. Tests scroll tool delivery to a backgrounded window.",
@@ -121,6 +173,34 @@
         }
       }
     ]
+  },
+  "webview": {
+    "process_name": "CuaTestHarness.WebView",
+    "exe_relative_path": "test-apps/harness-webview/CuaTestHarness.WebView.exe",
+    "default_cdp_port": 9222,
+    "main_window": {
+      "title": "CuaTestHarness WebView",
+      "automation_id": "wnd-main"
+    },
+    "description": "WPF host with Microsoft.Edge.WebView2 control. Loads ../shared-web/index.html. Exposes Chromium DevTools Protocol at default_cdp_port for cua-driver's `page` tool.",
+    "shared_dom_aids": [
+      "btn-increment", "btn-reset", "lbl-counter",
+      "txt-input", "lbl-input-mirror",
+      "sld-value", "lbl-slider-value",
+      "border-click-target", "lbl-last-action", "lbl-click-count",
+      "chk-agreed", "rdo-low", "rdo-med", "rdo-high", "lbl-chk-state",
+      "cbo-color", "lbl-combo-value",
+      "lnk-anchor", "lbl-nav-state", "section-target"
+    ]
+  },
+  "electron": {
+    "process_name": "CuaTestHarness.Electron",
+    "exe_relative_path": "test-apps/harness-electron/CuaTestHarness.Electron.exe",
+    "default_cdp_port": 9223,
+    "main_window": {
+      "title": "CuaTestHarness Electron"
+    },
+    "description": "Electron host loading the same ../shared-web/index.html as the WebView harness. Exposes CDP at default_cdp_port via --remote-debugging-port."
   },
   "winui3": {
     "process_name": "CuaTestHarness.WinUI3",

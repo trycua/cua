@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.Wpf", "CuaTe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.WinUI3", "CuaTestHarness.WinUI3\CuaTestHarness.WinUI3.csproj", "{B2C3D4E5-F6A7-489B-CDEF-012345678901}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CuaTestHarness.WebView", "CuaTestHarness.WebView\CuaTestHarness.WebView.csproj", "{C3D4E5F6-A7B8-49CD-EF01-234567890123}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -20,5 +22,9 @@ Global
 		{B2C3D4E5-F6A7-489B-CDEF-012345678901}.Debug|x64.Build.0 = Debug|x64
 		{B2C3D4E5-F6A7-489B-CDEF-012345678901}.Release|x64.ActiveCfg = Release|x64
 		{B2C3D4E5-F6A7-489B-CDEF-012345678901}.Release|x64.Build.0 = Release|x64
+		{C3D4E5F6-A7B8-49CD-EF01-234567890123}.Debug|x64.ActiveCfg = Debug|x64
+		{C3D4E5F6-A7B8-49CD-EF01-234567890123}.Debug|x64.Build.0 = Debug|x64
+		{C3D4E5F6-A7B8-49CD-EF01-234567890123}.Release|x64.ActiveCfg = Release|x64
+		{C3D4E5F6-A7B8-49CD-EF01-234567890123}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 EndGlobal

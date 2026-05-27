@@ -1,8 +1,8 @@
 # Inside Windows computer-use: synthetic cursors for background agents
 
-_Draft for May 27, 2026 by Francesco Bonacci_
+_Published on May 27, 2026 by Francesco Bonacci_
 
-![TODO: Cua Driver Windows demo still](TODO)
+![Cua Driver — background any computer-use agent](https://github.com/user-attachments/assets/0b0651b2-2c8c-4930-b0bb-3fd968f38800)
 
 **TL;DR:**
 - Cua Driver now supports Windows background computer-use for Claude Code, Codex, Hermes, and any MCP or CLI agent loop.
@@ -97,7 +97,7 @@ We recorded two Windows demos for this launch.
 
 **1. Coding agent QA loop.**
 
-<div align="center"><video src="TODO_WPF_DEMO_URL" width="600" controls></video></div>
+<div align="center"><video src="https://github.com/user-attachments/assets/8130a9d1-8874-4905-b845-c1b60fbb2a09" width="600" controls></video></div>
 
 The prompt was: "build a beautiful WPF app and make sure it works."
 
@@ -107,7 +107,7 @@ For desktop apps, a diff is not enough evidence. The agent needs to run the app 
 
 **2. Legacy Windows automation.**
 
-<div align="center"><video src="TODO_LEGACY_MAIL_DEMO_URL" width="600" controls></video></div>
+<div align="center"><video src="https://github.com/user-attachments/assets/873e8d39-855b-4fb2-9d5b-865535e1cb04" width="600" controls></video></div>
 
 We also drove a legacy mail-service desktop app with no API. The agent used the same UI a human would use: the window, the controls, the fields, the buttons.
 

@@ -71,9 +71,7 @@
 #               repo, group policy). Idempotent either way: if the dir is
 #               already on PATH, nothing changes.
 #
-# WARNING — BETA: cua-driver-rs is the cross-platform Rust port of the
-# Swift cua-driver. Windows and Linux support is feature-complete;
-# macOS parity is in progress and tracked separately.
+# Windows installer for the cross-platform cua-driver Rust implementation.
 
 [CmdletBinding()]
 param(
@@ -1294,11 +1292,6 @@ if ($AutoStart) {
     Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
 }
-Write-Host ""
-Write-Host "WARNING -- BETA: cua-driver-rs is a cross-platform Rust port of the Swift" -ForegroundColor Yellow
-Write-Host "          cua-driver. Windows and Linux support is feature-complete; macOS" -ForegroundColor Yellow
-Write-Host "          parity is in progress." -ForegroundColor Yellow
-
 }
 finally {
     # Always release the lock — success, error, Ctrl-C, or `exit` all

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# cua-driver installer — download the latest signed + notarized tarball
-# from GitHub Releases, move CuaDriver.app to /Applications, and symlink
-# the `cua-driver` binary into ~/.local/bin so shell users can invoke
-# it without typing the bundle path. Sudo-free.
+# cua-driver installer — download the latest Rust implementation from
+# GitHub Releases and wire it into the user's PATH. On macOS this moves
+# CuaDriver.app to /Applications and symlinks the `cua-driver` binary
+# into ~/.local/bin. Sudo-free.
 #
 # Usage (from README + release body):
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
@@ -12,18 +12,18 @@
 #                        ~/.local/bin (e.g. /usr/local/bin — that target needs sudo)
 #   --no-modify-path     skip auto-appending an `export PATH=...` line to your
 #                        shell rc when ~/.local/bin is missing from PATH
-#   --experimental-rust  opt into the experimental cua-driver-rs (Rust port)
-#                        backend instead of the Swift binary. Delegates to
-#                        libs/cua-driver/scripts/_install-rust.sh — see that
-#                        script for backend-specific env vars. Installs to a
-#                        separate bundle (CuaDriver.app) so the Swift
-#                        binary is left untouched. Also accepted as
-#                        --backend=rust.
+#   --backend=swift      install the retired Swift macOS implementation
+#                        instead of the Rust implementation. Legacy escape
+#                        hatch only; unsupported on non-macOS hosts.
+#   --experimental-rust  legacy no-op alias for the default Rust path.
+#                        Also accepted as --backend=rust.
 #
 # Env overrides:
-#   CUA_DRIVER_VERSION=0.1.0   pin a specific release tag
-#   CUA_DRIVER_BIN_DIR=PATH    same as --bin-dir
-#   CUA_DRIVER_NO_MODIFY_PATH=1  same as --no-modify-path
+#   CUA_DRIVER_RS_VERSION=0.3.1      pin a specific Rust release tag
+#   CUA_DRIVER_VERSION=0.3.1         legacy alias for CUA_DRIVER_RS_VERSION
+#   CUA_DRIVER_RS_INSTALL_DIR=PATH  same as --bin-dir
+#   CUA_DRIVER_BIN_DIR=PATH         legacy alias for --bin-dir
+#   CUA_DRIVER_NO_MODIFY_PATH=1     same as --no-modify-path
 #
 # Uninstall:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
@@ -37,10 +37,10 @@ APP_DEST="/Applications/$APP_NAME"
 BIN_DIR="${CUA_DRIVER_BIN_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CUA_DRIVER_NO_MODIFY_PATH:-0}"
 
-# Rust-backend delegation target. The Rust install logic is a private
+# Rust implementation delegation target. The Rust install logic is a private
 # helper script colocated with this one — _install-rust.sh — so that
 # this directory holds the single user-facing install.sh per platform.
-# `--experimental-rust` below either execs the on-disk helper (dev /
+# The Rust path below either execs the on-disk helper (dev /
 # checked-out-tree case) or curls this URL and pipes it to bash
 # (`curl ... | bash` install case).
 RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/_install-rust.sh"
@@ -49,18 +49,16 @@ RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-d
 #
 # Two-pass shape:
 #   1. Walk all argv and collect every unrecognised arg into FORWARDED_ARGS.
-#      That bucket is what we'd hand off to the Rust installer if the user
-#      opted in. Recognised Swift-only flags (--bin-dir, --no-modify-path)
-#      are consumed in this pass and applied to local state.
-#   2. If --experimental-rust (or --backend=rust) was seen anywhere in argv,
-#      exec into the Rust installer with FORWARDED_ARGS and never reach the
-#      Swift install path below.
+#      That bucket is what we'd hand off to the Rust installer. Recognised
+#      shared flags (--bin-dir, --no-modify-path) are consumed in this pass
+#      and applied to local state.
+#   2. Unless --backend=swift was seen, exec into the Rust installer with
+#      FORWARDED_ARGS and never reach the legacy Swift install path below.
 #
-# This lets the experimental flag appear at any position, lets `--` end
-# Swift-flag parsing without breaking forwarding, and keeps both installers'
-# argv shapes (--bin-dir, --no-modify-path) bit-compatible so the same
-# command works regardless of backend.
-USE_RUST_BACKEND=0
+# This lets legacy backend flags appear at any position, lets `--` end flag
+# parsing without breaking forwarding, and keeps both installers' argv shapes
+# (--bin-dir, --no-modify-path) bit-compatible.
+USE_RUST_BACKEND=1
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -68,9 +66,9 @@ while [[ $# -gt 0 ]]; do
         FORWARDED_ARGS+=("$1"); shift; continue
     fi
     case "$1" in
-        --experimental-rust) USE_RUST_BACKEND=1; shift ;;
-        --backend=rust)      USE_RUST_BACKEND=1; shift ;;
-        --backend=swift)     shift ;;                 # explicit default — no-op
+        --experimental-rust) shift ;;                 # legacy alias for default Rust path
+        --backend=rust)      shift ;;                 # explicit default — no-op
+        --backend=swift)     USE_RUST_BACKEND=0; shift ;;
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -88,40 +86,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- Auto-delegate to Rust on non-macOS ---------------------------------
+# --- Default delegation to the Rust implementation ----------------------
 #
-# The Swift binary is macOS-only. On Linux (and anywhere else this script
-# happens to run that has `bash` + `curl`), there is no Swift install
-# path to fall through to — the canonical install becomes cua-driver-rs.
-# Auto-set USE_RUST_BACKEND=1 so a single canonical URL works on every
-# platform: `curl … cua-driver/scripts/install.sh | bash` gives macOS
-# users the Swift driver (today's default) and Linux users the Rust
-# port. macOS users who want the Rust port still pass `--experimental-rust`
-# / `--backend=rust` explicitly.
-AUTO_RUST=0
-if [[ "$USE_RUST_BACKEND" == "0" && "$(uname -s 2>/dev/null)" != "Darwin" ]]; then
-    USE_RUST_BACKEND=1
-    AUTO_RUST=1
-    printf 'note: detected non-macOS host (%s); auto-selecting the cua-driver-rs Rust backend.\n' \
-        "$(uname -s 2>/dev/null || echo unknown)" >&2
-    printf '      Pass --backend=swift to force the Swift install path (will fail on non-Darwin).\n' >&2
-fi
-
-# --- Optional delegation to the experimental Rust backend ---------------
-#
-# If the user opted in with --experimental-rust / --backend=rust, hand the
-# rest of argv to _install-rust.sh and exit. The Swift
-# install path below is never touched in this case, so the Swift binary
-# (if present) is left exactly as-is — users can roll back by deleting
-# /Applications/CuaDriver.app and re-running this script without the flag.
+# Hand the rest of argv to _install-rust.sh and exit. The legacy Swift
+# install path below is only reached when --backend=swift is explicit.
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
-    if [[ "$AUTO_RUST" == "0" ]]; then
-        # Explicit opt-in on macOS — flag the "experimental" framing.
-        printf 'note: installing experimental Rust backend (cua-driver-rs). The Swift binary won'"'"'t be touched.\n' >&2
+    OS="$(uname -s 2>/dev/null || echo unknown)"
+    if [[ "$OS" != "Darwin" ]]; then
+        printf 'note: detected non-macOS host (%s); installing cua-driver via the Rust implementation.\n' "$OS" >&2
     else
-        # Auto-selected on Linux/other — drop the "experimental" qualifier
-        # (Rust is the canonical install path on every non-macOS platform).
-        printf 'note: installing cua-driver-rs (the Rust port — canonical on non-macOS).\n' >&2
+        printf 'note: installing cua-driver via the Rust implementation.\n' >&2
+    fi
+
+    if [[ -n "${CUA_DRIVER_BIN_DIR:-}" && -z "${CUA_DRIVER_RS_INSTALL_DIR:-}" ]]; then
+        export CUA_DRIVER_RS_INSTALL_DIR="$BIN_DIR"
+    fi
+    if [[ -n "${CUA_DRIVER_VERSION:-}" && -z "${CUA_DRIVER_RS_VERSION:-}" ]]; then
+        export CUA_DRIVER_RS_VERSION="$CUA_DRIVER_VERSION"
+    fi
+    if [[ -n "${CUA_DRIVER_NO_MODIFY_PATH:-}" && -z "${CUA_DRIVER_RS_NO_MODIFY_PATH:-}" ]]; then
+        export CUA_DRIVER_RS_NO_MODIFY_PATH="$CUA_DRIVER_NO_MODIFY_PATH"
     fi
 
     # Prefer the on-disk copy when this script is running from a checked-out

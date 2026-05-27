@@ -71,7 +71,7 @@ You can also infer the mode from the heuristic the code uses. Daemon-proxy mode 
 - `--no-daemon-relaunch` is not set.
 - `CUA_DRIVER_MCP_NO_RELAUNCH` is not truthy (`1`, `true`, `yes`, `on`).
 - The binary's `Bundle.main.bundlePath` does not end in `.app` (i.e. we're invoked through the `~/.local/bin/cua-driver` symlink, not the bundle's main executable directly).
-- The binary resolves into an installed `CuaDriver.app` bundle via `realpath` (raw `swift run` dev invocations fail this check and stay in-process).
+- The binary resolves into an installed `CuaDriver.app` bundle via `realpath` (raw `cargo run` dev invocations fail this check because the binary's parent path is not `/Applications/CuaDriver.app/Contents/MacOS/`, and stay in-process).
 - `getppid() != 1` (a ppid of 1 means launchd reparented us — we already have the right TCC context).
 
 ## Process lifecycles

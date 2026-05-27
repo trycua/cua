@@ -4,26 +4,28 @@
   "generators": {
     "cua-driver": {
       "name": "Cua Driver",
-      "language": "swift",
-      "sourcePath": "libs/cua-driver/Sources",
+      "language": "rust",
+      "sourcePath": "libs/cua-driver/rust/crates",
       "docsOutputPath": "docs/content/docs/cua-driver/reference",
       "generatorScript": "scripts/docs-generators/cua-driver.ts",
       "watchPaths": [
-        "libs/cua-driver/Sources/**/*.swift"
+        "libs/cua-driver/rust/crates/**/*.rs",
+        "libs/cua-driver/rust/Cargo.toml",
+        "libs/cua-driver/rust/Cargo.lock"
       ],
-      "buildCommand": "swift build --configuration release",
-      "buildDirectory": "libs/cua-driver",
+      "buildCommand": "cargo build -p cua-driver --release",
+      "buildDirectory": "libs/cua-driver/rust",
       "extractionMethod": "dump-docs",
       "outputs": [
         {
           "type": "mcp",
           "outputFile": "mcp-tools.mdx",
-          "extractCommand": ".build/release/cua-driver dump-docs --type mcp"
+          "extractCommand": "target/release/cua-driver dump-docs --type mcp"
         },
         {
           "type": "cli",
           "outputFile": "cli-reference.mdx",
-          "extractCommand": ".build/release/cua-driver dump-docs --type cli"
+          "extractCommand": "target/release/cua-driver dump-docs --type cli"
         }
       ],
       "enabled": false,

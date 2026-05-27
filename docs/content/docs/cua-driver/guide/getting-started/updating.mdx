@@ -7,13 +7,13 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 cua-driver ships three update surfaces, all reading from the same GitHub releases endpoint and 20-hour on-disk cache:
 
-| Surface | Verb | Use case |
-| --- | --- | --- |
-| Passive banner | (automatic) | Friendly nudge on every `mcp` / `serve` / `doctor` start. |
-| CLI check | `cua-driver check-update` | Human-readable "am I outdated?" probe. |
+| Surface        | Verb                             | Use case                                                                        |
+| -------------- | -------------------------------- | ------------------------------------------------------------------------------- |
+| Passive banner | (automatic)                      | Friendly nudge on every `mcp` / `serve` / `doctor` start.                       |
+| CLI check      | `cua-driver check-update`        | Human-readable "am I outdated?" probe.                                          |
 | Scripted check | `cua-driver check-update --json` | Hermes / CI / wrapper scripts. Same payload as the `check_for_update` MCP tool. |
-| MCP tool | `check_for_update` | Agents that want to ask programmatically, without spawning a subprocess. |
-| Apply | `cua-driver update --apply` | Download and install the latest release. |
+| MCP tool       | `check_for_update`               | Agents that want to ask programmatically, without spawning a subprocess.        |
+| Apply          | `cua-driver update --apply`      | Download and install the latest release.                                        |
 
 `check-update` and `check_for_update` are **read-only** — they never modify your install. Apply is a separate step on purpose.
 
@@ -81,7 +81,7 @@ $ cua-driver check-update --json
   "source": "github_releases",
   "checked_at": "2026-05-27T14:30:00Z",
   "cache_hit": false,
-  "install_command": "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash -s -- install --backend=rust",
+  "install_command": "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash",
   "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2",
   "error": null
 }
@@ -106,17 +106,17 @@ $ cua-driver check-update --json
 
 ### JSON schema
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `current_version` | string | The running binary's `CARGO_PKG_VERSION`. |
-| `latest_version` | string \| null | Highest non-draft non-prerelease `cua-driver-rs-v*` tag on GitHub. `null` if the fetch failed and no cache exists. |
-| `update_available` | bool | `latest > current` under strict semver. `false` when `latest_version` is `null`. |
-| `source` | string | Always `"github_releases"` today. Pinned so future alternate sources can be slotted in without breaking consumers. |
-| `checked_at` | string | ISO-8601 UTC timestamp of this check (not the cached fetch). |
-| `cache_hit` | bool | `true` when we short-circuited via the cache, `false` when we hit GitHub. |
-| `install_command` | string \| null | Shell one-liner to apply the update. `null` when up-to-date or the check failed. |
-| `release_notes_url` | string \| null | Release notes page on GitHub. `null` when up-to-date or the check failed. |
-| `error` | string \| null | Human-readable reason when the fetch failed and no cache was available. |
+| Field               | Type           | Notes                                                                                                              |
+| ------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `current_version`   | string         | The running binary's `CARGO_PKG_VERSION`.                                                                          |
+| `latest_version`    | string \| null | Highest non-draft non-prerelease `cua-driver-rs-v*` tag on GitHub. `null` if the fetch failed and no cache exists. |
+| `update_available`  | bool           | `latest > current` under strict semver. `false` when `latest_version` is `null`.                                   |
+| `source`            | string         | Always `"github_releases"` today. Pinned so future alternate sources can be slotted in without breaking consumers. |
+| `checked_at`        | string         | ISO-8601 UTC timestamp of this check (not the cached fetch).                                                       |
+| `cache_hit`         | bool           | `true` when we short-circuited via the cache, `false` when we hit GitHub.                                          |
+| `install_command`   | string \| null | Shell one-liner to apply the update. `null` when up-to-date or the check failed.                                   |
+| `release_notes_url` | string \| null | Release notes page on GitHub. `null` when up-to-date or the check failed.                                          |
+| `error`             | string \| null | Human-readable reason when the fetch failed and no cache was available.                                            |
 
 ### Example consumer snippet (bash)
 
@@ -140,7 +140,7 @@ $ cua-driver call check_for_update '{}'
   "source": "github_releases",
   "checked_at": "2026-05-27T14:30:00Z",
   "cache_hit": false,
-  "install_command": "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash -s -- install --backend=rust",
+  "install_command": "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash",
   "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2",
   "error": null
 }
@@ -149,7 +149,9 @@ $ cua-driver call check_for_update '{}'
 The tool is registered as `read_only`, `idempotent`, and `open_world` (the network can change the answer between calls). MCP clients see both a human summary in `content[0].text` and the JSON above in `structuredContent`.
 
 <Callout>
-The MCP tool intentionally has no `apply` variant. Installing over MCP would force a self-replacement of the running MCP server — a UX boundary we want explicit. If your agent needs to apply, shell out to `cua-driver update --apply` or run the `install_command` from the payload.
+  The MCP tool intentionally has no `apply` variant. Installing over MCP would force a
+  self-replacement of the running MCP server — a UX boundary we want explicit. If your agent needs
+  to apply, shell out to `cua-driver update --apply` or run the `install_command` from the payload.
 </Callout>
 
 ## `cua-driver update --apply` — installing

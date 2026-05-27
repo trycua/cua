@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Drive your first macOS app with Cua Driver
+description: Drive your first desktop app with cua-driver
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -120,8 +120,9 @@ cua-driver call click '{"pid":844,"window_id":10725,"x":120,"y":240}'
 The PNG is capped at 1568 px long-side by default (matching Anthropic's multimodal-vision downsampling limit), so the image you reason over and the coordinate space the click tool expects are the same resolution. No scaling math.
 
 <Callout type="warn">
-  The `window_id` field is optional on pixel clicks but recommended. It pins the coordinate conversion
-  to the window whose screenshot produced the pixel, rather than letting the driver pick heuristically.
+  The `window_id` field is optional on pixel clicks but recommended. It pins the coordinate
+  conversion to the window whose screenshot produced the pixel, rather than letting the driver pick
+  heuristically.
 </Callout>
 
 ## Cleanup

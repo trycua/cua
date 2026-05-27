@@ -146,8 +146,7 @@ pub struct UpdateState {
 ///
 /// Lives here (rather than in the `cua-driver` crate's `updater.rs`) so the
 /// MCP tool in this crate doesn't pull a circular dep. Both call sites
-/// emit the same string — the canonical install URL and the same
-/// `--backend=rust` flag the docs print.
+/// emit the same string as the docs' canonical install URL.
 fn install_one_liner() -> String {
     #[cfg(windows)]
     {
@@ -155,7 +154,7 @@ fn install_one_liner() -> String {
     }
     #[cfg(not(windows))]
     {
-        "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash -s -- install --backend=rust".to_owned()
+        "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash".to_owned()
     }
 }
 

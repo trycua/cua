@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # _install-rust.sh — private helper invoked by libs/cua-driver/scripts/install.sh
-# (the canonical user-facing installer) when --backend=rust is selected or
-# the script auto-detects a non-macOS host. Not intended for direct
+# (the canonical user-facing installer) for the default Rust implementation.
+# Not intended for direct
 # invocation; user-facing one-liners always go through the parent
 # install.sh, which forwards args + sets up the lockfile.
 #
@@ -9,14 +9,12 @@
 # and drops the binary into ~/.local/bin (or a path given via --bin-dir /
 # CUA_DRIVER_RS_INSTALL_DIR). Sudo-free.
 #
-# This is the Rust port of cua-driver — cross-platform (macOS / Linux /
-# Windows via WSL or git-bash) computer-use automation. The Swift
-# cua-driver (macOS only) ships separately under tag prefix `cua-driver-v*`
-# and is installed via the same `libs/cua-driver/scripts/install.sh` (no
-# flag); this helper is hard-pinned to `cua-driver-rs-v*` and will never
-# pick up the Swift binary.
+# This is the cross-platform cua-driver implementation for macOS / Linux /
+# Windows via WSL or git-bash. The retired Swift implementation (macOS
+# only) still ships separately under tag prefix `cua-driver-v*`; this
+# helper is hard-pinned to `cua-driver-rs-v*` and will never pick it up.
 #
-# Canonical user-facing invocation (forwards here on Linux / --backend=rust):
+# Canonical user-facing invocation (forwards here by default):
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 #
 # Flags:
@@ -65,9 +63,6 @@
 # it off the list. GC runs after the atomic swap so the about-to-be-active
 # version is never a deletion candidate.
 #
-# ⚠️  This is a BETA release. The Rust port is feature-complete on Windows
-# and Linux; macOS parity with the Swift cua-driver is in progress. For
-# production macOS automation prefer `libs/cua-driver/scripts/install.sh`.
 set -euo pipefail
 
 # --- Load shared daemon-cleanup helpers ---------------------------------
@@ -745,10 +740,3 @@ case "$(uname -s)" in
         echo "  Re-run the local installer with --autostart to register a systemd user unit."
         ;;
 esac
-
-echo ""
-echo "⚠️  BETA: cua-driver-rs is a cross-platform Rust port of the Swift"
-echo "    cua-driver. Windows and Linux support is feature-complete; macOS"
-echo "    parity with the Swift binary is in progress. For production macOS"
-echo "    use, prefer the original install:"
-echo "      /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)\""

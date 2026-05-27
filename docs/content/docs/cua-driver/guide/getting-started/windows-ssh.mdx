@@ -37,6 +37,7 @@ That's not a cua-driver bug — those APIs are working as designed against a ses
        will return empty results — these APIs need an attached interactive
        desktop.
 ```
+
 </Callout>
 
 ## The fix: daemon in Session 1+, proxy from Session 0
@@ -88,7 +89,7 @@ claude                             # Claude Code's MCP tool calls proxy through
 **Prerequisite — the user must have an active interactive session.** Either:
 
 - An RDP client is connected, OR
-- An RDP client *was* connected and has disconnected without logging off (the session stays in `Disc` state and is still considered active), OR
+- An RDP client _was_ connected and has disconnected without logging off (the session stays in `Disc` state and is still considered active), OR
 - The user is logged in at the local console.
 
 Confirm with `query session` from any shell — the user row should show `Active` or `Disc`:
@@ -102,6 +103,7 @@ query session
 ```
 
 No interactive session means `autostart kick` has no Session 1+ to land the daemon in — `kick` will report success but the daemon won't have a desktop attached. Open an RDP session once and the autostart trigger will fire `serve` automatically next logon.
+
 </Callout>
 
 ## How the proxy decides whether to forward
@@ -127,6 +129,7 @@ anyway (Session 0 attribution, GUI tools will return empty), pass
 **Why `call` worked over SSH before v0.2.7 but `mcp` didn't.** The `call` CLI had its own daemon-proxy shortcut baked in from the start (the daemon is the only place the per-pid element cache lives, so `call` had to proxy to share state across invocations anyway). The `mcp` entrypoint was hardcoded to run in-process on Windows / Linux on the assumption that MCP clients spawn fresh subprocesses — true, but irrelevant: a fresh subprocess over SSH is still in Session 0. `cua-driver-rs` v0.2.7 ([PR #1580](https://github.com/trycua/cua/pull/1580)) lined the two entrypoints up so `mcp` proxies on the same conditions `call` does.
 
 If you're on v0.2.6 or earlier and saw empty MCP results over SSH while `cua-driver call list_apps` worked, upgrade — `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex`.
+
 </Callout>
 
 ## Wiring Claude Code over SSH
@@ -159,7 +162,7 @@ Either form keeps `cua-driver mcp` in-process and the tool calls execute against
 
 Walk this list before opening an issue:
 
-1. **`cua-driver --version` on the SSH side reports `0.2.7` or later.** Earlier versions don't proxy `mcp` on Windows / Linux. Upgrade with the [install one-liner](/cua-driver/guide/getting-started/installation#install-cua-driver-rs-directly-linux--windows--macos).
+1. **`cua-driver --version` on the SSH side reports `0.2.7` or later.** Earlier versions don't proxy `mcp` on Windows / Linux. Upgrade with the [install one-liner](/cua-driver/guide/getting-started/installation).
 2. **`cua-driver status` from SSH reports a running daemon.** If not, `cua-driver autostart status` will tell you whether the Scheduled Task is registered. Re-run `enable && kick` from an RDP session if not.
 3. **`query session` shows an `Active` or `Disc` row for your user.** No interactive session means no Session 1+ for the daemon to land in.
 4. **`cua-driver doctor` from RDP reports `[ok] interactive session: session N has an attached interactive desktop`** — confirms the daemon's session has a desktop attached. Run from the same session you registered autostart in.

@@ -1454,10 +1454,258 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     }
 }
 
+fn cli_docs_json() -> serde_json::Value {
+    let no_args: Vec<serde_json::Value> = Vec::new();
+    let no_options: Vec<serde_json::Value> = Vec::new();
+    let no_flags: Vec<serde_json::Value> = Vec::new();
+    let no_subcommands: Vec<serde_json::Value> = Vec::new();
+
+    serde_json::json!({
+        "name": "cua-driver",
+        "version": env!("CARGO_PKG_VERSION"),
+        "abstract": "Cross-platform computer-use automation driver.",
+        "commands": [
+            {
+                "name": "mcp",
+                "abstract": "Run the stdio MCP server.",
+                "discussion": "On macOS, shell-spawned MCP processes can auto-launch and proxy through a CuaDriver.app daemon so TCC grants attach to the bundle. On Windows and Linux, MCP proxies through an already-running daemon when one is listening.",
+                "arguments": no_args,
+                "options": [
+                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path used by the proxy fallback.","type":"String","default_value":null,"is_optional":true}
+                ],
+                "flags": [
+                    {"name":"no-daemon-relaunch","short_name":null,"help":"Stay in-process instead of proxying through a daemon.","default_value":false},
+                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Expose the Claude Code computer-use compatibility screenshot surface.","default_value":false}
+                ],
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "list-tools",
+                "abstract": "List every registered MCP tool with a one-line description.",
+                "discussion": "",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "describe",
+                "abstract": "Print a tool's full description and JSON input schema.",
+                "discussion": "",
+                "arguments": [{"name":"tool-name","help":"Name of the MCP tool to describe.","type":"String","is_optional":false}],
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "call",
+                "abstract": "Invoke an MCP tool directly from the shell.",
+                "discussion": "Runs the same handler the MCP server uses. JSON arguments may be passed as a positional JSON object or through stdin.",
+                "arguments": [
+                    {"name":"tool-name","help":"Name of the MCP tool to invoke.","type":"String","is_optional":false},
+                    {"name":"json-args","help":"JSON object for the tool input schema. If omitted, stdin is read when piped.","type":"String","is_optional":true}
+                ],
+                "options": [
+                    {"name":"screenshot-out-file","short_name":null,"help":"Write the first image content block from the response to this path.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}
+                ],
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "serve",
+                "abstract": "Run cua-driver as a long-running daemon.",
+                "discussion": "The daemon owns per-process state such as element-index caches, recording state, and cursor overlay state.",
+                "arguments": no_args,
+                "options": [
+                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true}
+                ],
+                "flags": [
+                    {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false}
+                ],
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "stop",
+                "abstract": "Ask the running daemon to exit gracefully.",
+                "discussion": "",
+                "arguments": no_args,
+                "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "status",
+                "abstract": "Report whether a cua-driver daemon is running.",
+                "discussion": "",
+                "arguments": no_args,
+                "options": [
+                    {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},
+                    {"name":"pid-file","short_name":null,"help":"Override the pid-file path on Unix targets.","type":"String","default_value":null,"is_optional":true}
+                ],
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "mcp-config",
+                "abstract": "Print MCP server config or a client-specific install command.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, and pi.",
+                "arguments": no_args,
+                "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "recording",
+                "abstract": "Control trajectory recording on a running daemon.",
+                "discussion": "Recording state lives in-process, so use a daemon for multi-call sessions.",
+                "arguments": no_args,
+                "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
+                "flags": no_flags,
+                "subcommands": [
+                    {
+                        "name":"start",
+                        "abstract":"Start trajectory recording to a directory.",
+                        "discussion":"",
+                        "arguments":[{"name":"output-dir","help":"Directory to write turn folders into.","type":"String","is_optional":false}],
+                        "options":[],
+                        "flags":[{"name":"record-video","short_name":null,"help":"Also record a video when supported by the platform.","default_value":false}],
+                        "subcommands":[]
+                    },
+                    {
+                        "name":"stop",
+                        "abstract":"Stop trajectory recording.",
+                        "discussion":"",
+                        "arguments":[],
+                        "options":[],
+                        "flags":[],
+                        "subcommands":[]
+                    },
+                    {
+                        "name":"status",
+                        "abstract":"Print the current recording state.",
+                        "discussion":"",
+                        "arguments":[],
+                        "options":[],
+                        "flags":[],
+                        "subcommands":[]
+                    },
+                    {
+                        "name":"render",
+                        "abstract":"Render a recorded trajectory directory to an MP4.",
+                        "discussion":"This pure file-to-file path does not require a running daemon.",
+                        "arguments":[
+                            {"name":"input-dir","help":"Trajectory directory containing recorded turn folders.","type":"String","is_optional":false},
+                            {"name":"out-mp4","help":"Output MP4 path.","type":"String","is_optional":false}
+                        ],
+                        "options":[{"name":"scale","short_name":null,"help":"Scale factor for rendered frames.","type":"Number","default_value":null,"is_optional":true}],
+                        "flags":[{"name":"no-zoom","short_name":null,"help":"Disable cursor/action zoom effects in the rendered video.","default_value":false}],
+                        "subcommands":[]
+                    }
+                ]
+            },
+            {
+                "name": "config",
+                "abstract": "Read or mutate persistent driver configuration.",
+                "discussion": "Without a subcommand, prints the full config.",
+                "arguments": no_args,
+                "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "check-update",
+                "abstract": "Check whether a newer cua-driver release is available.",
+                "discussion": "Read-only. Uses the same update-state payload as the check_for_update MCP tool.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [
+                    {"name":"json","short_name":null,"help":"Emit a machine-readable JSON payload.","default_value":false},
+                    {"name":"no-cache","short_name":null,"help":"Skip the 20-hour on-disk cache and force a GitHub request.","default_value":false}
+                ],
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "update",
+                "abstract": "Check for an update and optionally apply it.",
+                "discussion": "The apply path delegates to the canonical platform installer scripts.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [
+                    {"name":"apply","short_name":null,"help":"Download and install the latest release when one is available.","default_value":false},
+                    {"name":"json","short_name":null,"help":"Emit the structured update-state payload.","default_value":false}
+                ],
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "doctor",
+                "abstract": "Run platform-aware diagnostic probes.",
+                "discussion": "Exit code is non-zero when any probe is an error.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [{"name":"json","short_name":null,"help":"Emit the probe report as JSON.","default_value":false}],
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "diagnose",
+                "abstract": "Print a pasteable install-layout and permission-attribution report.",
+                "discussion": "",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": no_subcommands
+            },
+            {
+                "name": "autostart",
+                "abstract": "Manage platform-native daemon autostart.",
+                "discussion": "Windows registers a logon Scheduled Task. macOS and Linux currently print manual-recipe guidance.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"enable","abstract":"Register the autostart entry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"disable","abstract":"Remove the autostart entry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"status","abstract":"Print whether autostart is registered and running.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"kick","abstract":"Start the autostart entry now without re-logging.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "skills",
+                "abstract": "Install, update, inspect, or remove the optional agent skill pack.",
+                "discussion": "The install script never touches agent skill directories automatically.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"install","abstract":"Fetch the versioned skill pack and link detected agents.","discussion":"","arguments":[],"options":[{"name":"agent","short_name":null,"help":"Restrict linking to one agent.","type":"String","default_value":null,"is_optional":true},{"name":"from","short_name":null,"help":"Fetch from a source such as main instead of the tagged release.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"all-platforms","short_name":null,"help":"Keep platform-specific skill files for every platform.","default_value":false}],"subcommands":[]},
+                    {"name":"update","abstract":"Refresh the local skill pack and links.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"uninstall","abstract":"Remove agent skill links.","discussion":"","arguments":[],"options":[],"flags":[{"name":"all","short_name":null,"help":"Also delete the local skill-pack copy.","default_value":false}],"subcommands":[]},
+                    {"name":"status","abstract":"Report local skill-pack and per-agent link state.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"path","abstract":"Print the local skill-pack path.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "dump-docs",
+                "abstract": "Output machine-readable CLI and MCP documentation JSON.",
+                "discussion": "Used by the docs generator to keep reference pages in sync with the live binary.",
+                "arguments": no_args,
+                "options": [{"name":"type","short_name":null,"help":"Which docs to emit: all, cli, or mcp.","type":"String","default_value":"all","is_optional":true}],
+                "flags": [{"name":"pretty","short_name":"p","help":"Pretty-print JSON.","default_value":false}],
+                "subcommands": no_subcommands
+            }
+        ]
+    })
+}
+
 /// Output documentation as JSON.  `doc_type` is one of:
 /// - `"mcp"` — only MCP tool docs (`{version, tools: [...]}`)
-/// - `"cli"` — CLI docs (stub on Rust — Swift extracts via swift-argument-parser
-///   introspection which has no clap analogue without a bigger refactor)
+/// - `"cli"` — CLI docs
 /// - `"all"` — `{cli, mcp}` matching Swift `CombinedDocs`
 pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: &str) {
     // Each MCP tool: `{name, description, input_schema}` (Swift's MCPToolDoc
@@ -1478,19 +1726,12 @@ pub fn run_dump_docs_with_type(registry: &ToolRegistry, pretty: bool, doc_type: 
         "tools":   tools,
     });
 
-    // CLI docs are intentionally a thin stub on Rust — full extraction
-    // would require introspecting clap's command graph which we don't use
-    // (cli.rs uses hand-rolled arg matching).  Documented in PARITY.md.
-    let cli_stub = serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "commands": [],
-        "_note": "CLI introspection not implemented on Rust port. Use `cua-driver --help` for CLI docs.",
-    });
+    let cli_docs = cli_docs_json();
 
     let doc = match doc_type {
-        "cli" => cli_stub,
+        "cli" => cli_docs,
         "mcp" => mcp,
-        _     => serde_json::json!({ "cli": cli_stub, "mcp": mcp }),
+        _     => serde_json::json!({ "cli": cli_docs, "mcp": mcp }),
     };
     let out = if pretty {
         serde_json::to_string_pretty(&doc)

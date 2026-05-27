@@ -487,7 +487,11 @@ fn cache_path() -> Option<PathBuf> {
 ///
 /// - tags that don't start with `cua-driver-rs-v` (Swift port releases)
 /// - draft releases (`"draft": true`)
-/// - pre-releases (`"prerelease": true`)
+///
+/// Pre-releases (`"prerelease": true`) are NOT filtered — cua-driver-rs
+/// is pre-1.0 and the CD pipeline marks every release `prerelease=true`
+/// by convention. Stripping them out left the check finding zero
+/// candidates.
 ///
 /// Returns the bare version string (e.g. `"0.1.4"`) on success, or a
 /// human-readable error string on failure. The caller is expected to
@@ -514,9 +518,10 @@ pub fn fetch_latest_version() -> Result<String, String> {
         .ok_or_else(|| "no matching cua-driver-rs-v* release in response".to_owned())
 }
 
-/// Pull the highest non-draft non-prerelease `cua-driver-rs-v*` tag out
-/// of the parsed releases response. Split out so unit tests can feed in
-/// canned JSON without hitting the network.
+/// Pull the highest non-draft `cua-driver-rs-v*` tag out of the parsed
+/// releases response. Split out so unit tests can feed in canned JSON
+/// without hitting the network. Pre-release flag is intentionally
+/// ignored — see `fetch_latest_version` doc-comment.
 pub(crate) fn pick_latest_release(body: &serde_json::Value) -> Option<String> {
     let releases = body.as_array()?;
     let mut versions: Vec<semver::Version> = releases
@@ -525,9 +530,6 @@ pub(crate) fn pick_latest_release(body: &serde_json::Value) -> Option<String> {
             let tag = r.get("tag_name")?.as_str()?;
             let bare = tag.strip_prefix(RELEASE_TAG_PREFIX)?;
             if r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false) {
-                return None;
-            }
-            if r.get("prerelease").and_then(|p| p.as_bool()).unwrap_or(false) {
                 return None;
             }
             semver::Version::parse(bare).ok()
@@ -936,13 +938,17 @@ mod tests {
     }
 
     #[test]
-    fn pick_latest_release_skips_drafts_and_prereleases() {
+    fn pick_latest_release_skips_drafts_but_accepts_prereleases() {
+        // Drafts are always skipped. Pre-releases are accepted — every
+        // cua-driver-rs release on `trycua/cua` is published as a
+        // pre-release while the project is pre-1.0, so filtering them
+        // out left the check finding zero candidates.
         let body = serde_json::json!([
             {"tag_name": "cua-driver-rs-v0.2.0", "draft": true,  "prerelease": false},
             {"tag_name": "cua-driver-rs-v0.1.5", "draft": false, "prerelease": true},
             {"tag_name": "cua-driver-rs-v0.1.4", "draft": false, "prerelease": false},
         ]);
-        assert_eq!(pick_latest_release(&body).as_deref(), Some("0.1.4"));
+        assert_eq!(pick_latest_release(&body).as_deref(), Some("0.1.5"));
     }
 
     #[test]

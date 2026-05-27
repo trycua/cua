@@ -325,8 +325,10 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         msg_send![alloc, initWithFrame: image_rect]
     };
     // NSImageScaleProportionallyUpOrDown = 3 (preserve aspect ratio,
-    // scale up or down to fit the view).
-    let _: () = msg_send![image_view, setImageScaling: 3i64];
+    // scale up or down to fit the view). AppKit types this as NSUInteger
+    // (`'Q'` / u64) — a signed i64 here triggers an objc2 type-encoding
+    // panic on macOS 26+.
+    let _: () = msg_send![image_view, setImageScaling: 3u64];
 
     // NSTextField label
     let label: *mut AnyObject = {

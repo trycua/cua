@@ -26,7 +26,7 @@
   <table>
     <tr>
       <td colspan="3" align="center">
-        <a href="#cua-driver---background-computer-use-on-macos-linux-and-windows">
+        <a href="#cua-driver---background-computer-use-on-macos-windows-and-linux-pre-release">
           <img src="img/card-cua-driver.png" alt="Cua Driver — The background computer-use agent" width="888">
         </a>
       </td>
@@ -53,11 +53,11 @@
 
 ---
 
-## Cua Driver - Background computer-use on macOS, Linux, and Windows
+## Cua Driver - Background computer-use on macOS, Windows, and Linux pre-release
 
-Drive native desktop apps **in the background** — agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS, Linux, and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients.
+Drive native desktop apps **in the background** — agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
 
-**macOS / Linux**
+**macOS / Linux pre-release**
 
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"

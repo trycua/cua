@@ -1,6 +1,6 @@
 ---
 title: Integrations
-description: Connect cua-driver to your AI coding agent
+description: Connect Cua Driver to your AI coding agent
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -40,7 +40,8 @@ This mode still exposes the normal CuaDriver tools. The only changed tool is `sc
 For this Claude Code vision/computer-use-style path, use MCP rather than shelling out to the CLI. CLI screenshots can still capture windows, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
 
 <Callout type="info">
-  This does not call Anthropic APIs or expose Anthropic's native computer-use API tool. It is a CuaDriver MCP compatibility mode for Claude Code.
+  This does not call Anthropic APIs or expose Anthropic's native computer-use API tool. It is a
+  CuaDriver MCP compatibility mode for Claude Code.
 </Callout>
 
 ## GitHub Copilot CLI
@@ -111,7 +112,11 @@ cua-driver mcp-config --client opencode
 Paste the output into `~/.config/opencode/config.json` (global) or `opencode.json` at the project root.
 
 <Callout type="warn">
-**Always configure cua-driver as an MCP server — never rely on the CLI fallback.** If MCP is not wired up, OpenCode calls `cua-driver` as a shell subprocess. The `get_window_state` response no longer includes base64 by default, but the screenshot image block is silently dropped — the model receives only the AX tree with no visual context. Use `--screenshot-out-file` or the `screenshot_out_file` param to preserve the image when using the CLI path.
+  **Always configure Cua Driver as an MCP server — never rely on the CLI fallback.** If MCP is not
+  wired up, OpenCode calls `cua-driver` as a shell subprocess. The `get_window_state` response no
+  longer includes base64 by default, but the screenshot image block is silently dropped — the model
+  receives only the AX tree with no visual context. Use `--screenshot-out-file` or the
+  `screenshot_out_file` param to preserve the image when using the CLI path.
 </Callout>
 
 ### Local vision models (Ollama)

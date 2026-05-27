@@ -1,6 +1,6 @@
 ---
 title: MCP process model
-description: How cua-driver mcp runs — in-process vs daemon-proxy modes, lifecycles, failure modes, and wrapper-author guidance
+description: How the `cua-driver mcp` command runs — in-process vs daemon-proxy modes, lifecycles, failure modes, and wrapper-author guidance
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -93,7 +93,7 @@ Run `cua-driver status` at any point to verify:
 
 ```bash
 cua-driver status
-# cua-driver daemon is running
+# Cua Driver daemon is running
 #   socket: /Users/you/Library/Caches/cua-driver/cua-driver.sock
 #   pid: 12345
 ```
@@ -133,7 +133,7 @@ If `open` itself fails (CuaDriver.app not installed at all), the error is report
 If the daemon is killed (user quits CuaDriver.app, `killall`, crash) while an mcp client is connected, the proxy can't tell until the next `CallTool` lands. That call raises:
 
 ```text
-MCPError.internalError("cua-driver daemon not reachable on <socket>. Start it with
+MCPError.internalError("Cua Driver daemon not reachable on <socket>. Start it with
 `open -n -g -a CuaDriver --args serve` and retry.")
 ```
 

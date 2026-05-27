@@ -607,7 +607,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   // Frontmatter — must be at the very beginning of the file
   lines.push('---');
   lines.push('title: MCP Tools');
-  lines.push('description: Reference for every MCP tool cua-driver exposes');
+  lines.push('description: Reference for every MCP tool Cua Driver exposes');
   lines.push('---');
   lines.push('');
   lines.push(`{/*

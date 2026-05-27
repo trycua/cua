@@ -529,10 +529,10 @@ jobs:
           body: |
             > **cua-driver-rs**
             >
-            > `cua-driver-rs` is the cross-platform Rust implementation of
+            > `cua-driver-rs` is the Rust implementation of
             > [`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver),
-            > shipping the same user-facing `cua-driver` binary for macOS, Linux,
-            > and Windows.
+            > shipping the same user-facing `cua-driver` binary for macOS and
+            > Windows, plus Linux pre-release artifacts for early testing.
             >
             > The Rust port and the Swift driver publish to the same GitHub repo under
             > **distinct tag prefixes** (`cua-driver-rs-v*` vs `cua-driver-v*`), so their
@@ -542,14 +542,16 @@ jobs:
 
             ${{ steps.checksums.outputs.checksums }}
 
-            ### Install (Linux / macOS)
+            ### Install (macOS / Linux pre-release)
 
             ```bash
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
             ```
 
-            The shell installer covers macOS and Linux and installs the Rust
-            implementation by default.
+            The shell installer covers macOS and the Linux pre-release backend
+            and installs the Rust implementation by default. Linux artifacts are
+            published for early testing and are not yet an official supported
+            release tier.
 
             ### Install (Windows)
 
@@ -569,7 +571,7 @@ jobs:
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-x86_64.tar.gz` — same payload, named for x86_64 callers
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root; **no** .app — bypasses the TCC auto-relaunch path)
 
-            **Linux**
+            **Linux pre-release**
             - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — directory tarball
             - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — bare binary
 
@@ -580,9 +582,9 @@ jobs:
             - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-arm64-binary.zip` — bare `cua-driver.exe` (Windows on ARM)
 
             **Installer scripts**
-            - `install.sh` — Linux / macOS one-liner installer
+            - `install.sh` — macOS / Linux pre-release one-liner installer
             - `install.ps1` — Windows one-liner installer
-            - `uninstall.sh` — Linux / macOS one-liner uninstaller
+            - `uninstall.sh` — macOS / Linux pre-release one-liner uninstaller
             - `uninstall.ps1` — Windows one-liner uninstaller
           generate_release_notes: false
           make_latest: false

@@ -17,7 +17,7 @@ fn main() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
     assert!(lines.len() >= 2, "status should print at least 2 lines, got: {stdout:?}");
-    assert_eq!(lines[0], "cua-driver daemon is running",
+    assert_eq!(lines[0], "Cua Driver daemon is running",
         "first line wrong: {:?}", lines[0]);
     assert!(lines[1].trim_start().starts_with("socket:"),
         "second line should start with 'socket:': {:?}", lines[1]);
@@ -39,7 +39,7 @@ fn main() {
     let out3 = Command::new(&exe).arg("status").output().expect("status2");
     assert_eq!(out3.status.code(), Some(1), "status after stop should exit 1");
     let stderr3 = String::from_utf8_lossy(&out3.stderr);
-    assert!(stderr3.contains("cua-driver daemon is not running"),
+    assert!(stderr3.contains("Cua Driver daemon is not running"),
         "stderr should say 'not running': {stderr3:?}");
     println!("status-not-running OK");
 
@@ -47,7 +47,7 @@ fn main() {
     let out4 = Command::new(&exe).arg("stop").output().expect("stop2");
     assert_eq!(out4.status.code(), Some(1), "stop on dead daemon should exit 1");
     let stderr4 = String::from_utf8_lossy(&out4.stderr);
-    assert!(stderr4.contains("cua-driver daemon is not running"),
+    assert!(stderr4.contains("Cua Driver daemon is not running"),
         "stderr should say 'not running': {stderr4:?}");
     println!("stop-not-running OK");
 

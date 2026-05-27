@@ -673,7 +673,7 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
         #[cfg(not(target_os = "macos"))]
         {
             anyhow::bail!(
-                "no cua-driver daemon listening on {socket_path}. Start one in \
+                "no Cua Driver daemon listening on {socket_path}. Start one in \
                  your interactive session — on Windows run \
                  `cua-driver autostart enable && cua-driver autostart kick`; \
                  on Linux run `cua-driver serve &` in the user's session. \
@@ -1113,7 +1113,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
     if !crate::serve::is_daemon_listening(&socket_path) {
         eprintln!(
-            "cua-driver daemon is not running.\n\
+            "Cua Driver daemon is not running.\n\
              Start it first with: cua-driver serve"
         );
         process::exit(1);
@@ -1514,7 +1514,7 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "serve",
-                "abstract": "Run cua-driver as a long-running daemon.",
+                "abstract": "Run Cua Driver as a long-running daemon.",
                 "discussion": "The daemon owns per-process state such as element-index caches, recording state, and cursor overlay state.",
                 "arguments": no_args,
                 "options": [
@@ -1537,7 +1537,7 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "status",
-                "abstract": "Report whether a cua-driver daemon is running.",
+                "abstract": "Report whether a Cua Driver daemon is running.",
                 "discussion": "",
                 "arguments": no_args,
                 "options": [

@@ -1,19 +1,19 @@
 ---
 title: Installation
-description: Install cua-driver on macOS, Linux, or Windows
+description: Install Cua Driver on macOS, Windows, or the Linux pre-release backend
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Install cua-driver with the command for your platform:
+Install Cua Driver with the command for your platform. macOS and Windows are the official install targets; Linux is available as a pre-release backend while platform testing is still in progress.
 
-| Platform | Command                                                                                                             |
-| -------- | ------------------------------------------------------------------------------------------------------------------- |
-| macOS    | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
-| Linux    | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
-| Windows  | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 \| iex`                  |
+| Platform          | Command                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| macOS             | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
+| Linux pre-release | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
+| Windows           | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 \| iex`                  |
 
-**macOS / Linux**
+**macOS / Linux pre-release**
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
@@ -27,7 +27,14 @@ irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/in
 
 On macOS, the installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `~/.local/bin/cua-driver`. The bundle is signed under `com.trycua.driver`, so TCC grants survive every release.
 
-On Linux, the installer downloads the release into `~/.cua-driver-rs/packages/releases/`, retargets `~/.cua-driver-rs/packages/current`, and symlinks `~/.local/bin/cua-driver`.
+On Linux, the pre-release backend installer downloads the release into `~/.cua-driver-rs/packages/releases/`, retargets `~/.cua-driver-rs/packages/current`, and symlinks `~/.local/bin/cua-driver`.
+
+<Callout type="warn">
+  **Linux is pre-release.** Linux artifacts and install paths are published for early testing, but
+  Linux has not completed the same official release and platform validation pass as macOS and
+  Windows. Expect gaps, report issues, and avoid treating Linux as a supported production target
+  until it is promoted out of pre-release.
+</Callout>
 
 On Windows, the installer downloads the release into `%USERPROFILE%\.cua-driver\packages\releases\`, retargets the `current` junction, and exposes `cua-driver.exe` through `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`.
 
@@ -50,7 +57,7 @@ The install runs **without sudo/admin**. On macOS and Linux the CLI symlink live
   changed.
 </Callout>
 
-Both canonical installers live under `libs/cua-driver/scripts/`. The shell installer covers macOS and Linux; `install.ps1` covers Windows.
+Both canonical installers live under `libs/cua-driver/scripts/`. The shell installer covers macOS and the Linux pre-release backend; `install.ps1` covers Windows.
 
 The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
 
@@ -237,7 +244,7 @@ Window-driving tools — `list_windows`, `click`, `type_text`, `screenshot`, `ge
 
 **Windows session model in one paragraph.** Every Windows process runs inside a numbered session. Session `0` is reserved for services and has no interactive desktop attached. Sessions `1`, `2`, ... are interactive logons — one per console / RDP user. SSH-launched processes (OpenSSH server) **default to Session 0** unless the SSH server is explicitly configured to spawn the shell inside the interactive session. The same applies to most Windows service hosts, scheduled tasks running under SYSTEM, and background invocations from CI agents.
 
-If `cua-driver` lands in Session 0, the window tools will silently return empty arrays and "no windows found" — that's the APIs working as designed against a session with no desktop, not a cua-driver bug.
+If `cua-driver` lands in Session 0, the window tools will silently return empty arrays and "no windows found" — that's the APIs working as designed against a session with no desktop, not a Cua Driver bug.
 
 **Diagnose with `cua-driver doctor`.** The Windows session probe surfaces this directly:
 
@@ -262,7 +269,7 @@ A healthy interactive logon reports the inverse:
 - **Run from RDP or the local console** — the simplest fix; both put your shell in your own interactive session, not Session 0.
 - **Run from a Windows Terminal / PowerShell launched by your logged-in user** — same effect.
 - **Register a logon Scheduled Task** (recommended, equivalent to macOS LaunchAgent) — see [Auto-start at logon](#auto-start-at-logon-windows) below, or the [Autostart concept page](/cua-driver/guide/getting-started/autostart) for the `cua-driver autostart enable` one-liner.
-- **Driving over SSH?** Register the autostart task once from an interactive session, then `cua-driver mcp` and `cua-driver call` over SSH proxy through the running daemon automatically. See [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
+- **Driving over SSH?** Register the autostart task once from an interactive session, then `cua-driver mcp` and `cua-driver call` over SSH proxy through the running daemon automatically. See [Running Cua Driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
 - **Use a session-launcher utility** — if you must invoke from a service / SSH context _without_ the daemon-proxy path, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
 
 Run `cua-driver doctor` after switching contexts to confirm the warning has cleared.
@@ -275,7 +282,7 @@ The Windows-native equivalent of macOS's LaunchAgent is a **Scheduled Task trigg
   **One-liner:** `cua-driver autostart enable && cua-driver autostart kick` does everything the
   manual block below does. See the [Autostart concept
   page](/cua-driver/guide/getting-started/autostart) for the full `enable / disable / kick / status`
-  verb family, and [Running cua-driver under SSH on
+  verb family, and [Running Cua Driver under SSH on
   Windows](/cua-driver/guide/getting-started/windows-ssh) for the recommended headless workflow on
   top of it.
 </Callout>
@@ -435,11 +442,11 @@ release for them to recommend.
 
 ## Requirements
 
-| Platform | Requirements                                                                                               |
-| -------- | ---------------------------------------------------------------------------------------------------------- |
-| macOS    | macOS 14 (Sonoma) or later; Apple Silicon or Intel; Accessibility and Screen Recording grants.             |
-| Linux    | x86_64 Linux desktop session; X11 or XWayland; AT-SPI for accessibility-tree tools.                        |
-| Windows  | Windows 10/11 or Server with an interactive desktop session; PowerShell; UI Automation enabled by default. |
+| Platform          | Requirements                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| macOS             | macOS 14 (Sonoma) or later; Apple Silicon or Intel; Accessibility and Screen Recording grants.             |
+| Linux pre-release | x86_64 Linux desktop session; X11 or XWayland; AT-SPI for accessibility-tree tools.                        |
+| Windows           | Windows 10/11 or Server with an interactive desktop session; PowerShell; UI Automation enabled by default. |
 
 Plan for roughly 50 MB for the app bundle or package directory, plus any retained old versions on Linux / Windows.
 
@@ -453,7 +460,7 @@ Most workflows benefit from a persistent daemon. Element-indexed workflows requi
 open -n -g -a CuaDriver --args serve
 ```
 
-**Linux**
+**Linux pre-release**
 
 ```bash
 cua-driver serve &
@@ -470,7 +477,7 @@ Confirm it is up:
 
 ```bash
 cua-driver status
-# cua-driver daemon is running
+# Cua Driver daemon is running
 #   socket: /Users/you/Library/Caches/cua-driver/cua-driver.sock
 #   pid: 12345
 ```
@@ -485,7 +492,7 @@ On macOS, `open -n -g -a CuaDriver --args serve` is the recommended form because
 
 ## Register with an MCP client (optional)
 
-The MCP server is one of two ways to use cua-driver — skip this section if you only want the CLI (`cua-driver list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
+The MCP server is one of two ways to use Cua Driver — skip this section if you only want the CLI (`cua-driver list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
 
 Cua Driver speaks MCP over stdio. Use `cua-driver mcp-config --client <name>` to print the right command for your client, or copy one of the snippets below directly:
 
@@ -556,7 +563,7 @@ The client spawns `cua-driver mcp` on demand once registered.
   proxies every tool call through to it instead of running in-process. Crucial for SSH on Windows,
   where the SSH session lands in Session 0 (no desktop) but the daemon — registered via `cua-driver
   autostart enable` — lives in the user's Session 1+ interactive logon. Same `--no-daemon-relaunch`
-  / `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` opt-out as macOS. See [Running cua-driver under SSH on
+  / `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` opt-out as macOS. See [Running Cua Driver under SSH on
   Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
 </Callout>
 

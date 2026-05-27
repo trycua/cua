@@ -1,11 +1,11 @@
 ---
-title: Running cua-driver under SSH on Windows
-description: The "daemon in interactive session + SSH-side proxy" workflow that makes cua-driver work headlessly over SSH on Windows.
+title: Running Cua Driver under SSH on Windows
+description: The "daemon in interactive session + SSH-side proxy" workflow that makes Cua Driver work headlessly over SSH on Windows.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The canonical headless / remote-driving setup for cua-driver on Windows is:
+The canonical headless / remote-driving setup for Cua Driver on Windows is:
 
 1. A `cua-driver serve` daemon runs in the user's **interactive session** (Session 1+), kept alive by [`cua-driver autostart`](/cua-driver/guide/getting-started/autostart).
 2. You SSH into the same box (which lands in Session 0).
@@ -18,7 +18,7 @@ This page explains why the proxy is necessary, how to wire it up, and the opt-ou
 
 Windows OpenSSH server runs in **Session 0** — the non-interactive services session. Sessions `1`, `2`, ... are interactive logons (one per console / RDP user). Every process inherits the session of its parent, so a shell spawned from `sshd` lands in Session 0 too.
 
-The Win32 APIs that cua-driver's window tools bottom out in — `EnumWindows`, `GetForegroundWindow`, `PrintWindow`, UIA, `BitBlt` over the screen DC — are all scoped to the **calling process's WindowStation + Desktop**. Session 0 has no interactive desktop attached. So:
+The Win32 APIs that Cua Driver's window tools bottom out in — `EnumWindows`, `GetForegroundWindow`, `PrintWindow`, UIA, `BitBlt` over the screen DC — are all scoped to the **calling process's WindowStation + Desktop**. Session 0 has no interactive desktop attached. So:
 
 ```powershell
 # Over SSH (Session 0), with no daemon helper:
@@ -26,7 +26,7 @@ cua-driver call list_windows
 # []                       ← empty. The user's RDP session has 12 windows open.
 ```
 
-That's not a cua-driver bug — those APIs are working as designed against a session with no desktop. The same thing would happen to any native Win32 tool spawned the same way.
+That's not a Cua Driver bug — those APIs are working as designed against a session with no desktop. The same thing would happen to any native Win32 tool spawned the same way.
 
 <Callout type="info">
 **Confirm with `cua-driver doctor`.** The Windows session probe surfaces this directly:
@@ -74,7 +74,7 @@ cua-driver autostart kick          # start it now, don't wait for next logon
 
 # ── from SSH (or any session) ────────────────────────────────────────
 cua-driver status
-# cua-driver daemon is running
+# Cua Driver daemon is running
 #   socket: \\.\pipe\cua-driver
 #   pid: 12345
 #   session: 2                     ← daemon's in your interactive session
@@ -117,7 +117,7 @@ No interactive session means `autostart kick` has no Session 1+ to land the daem
 There's no auto-spawn on Windows / Linux — unlike macOS, there's no `open -a CuaDriver` equivalent that could land a fresh daemon in the right session. If no daemon is listening when you run `cua-driver mcp`, the CLI bails with an actionable error:
 
 ```text
-no cua-driver daemon listening on \\.\pipe\cua-driver. Start one in your
+no Cua Driver daemon listening on \\.\pipe\cua-driver. Start one in your
 interactive session — on Windows run `cua-driver autostart enable &&
 cua-driver autostart kick`; on Linux run `cua-driver serve &` in the user's
 session. Then re-run `cua-driver mcp`. To skip the proxy and run in-process

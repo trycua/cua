@@ -1,6 +1,6 @@
 ---
 title: MCP Tools
-description: Reference for every MCP tool cua-driver exposes
+description: Reference for every MCP tool Cua Driver exposes
 ---
 
 {/*
@@ -454,7 +454,7 @@ Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restar
 
 **Video is on by default** — the main display is captured to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. Pass `record_video: false` to opt out.
 
-**macOS uses native ScreenCaptureKit** (in-process SCStream + SCRecordingOutput) so video inherits cua-driver's own Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
+**macOS uses native ScreenCaptureKit** (in-process SCStream + SCRecordingOutput) so video inherits Cua Driver's own Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
 
 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.
 

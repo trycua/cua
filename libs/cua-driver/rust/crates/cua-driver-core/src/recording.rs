@@ -18,6 +18,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cursor_sampler::CursorSampler;
+use crate::recording_loader::parse_screen_from_summary;
 use crate::video::{self, VideoBackend, VideoMetadata};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
@@ -55,6 +56,22 @@ static CLICK_MARKER_FN: OnceLock<ClickMarkerFnBox> = OnceLock::new();
 /// Register the platform-specific click-marker callback. Call once at startup.
 pub fn set_click_marker_fn(f: impl Fn(&[u8], f64, f64) -> Option<Vec<u8>> + Send + Sync + 'static) {
     let _ = CLICK_MARKER_FN.set(Box::new(f));
+}
+
+// ── Platform window-origin callback ──────────────────────────────────────────
+//
+// Resolves the screen-space origin of the screenshot bitmap for a window.
+// Element-indexed click results report screen-absolute coordinates, while
+// click.png markers are drawn in screenshot-local pixels.
+
+type WindowBitmapOriginFnBox = Box<dyn Fn(Option<u64>, Option<i64>) -> Option<(f64, f64)> + Send + Sync>;
+static WINDOW_BITMAP_ORIGIN_FN: OnceLock<WindowBitmapOriginFnBox> = OnceLock::new();
+
+/// Register the platform-specific screenshot-origin resolver. Call once at startup.
+pub fn set_window_bitmap_origin_fn(
+    f: impl Fn(Option<u64>, Option<i64>) -> Option<(f64, f64)> + Send + Sync + 'static,
+) {
+    let _ = WINDOW_BITMAP_ORIGIN_FN.set(Box::new(f));
 }
 
 // ── Platform AX-snapshot callback ────────────────────────────────────────────
@@ -370,21 +387,22 @@ fn write_turn(
     let pid       = args.opt_i64("pid");
     let element_index = args.opt_u64("element_index");
 
-    // Extract click point for click-family tools. Falls back to the
-    // platform element_index → window-local-pixels resolver when the call
-    // used `element_index` instead of explicit `x, y`, so click.png is
-    // written for AX-indexed clicks too.
+    // Extract click point for click-family tools. Pixel-addressed clicks
+    // already use screenshot-local `x, y`. Element-indexed clicks report
+    // screen coords in the result summary, so convert those back into the
+    // screenshot bitmap's local coordinate space before drawing click.png.
     let click_point: Option<(f64, f64)> = if matches!(
         tool_name, "click" | "double_click" | "right_click"
     ) {
         match (args.opt_f64("x"), args.opt_f64("y")) {
             (Some(x), Some(y)) => Some((x, y)),
-            _ => match (window_id, pid, element_index, ELEMENT_BOUNDS_FN.get()) {
-                (Some(wid), Some(p), Some(idx), Some(f)) => {
-                    u32::try_from(idx).ok().and_then(|idx32| f(wid, p, idx32))
-                }
-                _ => None,
-            },
+            _ => click_point_from_result_summary(result_text, window_id, pid)
+                .or_else(|| match (window_id, pid, element_index, ELEMENT_BOUNDS_FN.get()) {
+                    (Some(wid), Some(p), Some(idx), Some(f)) => {
+                        u32::try_from(idx).ok().and_then(|idx32| f(wid, p, idx32))
+                    }
+                    _ => None,
+                }),
         }
     } else {
         None
@@ -427,6 +445,21 @@ fn write_turn(
     }
 
     Ok(())
+}
+
+fn click_point_from_result_summary(
+    result_text: &str,
+    window_id: Option<u64>,
+    pid: Option<i64>,
+) -> Option<(f64, f64)> {
+    let screen = parse_screen_from_summary(result_text)?;
+    let origin_fn = WINDOW_BITMAP_ORIGIN_FN.get()?;
+    let origin = origin_fn(window_id, pid)?;
+    Some(screen_to_window_local(screen, origin))
+}
+
+fn screen_to_window_local(screen: (f64, f64), bitmap_origin: (f64, f64)) -> (f64, f64) {
+    (screen.0 - bitmap_origin.0, screen.1 - bitmap_origin.1)
 }
 
 fn write_json_atomic(path: &Path, value: &Value) -> anyhow::Result<()> {
@@ -490,4 +523,89 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn result_summary_screen_coords_are_converted_to_window_local_click_point() {
+        assert_eq!(
+            parse_screen_from_summary("Performed UIA Invoke on [28] (screen (745,679))."),
+            Some((745.0, 679.0)),
+        );
+        assert_eq!(screen_to_window_local((745.0, 679.0), (701.0, 601.0)), (44.0, 78.0));
+    }
+
+    #[test]
+    fn write_turn_marks_element_index_clicks_from_result_summary() {
+        let marker_calls = Arc::new(Mutex::new(Vec::<(f64, f64)>::new()));
+        let calls = Arc::clone(&marker_calls);
+
+        set_screenshot_fn(|window_id, pid| {
+            assert_eq!(window_id, Some(7));
+            assert_eq!(pid, Some(42));
+            Some(b"not-a-real-png".to_vec())
+        });
+        set_window_bitmap_origin_fn(|window_id, pid| {
+            assert_eq!(window_id, Some(7));
+            assert_eq!(pid, Some(42));
+            Some((701.0, 601.0))
+        });
+        set_click_marker_fn(move |_png_bytes, cx, cy| {
+            calls.lock().unwrap().push((cx, cy));
+            Some(format!("{cx},{cy}").into_bytes())
+        });
+
+        let root = std::env::temp_dir().join(format!(
+            "cua-driver-core-recording-test-{}-{}",
+            std::process::id(),
+            now_ms(),
+        ));
+        let summary_dir = root.join("turn-summary");
+        write_turn(
+            &summary_dir,
+            "click",
+            &json!({"pid": 42, "window_id": 7, "element_index": 28}),
+            "Performed UIA Invoke on [28] (screen (745,679)).",
+            1_100,
+            1_000,
+        ).unwrap();
+
+        let action: Value = serde_json::from_str(
+            &std::fs::read_to_string(summary_dir.join("action.json")).unwrap(),
+        ).unwrap();
+        assert_eq!(action["click_point"], json!({"x": 44.0, "y": 78.0}));
+        assert_eq!(std::fs::read(summary_dir.join("click.png")).unwrap(), b"44,78");
+
+        let pixel_dir = root.join("turn-pixel");
+        write_turn(
+            &pixel_dir,
+            "click",
+            &json!({"pid": 42, "window_id": 7, "x": 12.0, "y": 34.0}),
+            "Performed click (screen (745,679)).",
+            1_200,
+            1_000,
+        ).unwrap();
+        assert_eq!(std::fs::read(pixel_dir.join("click.png")).unwrap(), b"12,34");
+
+        let unparsed_dir = root.join("turn-unparsed");
+        write_turn(
+            &unparsed_dir,
+            "click",
+            &json!({"pid": 42, "window_id": 7, "element_index": 29}),
+            "Performed UIA Invoke on [29].",
+            1_300,
+            1_000,
+        ).unwrap();
+        assert!(!unparsed_dir.join("click.png").exists());
+
+        assert_eq!(*marker_calls.lock().unwrap(), vec![(44.0, 78.0), (12.0, 34.0)]);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

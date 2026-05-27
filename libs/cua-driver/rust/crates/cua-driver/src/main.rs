@@ -650,6 +650,9 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
             platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
         });
+        cua_driver_core::recording::set_window_bitmap_origin_fn(|window_id, pid| {
+            platform_windows::recording_hooks::window_bitmap_origin_xy(window_id, pid)
+        });
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
@@ -714,6 +717,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         });
         cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
             platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        cua_driver_core::recording::set_window_bitmap_origin_fn(|window_id, pid| {
+            platform_windows::recording_hooks::window_bitmap_origin_xy(window_id, pid)
         });
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),

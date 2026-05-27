@@ -225,10 +225,10 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
 }
 
 /// Pull "(screen (X,Y))" out of a tool-result text. Returns `(x, y)`
-/// when the pattern is present and parses as numbers. Used as last-
-/// resort coord recovery for element-indexed clicks whose action.json
-/// doesn't yet carry click_point.
-fn parse_screen_from_summary(summary: &str) -> Option<(f64, f64)> {
+/// when the pattern is present and parses as numbers. Used by the
+/// recorder and as last-resort coord recovery for element-indexed clicks
+/// whose action.json doesn't yet carry click_point.
+pub(crate) fn parse_screen_from_summary(summary: &str) -> Option<(f64, f64)> {
     // Looking for: "...(screen (123,456))..." — find the inner parens
     // right after "screen ".
     let idx = summary.find("(screen (")?;

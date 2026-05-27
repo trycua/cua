@@ -14,6 +14,7 @@ pub mod cdp;
 pub mod element_cache;
 pub mod image_utils;
 pub mod page;
+pub mod pip_hook;
 pub mod protocol;
 pub mod cursor_sampler;
 pub mod recording;

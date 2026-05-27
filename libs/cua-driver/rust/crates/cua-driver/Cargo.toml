@@ -18,6 +18,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 cua-driver-core = { path = "../cua-driver-core" }
 cursor-overlay = { path = "../cursor-overlay" }
+pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
 base64 = { workspace = true }
 uuid = { workspace = true }

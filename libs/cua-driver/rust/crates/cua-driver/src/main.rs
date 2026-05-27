@@ -72,6 +72,73 @@ fn emit_entry_telemetry(command: &cli::Command) {
     }
 }
 
+/// Wire up the experimental picture-in-picture preview window.
+///
+/// Called from every long-running entry point (Serve and Mcp on all
+/// platforms; the `Call` arm intentionally skips PiP since the
+/// per-call binaries don't keep an AppKit/event loop alive long
+/// enough to be useful).
+///
+/// No-op when `--experimental-pip` is not on argv. On Windows / Linux
+/// the factory returns "not yet implemented" — we log and continue
+/// without a window so the rest of the daemon keeps working.
+fn maybe_init_pip() {
+    let cfg = match pip_preview::default_config_path() {
+        Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+        None => pip_preview::PipConfig::from_args(),
+    };
+    if !cfg.enabled {
+        return;
+    }
+
+    // Register the platform factory. The set is idempotent so multiple
+    // entry points calling this in the same process is safe.
+    #[cfg(target_os = "macos")]
+    pip_preview::set_pip_backend_factory(
+        Box::new(platform_macos::pip::MacosPipBackendFactory),
+    );
+    #[cfg(target_os = "windows")]
+    pip_preview::set_pip_backend_factory(
+        Box::new(platform_windows::pip::WindowsPipBackendFactory),
+    );
+    #[cfg(target_os = "linux")]
+    pip_preview::set_pip_backend_factory(
+        Box::new(platform_linux::pip::LinuxPipBackendFactory),
+    );
+
+    match pip_preview::start_pip(&cfg) {
+        Ok(backend) => {
+            // Bridge: when the tool dispatcher in cua-driver-core wants
+            // to push a frame, forward to the live backend handle.
+            // We move the Box into a static Mutex<Option<...>> so the
+            // closure can re-borrow on every call without taking
+            // ownership of the trait object.
+            use std::sync::Mutex as StdMutex;
+            static BACKEND: std::sync::OnceLock<StdMutex<Option<Box<dyn pip_preview::PipBackend>>>> =
+                std::sync::OnceLock::new();
+            let _ = BACKEND.set(StdMutex::new(Some(backend)));
+            cua_driver_core::pip_hook::set_pip_push_fn(|frame| {
+                if let Some(slot) = BACKEND.get() {
+                    if let Some(b) = slot.lock().unwrap().as_ref() {
+                        b.push_frame(pip_preview::PipFrame {
+                            png_bytes: frame.png_bytes,
+                            action_label: frame.action_label,
+                            timestamp_ms: frame.timestamp_ms,
+                        });
+                    }
+                }
+            });
+            eprintln!(
+                "⚗️  PiP preview enabled (experimental — macOS only today; \
+                 see https://github.com/trycua/cua/issues for follow-up)"
+            );
+        }
+        Err(e) => {
+            eprintln!("⚗️  PiP preview requested but unavailable: {e}");
+        }
+    }
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -181,10 +248,35 @@ fn main() {
             cua_driver_core::video::set_video_backend_factory(
                 Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
             );
+            let pip_cfg = match pip_preview::default_config_path() {
+                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+                None => pip_preview::PipConfig::from_args(),
+            };
+            maybe_init_pip();
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
+            // PiP needs the AppKit main run loop to process the
+            // dispatch_async_f calls that push frames into NSImageView.
+            // When --experimental-pip is on, move the serve loop onto
+            // a background thread and park the main thread in
+            // NSApplication.run() so the dispatched blocks actually
+            // execute. Without this, frames queue forever and the
+            // window stays blank. The non-PiP path keeps the original
+            // run-on-main semantics so we don't change behaviour for
+            // existing users.
+            if pip_cfg.enabled {
+                std::thread::Builder::new()
+                    .name("cua-serve".into())
+                    .spawn(move || {
+                        serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+                        std::process::exit(0);
+                    })
+                    .expect("spawn serve thread");
+                platform_macos::pip::run_appkit_main_loop();
+                return;
+            }
             serve::run_serve_cmd(reg, &sp, Some(&pid_path));
             return;
         }
@@ -314,6 +406,7 @@ fn main() {
     cua_driver_core::video::set_video_backend_factory(
         Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
     );
+    maybe_init_pip();
 
     std::thread::Builder::new()
         .name("cua-mcp".into())
@@ -405,6 +498,7 @@ fn main() -> anyhow::Result<()> {
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let reg = Arc::new(build_registry(cursor_cfg));
             reg.init_self_weak();
+            maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
@@ -523,6 +617,7 @@ async fn async_main() -> anyhow::Result<()> {
 
     let registry = Arc::new(build_registry(cursor_cfg));
     registry.init_self_weak();
+    maybe_init_pip();
     cua_driver_core::server::run(registry).await?;
     Ok(())
 }

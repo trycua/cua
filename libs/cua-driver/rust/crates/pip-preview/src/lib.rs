@@ -16,6 +16,15 @@
 
 use std::sync::OnceLock;
 
+/// Canonical `~/.cua-driver/config.json` path matching what the per-platform
+/// `set_config` tools write to. Returns `None` when `$HOME` is unset
+/// (sandboxed CI).
+pub fn default_config_path() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
+}
+
 /// Geometry of the PiP window, in screen points (top-left origin).
 ///
 /// Parsed from `--experimental-pip-geometry WxH+X+Y`. `x` / `y` are
@@ -124,6 +133,49 @@ impl PipConfig {
                 _ => {}
             }
             i += 1;
+        }
+        cfg
+    }
+
+    /// Resolve the config from (in order of precedence, low → high):
+    ///
+    ///   defaults  →  `~/.cua-driver/config.json` keys
+    ///                  (`experimental_pip` bool, `experimental_pip_geometry` string)
+    ///              →  CLI flags
+    ///
+    /// Lets users persist `--experimental-pip` across daemon restarts by
+    /// editing `~/.cua-driver/config.json` once, instead of re-running
+    /// `claude mcp add` with the flag baked into the args list.
+    /// Malformed or missing file falls back to the next layer silently.
+    pub fn from_args_and_file(config_path: &std::path::Path) -> Self {
+        let mut cfg = PipConfig::default();
+        if let Ok(text) = std::fs::read_to_string(config_path) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(b) = json.get("experimental_pip").and_then(|v| v.as_bool()) {
+                    cfg.enabled = b;
+                }
+                if let Some(s) = json.get("experimental_pip_geometry").and_then(|v| v.as_str()) {
+                    if let Some(g) = PipGeometry::parse(s) {
+                        cfg.geometry = g;
+                    }
+                }
+            }
+        }
+        // CLI args override anything in the file.
+        let args: Vec<String> = std::env::args().collect();
+        let cli = PipConfig::parse(&args[1..]);
+        if cli.enabled {
+            cfg.enabled = true;
+        }
+        // CLI geometry only overrides when explicitly passed — detect by
+        // diffing against PipGeometry::default() (the parse() entry point
+        // returns the default when no flag is present).
+        if cli.geometry.width != PipGeometry::default().width
+            || cli.geometry.height != PipGeometry::default().height
+            || cli.geometry.x.is_some()
+            || cli.geometry.y.is_some()
+        {
+            cfg.geometry = cli.geometry;
         }
         cfg
     }

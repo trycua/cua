@@ -83,7 +83,10 @@ fn emit_entry_telemetry(command: &cli::Command) {
 /// the factory returns "not yet implemented" — we log and continue
 /// without a window so the rest of the daemon keeps working.
 fn maybe_init_pip() {
-    let cfg = pip_preview::PipConfig::from_args();
+    let cfg = match pip_preview::default_config_path() {
+        Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+        None => pip_preview::PipConfig::from_args(),
+    };
     if !cfg.enabled {
         return;
     }
@@ -245,7 +248,10 @@ fn main() {
             cua_driver_core::video::set_video_backend_factory(
                 Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
             );
-            let pip_cfg = pip_preview::PipConfig::from_args();
+            let pip_cfg = match pip_preview::default_config_path() {
+                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+                None => pip_preview::PipConfig::from_args(),
+            };
             maybe_init_pip();
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();

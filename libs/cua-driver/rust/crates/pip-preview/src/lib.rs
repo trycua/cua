@@ -25,6 +25,51 @@ pub fn default_config_path() -> Option<std::path::PathBuf> {
         .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
 }
 
+/// Merge a single `key`/`value` into `~/.cua-driver/config.json`,
+/// preserving any other keys that are already there. Used by the
+/// per-platform `set_config` tools to persist `experimental_pip` /
+/// `experimental_pip_geometry` so the next daemon restart picks them up.
+pub fn write_config_key(key: &str, value: serde_json::Value) -> Result<(), String> {
+    let path = default_config_path().ok_or_else(|| "$HOME is not set".to_string())?;
+    let mut json: serde_json::Value = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json[key] = value;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read `experimental_pip` + `experimental_pip_geometry` from the
+/// config file, falling back to defaults when missing or malformed.
+/// Surfaced by the per-platform `get_config` tools alongside the
+/// in-memory `DriverConfig` fields.
+pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
+    let path = match default_config_path() {
+        Some(p) => p,
+        None => return (false, None),
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return (false, None),
+    };
+    let json: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return (false, None),
+    };
+    let enabled = json.get("experimental_pip").and_then(|v| v.as_bool()).unwrap_or(false);
+    let geometry = json.get("experimental_pip_geometry")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned());
+    (enabled, geometry)
+}
+
 /// Geometry of the PiP window, in screen points (top-left origin).
 ///
 /// Parsed from `--experimental-pip-geometry WxH+X+Y`. `x` / `y` are

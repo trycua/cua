@@ -37,6 +37,11 @@ impl Tool for GetConfigTool {
             .first()
             .map(|s| s.config.enabled)
             .unwrap_or(true);
+        // PiP values aren't in DriverConfig — they're file-only since the
+        // backend is initialised once at startup. Read fresh so the
+        // response reflects whatever set_config (or a direct JSON edit)
+        // last wrote.
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration")
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
@@ -46,6 +51,8 @@ impl Tool for GetConfigTool {
                 "agent_cursor": {
                     "enabled": cursor_enabled,
                 },
+                "experimental_pip": pip_enabled,
+                "experimental_pip_geometry": pip_geometry,
             }))
     }
 }

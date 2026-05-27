@@ -4306,6 +4306,7 @@ impl Tool for GetConfigTool {
             .first()
             .map(|s| s.config.enabled)
             .unwrap_or(true);
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
@@ -4313,6 +4314,8 @@ impl Tool for GetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
+            "experimental_pip":    pip_enabled,
+            "experimental_pip_geometry": pip_geometry,
         });
         // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -4344,13 +4347,17 @@ impl Tool for SetConfigTool {
                   — bulk write of named fields.\n\n\
                 Known keys:\n\
                 - `capture_mode` (string: `vision` | `ax` | `som`)\n\
-                - `max_image_dimension` (integer)\n\n\
+                - `max_image_dimension` (integer)\n\
+                - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
+                - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape."},
-                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."}
+                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
+                "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
+                "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -4372,8 +4379,31 @@ impl Tool for SetConfigTool {
                     Some(n) => { cfg.max_image_dimension = n as u32; applied = true; }
                     None    => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
                 },
+                "experimental_pip" => match val.as_bool() {
+                    Some(b) => {
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
+                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+                        }
+                        applied = true;
+                    }
+                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
+                },
+                "experimental_pip_geometry" => match val.as_str() {
+                    Some(s) => {
+                        if pip_preview::PipGeometry::parse(s).is_none() {
+                            return ToolResult::error(format!(
+                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
+                            ));
+                        }
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
+                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+                        }
+                        applied = true;
+                    }
+                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
+                },
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension."
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
                 )),
             }
         }
@@ -4384,6 +4414,23 @@ impl Tool for SetConfigTool {
         if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
             cfg.max_image_dimension = dim as u32; applied = true;
         }
+        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
+            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled)) {
+                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+            }
+            applied = true;
+        }
+        if let Some(geom) = args.get("experimental_pip_geometry").and_then(|v| v.as_str()) {
+            if pip_preview::PipGeometry::parse(geom).is_none() {
+                return ToolResult::error(format!(
+                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
+                ));
+            }
+            if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(geom.to_owned())) {
+                return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+            }
+            applied = true;
+        }
         if !applied {
             return ToolResult::error("Missing required string field `key` (or a known legacy per-field).");
         }
@@ -4393,6 +4440,7 @@ impl Tool for SetConfigTool {
             .first()
             .map(|s| s.config.enabled)
             .unwrap_or(true);
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
@@ -4400,6 +4448,8 @@ impl Tool for SetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
+            "experimental_pip":    pip_enabled,
+            "experimental_pip_geometry": pip_geometry,
         });
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
         ToolResult::text(format!("✅ {pretty}")).with_structured(payload)

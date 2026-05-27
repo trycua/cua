@@ -18,7 +18,11 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
-        description: "Update cua-driver-rs configuration. Changes take effect immediately.".into(),
+        description: "Update cua-driver-rs configuration. Changes to capture_mode \
+            and max_image_dimension take effect immediately. The experimental_pip \
+            keys are persisted to ~/.cua-driver/config.json and take effect on \
+            the next daemon restart (the PiP backend is initialised once at \
+            startup).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -30,6 +34,16 @@ fn def() -> &'static ToolDef {
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
+                },
+                "experimental_pip": {
+                    "type": "boolean",
+                    "description": "Enable the experimental picture-in-picture preview window. \
+                        Applies on next daemon restart."
+                },
+                "experimental_pip_geometry": {
+                    "type": "string",
+                    "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` \
+                        form (e.g. `320x200+24+24`). Applies on next daemon restart."
                 }
             },
             "additionalProperties": false
@@ -64,9 +78,32 @@ impl Tool for SetConfigTool {
                 return ToolResult::error(format!("max_image_dimension {dim} exceeds u32::MAX"));
             }
         }
+        // PiP keys persist to the same config.json but take effect only on
+        // next daemon restart — the backend is initialised once at startup.
+        let mut pip_note = String::new();
+        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
+            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled)) {
+                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+            }
+            pip_note = format!(" — restart cua-driver for experimental_pip={enabled} to take effect");
+        }
+        if let Some(geom) = args.opt_str("experimental_pip_geometry") {
+            // Validate before persisting so the user gets an immediate error.
+            if pip_preview::PipGeometry::parse(&geom).is_none() {
+                return ToolResult::error(format!(
+                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
+                ));
+            }
+            if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(geom.clone())) {
+                return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+            }
+            if pip_note.is_empty() {
+                pip_note = format!(" — restart cua-driver for experimental_pip_geometry={geom} to take effect");
+            }
+        }
         ToolResult::text(format!(
-            "Config updated: capture_mode={}, max_image_dimension={}",
-            cfg.capture_mode, cfg.max_image_dimension
+            "Config updated: capture_mode={}, max_image_dimension={}{}",
+            cfg.capture_mode, cfg.max_image_dimension, pip_note
         ))
     }
 }

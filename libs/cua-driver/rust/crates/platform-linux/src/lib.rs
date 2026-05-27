@@ -14,6 +14,7 @@ use cua_driver_core::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;
+pub mod pip;
 
 #[cfg(target_os = "linux")]
 pub mod x11;

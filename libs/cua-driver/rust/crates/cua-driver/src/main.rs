@@ -32,6 +32,7 @@ mod proxy;
 mod serve;
 mod skills;
 mod telemetry;
+mod check_update_tool;
 mod updater;
 mod version_check;
 
@@ -139,6 +140,26 @@ fn maybe_init_pip() {
     }
 }
 
+// ── Registry helpers (macOS) ─────────────────────────────────────────────
+
+/// Build the macOS tool registry and inject the platform-agnostic
+/// `check_for_update` tool. Wrapper lives in the binary crate so the
+/// `cua-driver-core` graph (shared with every `platform-*` crate) stays
+/// free of the `ureq` + rustls + ring deps that the check tool needs.
+#[cfg(target_os = "macos")]
+fn build_macos_registry() -> cua_driver_core::tool::ToolRegistry {
+    let mut r = platform_macos::register_tools();
+    check_update_tool::register_into(&mut r);
+    r
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::ToolRegistry {
+    let mut r = platform_macos::register_tools_with_compat(compat);
+    check_update_tool::register_into(&mut r);
+    r
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -161,12 +182,12 @@ fn main() {
             return;
         }
         cli::Command::ListTools => {
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             cli::run_list_tools(&reg);
             return;
         }
         cli::Command::Describe(name) => {
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             cli::run_describe(&reg, &name);
             return;
         }
@@ -198,7 +219,7 @@ fn main() {
             cua_driver_core::video::set_video_backend_factory(
                 Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
             );
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             reg.init_self_weak();
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             return;
@@ -253,7 +274,7 @@ fn main() {
                 None => pip_preview::PipConfig::from_args(),
             };
             maybe_init_pip();
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
@@ -296,12 +317,16 @@ fn main() {
             return;
         }
         cli::Command::DumpDocs { pretty, doc_type } => {
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
             return;
         }
-        cli::Command::Update { apply } => {
-            cli::run_update_cmd(apply);
+        cli::Command::Update { apply, json } => {
+            cli::run_update_cmd(apply, json);
+            return;
+        }
+        cli::Command::CheckUpdate { json, no_cache } => {
+            cli::run_check_update_cmd(json, no_cache);
             return;
         }
         cli::Command::Doctor { json } => {
@@ -316,7 +341,7 @@ fn main() {
             return;
         }
         cli::Command::Diagnose => {
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             cli::run_diagnose_cmd(reg);
             return;
         }
@@ -329,7 +354,7 @@ fn main() {
             return;
         }
         cli::Command::Config { subcommand, key, value, socket } => {
-            let reg = Arc::new(platform_macos::register_tools());
+            let reg = Arc::new(build_macos_registry());
             reg.init_self_weak();
             cli::run_config_cmd(reg, subcommand.as_deref(), key.as_deref(), value.as_deref(), socket.as_deref());
             return;
@@ -418,7 +443,7 @@ fn main() {
             let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
             rt.block_on(async move {
                 // Register tools; overlay init has already happened above.
-                let registry = Arc::new(platform_macos::register_tools_with_compat(compat));
+                let registry = Arc::new(build_macos_registry_with_compat(compat));
                 // Wire up replay tool's back-reference to the registry.
                 registry.init_self_weak();
                 if let Err(e) = cua_driver_core::server::run(registry).await {
@@ -527,8 +552,12 @@ fn main() -> anyhow::Result<()> {
             cli::run_dump_docs_with_type(&reg, pretty, &doc_type);
             return Ok(());
         }
-        cli::Command::Update { apply } => {
-            cli::run_update_cmd(apply);
+        cli::Command::Update { apply, json } => {
+            cli::run_update_cmd(apply, json);
+            return Ok(());
+        }
+        cli::Command::CheckUpdate { json, no_cache } => {
+            cli::run_check_update_cmd(json, no_cache);
             return Ok(());
         }
         cli::Command::Doctor { json } => {
@@ -653,7 +682,7 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
-        platform_windows::register_tools_with_cursor(cursor_cfg, compat)
+        { let mut r = platform_windows::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
     #[cfg(target_os = "linux")]
     {
@@ -675,7 +704,7 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
-        platform_linux::register_tools_with_cursor(cursor_cfg, compat)
+        { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
@@ -718,7 +747,14 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
-        platform_windows::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
+        {
+            let mut r = platform_windows::register_tools_with_cursor(
+                cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
+                compat,
+            );
+            check_update_tool::register_into(&mut r);
+            r
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -740,7 +776,14 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
-        platform_linux::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
+        {
+            let mut r = platform_linux::register_tools_with_cursor(
+                cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
+                compat,
+            );
+            check_update_tool::register_into(&mut r);
+            r
+        }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {

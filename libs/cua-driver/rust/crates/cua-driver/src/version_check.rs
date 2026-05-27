@@ -60,7 +60,7 @@ const HTTP_TIMEOUT_SECONDS: u64 = 4;
 /// Tag-name prefix used by the Rust-port releases on the trycua/cua repo.
 /// Releases tagged with anything else (e.g. the Swift port's
 /// `cua-driver-v*`) are filtered out so we never recommend the wrong binary.
-pub(crate) const RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
+pub const RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
 
 /// GitHub releases API endpoint. Paginates newest-first; 40 entries is
 /// plenty of headroom past the most recent stable release even when
@@ -103,6 +103,146 @@ pub fn maybe_announce_update() {
             .name("cua-version-check".into())
             .spawn(task)
             .ok();
+    }
+}
+
+/// Structured snapshot returned by [`check_update_state`] — the canonical
+/// payload behind both `cua-driver check-update --json` and the
+/// `check_for_update` MCP tool. Hermes branches on `update_available`.
+///
+/// Fields mirror the JSON schema documented in the user-facing
+/// `getting-started/updating` page; field names use snake_case so a
+/// serde-default JSON serialise round-trips cleanly into typed consumers
+/// without a Deserialize impl on their side.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct UpdateState {
+    pub current_version: String,
+    /// `None` when the network fetch failed and no usable cache existed —
+    /// the `error` field carries the human-readable reason.
+    pub latest_version: Option<String>,
+    pub update_available: bool,
+    /// Always `"github_releases"` today. A constant on the wire so future
+    /// alternate sources (private registries, mirrors) can be slotted in
+    /// without breaking existing consumers that key off this string.
+    pub source: &'static str,
+    /// ISO-8601 UTC timestamp of when this check ran (NOT when the cached
+    /// result was originally fetched — see `cache_hit`).
+    pub checked_at: String,
+    /// `true` when we short-circuited via the on-disk cache (no network
+    /// round-trip this invocation). `false` when we actually hit GitHub.
+    pub cache_hit: bool,
+    /// Shell one-liner to apply the update. `None` when already up-to-date
+    /// or the check failed.
+    pub install_command: Option<String>,
+    /// URL of the release notes page on GitHub. `None` when already
+    /// up-to-date or the check failed.
+    pub release_notes_url: Option<String>,
+    /// Human-readable error string when the network fetch failed AND no
+    /// cache was available. `None` on success / cache fallback.
+    pub error: Option<String>,
+}
+
+/// Build the canonical install one-liner for the current target.
+///
+/// Lives here (rather than in the `cua-driver` crate's `updater.rs`) so the
+/// MCP tool in this crate doesn't pull a circular dep. Both call sites
+/// emit the same string — the canonical install URL and the same
+/// `--backend=rust` flag the docs print.
+fn install_one_liner() -> String {
+    #[cfg(windows)]
+    {
+        "irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex".to_owned()
+    }
+    #[cfg(not(windows))]
+    {
+        "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash -s -- install --backend=rust".to_owned()
+    }
+}
+
+/// Run a check and return a structured result.
+///
+/// Drives the same fetch + cache primitives the launch-time banner uses,
+/// so the two paths never disagree on which tag is "latest". Respects the
+/// 20-hour `CACHE_REFRESH_SECONDS` unless `no_cache=true`, which forces a
+/// fresh GitHub round-trip (and rewrites the cache on success).
+///
+/// Never panics, never returns an error type — fetch failures land in
+/// `UpdateState.error` with a non-empty `current_version` so consumers
+/// always get a well-formed payload they can branch on.
+pub fn check_update_state(no_cache: bool) -> UpdateState {
+    let current = env!("CARGO_PKG_VERSION").to_owned();
+    let now = unix_now();
+    let checked_at = iso8601(now);
+
+    let cached = read_cache().unwrap_or_default();
+    let cache_fresh = cached
+        .last_checked_unix
+        .map(|t| now.saturating_sub(t) < CACHE_REFRESH_SECONDS)
+        .unwrap_or(false);
+
+    // Honour the cache unless caller explicitly asked us to bypass it.
+    // Mirrors `npm outdated --no-cache` / `brew update --force` semantics.
+    let use_cache = !no_cache && cache_fresh && cached.latest_version.is_some();
+
+    let (latest, cache_hit, fetch_error) = if use_cache {
+        (cached.latest_version.clone(), true, None)
+    } else {
+        match fetch_latest_version() {
+            Ok(v) => {
+                // Persist on success so the next launch can reuse the answer.
+                let new_cache = VersionCache {
+                    last_checked_unix: Some(now),
+                    last_checked_at: Some(checked_at.clone()),
+                    latest_version: Some(v.clone()),
+                    dismissed_versions: cached.dismissed_versions.clone(),
+                };
+                if let Err(e) = write_cache(&new_cache) {
+                    tracing::debug!(target: "cua_driver::version_check",
+                                    "failed to write cache: {e}");
+                }
+                (Some(v), false, None)
+            }
+            Err(e) => {
+                // Network failure — fall back to whatever the cache holds
+                // (better a slightly-stale answer than nothing). The error
+                // surfaces only when no cache is available.
+                tracing::debug!(target: "cua_driver::version_check",
+                                "fetch failed: {e}");
+                match cached.latest_version.clone() {
+                    Some(v) => (Some(v), true, None),
+                    None => (None, false, Some(e)),
+                }
+            }
+        }
+    };
+
+    let update_available = latest
+        .as_deref()
+        .map(|l| is_newer(l, &current))
+        .unwrap_or(false);
+
+    let (install_command, release_notes_url) = if update_available {
+        let l = latest.as_deref().unwrap_or("");
+        (
+            Some(install_one_liner()),
+            Some(format!(
+                "https://github.com/trycua/cua/releases/tag/{RELEASE_TAG_PREFIX}{l}"
+            )),
+        )
+    } else {
+        (None, None)
+    };
+
+    UpdateState {
+        current_version: current,
+        latest_version: latest,
+        update_available,
+        source: "github_releases",
+        checked_at,
+        cache_hit,
+        install_command,
+        release_notes_url,
+        error: fetch_error,
     }
 }
 
@@ -352,7 +492,7 @@ fn cache_path() -> Option<PathBuf> {
 /// Returns the bare version string (e.g. `"0.1.4"`) on success, or a
 /// human-readable error string on failure. The caller is expected to
 /// downgrade errors to `tracing::debug!`.
-pub(crate) fn fetch_latest_version() -> Result<String, String> {
+pub fn fetch_latest_version() -> Result<String, String> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()

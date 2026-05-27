@@ -681,6 +681,19 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+        // Pulse the agent cursor onto the field being typed into (when an
+        // element_index is supplied) so the viewer sees *where* typing happens.
+        if let Some(idx) = args.opt_u64("element_index") {
+            let idx = idx as usize;
+            if let Ok(Ok((bx, by, bw, bh))) =
+                tokio::task::spawn_blocking(move || crate::atspi::get_element_bounds(pid, idx)).await
+            {
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                    x: bx as f64 + bw as f64 / 2.0,
+                    y: by as f64 + bh as f64 / 2.0,
+                });
+            }
+        }
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
             crate::input::send_type_text(xid, &text)
@@ -849,6 +862,18 @@ impl Tool for SetValueTool {
         let idx = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
         let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
         let value_for_task = value.clone();
+        // Pulse the agent cursor onto the target element before writing, so a
+        // value write gets the same visual feedback as a click — the viewer can
+        // see *where* the agent is acting. No-op when the element bounds can't
+        // be resolved or the overlay is disabled.
+        if let Ok(Ok((bx, by, bw, bh))) =
+            tokio::task::spawn_blocking(move || crate::atspi::get_element_bounds(pid, idx)).await
+        {
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                x: bx as f64 + bw as f64 / 2.0,
+                y: by as f64 + bh as f64 / 2.0,
+            });
+        }
         let result = tokio::task::spawn_blocking(move || {
             crate::atspi::set_value(pid, idx, &value_for_task)
         }).await;

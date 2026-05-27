@@ -2366,6 +2366,19 @@ impl Tool for TypeTextTool {
         // duration of the keystrokes (both XAML/UIA and PostMessage paths).
         pin_overlay_above(hwnd);
 
+        // Glide the agent cursor onto the field being typed into, so the viewer
+        // can see *where* the agent is typing — same visual feedback as a click.
+        // Only when an element_index is supplied (we have its cached center);
+        // the focused-element path has no resolvable position to point at.
+        if let Some(idx) = elem_idx {
+            if let Some((cx, cy)) = self.state.element_cache.get_element_center(pid, hwnd, idx as usize) {
+                overlay_glide_to(cx as f64, cy as f64).await;
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                    x: cx as f64, y: cy as f64,
+                });
+            }
+        }
+
         // CUA-543 routing: PostMessage WM_CHAR doesn't reach modern
         // XAML / WinUI3 hosts. When the target is one of those AND the
         // caller has supplied an element_index, route through UIA
@@ -2828,6 +2841,18 @@ impl Tool for SetValueTool {
             Some(v) => v.to_owned(),
             None    => return ToolResult::error("Missing required string field value."),
         };
+
+        // Glide the agent cursor onto the target element before writing its
+        // value, so a value write gets the same visual feedback as a click —
+        // the viewer can see *where* the agent is acting. No-op when the
+        // overlay is disabled or the element has no cached center.
+        if let Some((cx, cy)) = self.state.element_cache.get_element_center(pid, hwnd, idx) {
+            pin_overlay_above(hwnd);
+            overlay_glide_to(cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                x: cx as f64, y: cy as f64,
+            });
+        }
 
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {

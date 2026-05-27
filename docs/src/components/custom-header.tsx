@@ -23,7 +23,7 @@ import CuaDriverIconWhite from '@/assets/cua-driver-icon-white.png';
 
 const docsSites = [
   {
-    name: 'cua-driver',
+    name: 'Cua Driver',
     label: 'Docs',
     href: '/cua-driver/guide/getting-started/introduction',
     prefix: '/cua-driver',

@@ -1,0 +1,54 @@
+name: "CI: SPDX Headers"
+
+# Verifies that every cua-driver source file carries an SPDX-License-Identifier
+# header. Currently warn-only (continue-on-error: true) while we stamp the
+# existing tree in a separate sweep PR; will be flipped to enforcing once the
+# tree is clean. See scripts/spdx-headers.py for the applier and the runbook.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/**/*.swift"
+      - "libs/cua-driver/**/*.rs"
+      - "scripts/spdx-headers.py"
+      - ".github/workflows/ci-spdx-headers.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/**/*.swift"
+      - "libs/cua-driver/**/*.rs"
+      - "scripts/spdx-headers.py"
+
+jobs:
+  check:
+    name: Check SPDX headers (warn-only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check SPDX headers
+        id: spdx
+        continue-on-error: true
+        run: python3 scripts/spdx-headers.py --check libs/cua-driver
+
+      - name: Show help if check failed
+        if: steps.spdx.outcome == 'failure'
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════════╗"
+          echo "║                Missing SPDX-License-Identifier headers            ║"
+          echo "╠══════════════════════════════════════════════════════════════════╣"
+          echo "║                                                                  ║"
+          echo "║  This check is WARN-ONLY today; it will become enforcing once    ║"
+          echo "║  the existing tree has been stamped in a follow-up sweep PR.     ║"
+          echo "║                                                                  ║"
+          echo "║  To stamp new files locally:                                     ║"
+          echo "║                                                                  ║"
+          echo "║    python3 scripts/spdx-headers.py --apply libs/cua-driver       ║"
+          echo "║                                                                  ║"
+          echo "║  To preview without writing:                                     ║"
+          echo "║                                                                  ║"
+          echo "║    python3 scripts/spdx-headers.py --dry-run libs/cua-driver     ║"
+          echo "║                                                                  ║"
+          echo "╚══════════════════════════════════════════════════════════════════╝"

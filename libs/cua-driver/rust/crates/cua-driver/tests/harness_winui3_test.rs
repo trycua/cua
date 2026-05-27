@@ -74,7 +74,7 @@ impl Harness {
     fn launch() -> Option<Self> {
         let exe = harness_exe();
         if !exe.exists() {
-            eprintln!("WinUI3 harness exe not found at {exe:?} — run test-harness/build.ps1");
+            eprintln!("WinUI3 harness exe not found at {exe:?} — run test-harness/build/windows.ps1");
             return None;
         }
         let app = Command::new(&exe)
@@ -253,4 +253,140 @@ fn harness_winui3_xaml_popup_open() {
     println!("✅ harness_winui3_xaml_popup_open: popup body visible in UIA tree");
 
     child.kill().ok();
+}
+
+// ── Session helper for the additional control tests ──────────────────────────
+
+fn winui3_with_session<F>(f: F)
+where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) {
+    let driver = driver_binary();
+    if !driver.exists() { eprintln!("cua-driver.exe not built"); return; }
+    let harness = match Harness::launch() { Some(h) => h, None => return };
+    let mut child = Command::new(&driver)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn cua-driver");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut raw_stdout = child.stdout.take().unwrap();
+    let mut stdout = BufReader::new(&mut raw_stdout);
+    init(&mut stdin, &mut stdout);
+    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WinUI3")
+        .expect("WinUI3 main window");
+    f(harness.pid, wid, &mut stdin, &mut stdout);
+    drop(stdout);
+    drop(stdin);
+    child.kill().ok();
+}
+
+/// Regression guard for the click → TogglePattern dispatch fix.
+/// cua-driver `click` now tries Invoke → Toggle → SelectionItem →
+/// ExpandCollapse before falling through to PostMessage, so WinUI3
+/// CheckBox toggles correctly via UIA without needing dispatch:foreground.
+#[test]
+#[ignore]
+fn harness_winui3_checkbox_toggle() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "chk-agreed").expect("chk-agreed");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("agreed=True"),
+            "WinUI3 CheckBox didn't toggle: TogglePattern dispatch may have regressed.");
+        println!("✅ harness_winui3_checkbox_toggle: agreed=True via UIA Toggle");
+    });
+}
+
+/// Regression guard for SelectionItem.Select dispatch on RadioButton.
+#[test]
+#[ignore]
+fn harness_winui3_radio_select() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "rdo-high").expect("rdo-high");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("prio=High"),
+            "WinUI3 radio didn't select High via SelectionItem.Select.");
+        println!("✅ harness_winui3_radio_select: prio=High via UIA SelectionItem");
+    });
+}
+
+/// Documents cua-driver gap: WinUI3 Slider implements
+/// `RangeValuePattern`, not `ValuePattern`. cua-driver's `set_value` tool
+/// queries `ValuePatternId` specifically (impl_.rs:2640), so it silently
+/// fails on RangeValuePattern-only elements. Real fix: cua-driver should
+/// try RangeValuePattern.SetValue (coercing the string to a double) when
+/// ValuePattern isn't found.
+/// Regression guard for Slider element enumeration + RangeValuePattern
+/// set_value. cua-driver's UIA cache now pre-fetches RangeValuePattern,
+/// and `detect_cached_actions` reports `set_value` when present — so
+/// Slider parents get an `[N]` flat-tree index. The `set_value` tool
+/// already falls back to RangeValuePattern, so writing the value works
+/// end-to-end against a WinUI3 Slider.
+#[test]
+#[ignore]
+fn harness_winui3_slider_set_value() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let idx = find_idx(snapshot_text(&snap), "sld-value")
+            .expect("sld-value should now be in the UIA flat tree after RangeValuePattern detection fix");
+        let resp = tools_call(stdin, stdout, 30, "set_value", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx,
+            "value": "42"
+        }));
+        println!("set_value sld-value=42: {}", resp["result"]["content"][0]["text"]);
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let text = snapshot_text(&post);
+        let advanced = text.lines().any(|l|
+            l.contains("slider_value=") && !l.contains("slider_value=0\""));
+        assert!(advanced,
+            "WinUI3 Slider didn't move via RangeValuePattern.SetValue. Lines: {}",
+            text.lines().filter(|l| l.contains("slider_value"))
+                .collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_winui3_slider_set_value: value moved via UIA RangeValuePattern.SetValue");
+    });
+}
+
+/// Regression guard for ExpandCollapse.Expand + SelectionItem.Select on
+/// WinUI3 ComboBox.
+#[test]
+#[ignore]
+fn harness_winui3_combo_select() {
+    winui3_with_session(|pid, wid, stdin, stdout| {
+        let snap = tools_call(stdin, stdout, 20, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let combo_idx = find_idx(snapshot_text(&snap), "cbo-color").expect("cbo-color");
+        // Expand the dropdown via ExpandCollapse.
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": combo_idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        // Re-snapshot — items materialize after expand.
+        let snap2 = tools_call(stdin, stdout, 31, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        let item_idx = find_idx(snapshot_text(&snap2), "cbo-item-orange")
+            .expect("cbo-item-orange after expand");
+        // Select the item via SelectionItem.Select.
+        let _ = tools_call(stdin, stdout, 32, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": item_idx
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = tools_call(stdin, stdout, 33, "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "ax"}));
+        assert!(snapshot_text(&post).contains("color=orange"),
+            "WinUI3 combo didn't switch to orange via ExpandCollapse + SelectionItem.Select.");
+        println!("✅ harness_winui3_combo_select: color=orange via UIA Expand + Select");
+    });
 }

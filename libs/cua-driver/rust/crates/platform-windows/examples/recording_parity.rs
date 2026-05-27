@@ -1,4 +1,9 @@
-//! Parity check for `set_recording` + `get_recording_state`.
+//! Smoke check for the recording tools via the Windows named-pipe daemon.
+//!
+//! Renamed from the old "Swift-parity" check — the API split into
+//! `start_recording` + `stop_recording` (see JOURNAL_VIDEO.md) means
+//! the older Swift CLI surface is no longer the reference. This file
+//! verifies the new contract end-to-end against a running daemon.
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -31,8 +36,8 @@ fn main() {
             .map(|s| s.to_owned()).unwrap_or_default()
     }
 
-    // 1. Disable to start clean.
-    let _ = req(&mut pipe, r#"{"method":"call","name":"set_recording","args":{"enabled":false}}"#);
+    // 1. Stop to start clean (idempotent).
+    let _ = req(&mut pipe, r#"{"method":"call","name":"stop_recording","args":{}}"#);
 
     // 2. get_recording_state — disabled.
     let r1 = req(&mut pipe, r#"{"method":"call","name":"get_recording_state","args":{}}"#);
@@ -40,43 +45,36 @@ fn main() {
     assert_eq!(t1, "✅ recording: disabled", "Disabled text wrong: {t1:?}");
     println!("get_recording_state disabled OK");
 
-    // 3. set_recording missing field.
-    let r2 = req(&mut pipe, r#"{"method":"call","name":"set_recording","args":{}}"#);
+    // 3. start_recording without output_dir → must error.
+    let r2 = req(&mut pipe, r#"{"method":"call","name":"start_recording","args":{}}"#);
     let e2 = extract_text(&serde_json::from_str(r2.trim()).unwrap());
-    assert!(e2.to_lowercase().contains("enabled") && e2.to_lowercase().contains("required"),
-        "Missing-enabled wording wrong: {e2:?}");
-    println!("Missing-enabled err OK");
-
-    // 4. set_recording enabled without output_dir.
-    let r3 = req(&mut pipe, r#"{"method":"call","name":"set_recording","args":{"enabled":true}}"#);
-    let e3 = extract_text(&serde_json::from_str(r3.trim()).unwrap());
-    assert!(e3.contains("`output_dir` is required when enabling recording"),
-        "Missing-output_dir wording wrong: {e3:?}");
+    assert!(e2.to_lowercase().contains("output_dir") && e2.to_lowercase().contains("required"),
+        "Missing-output_dir wording wrong: {e2:?}");
     println!("Missing-output_dir err OK");
 
-    // 5. Enable with output_dir.
+    // 4. Start with output_dir, opt out of video (no ffmpeg dependency).
     let dir = std::env::temp_dir().join("cua-rec-parity").to_string_lossy().into_owned()
         .replace('\\', "\\\\");
     let r4 = req(&mut pipe, &format!(
-        r#"{{"method":"call","name":"set_recording","args":{{"enabled":true,"output_dir":"{dir}"}}}}"#));
+        r#"{{"method":"call","name":"start_recording","args":{{"output_dir":"{dir}","record_video":false}}}}"#));
     let t4 = extract_text(&serde_json::from_str(r4.trim()).unwrap());
-    println!("Enable resp: {t4:?}");
-    assert!(t4.starts_with("✅ Recording enabled -> "),
-        "Enable text wrong: {t4:?}");
+    println!("Start resp: {t4:?}");
+    assert!(t4.starts_with("✅ Recording started -> "),
+        "Start text wrong: {t4:?}");
 
-    // 6. get_recording_state — enabled.
+    // 5. get_recording_state — enabled.
     let r5 = req(&mut pipe, r#"{"method":"call","name":"get_recording_state","args":{}}"#);
     let t5 = extract_text(&serde_json::from_str(r5.trim()).unwrap());
     println!("State enabled: {t5:?}");
     assert!(t5.starts_with("✅ recording: enabled output_dir=") && t5.contains("next_turn="),
         "Enabled state text wrong: {t5:?}");
 
-    // 7. Disable.
-    let r6 = req(&mut pipe, r#"{"method":"call","name":"set_recording","args":{"enabled":false}}"#);
+    // 6. Stop.
+    let r6 = req(&mut pipe, r#"{"method":"call","name":"stop_recording","args":{}}"#);
     let t6 = extract_text(&serde_json::from_str(r6.trim()).unwrap());
-    assert_eq!(t6, "✅ Recording disabled.", "Disabled text wrong: {t6:?}");
+    assert!(t6.starts_with("✅ Recording stopped."), "Stop text wrong: {t6:?}");
 
-    println!("\n✅ PASS: get_recording_state + set_recording match Swift");
+    println!("\n✅ PASS: start_recording + stop_recording + get_recording_state");
 }
 
 #[cfg(not(target_os = "windows"))]

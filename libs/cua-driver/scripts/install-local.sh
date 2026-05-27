@@ -6,18 +6,28 @@
 # private helper based on host + flags.
 #
 # Helpers (private — do not invoke directly):
-#   _install-local-swift.sh   Builds CuaDriver.app from libs/cua-driver/swift
-#                             and installs to /Applications + ~/.local/bin
 #   _install-local-rust.sh    Builds cua-driver from libs/cua-driver/rust
 #                             and installs the cross-platform binary
+#   _install-local-swift.sh   Builds CuaDriver.app from libs/cua-driver/swift
+#                             and installs to /Applications + ~/.local/bin
 #
-# Defaults:
-#   macOS   → Swift backend (today's default; pass --backend=rust to override)
-#   non-mac → Rust backend (Swift is macOS-only; auto-selected)
+# Defaults (this script only — install.sh keeps the Swift default on macOS):
+#   all hosts → Rust backend
+#
+# Why the local installer defaults to Rust while the production install.sh
+# still gates it behind --experimental-rust: this script is for developers
+# working on the checked-out tree, where the Rust port is the active
+# development target across all three platforms (Windows / Linux / macOS)
+# and has the full integration-test surface attached (see
+# crates/cua-driver/tests/harness_*_test.rs). The production curl-pipe-bash
+# stays on Swift on macOS until the Rust port flips experimental → stable.
 #
 # Flags (forwarded verbatim to whichever helper runs):
-#   --experimental-rust    opt into the Rust port (same as --backend=rust)
-#   --backend=swift|rust   explicit backend selector
+#   --backend=swift|rust   explicit backend selector (defaults to rust here)
+#   --experimental-rust    legacy alias for --backend=rust; now a no-op
+#                          since rust is the default. Accepted for
+#                          backward compat with scripts/docs that still
+#                          pass it.
 #   --release              build the release configuration (default: debug)
 #   --daemon | --autostart pass through to the backend helper
 #   --bin-dir <path>       override the symlink destination (default ~/.local/bin)
@@ -31,9 +41,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # --- Lightweight flag parsing (mirror install.sh) -----------------------
 # Two-pass shape: collect every unrecognised arg into FORWARDED_ARGS so the
 # selected backend helper sees the same argv shape as before the wrapper
-# existed. Recognised dispatch flags (--experimental-rust, --backend=*) are
-# consumed here and never forwarded.
-USE_RUST_BACKEND=0
+# existed. Recognised dispatch flags (--backend=*, --experimental-rust)
+# are consumed here and never forwarded.
+USE_SWIFT_BACKEND=0
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -41,9 +51,9 @@ while [[ $# -gt 0 ]]; do
         FORWARDED_ARGS+=("$1"); shift; continue
     fi
     case "$1" in
-        --experimental-rust) USE_RUST_BACKEND=1; shift ;;
-        --backend=rust)      USE_RUST_BACKEND=1; shift ;;
-        --backend=swift)     shift ;;                 # explicit default — no-op
+        --backend=swift)     USE_SWIFT_BACKEND=1; shift ;;
+        --backend=rust)      shift ;;                 # explicit default — no-op
+        --experimental-rust) shift ;;                 # legacy alias for --backend=rust
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -53,17 +63,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Auto-select Rust on non-macOS — Swift has no install path off Darwin.
-if [[ "$USE_RUST_BACKEND" == "0" && "$(uname -s 2>/dev/null)" != "Darwin" ]]; then
-    USE_RUST_BACKEND=1
-    printf 'note: detected non-macOS host (%s); auto-selecting the cua-driver-rs Rust backend.\n' \
+# Hard-error on --backend=swift off-Darwin — there's no Swift install path
+# anywhere else and the helper would just bail with a confusing error.
+if [[ "$USE_SWIFT_BACKEND" == "1" && "$(uname -s 2>/dev/null)" != "Darwin" ]]; then
+    printf 'error: --backend=swift requested on non-macOS host (%s); Swift binary is macOS-only.\n' \
         "$(uname -s 2>/dev/null || echo unknown)" >&2
+    exit 2
 fi
 
-if [[ "$USE_RUST_BACKEND" == "1" ]]; then
-    HELPER="$SCRIPT_DIR/_install-local-rust.sh"
-else
+if [[ "$USE_SWIFT_BACKEND" == "1" ]]; then
     HELPER="$SCRIPT_DIR/_install-local-swift.sh"
+else
+    HELPER="$SCRIPT_DIR/_install-local-rust.sh"
 fi
 
 if [[ ! -f "$HELPER" ]]; then

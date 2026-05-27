@@ -227,7 +227,6 @@ const WIN_W: f64 = 460.0;
 const WIN_H: f64 = 360.0;
 const PAD: f64 = 20.0;
 const ROW_H: f64 = 76.0;
-const BUTTON_BAR_H: f64 = 56.0;
 const READY_STRIP_H: f64 = 36.0;
 
 unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
@@ -379,7 +378,6 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
     // ---- Stash handles for the timer callback ----
     HANDLES.with(|cell| {
         *cell.borrow_mut() = Some(PanelHandles {
-            window: ptr_to_usize(window),
             heading: ptr_to_usize(heading),
             subheading: ptr_to_usize(subheading),
             ready_strip: ptr_to_usize(ready_strip),
@@ -430,7 +428,6 @@ struct RowHandles {
 }
 
 struct PanelHandles {
-    window: usize,
     heading: usize,
     subheading: usize,
     ready_strip: usize,

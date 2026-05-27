@@ -377,3 +377,133 @@ pub fn send_click_synthesized(
 
     Ok(())
 }
+
+/// Press-hold-move-release drag via `SendInput`. Companion to
+/// [`send_click_synthesized`] for the `drag` tool's `dispatch:"foreground"`
+/// path.
+///
+/// Why a SendInput drag is needed at all: the PostMessage drag path posts
+/// `WM_LBUTTONDOWN` + `WM_MOUSEMOVE`s + `WM_LBUTTONUP` to the target HWND.
+/// PostMessage does NOT update the per-thread keyboard state that
+/// `GetKeyState(VK_LBUTTON)` reads, so frameworks that poll the button-held
+/// state during their drag handler (WPF's Thumb.IsDragging logic does this
+/// via Mouse.LeftButton, which polls GetKeyState) never observe the button
+/// as down and the drag is a no-op. SendInput goes through the system
+/// input queue and DOES update GetKeyState, so a WPF Slider thumb actually
+/// tracks the drag.
+///
+/// Same UIAccess constraints as [`send_click_synthesized`] — the
+/// `SetForegroundWindow` swap is rejected from non-UIAccess processes
+/// when foreground-lock is active; route through `cua-driver-uia.exe`
+/// for reliable operation.
+pub fn send_drag_synthesized(
+    target: u64,
+    sx_from: i32, sy_from: i32,
+    sx_to:   i32, sy_to:   i32,
+    duration_ms: u64,
+    steps: usize,
+    button: &str,
+) -> Result<()> {
+    let target = HWND(target as *mut _);
+    if target.0.is_null() {
+        bail!("invalid target hwnd");
+    }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
+        bail!(msg);
+    }
+
+    let (down_flag, up_flag) = match button {
+        "right"  => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        _        => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+    };
+
+    let (vd_x, vd_y, vd_w, vd_h) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
+        )
+    };
+    let norm = |sx: i32, sy: i32| -> (i32, i32) {
+        let nx = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
+        let ny = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
+        (nx, ny)
+    };
+    let make_input = |dx: i32, dy: i32, flags| INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx, dy, mouseData: 0,
+                dwFlags: flags | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                time: 0, dwExtraInfo: 0,
+            },
+        },
+    };
+
+    let steps = steps.max(1);
+    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { 0 };
+
+    unsafe {
+        let prev_fg = GetForegroundWindow();
+        let mut prev_cursor = POINT::default();
+        let _ = GetCursorPos(&mut prev_cursor);
+
+        let _ = SetForegroundWindow(target);
+        sleep(Duration::from_millis(8));
+        let actual_fg = GetForegroundWindow();
+        if actual_fg != target {
+            bail!(
+                "Foreground swap to target HWND {:?} was rejected by Windows \
+                 (actual foreground is HWND {:?}). Non-UIAccess processes can't \
+                 reliably change foreground under the foreground-lock. Route the \
+                 drag through cua-driver-uia.exe.",
+                target.0, actual_fg.0
+            );
+        }
+
+        // 1. Move + press at the start of the drag.
+        let (nfx, nfy) = norm(sx_from, sy_from);
+        let _ = SetCursorPos(sx_from, sy_from);
+        let prelude = [
+            make_input(nfx, nfy, MOUSEEVENTF_MOVE),
+            make_input(nfx, nfy, down_flag),
+        ];
+        let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != prelude.len() {
+            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            let _ = SetForegroundWindow(prev_fg);
+            bail!("SendInput drag-prelude inserted {sent}/{} events", prelude.len());
+        }
+
+        // 2. Interpolate the path. SetCursorPos + MOUSEEVENTF_MOVE in lockstep
+        //    so both the visible cursor and the system input queue track the
+        //    same path — WPF's drag-handler watches GetKeyState during each
+        //    move event.
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let x = sx_from + ((sx_to - sx_from) as f64 * t).round() as i32;
+            let y = sy_from + ((sy_to - sy_from) as f64 * t).round() as i32;
+            let (nx, ny) = norm(x, y);
+            let _ = SetCursorPos(x, y);
+            let mv = [make_input(nx, ny, MOUSEEVENTF_MOVE)];
+            let _ = SendInput(&mv, std::mem::size_of::<INPUT>() as i32);
+            if step_delay_ms > 0 {
+                sleep(Duration::from_millis(step_delay_ms));
+            }
+        }
+
+        // 3. Release at the end.
+        let (ntx, nty) = norm(sx_to, sy_to);
+        let release = [make_input(ntx, nty, up_flag)];
+        let _ = SendInput(&release, std::mem::size_of::<INPUT>() as i32);
+
+        // Brief settle, then restore previous state.
+        sleep(Duration::from_millis(40));
+        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+        let _ = SetForegroundWindow(prev_fg);
+    }
+
+    Ok(())
+}

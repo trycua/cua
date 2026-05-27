@@ -125,7 +125,7 @@ async fn async_main() -> anyhow::Result<()> {
 
 #[cfg(target_os = "windows")]
 async fn handle_request(
-    reg: &mcp_server::tool::ToolRegistry,
+    reg: &cua_driver_core::tool::ToolRegistry,
     req: PipeRequest,
 ) -> PipeResponse {
     match req.method.as_str() {
@@ -164,9 +164,9 @@ async fn handle_request(
             let result = reg.invoke(&tool_name, args).await;
             let is_err = result.is_error.unwrap_or(false);
             let content: Vec<serde_json::Value> = result.content.iter().map(|c| match c {
-                mcp_server::protocol::Content::Text { text, .. } =>
+                cua_driver_core::protocol::Content::Text { text, .. } =>
                     serde_json::json!({"type":"text","text":text}),
-                mcp_server::protocol::Content::Image { data, mime_type, .. } =>
+                cua_driver_core::protocol::Content::Image { data, mime_type, .. } =>
                     serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
             }).collect();
             let mut result_obj = serde_json::json!({"content": content, "isError": is_err});
@@ -175,7 +175,7 @@ async fn handle_request(
             }
             if is_err {
                 let msg = result.content.iter()
-                    .filter_map(|c| if let mcp_server::protocol::Content::Text { text, .. } = c {
+                    .filter_map(|c| if let cua_driver_core::protocol::Content::Text { text, .. } = c {
                         Some(text.as_str())
                     } else { None })
                     .collect::<Vec<_>>().join("\n");

@@ -207,7 +207,7 @@ pub fn read_class_name(hwnd: u64) -> String {
 pub fn background_unavailable_error(
     hwnd: u64,
     kind: EventKind,
-) -> mcp_server::protocol::ToolResult {
+) -> cua_driver_core::protocol::ToolResult {
     let class = read_class_name(hwnd);
     let text = format!(
         "Background dispatch is not available for target window class \
@@ -216,7 +216,7 @@ pub fn background_unavailable_error(
          swap directly by setting dispatch:\"foreground\".",
         kind.name()
     );
-    mcp_server::protocol::ToolResult::error(text)
+    cua_driver_core::protocol::ToolResult::error(text)
         .with_structured(serde_json::json!({
             "code": "background_unavailable",
             "target_class": class,

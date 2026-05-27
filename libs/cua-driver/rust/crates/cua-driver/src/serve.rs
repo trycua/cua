@@ -242,7 +242,7 @@ pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<Da
 /// This is `async` and must be called from a tokio runtime.
 #[cfg(unix)]
 pub async fn run_serve(
-    registry: std::sync::Arc<mcp_server::tool::ToolRegistry>,
+    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -380,9 +380,9 @@ pub async fn run_serve(
                                 let is_err = result.is_error.unwrap_or(false);
                                 let content: Vec<serde_json::Value> = result.content.iter().map(|c| {
                                     match c {
-                                        mcp_server::protocol::Content::Text { text, .. } =>
+                                        cua_driver_core::protocol::Content::Text { text, .. } =>
                                             serde_json::json!({"type":"text","text":text}),
-                                        mcp_server::protocol::Content::Image { data, mime_type, .. } =>
+                                        cua_driver_core::protocol::Content::Image { data, mime_type, .. } =>
                                             serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
                                     }
                                 }).collect();
@@ -396,7 +396,7 @@ pub async fn run_serve(
                                 let resp = if is_err {
                                     DaemonResponse::err(
                                         result.content.iter()
-                                            .filter_map(|c| if let mcp_server::protocol::Content::Text { text, .. } = c { Some(text.as_str()) } else { None })
+                                            .filter_map(|c| if let cua_driver_core::protocol::Content::Text { text, .. } = c { Some(text.as_str()) } else { None })
                                             .collect::<Vec<_>>()
                                             .join("\n"),
                                         1
@@ -608,7 +608,7 @@ struct SecurityAttributesRaw {
 
 #[cfg(target_os = "windows")]
 pub async fn run_serve(
-    registry: std::sync::Arc<mcp_server::tool::ToolRegistry>,
+    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -755,9 +755,9 @@ pub async fn run_serve(
                                 let result = reg.invoke(&tool_name, args).await;
                                 let is_err = result.is_error.unwrap_or(false);
                                 let content: Vec<serde_json::Value> = result.content.iter().map(|c| match c {
-                                    mcp_server::protocol::Content::Text { text, .. } =>
+                                    cua_driver_core::protocol::Content::Text { text, .. } =>
                                         serde_json::json!({"type":"text","text":text}),
-                                    mcp_server::protocol::Content::Image { data, mime_type, .. } =>
+                                    cua_driver_core::protocol::Content::Image { data, mime_type, .. } =>
                                         serde_json::json!({"type":"image","data":data,"mimeType":mime_type}),
                                 }).collect();
                                 let mut result_obj = serde_json::json!({"content": content, "isError": is_err});
@@ -767,7 +767,7 @@ pub async fn run_serve(
                                 let resp = if is_err {
                                     DaemonResponse::err(
                                         result.content.iter()
-                                            .filter_map(|c| if let mcp_server::protocol::Content::Text { text, .. } = c { Some(text.as_str()) } else { None })
+                                            .filter_map(|c| if let cua_driver_core::protocol::Content::Text { text, .. } = c { Some(text.as_str()) } else { None })
                                             .collect::<Vec<_>>().join("\n"),
                                         1
                                     )
@@ -803,7 +803,7 @@ pub async fn run_serve(
 
 #[cfg(not(any(unix, target_os = "windows")))]
 pub async fn run_serve(
-    _registry: std::sync::Arc<mcp_server::tool::ToolRegistry>,
+    _registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     _socket_path: &str,
     _pid_file_path: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -814,7 +814,7 @@ pub async fn run_serve(
 
 /// `cua-driver serve` implementation.
 pub fn run_serve_cmd(
-    registry: std::sync::Arc<mcp_server::tool::ToolRegistry>,
+    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
     socket_path: &str,
     pid_file_path: Option<&str>,
 ) {

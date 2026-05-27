@@ -19,7 +19,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_ProcessIdPropertyId, UIA_ValueValuePropertyId,
     UIA_InvokePatternId, UIA_SelectionItemPatternId,
     UIA_TogglePatternId, UIA_ExpandCollapsePatternId, UIA_TextPatternId,
-    UIA_ValuePatternId, UIA_ScrollPatternId,
+    UIA_ValuePatternId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
     TreeScope_Children, TreeScope_Subtree,
 };
 
@@ -32,7 +32,11 @@ pub use windows_enum::enumerate_top_level_windows;
 const MAX_DEPTH: usize = 25;
 const MAX_TOTAL_ELEMENTS: usize = 5000;
 
-/// A single node in the UIA tree.
+/// A single node in the accessibility tree.
+///
+/// Same shape for the UIA primary path AND the MSAA fallback (used for
+/// SAL/VCL window classes — see `msaa.rs`). MSAA-only fields use the
+/// `_ptr is IAccessible` / `msaa_role = Some(...)` discriminator.
 #[derive(Clone)]
 pub struct UiaNode {
     pub element_index: Option<usize>,
@@ -42,11 +46,22 @@ pub struct UiaNode {
     pub automation_id: Option<String>,
     pub help_text: Option<String>,
     pub actions: Vec<String>,
-    /// Raw IUIAutomationElement pointer as usize (retained for cache).
+    /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
+    /// MSAA path) as usize. Retained — `ElementCache` Drop releases it via
+    /// the `kind`-appropriate vtable.
     pub element_ptr: usize,
     /// Screen-coordinate center, captured at walk time to avoid later COM calls.
     pub center_x: i32,
     pub center_y: i32,
+    /// Full screen-coord rect (left, top, right, bottom). Available for
+    /// elements that report a meaningful bounding box. Used by the click
+    /// tool when `action:"expand"` needs the right-edge offset.
+    pub rect: Option<(i32, i32, i32, i32)>,
+    /// MSAA role code (e.g. 0x38 = `ROLE_SYSTEM_BUTTONDROPDOWN`). `Some`
+    /// iff this node came from the MSAA walker — the click tool checks
+    /// this to route `action:"expand"` to a right-edge SendInput click
+    /// instead of an unsupported UIA pattern lookup.
+    pub msaa_role: Option<i32>,
 }
 
 pub struct UiaTreeResult {
@@ -100,6 +115,7 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
         UIA_SelectionItemPatternId,
         UIA_ExpandCollapsePatternId,
         UIA_ValuePatternId,
+        UIA_RangeValuePatternId,
         UIA_TextPatternId,
         UIA_ScrollPatternId,
     ] {
@@ -116,55 +132,33 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
 
     let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
 
-    // SAL (LibreOffice / OpenOffice) fast-path: VCL's UIA provider hangs
-    // on `BuildUpdatedCache(TreeScope.Subtree)` for transient dialogs
-    // (SALSUBFRAME class — Confirmation, Warning, modal Yes/No). Both
-    // the atomic `ElementFromHandleBuildCache` and the split
-    // `ElementFromHandle + BuildUpdatedCache(Subtree)` paths block
-    // indefinitely under the daemon's MTA thread pool (the same code
-    // runs fine via CLI in-process, suggesting a COM apartment /
-    // concurrent-access interaction with SAL's provider). The 4 s
-    // outer timeout fires and the caller gets the structured
-    // diagnostic, but that's a wasted 4 s every call.
+    // SAL (LibreOffice / OpenOffice) fallback: ALL SAL-class windows go
+    // through the MSAA walker.
     //
-    // Short-circuit by class detection: if the target's class starts
-    // with "SAL", skip the bulk-cache walk entirely and return the
-    // same synthetic stub the post-walk SAL-skip would emit, with the
-    // three actionable fallback options. Saves the 4 s wait and the
-    // ambiguity of "did the walk run? did it find nothing? did it
-    // hang?" The caller sees the stub immediately and routes to the
-    // appropriate workaround.
-    // Class lookup once — used both for the fast-path skip decision
-    // and the diagnostic stub. SALSUBFRAME is the empirically-confirmed
-    // hang class (modal Confirmation / Warning dialogs). SALFRAME
-    // (the document window, the Recovery dialog) walks fine, so don't
-    // include it in the skip list — pixel + element_index against
-    // Recovery's Discard All button worked end-to-end through the
-    // primary path. SALMENU / SALTMPSUBFRAME are transient menu hosts
-    // that the user typically doesn't get_window_state on; default to
-    // skipping out of caution. If a real use-case emerges, narrow.
-    let sal_class: Option<String> = {
+    // Two reasons:
+    //   1. **Hang avoidance** for SALSUBFRAME / SALMENU / SALTMPSUBFRAME —
+    //      VCL's UIA provider hangs on `BuildUpdatedCache(TreeScope.Subtree)`
+    //      under the daemon's MTA pool, wasting the 4 s outer timeout.
+    //   2. **Role fidelity** for SALFRAME (main document window, Recovery
+    //      dialog) — UIA technically walks fine, but the built-in
+    //      MSAA→UIA proxy collapses `ROLE_SYSTEM_BUTTONDROPDOWN` (0x38) to
+    //      a featureless `SplitButton` with no separable dropdown
+    //      affordance. MSAA via oleacc.dll preserves the role, letting
+    //      the click tool route `action:"expand"` to a right-edge
+    //      SendInput click that opens the dropdown half (e.g. LO Writer
+    //      "Font Color" → SALTMPSUBFRAME color picker).
+    //
+    // The UIA pattern dispatches we lose for SALFRAME (Toggle / Select /
+    // ExpandCollapse) only matter for WinUI3 controls, which VCL doesn't
+    // host. Net win.
+    let sal_class: bool = {
         use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
         let mut buf = [0u16; 64];
         let n = GetClassNameW(hwnd_win, &mut buf);
-        if n > 0 {
-            let s = String::from_utf16_lossy(&buf[..n as usize]);
-            if s == "SALSUBFRAME" || s == "SALMENU" || s == "SALTMPSUBFRAME" {
-                Some(s)
-            } else { None }
-        } else { None }
+        n > 0 && String::from_utf16_lossy(&buf[..n as usize]).starts_with("SAL")
     };
-    if let Some(class) = sal_class {
-        let stub = format!(
-            "- Window <{class} — SAL/VCL target, UIA walk skipped>\n\
-             (SAL's UIA provider hangs on TreeScope.Subtree BuildUpdatedCache \
-             when the daemon is running in MTA; the cua-driver fast-path \
-             returns immediately rather than wait 4 s. Use one of: \
-             (a) `screenshot(pid, window_id)` + pixel `click(x, y)`; \
-             (b) `press_key` with `dispatch:\"foreground\"` (Esc / Enter / Y / N); \
-             (c) `get_window_state` with `capture_mode:\"vision\"`.)\n"
-        );
-        return UiaTreeResult { tree_markdown: stub, nodes: Vec::new() };
+    if sal_class {
+        return crate::msaa::walk_msaa_tree(hwnd);
     }
 
     // Two-call sequence (ElementFromHandle + BuildUpdatedCache) instead of
@@ -407,7 +401,7 @@ unsafe fn walk_cached(
         let node = if is_actionable {
             let idx = *counter;
             *counter += 1;
-            let (center_x, center_y) = read_cached_bounding_rect(element);
+            let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
             UiaNode {
                 element_index: Some(idx),
                 control_type: control_type.clone(),
@@ -419,6 +413,8 @@ unsafe fn walk_cached(
                 element_ptr: ptr,
                 center_x,
                 center_y,
+                rect,
+                msaa_role: None,
             }
         } else {
             UiaNode {
@@ -432,6 +428,8 @@ unsafe fn walk_cached(
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
+                rect: None,
+                msaa_role: None,
             }
         };
 
@@ -495,11 +493,19 @@ fn read_cached_bool(element: &IUIAutomationElement, property_id: windows::Win32:
     }
 }
 
-fn read_cached_bounding_rect(element: &IUIAutomationElement) -> (i32, i32) {
+/// Read bounding rect as (center_x, center_y, Some((l,t,r,b))). Returns
+/// rect=None when the element has no meaningful BoundingRectangle (offscreen
+/// containers, structure-only elements).
+fn read_cached_bounding_rect_full(element: &IUIAutomationElement) -> (i32, i32, Option<(i32, i32, i32, i32)>) {
     unsafe {
-        element.CachedBoundingRectangle()
-            .map(|r| ((r.left + r.right) / 2, (r.top + r.bottom) / 2))
-            .unwrap_or((0, 0))
+        match element.CachedBoundingRectangle() {
+            Ok(r) if r.right > r.left && r.bottom > r.top => (
+                (r.left + r.right) / 2,
+                (r.top + r.bottom) / 2,
+                Some((r.left, r.top, r.right, r.bottom)),
+            ),
+            _ => (0, 0, None),
+        }
     }
 }
 
@@ -520,6 +526,13 @@ fn detect_cached_actions(element: &IUIAutomationElement, is_enabled: bool) -> Ve
             actions.push("expand".into());
         }
         if element.GetCachedPattern(UIA_ValuePatternId).is_ok() {
+            actions.push("set_value".into());
+        }
+        // RangeValuePattern is exposed by Sliders, ProgressBars, and other
+        // numeric-range controls. Without this entry the slider parent
+        // gets actions=[] → marked non-actionable → no `[N]` index in the
+        // flat tree, making the slider unaddressable by AutomationId.
+        if element.GetCachedPattern(UIA_RangeValuePatternId).is_ok() {
             actions.push("set_value".into());
         }
         if element.GetCachedPattern(UIA_TextPatternId).is_ok() {
@@ -579,7 +592,7 @@ fn control_type_name(id: i32) -> String {
     }.into()
 }
 
-fn format_node_line(node: &UiaNode) -> String {
+pub(crate) fn format_node_line(node: &UiaNode) -> String {
     let mut s = String::new();
     if let Some(idx) = node.element_index {
         s.push_str(&format!("- [{}] {}", idx, node.control_type));

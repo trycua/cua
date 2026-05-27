@@ -23,12 +23,12 @@
 //!        pre-existing `cua-driver-eval` bookmark (creation flow is
 //!        described in the docs; not yet automated end-to-end).  Zero
 //!        config, no launch flag.
-//!     2. **CDP fallback** — uses the shared `mcp_server::cdp` helper.
+//!     2. **CDP fallback** — uses the shared `cua_driver_core::cdp` helper.
 //!        Requires `--remote-debugging-port=N` and `CUA_DRIVER_CDP_PORT=N`.
 //!        Returns an actionable error if neither path works.
 
 use async_trait::async_trait;
-use mcp_server::page::{ClickElementResult, PageBackend};
+use cua_driver_core::page::{ClickElementResult, PageBackend};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -125,7 +125,7 @@ impl PageBackend for WindowsPageBackend {
                  bookmark-URL bypass.  Or use `get_text` / `query_dom` for read-only access."
             ),
         };
-        let result = mcp_server::cdp::evaluate(port, javascript, true).await?;
+        let result = cua_driver_core::cdp::evaluate(port, javascript, true).await?;
         Ok(format!("cdp.runtime.evaluate.user_gesture: {result}"))
     }
 
@@ -166,18 +166,30 @@ impl PageBackend for WindowsPageBackend {
 
         // The wrapper paths return the result JSON-stringified. The bookmark
         // wrapper wraps the user expression's return in JSON.stringify(),
-        // which means the inner string itself is JSON-encoded — we need to
-        // parse twice to get the actual coord object.
-        let parsed: serde_json::Value = serde_json::from_str(&probe_json)
-            .or_else(|_| {
-                // Bookmark wrapper double-encoded the string — decode the
-                // outer JSON-string, then parse the inner JSON.
-                let inner: String = serde_json::from_str(&probe_json)?;
-                serde_json::from_str::<serde_json::Value>(&inner)
-            })
-            .map_err(|e| anyhow::anyhow!(
-                "click_element: could not parse coord JSON from probe (raw: {probe_raw:?}): {e}"
-            ))?;
+        // and CDP's runtime.evaluate also serialises the JS return as a
+        // JSON-string when it's not a primitive — either way the inner
+        // string itself is JSON-encoded. We need to parse twice to get
+        // the actual coord object.
+        //
+        // Crucially, the first parse can SUCCEED as a Value::String (when
+        // the outer is a quoted JSON-string), so we can't rely on
+        // `.or_else(|_| ...)` to trigger the second decode — that branch
+        // only fires on a hard parse error. Inspect the parsed value and
+        // re-decode when it's a String.
+        let parsed: serde_json::Value = {
+            let first = serde_json::from_str::<serde_json::Value>(&probe_json)
+                .map_err(|e| anyhow::anyhow!(
+                    "click_element: could not parse coord JSON from probe (raw: {probe_raw:?}): {e}"
+                ))?;
+            match first {
+                serde_json::Value::String(inner) => serde_json::from_str(&inner)
+                    .map_err(|e| anyhow::anyhow!(
+                        "click_element: inner JSON parse failed for double-encoded probe \
+                         response (raw: {probe_raw:?}): {e}"
+                    ))?,
+                other => other,
+            }
+        };
 
         // Required-field validation. The previous version defaulted any
         // missing field to 0.0, which silently animated the visible cursor

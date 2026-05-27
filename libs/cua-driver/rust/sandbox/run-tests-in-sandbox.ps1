@@ -87,6 +87,14 @@ try {
     Write-Host "`n[BUILD] cargo test --no-run (harness_winui3_test)..." -ForegroundColor Yellow
     cargo test --test harness_winui3_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_winui3_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (harness_web_test)..." -ForegroundColor Yellow
+    cargo test --test harness_web_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_web_test) failed" }
+
+    Write-Host "`n[BUILD] cargo test --no-run (harness_bg_modality_test)..." -ForegroundColor Yellow
+    cargo test --test harness_bg_modality_test --no-run
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_bg_modality_test) failed" }
 } finally { Pop-Location }
 
 # ── 1.5. Build the .NET test-harness if dotnet is on PATH ────────────────────
@@ -95,7 +103,7 @@ try {
 # dotnet isn't available — the smoke tests degrade to "skipped" inside
 # the sandbox rather than failing the whole run.
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-    $harnessBuild = Join-Path $wsRoot "..\test-harness\build.ps1"
+    $harnessBuild = Join-Path $wsRoot "..\test-harness\build\windows.ps1"
     if (Test-Path $harnessBuild) {
         Write-Host "`n[BUILD] test-harness (dotnet publish)..." -ForegroundColor Yellow
         # build.ps1 sets $ErrorActionPreference=Stop and throws on
@@ -110,7 +118,7 @@ if (Get-Command dotnet -ErrorAction SilentlyContinue) {
             Write-Host "[WARN] test-harness build errored: $($_.Exception.Message) — harness tests will skip." -ForegroundColor Yellow
         }
     } else {
-        Write-Host "`n[SKIP] test-harness/build.ps1 not found — harness tests will skip." -ForegroundColor Yellow
+        Write-Host "`n[SKIP] test-harness/build/windows.ps1 not found — harness tests will skip." -ForegroundColor Yellow
     }
 } else {
     Write-Host "`n[SKIP] dotnet CLI not on PATH — test-harness build skipped, harness tests will degrade." -ForegroundColor Yellow

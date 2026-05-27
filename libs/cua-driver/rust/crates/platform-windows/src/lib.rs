@@ -9,17 +9,21 @@
 //!
 //! Reference: /tmp/trope-cua/src/CuaDriver.Win/
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;
 pub mod diagnostics;
+pub mod recording_hooks;
 
 #[cfg(target_os = "windows")]
 pub mod win32;
 
 #[cfg(target_os = "windows")]
 pub mod uia;
+
+#[cfg(target_os = "windows")]
+pub mod msaa;
 
 #[cfg(target_os = "windows")]
 pub mod input;

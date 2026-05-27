@@ -80,21 +80,21 @@ pub fn screenshot_display() -> anyhow::Result<(String, u32, u32)> {
 }
 
 // PNG/JPEG/resize/crosshair helpers — re-exports of the shared
-// `mcp_server::image_utils` module. The previous file-local copies were
+// `cua_driver_core::image_utils` module. The previous file-local copies were
 // near-identical to the Windows and Linux versions; the dedup-audit
 // (2026-05) moved them all to one place. See
 // `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the audit trail.
 
 /// Convert raw PNG bytes to JPEG at the given quality (1-95).
 pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> anyhow::Result<Vec<u8>> {
-    mcp_server::image_utils::png_bytes_to_jpeg(png_bytes, quality)
+    cua_driver_core::image_utils::png_bytes_to_jpeg(png_bytes, quality)
 }
 
 /// Downscale `png_bytes` so neither dimension exceeds `max_dim`.
 /// If `max_dim == 0` or the image already fits, returns the original
 /// bytes unchanged.
 pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> anyhow::Result<Vec<u8>> {
-    mcp_server::image_utils::resize_png_if_needed(png_bytes, max_dim)
+    cua_driver_core::image_utils::resize_png_if_needed(png_bytes, max_dim)
 }
 
 /// Draw a red crosshair at pixel (cx, cy) on a PNG image and write to
@@ -107,17 +107,17 @@ pub fn write_crosshair_png(
     cy: f64,
     path: &str,
 ) -> anyhow::Result<()> {
-    mcp_server::image_utils::write_crosshair_png(png_bytes, cx, cy, path)
+    cua_driver_core::image_utils::write_crosshair_png(png_bytes, cx, cy, path)
 }
 
 /// Draw a red crosshair at pixel (cx, cy) on a PNG image and return the
 /// modified PNG bytes. Used by recording's click-marker callback to
 /// produce click.png.
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> anyhow::Result<Vec<u8>> {
-    mcp_server::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
+    cua_driver_core::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
 
 /// Parse width and height from a PNG file's IHDR chunk.
 pub fn png_dimensions(data: &[u8]) -> anyhow::Result<(u32, u32)> {
-    mcp_server::image_utils::png_dimensions(data)
+    cua_driver_core::image_utils::png_dimensions(data)
 }

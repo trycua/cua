@@ -21,6 +21,56 @@ fn pin_overlay_above(hwnd: u64) {
     crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(wid));
 }
 
+/// Convert (px, py) — "window-local screenshot pixels, top-left origin
+/// of the PNG returned by `get_window_state`" — to screen coordinates.
+///
+/// The capture path (`crate::capture::screenshot_window`) takes the
+/// PrintWindow buffer (sized to `GetWindowRect`) and crops it to
+/// `DWMWA_EXTENDED_FRAME_BOUNDS` with a 1-pixel inset on each side
+/// (`DWM_CROP_INSET_PX`). So the bitmap's top-left in screen coords is
+/// `(dwm_frame.left + 1, dwm_frame.top + 1)` — and CALLER coordinates
+/// `(px, py)` are offsets relative to that origin.
+///
+/// Pre-PR-#1697 the click / right_click / double_click / drag impls
+/// called `ClientToScreen(px, py)`, which interprets the offsets as
+/// CLIENT-area relative — so the screen click landed ~30 px BELOW the
+/// bitmap location the agent intended (the title-bar height got added).
+/// This helper aligns the screen mapping with what the screenshot
+/// actually shows.
+///
+/// Fallbacks: if the DWM call fails (very old Windows / shell-extension
+/// hook) we degrade to `GetWindowRect.top-left + (px, py)` — matches
+/// the capture fallback which also keeps the full PrintWindow bitmap
+/// without crop.
+fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    // Keep this constant in sync with `capture::DWM_CROP_INSET_PX`.
+    const DWM_CROP_INSET_PX: i32 = 1;
+    let h = HWND(hwnd as *mut _);
+    unsafe {
+        let mut dwm = RECT::default();
+        let hr = DwmGetWindowAttribute(
+            h,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut dwm as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        if hr.is_ok() {
+            return (dwm.left + DWM_CROP_INSET_PX + px,
+                    dwm.top  + DWM_CROP_INSET_PX + py);
+        }
+        // Fallback path — capture also keeps the full bitmap when DWM
+        // bounds aren't available, so the bitmap origin IS GetWindowRect
+        // top-left in that branch.
+        let mut wr = RECT::default();
+        let _ = GetWindowRect(h, &mut wr);
+        (wr.left + px, wr.top + py)
+    }
+}
+
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
@@ -43,7 +93,7 @@ async fn overlay_glide_to(sx: f64, sy: f64) {
     }
     crate::overlay::animate_cursor_to(sx, sy).await;
 }
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
@@ -373,7 +423,7 @@ impl Tool for ListWindowsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let _on_screen_only = args.bool_or("on_screen_only", false);
         let (windows, pid_to_name) = tokio::task::spawn_blocking(move || {
@@ -550,7 +600,7 @@ impl Tool for GetWindowStateTool {
             let cfg = self.state.config.read().unwrap();
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let capture_mode = args.str_or("capture_mode", &default_mode);
         let query = args.opt_str("query");
 
@@ -618,8 +668,17 @@ impl Tool for GetWindowStateTool {
                 if let Some(tr) = tree_opt {
                     let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
                     let header = format!("window_id={hwnd} pid={pid} elements={count}\n\n");
-                    content.push(mcp_server::protocol::Content::text(header + &tr.tree_markdown));
-                    state.element_cache.update(pid, hwnd, &tr.nodes);
+                    content.push(cua_driver_core::protocol::Content::text(header + &tr.tree_markdown));
+                    // Route the cache to the matching dispatch path: any
+                    // node whose msaa_role is Some came from the MSAA
+                    // walker, so the entire snapshot must Drop via
+                    // IAccessible and click must dispatch through MSAA.
+                    let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
+                    if is_msaa {
+                        state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
+                    } else {
+                        state.element_cache.update(pid, hwnd, &tr.nodes);
+                    }
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
                 }
@@ -630,7 +689,7 @@ impl Tool for GetWindowStateTool {
                     } else {
                         state.resize_registry.clear_ratio(pid);
                     }
-                    content.push(mcp_server::protocol::Content::image_png(b64));
+                    content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
                 }
@@ -1680,11 +1739,22 @@ impl Tool for ClickTool {
                 is scoped per (pid, window_id) and is replaced by the next snapshot of the \
                 same window.\n\n\
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
-                returned by `get_window_state`) — synthesizes mouse events via \
-                PostMessage(WM_LBUTTONDOWN/UP) and delivers them to the deepest child \
-                window under that point. `count: 2` posts two down/up pairs for a \
-                double-click. Pixel clicks need a visible on-screen window to anchor the \
-                coordinate conversion (errors with `pid X has no on-screen window` otherwise).\n\n\
+                returned by `get_window_state`). On `dispatch:\"background\"` (default) and \
+                `dispatch:\"auto\"`, cua-driver FIRST does a UIA hit-test at the resolved \
+                screen position: if the deepest invokable element under that point exposes \
+                `InvokePattern`, it's invoked through the accessibility channel — same \
+                background-safe path as the `element_index` mode, no foreground swap, no \
+                visible flash. **This makes pixel clicks on UWP / WinUI3 / Win11 packaged \
+                apps work flash-free out of the box** — agents should default to \
+                `dispatch:\"background\"` even on XAML hosts whose CoreInput dispatcher \
+                drops raw PostMessage. The PostMessage(WM_LBUTTONDOWN/UP) fallback only \
+                runs when the UIA hit-test misses (canvas / video / WebGL / custom-drawn \
+                surfaces with no UIA peer), and on those targets `dispatch:\"background\"` \
+                returns a structured `background_unavailable` error if PostMessage is \
+                known to drop too — at which point you switch to `dispatch:\"foreground\"`. \
+                `count: 2` posts two down/up pairs for a double-click. Pixel clicks need \
+                a visible on-screen window to anchor the coordinate conversion (errors \
+                with `pid X has no on-screen window` otherwise).\n\n\
                 Exactly one of `element_index` or (`x` AND `y`) must be provided. \
                 `pid` is required in both modes. `window_id` is required when \
                 `element_index` is used (scopes the cache lookup). After a `zoom` call, \
@@ -1712,8 +1782,9 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::uia::cache::SnapshotKind;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
@@ -1722,6 +1793,13 @@ impl Tool for ClickTool {
         let button = args.str_or("button", "left");
         let count = args.u64_or("count", 1) as usize;
         let dispatch = DispatchMode::from_args(&args);
+        // Optional `action` arg picks among the actions exposed in the
+        // accessibility tree. Today this only changes behavior for MSAA
+        // BUTTONDROPDOWN: `"expand"` clicks the right-edge (dropdown arrow
+        // half) instead of the center (press half). Defaults to first
+        // action in the element's `actions=[...]` list, which preserves
+        // existing semantics for UIA elements.
+        let action_req = args.get("action").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         // Resolve HWND: explicit, or auto from pid.
         let hwnd = match hwnd_opt {
@@ -1736,6 +1814,84 @@ impl Tool for ClickTool {
         };
 
         if let Some(idx) = elem_idx {
+            // ── MSAA dispatch (SAL/VCL targets) ────────────────────────────
+            // For MSAA elements, route by role:
+            //   - `action:"expand"` on BUTTONDROPDOWN → SendInput at the
+            //     cached rect's right-edge (the dropdown arrow half).
+            //     Opens the picker (e.g. LO Writer Font Color → SALTMPSUBFRAME).
+            //   - default action / `"invoke"` → SendInput at center
+            //     (matches `accDoDefaultAction` semantics for VCL controls
+            //     and works through dispatch:"foreground"). We DO NOT call
+            //     `accDoDefaultAction` here because LO's MSAA impl applies
+            //     the change asynchronously and returns S_OK either way,
+            //     so the visible behavior is the same as a center click.
+            if let Some((SnapshotKind::Msaa, role)) =
+                self.state.element_cache.get_element_kind_and_role(pid, hwnd, idx)
+            {
+                const ROLE_BUTTONDROPDOWN: i32 = 0x38;
+                const ROLE_BUTTONMENU: i32 = 0x39;
+                const ROLE_BUTTONDROPDOWNGRID: i32 = 0x3A;
+                const ROLE_SPLITBUTTON: i32 = 0x3E;
+                let want_expand = action_req.as_deref() == Some("expand");
+                let is_dropdown_role = matches!(
+                    role,
+                    Some(ROLE_BUTTONDROPDOWN | ROLE_BUTTONMENU | ROLE_BUTTONDROPDOWNGRID | ROLE_SPLITBUTTON)
+                );
+                let (tx, ty) = if want_expand && is_dropdown_role {
+                    match self.state.element_cache.get_element_rect(pid, hwnd, idx) {
+                        Some((_l, t, r, b)) => {
+                            // Right-edge of the SplitButton — the dropdown
+                            // arrow half. -4 puts the click safely inside
+                            // the arrow region for the typical ~12-16 px
+                            // arrow width VCL uses.
+                            (r - 4, (t + b) / 2)
+                        }
+                        None => {
+                            return ToolResult::error(format!(
+                                "MSAA element [{idx}] has no cached rect — \
+                                 cannot dispatch action:\"expand\". Re-run \
+                                 get_window_state to refresh the cache."
+                            ));
+                        }
+                    }
+                } else if want_expand && !is_dropdown_role {
+                    return ToolResult::error(format!(
+                        "action:\"expand\" requested for MSAA element [{idx}] \
+                         but its role ({role:?}) is not a dropdown button. \
+                         Use action:\"invoke\" or omit the action arg."
+                    ));
+                } else {
+                    match self.state.element_cache.get_element_center(pid, hwnd, idx) {
+                        Some(v) => v,
+                        None => return ToolResult::error(format!(
+                            "MSAA element [{idx}] not in cache for hwnd={hwnd}. \
+                             Call get_window_state first."
+                        )),
+                    }
+                };
+                pin_overlay_above(hwnd);
+                overlay_glide_to(tx as f64, ty as f64).await;
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                    x: tx as f64, y: ty as f64,
+                });
+                let btn_fg = button.clone();
+                let prev_fg_addr = unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+                };
+                let send_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_click_synthesized(hwnd, tx, ty, count, &btn_fg)
+                }).await;
+                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                let half = if want_expand { "dropdown" } else { "press" };
+                return match send_result {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Performed SendInput click on MSAA [{idx}] {half} half at ({tx},{ty})."
+                    )),
+                    Ok(Err(e)) => ToolResult::error(e.to_string()),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
+            }
+
             // UIA path: get cached center (no COM call needed — captured at walk time).
             let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
                 Some(v) => v,
@@ -1788,40 +1944,85 @@ impl Tool for ClickTool {
                 if use_uia_invoke {
                     if let Some(ptr) = state_clone.element_cache.get_element_ptr(pid, hwnd, idx) {
                         use windows::Win32::UI::Accessibility::{
-                            IUIAutomationElement, IUIAutomationInvokePattern, UIA_InvokePatternId,
+                            IUIAutomationElement, IUIAutomationInvokePattern,
+                            IUIAutomationTogglePattern, IUIAutomationSelectionItemPattern,
+                            IUIAutomationExpandCollapsePattern,
+                            UIA_InvokePatternId, UIA_TogglePatternId,
+                            UIA_SelectionItemPatternId, UIA_ExpandCollapsePatternId,
                         };
                         use windows::core::Interface;
-                        // Reconstruct without consuming the cache's AddRef;
-                        // forget after we extract the pattern so Drop doesn't
-                        // double-Release the cached pointer.
                         let elem: IUIAutomationElement =
                             unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+
+                        // Try patterns in order of click-semantics specificity:
+                        //   1. Invoke      - buttons / hyperlinks (canonical)
+                        //   2. Toggle      - checkboxes (no Invoke)
+                        //   3. SelectionItem - radio buttons, listbox items
+                        //   4. ExpandCollapse - combo boxes, tree nodes
+                        // Each call is wrapped in the UWP foreground-steal bypass.
+                        //
+                        // Why this order: PR #1699's WinUI3 control parity tests
+                        // surfaced these pattern-dispatch gaps. Without these
+                        // fallthroughs, cua-driver couldn't drive WinUI3
+                        // CheckBox / RadioButton / ComboBox because PostMessage
+                        // doesn't reach their handlers (CoreInput dispatcher).
                         let invoke_result = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) };
-                        std::mem::forget(elem);
                         if let Ok(pattern) = invoke_result {
                             if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
-                                // UWP foreground-steal bypass: wrap Invoke so
-                                // XAML hosts don't self-foreground and steal
-                                // user focus. See crate::uia::fg_bypass.
-                                let invoke_outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
-                                    hwnd as isize,
-                                    || unsafe { inv.Invoke() },
-                                );
-                                match invoke_outcome {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { inv.Invoke() });
+                                match outcome {
                                     Ok(()) => {
+                                        std::mem::forget(elem);
                                         return Ok(format!(
                                             "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
                                         ));
                                     }
-                                    Err(e) => {
-                                        tracing::debug!(
-                                            target: "click",
-                                            "UIA Invoke failed for [{idx}]: {e}; falling back to PostMessage"
-                                        );
-                                    }
+                                    Err(e) => tracing::debug!(target: "click",
+                                        "UIA Invoke on [{idx}]: {e}, trying Toggle"),
                                 }
                             }
                         }
+                        let toggle_result = unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) };
+                        if let Ok(pattern) = toggle_result {
+                            if let Ok(tg) = pattern.cast::<IUIAutomationTogglePattern>() {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { tg.Toggle() });
+                                if outcome.is_ok() {
+                                    std::mem::forget(elem);
+                                    return Ok(format!(
+                                        "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
+                                    ));
+                                }
+                            }
+                        }
+                        let sel_result = unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) };
+                        if let Ok(pattern) = sel_result {
+                            if let Ok(si) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { si.Select() });
+                                if outcome.is_ok() {
+                                    std::mem::forget(elem);
+                                    return Ok(format!(
+                                        "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
+                                    ));
+                                }
+                            }
+                        }
+                        let exp_result = unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) };
+                        if let Ok(pattern) = exp_result {
+                            if let Ok(ec) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
+                                let outcome = crate::uia::fg_bypass::run_with_uwp_bypass(
+                                    hwnd as isize, || unsafe { ec.Expand() });
+                                if outcome.is_ok() {
+                                    std::mem::forget(elem);
+                                    return Ok(format!(
+                                        "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
+                                    ));
+                                }
+                            }
+                        }
+                        std::mem::forget(elem);
                     }
                 }
                 // PostMessage fallback (legacy Win32 + non-Invokable elements).
@@ -1862,14 +2063,10 @@ impl Tool for ClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            // px/py are window-client coords. Convert to screen for the overlay.
-            let (sx, sy) = unsafe {
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                let mut pt = POINT { x: px as i32, y: py as i32 };
-                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
-                (pt.x as f64, pt.y as f64)
-            };
+            // px/py are bitmap pixels — see `bitmap_to_screen` for the
+            // mapping (DWM-frame top-left + 1-px inset, NOT ClientToScreen).
+            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(hwnd);
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
@@ -2028,8 +2225,10 @@ impl Tool for ClickTool {
                 }
             }
 
+            // bitmap pixels -> screen (DWM-frame origin + inset). Use
+            // post_click_screen so we don't double-ClientToScreen.
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::post_click(hwnd, px as i32, py as i32, count, &btn)
+                crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
             }).await;
             match result {
                 Ok(Ok(())) => {
@@ -2103,7 +2302,7 @@ impl Tool for TypeTextTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
@@ -2113,7 +2312,7 @@ impl Tool for TypeTextTool {
         // invocation tags into the text param (see text_sanitize docs).
         // Returns Cow::Borrowed on the no-match fast path so the common
         // case is allocation-free.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index");
@@ -2272,7 +2471,7 @@ impl Tool for PressKeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
@@ -2397,7 +2596,7 @@ impl Tool for HotkeyTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
@@ -2631,22 +2830,51 @@ impl Tool for SetValueTool {
         };
 
         let state = self.state.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
             let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
                 .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache."))?;
             use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId};
             use windows::core::{Interface, BSTR};
             let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-            let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId)? };
+            // Try ValuePattern first (text inputs, editable combos, etc).
+            if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) } {
+                if let Ok(vp) = pattern.cast::<IUIAutomationValuePattern>() {
+                    if unsafe { vp.SetValue(&BSTR::from(value.as_str())) }.is_ok() {
+                        std::mem::forget(elem);
+                        return Ok("ValuePattern".to_string());
+                    }
+                }
+            }
+            // Fall through to RangeValuePattern for Sliders / ProgressBars /
+            // numeric ranges. RangeValue.SetValue takes a double, so coerce
+            // the string. Documented gap-closer (PR #1699 harness exposed).
+            use windows::Win32::UI::Accessibility::{
+                IUIAutomationRangeValuePattern, UIA_RangeValuePatternId,
+            };
+            if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_RangeValuePatternId) } {
+                if let Ok(rv) = pattern.cast::<IUIAutomationRangeValuePattern>() {
+                    let parsed: f64 = value.parse().map_err(|_| anyhow::anyhow!(
+                        "set_value: target element exposes RangeValuePattern (Slider / \
+                         ProgressBar / numeric range). `value` must be a parseable f64; \
+                         got {value:?}."
+                    ))?;
+                    unsafe { rv.SetValue(parsed)? };
+                    std::mem::forget(elem);
+                    return Ok("RangeValuePattern".to_string());
+                }
+            }
             std::mem::forget(elem);
-            let vp: IUIAutomationValuePattern = pattern.cast()?;
-            unsafe { vp.SetValue(&BSTR::from(value.as_str()))? };
-            Ok(())
+            anyhow::bail!(
+                "set_value: element [{idx}] does not implement ValuePattern or \
+                 RangeValuePattern. For controls with TogglePattern (CheckBox) or \
+                 SelectionItemPattern (RadioButton / ComboBoxItem), use the `click` \
+                 tool instead."
+            );
         }).await;
         match result {
-            // Match Swift's text format 1:1 (default AXValue-write path).
-            // UIA role/title placeholder pending element-cache enrichment.
-            Ok(Ok(())) => ToolResult::text(format!("✅ Set AXValue on [{idx}] (UIA ValuePattern).")),
+            Ok(Ok(pattern_name)) => ToolResult::text(format!(
+                "✅ Set AXValue on [{idx}] (UIA {pattern_name})."
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2708,7 +2936,7 @@ impl Tool for ScrollTool {
             Some(d) => d.to_owned(),
             None    => return ToolResult::error("Missing required string field direction."),
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let by = args.str_or("by", "line");
         let direction_display = direction.clone();
         let by_display = by.clone();
@@ -2895,7 +3123,7 @@ impl Tool for DoubleClickTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
         let x = args.opt_f64("x");
@@ -2987,13 +3215,10 @@ impl Tool for DoubleClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            let (sx, sy) = unsafe {
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                let mut pt = POINT { x: px as i32, y: py as i32 };
-                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
-                (pt.x as f64, pt.y as f64)
-            };
+            // bitmap pixels -> screen via DWM-frame origin (see
+            // `bitmap_to_screen` doc for why ClientToScreen is wrong).
+            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(hwnd);
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
@@ -3009,26 +3234,24 @@ impl Tool for DoubleClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, 2, "left")
+                    crate::input::send_click_synthesized(hwnd, sx_i, sy_i, 2, "left")
                 }).await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent double-click via SendInput to pid {pid} at screen ({},{}) (dispatch:foreground).",
-                        sx as i32, sy as i32
+                        "✅ Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (dispatch:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
-            let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 2, "left")).await;
+            let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 2, "left")).await;
             match result {
                 Ok(Ok(())) => {
                     // Match Swift's pixel-path text 1:1.
                     ToolResult::text(format!(
-                        "✅ Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({}, {}).",
-                        sx as i32, sy as i32))
+                        "✅ Posted double-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -3091,7 +3314,7 @@ impl Tool for RightClickTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
         let x = args.opt_f64("x");
@@ -3182,13 +3405,10 @@ impl Tool for RightClickTool {
                 px *= ratio;
                 py *= ratio;
             }
-            let (sx, sy) = unsafe {
-                use windows::Win32::Foundation::{HWND, POINT};
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                let mut pt = POINT { x: px as i32, y: py as i32 };
-                let _ = ClientToScreen(HWND(hwnd as *mut _), &mut pt);
-                (pt.x as f64, pt.y as f64)
-            };
+            // bitmap pixels -> screen via DWM-frame origin (see
+            // `bitmap_to_screen` doc).
+            let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
+            let (sx, sy) = (sx_i as f64, sy_i as f64);
             pin_overlay_above(hwnd);
             overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
@@ -3202,26 +3422,24 @@ impl Tool for RightClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, 1, "right")
+                    crate::input::send_click_synthesized(hwnd, sx_i, sy_i, 1, "right")
                 }).await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent right-click via SendInput to pid {pid} at screen ({},{}) (dispatch:foreground).",
-                        sx as i32, sy as i32
+                        "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (dispatch:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
-            let result = tokio::task::spawn_blocking(move || crate::input::post_click(hwnd, xi, yi, 1, "right")).await;
+            let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 1, "right")).await;
             match result {
                 Ok(Ok(())) => {
                     // Swift pixel-path text 1:1.
                     ToolResult::text(format!(
-                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({}, {}).",
-                        sx as i32, sy as i32))
+                        "✅ Posted right-click to pid {pid} at window-pixel ({xi}, {yi}) → screen-point ({sx_i}, {sy_i})."))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -3276,7 +3494,7 @@ impl Tool for DragTool {
         let pid = raw_pid as u32;
         let dispatch = DispatchMode::from_args(&args);
 
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
@@ -3323,16 +3541,11 @@ impl Tool for DragTool {
             }
         };
 
-        // Compute screen-coord endpoints for Swift's text format.
-        let (sx_from, sy_from, sx_to, sy_to) = unsafe {
-            use windows::Win32::Foundation::{HWND, POINT};
-            use windows::Win32::Graphics::Gdi::ClientToScreen;
-            let mut p1 = POINT { x: from_x as i32, y: from_y as i32 };
-            let mut p2 = POINT { x: to_x   as i32, y: to_y   as i32 };
-            let _ = ClientToScreen(HWND(hwnd as *mut _), &mut p1);
-            let _ = ClientToScreen(HWND(hwnd as *mut _), &mut p2);
-            (p1.x, p1.y, p2.x, p2.y)
-        };
+        // Compute screen-coord endpoints. Same correction as the click
+        // tools — bitmap pixels are anchored to the DWM-frame top-left,
+        // not the client area top-left (see `bitmap_to_screen` doc).
+        let (sx_from, sy_from) = bitmap_to_screen(hwnd, from_x as i32, from_y as i32);
+        let (sx_to,   sy_to)   = bitmap_to_screen(hwnd, to_x   as i32, to_y   as i32);
 
         // dispatch:"background" — refuse if PostMessage drag would silently drop.
         if dispatch == DispatchMode::Background
@@ -3340,19 +3553,36 @@ impl Tool for DragTool {
         {
             return background_unavailable_error(hwnd, EventKind::MouseClick);
         }
-        // dispatch:"foreground" — no SendInput-based drag helper yet. The
-        // PostMessage drag works for the GTK-canvas + plain-Win32 cases we
-        // care about today; Chromium DOM dragstart will need a real
-        // SendInput-MOUSE-MOVE sequence, tracked as TODO.
+        // dispatch:"foreground" — SendInput-based drag. Required for WPF
+        // Slider thumbs (and any framework that polls GetKeyState during
+        // its drag handler — PostMessage doesn't update per-thread input
+        // state, so those targets see a button-up world during the drag
+        // and never start tracking). Subject to the same UIAccess
+        // foreground-lock constraint as send_click_synthesized.
         if dispatch == DispatchMode::Foreground {
-            return ToolResult::error(
-                "dispatch:\"foreground\" is not yet implemented for the drag tool. \
-                 Use bring_to_front to activate the target first, then retry with \
-                 dispatch:\"auto\" (PostMessage WM_MOUSEMOVE works against an \
-                 already-foreground window in most cases). TODO: add a \
-                 send_drag_synthesized helper analogous to send_click_synthesized."
-                    .to_string(),
-            );
+            let btn_fg = button.clone();
+            let prev_fg_addr = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+            };
+            let send_result = tokio::task::spawn_blocking(move || {
+                crate::input::mouse::send_drag_synthesized(
+                    hwnd,
+                    sx_from, sy_from,
+                    sx_to,   sy_to,
+                    duration_ms, steps, &btn_fg,
+                )
+            }).await;
+            tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+            let button_suffix = if button == "left" { String::new() } else { format!(" ({} button)", button) };
+            return match send_result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Sent drag{button_suffix} via SendInput on pid {raw_pid} \
+                     from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
+                     in {duration_ms}ms / {steps} steps (dispatch:foreground)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
         }
 
         // Pin the agent-cursor overlay above the drag target so the synthetic
@@ -3490,7 +3720,7 @@ impl Tool for MoveCursorTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
         let cursor_id_owned = args.str_or("cursor_id", "default");
@@ -3542,7 +3772,7 @@ impl Tool for SetAgentCursorEnabledTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id_owned = args.str_or("cursor_id", "default");
         let cursor_id = cursor_id_owned.as_str();
         self.state.cursor_registry.set_enabled(cursor_id, enabled);
@@ -4283,7 +4513,7 @@ impl Tool for ZoomTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required integer field window_id."),
         };
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let coerce = |k: &str| args.opt_f64(k).or_else(|| args.opt_i64(k).map(|i| i as f64));
         let (x1, y1, x2, y2) = match (coerce("x1"), coerce("y1"), coerce("x2"), coerce("y2")) {
             (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
@@ -4317,7 +4547,7 @@ impl Tool for ZoomTool {
                 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                 let b64 = B64.encode(&crop.jpeg_bytes);
                 let (w, h) = (crop.out_w, crop.out_h);
-                use mcp_server::protocol::Content;
+                use cua_driver_core::protocol::Content;
                 // Match Swift's text format 1:1.
                 let summary = "✅ Zoomed region captured at native resolution. \
                     To click a target in this image, use \
@@ -4367,12 +4597,12 @@ impl Tool for TypeTextCharsTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
         // Same trailing-protocol-tag scrub as the main TypeTextTool — see
-        // mcp_server::text_sanitize for rationale.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        // cua_driver_core::text_sanitize for rationale.
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let hwnd_opt = args.opt_u64("window_id");
@@ -4454,7 +4684,7 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let hwnd_opt = args.opt_u64("window_id");
 
@@ -4887,6 +5117,9 @@ impl Tool for DebugWindowInfoTool {
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
+    // Share the element cache with the recording-hook layer so it can
+    // resolve element_index → window-local screenshot coords for click.png.
+    crate::recording_hooks::set_element_cache(state.element_cache.clone());
     let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
@@ -4942,7 +5175,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     let _: &TypeTextCharsTool = &TypeTextCharsTool { _state: state.clone() }; // touch struct so it stays in this crate for now
     // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
     // in its UIA TextPattern + FindAll backend (CDP for execute_javascript).
-    r.register(Box::new(mcp_server::page::PageTool::new(
+    r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
     r.register_recording_tools();

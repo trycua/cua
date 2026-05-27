@@ -32,7 +32,7 @@ mod zoom;
 mod type_text_chars;
 mod page;
 
-use mcp_server::tool::ToolRegistry;
+use cua_driver_core::tool::ToolRegistry;
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -209,6 +209,9 @@ impl Default for ToolState {
 /// note telling the caller to use pixel-addressed tools.
 pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     let state = Arc::new(ToolState::default());
+    // Share the element cache with the recording-hook layer so it can
+    // resolve element_index → window-local screenshot coords for click.png.
+    crate::recording_hooks::set_element_cache(state.element_cache.clone());
 
     registry.register(Box::new(list_apps::ListAppsTool));
     registry.register(Box::new(list_windows::ListWindowsTool));
@@ -241,10 +244,17 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(set_config::SetConfigTool::new(state.clone())));
     registry.register(Box::new(get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone())));
     registry.register(Box::new(zoom::ZoomTool { state: state.clone() }));
-    registry.register(Box::new(type_text_chars::TypeTextCharsTool::new(state.clone())));
+    // `type_text_chars` is intentionally NOT registered — Swift treats it as
+    // a deprecated alias for `type_text` resolved at invoke time in
+    // mcp-server's `ToolRegistry::invoke`. Keeping it out of the registry
+    // means it doesn't show up in `tools/list` either, matching Swift's
+    // ToolRegistry.swift (`type_text_chars` not in `handlers`) and the
+    // platform-windows::build_registry which uses the same convention.
+    // Touch the struct so it stays in this crate for the alias resolver.
+    let _: &type_text_chars::TypeTextCharsTool = &type_text_chars::TypeTextCharsTool::new(state.clone());
     // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
     // its Apple-Events / CDP / AX-tree backend here.
-    registry.register(Box::new(mcp_server::page::PageTool::new(
+    registry.register(Box::new(cua_driver_core::page::PageTool::new(
         Arc::new(page::MacOsPageBackend::new(state.clone())),
     )));
     // Recording / replay tools are platform-independent — live in mcp-server.

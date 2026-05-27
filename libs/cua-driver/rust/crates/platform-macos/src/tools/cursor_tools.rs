@@ -5,12 +5,11 @@
 //! where codex wrapper wants control over the cursor icon.
 
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
 use super::ToolState;
-use crate::cursor::state::CursorConfig;
 
 // ── SetAgentCursorEnabled ─────────────────────────────────────────────────────
 
@@ -49,7 +48,7 @@ impl Tool for SetAgentCursorEnabledTool {
     fn def(&self) -> &ToolDef { enabled_def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
         let cursor_id_owned = args.str_or("cursor_id", "default");
         let cursor_id = cursor_id_owned.as_str();
@@ -154,7 +153,7 @@ impl Tool for SetAgentCursorMotionTool {
     fn def(&self) -> &ToolDef { motion_def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = args.str_or("cursor_id", "default");
 
         // Start from the current state or defaults.
@@ -290,7 +289,7 @@ impl Tool for SetAgentCursorStyleTool {
     fn def(&self) -> &ToolDef { style_def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = args.str_or("cursor_id", "default");
 
         // ── image_path ────────────────────────────────────────────────────────

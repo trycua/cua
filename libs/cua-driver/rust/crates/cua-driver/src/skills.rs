@@ -39,13 +39,17 @@
 //!
 //! ## Agent detection
 //!
-//! Same four agent dirs as the Swift cua-driver installer detects:
+//! Same agent dirs as the Swift cua-driver installer detects:
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode:    `~/.config/opencode/skills/` (macOS / Linux),
 //!                `%APPDATA%\opencode\skills\` (Windows)
+//! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
+//!                (`agy`) and Antigravity IDE; same dir Google Gemini CLI
+//!                used before the May-2026 transition, so existing
+//!                installs migrate forward unchanged.
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
@@ -171,6 +175,14 @@ enum AgentParent {
     /// `<HOME or USERPROFILE>/<segment>`.
     Home(&'static str),
     /// `<APPDATA>/<segment>` (Windows roaming app config).
+    ///
+    /// `#[allow(dead_code)]`: constructed only inside `#[cfg(windows)]`
+    /// AGENTS entries (OpenCode on Windows reads from `%APPDATA%`) and
+    /// matched only inside `#[cfg(windows)]` arms of `parent_path`. The
+    /// enum variant itself sits in cross-platform code so rustc's
+    /// post-cfg-strip dead-code pass flags it on macOS/Linux even though
+    /// the Windows build uses it.
+    #[allow(dead_code)]
     AppData(&'static str),
 }
 
@@ -182,6 +194,10 @@ const AGENTS: &[Agent] = &[
     Agent { label: "OpenCode",    parent: AgentParent::AppData("opencode/skills") },
     #[cfg(not(windows))]
     Agent { label: "OpenCode",    parent: AgentParent::Home(".config/opencode/skills") },
+    // Antigravity CLI + Antigravity IDE share the `.gemini/skills/` dir
+    // (the same path Gemini CLI used pre-May-2026). Registering the
+    // single shared path means both surfaces pick up the same symlink.
+    Agent { label: "Antigravity", parent: AgentParent::Home(".gemini/skills") },
 ];
 
 impl Agent {

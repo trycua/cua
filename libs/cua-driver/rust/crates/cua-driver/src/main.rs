@@ -109,7 +109,7 @@ fn main() {
         }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             // Register callbacks (needed if the tool does screenshots/recording).
-            mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+            cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
                     platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
                 } else if let Some(p) = pid {
@@ -119,9 +119,18 @@ fn main() {
                     platform_macos::capture::screenshot_display_bytes().ok()
                 }
             });
-            mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+            cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
                 platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
             });
+            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+            });
+            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+            });
+            cua_driver_core::video::set_video_backend_factory(
+                Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+            );
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
@@ -150,7 +159,7 @@ fn main() {
                            expect tool calls touching AX or Screen Recording \
                            to fail until you grant the missing TCC permissions.");
             }
-            mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+            cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
                     platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
                 } else if let Some(p) = pid {
@@ -160,9 +169,18 @@ fn main() {
                     platform_macos::capture::screenshot_display_bytes().ok()
                 }
             });
-            mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+            cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
                 platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
             });
+            cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+                platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+            });
+            cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+                platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+            });
+            cua_driver_core::video::set_video_backend_factory(
+                Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+            );
             let reg = Arc::new(platform_macos::register_tools());
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
@@ -272,7 +290,7 @@ fn main() {
     // Spawn tokio + MCP server on a background thread so the main thread
     // is free for AppKit.
     // Register screenshot callback for recording (post-action screenshots).
-    mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
         if let Some(wid) = window_id {
             platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
         } else if let Some(p) = pid {
@@ -284,9 +302,18 @@ fn main() {
     });
 
     // Register click-marker callback for recording (click.png with red crosshair).
-    mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
         platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
     });
+    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    });
+    cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+        platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+    });
+    cua_driver_core::video::set_video_backend_factory(
+        Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+    );
 
     std::thread::Builder::new()
         .name("cua-mcp".into())
@@ -301,7 +328,7 @@ fn main() {
                 let registry = Arc::new(platform_macos::register_tools_with_compat(compat));
                 // Wire up replay tool's back-reference to the registry.
                 registry.init_self_weak();
-                if let Err(e) = mcp_server::server::run(registry).await {
+                if let Err(e) = cua_driver_core::server::run(registry).await {
                     tracing::error!("MCP server error: {e}");
                 }
             });
@@ -496,18 +523,18 @@ async fn async_main() -> anyhow::Result<()> {
 
     let registry = Arc::new(build_registry(cursor_cfg));
     registry.init_self_weak();
-    mcp_server::server::run(registry).await?;
+    cua_driver_core::server::run(registry).await?;
     Ok(())
 }
 
 // ── Registry builder (non-macOS) ──────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
-fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool::ToolRegistry {
+fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::tool::ToolRegistry {
     let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
     #[cfg(target_os = "windows")]
     {
-        mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(hwnd) = window_id {
                 platform_windows::capture::screenshot_window_bytes(hwnd).ok()
             } else if let Some(p) = pid {
@@ -519,14 +546,23 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool:
                 platform_windows::capture::screenshot_display_bytes().ok()
             }
         });
-        mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_windows::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(target_os = "linux")]
     {
-        mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(xid) = window_id {
                 platform_linux::capture::screenshot_window_bytes(xid).ok()
             } else if let Some(p) = pid {
@@ -538,16 +574,19 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool:
                 platform_linux::capture::screenshot_display_bytes().ok()
             }
         });
-        mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_linux::register_tools_with_cursor(cursor_cfg, compat)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = cursor_cfg;
         let _ = compat;
-        let mut r = mcp_server::tool::ToolRegistry::new();
+        let mut r = cua_driver_core::tool::ToolRegistry::new();
         r.register(Box::new(crate::stub::UnsupportedPlatformTool));
         r
     }
@@ -556,11 +595,11 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> mcp_server::tool:
 /// Build a registry without initialising the cursor overlay.
 /// Used by CLI subcommands (list-tools / describe / call) that don't need the overlay.
 #[cfg(not(target_os = "macos"))]
-fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
+fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
     let compat = CLAUDE_CODE_COMPAT.load(Ordering::SeqCst);
     #[cfg(target_os = "windows")]
     {
-        mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(hwnd) = window_id {
                 platform_windows::capture::screenshot_window_bytes(hwnd).ok()
             } else if let Some(p) = pid {
@@ -572,14 +611,23 @@ fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
                 platform_windows::capture::screenshot_display_bytes().ok()
             }
         });
-        mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_windows::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_windows::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_windows::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }
     #[cfg(target_os = "linux")]
     {
-        mcp_server::recording::set_screenshot_fn(|window_id, pid| {
+        cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
             if let Some(xid) = window_id {
                 platform_linux::capture::screenshot_window_bytes(xid).ok()
             } else if let Some(p) = pid {
@@ -591,15 +639,18 @@ fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
                 platform_linux::capture::screenshot_display_bytes().ok()
             }
         });
-        mcp_server::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+        cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::video::set_video_backend_factory(
+            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+        );
         platform_linux::register_tools_with_cursor(cursor_overlay::CursorConfig { enabled: false, ..Default::default() }, compat)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = compat;
-        let mut r = mcp_server::tool::ToolRegistry::new();
+        let mut r = cua_driver_core::tool::ToolRegistry::new();
         r.register(Box::new(crate::stub::UnsupportedPlatformTool));
         r
     }
@@ -608,7 +659,7 @@ fn build_registry_no_cursor() -> mcp_server::tool::ToolRegistry {
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 mod stub {
     use async_trait::async_trait;
-    use mcp_server::tool::{Tool, ToolDef, ToolResult};
+    use cua_driver_core::tool::{Tool, ToolDef, ToolResult};
     use serde_json::Value;
 
     pub struct UnsupportedPlatformTool;

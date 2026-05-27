@@ -292,6 +292,14 @@ impl Snapshot {
     /// Pure-function diff: given the snapshot's window-id set + a
     /// list of currently-visible windows, return the (opened, closed)
     /// classification.
+    ///
+    /// `#[allow(dead_code)]`: today only the `#[cfg(test)]` block below
+    /// constructs this — production callers `wait_for_window_change` /
+    /// `wait_for_window_close` keep the (opened, closed) split inline.
+    /// Kept `pub(crate)` because the doc comment near the top of this
+    /// `impl` block calls it out as the entry point for unit-testing the
+    /// diff logic without driving the live window enumerator.
+    #[allow(dead_code)]
     pub(crate) fn diff(
         snapshot_ids: &HashSet<u32>,
         current: &[WindowInfo],

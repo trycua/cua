@@ -23,11 +23,16 @@
 #
 # Linux layout produced (matches install.sh):
 #
-#   ${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}/packages/
+#   ${CUA_DRIVER_HOME:-$HOME/.cua-driver}/packages/
 #       releases/<version>-local-<config>-<target>/cua-driver
 #       current/cua-driver  -> ../releases/<active>/cua-driver
-#   ${CUA_DRIVER_RS_INSTALL_DIR:-$HOME/.local/bin}/cua-driver
+#   ${CUA_DRIVER_INSTALL_DIR:-$HOME/.local/bin}/cua-driver
 #       -> ../current/cua-driver
+#
+# Legacy env vars `CUA_DRIVER_RS_HOME` / `CUA_DRIVER_RS_INSTALL_DIR` /
+# `CUA_DRIVER_RS_BIN_DIR` are still accepted for backwards compat
+# (rename from v0.2.16 per PR #1644; this helper was missed in the
+# initial rename and ported in PR #1717).
 #
 # macOS layout produced:
 #   /Applications/CuaDriver.app/Contents/MacOS/cua-driver  (bundle replaced wholesale)
@@ -120,10 +125,23 @@ case "$OS" in
     *)      echo "${RED}Unsupported OS: $OS${NORMAL}"; exit 1 ;;
 esac
 
-HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
-BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
+# Canonical home is `~/.cua-driver/` (renamed from `~/.cua-driver-rs/`
+# in v0.2.16 — PR #1644). Accept the legacy `CUA_DRIVER_RS_HOME` env var
+# too so any dev scripts that still set it keep working.
+HOME_DIR="${CUA_DRIVER_HOME:-${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}}"
+BIN_DIR="${CUA_DRIVER_INSTALL_DIR:-${CUA_DRIVER_BIN_DIR:-${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}}}"
 RELEASES_DIR="$HOME_DIR/packages/releases"
 CURRENT_LINK="$HOME_DIR/packages/current"
+
+# Best-effort sweep: if a previous install left a stale `~/.cua-driver-rs/`
+# (the pre-v0.2.16 home), remove it. The runtime sweeps it on first call
+# too (see telemetry.rs::migrate_legacy_telemetry_home) so this is belt-
+# and-braces — keeps the home dir layout single-rooted for the user.
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+if [ -d "$LEGACY_HOME_DIR" ] && [ "$HOME_DIR" != "$LEGACY_HOME_DIR" ]; then
+    echo "  Sweeping legacy install dir $LEGACY_HOME_DIR"
+    rm -rf "$LEGACY_HOME_DIR"
+fi
 
 VERSION_TAG="0.0.0-local-$BUILD_CONFIG"
 VERSIONED_DIR="$RELEASES_DIR/$VERSION_TAG-$TARGET_TRIPLE"
@@ -139,8 +157,27 @@ echo ""
 # --- Prerequisites ------------------------------------------------------
 
 if ! command -v cargo >/dev/null 2>&1; then
+    # Common rustup default install at $HOME/.cargo/bin/cargo — source the
+    # rustup-shipped env script if present so cargo + rustc + the active
+    # toolchain shims all land on PATH for the rest of this script. This
+    # matters because rustup-init writes the PATH-prepending line into the
+    # user's shell rc, which only takes effect in NEW interactive shells —
+    # a fresh post-rustup invocation of `./install-local.sh` in the same
+    # shell as the rustup install would otherwise fail here even though
+    # cargo is on disk.
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck disable=SC1091
+        . "$HOME/.cargo/env"
+    elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+        # Older rustup installs (or non-rustup Cargo installs) may lack
+        # the env script — directly prepend the canonical bin dir.
+        export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+fi
+if ! command -v cargo >/dev/null 2>&1; then
     echo "${RED}Error: cargo not found on PATH.${NORMAL}"
     echo "Install Rust via rustup: https://rustup.rs/"
+    echo "After install, either open a new shell or run: . \$HOME/.cargo/env"
     exit 1
 fi
 
@@ -168,6 +205,24 @@ mkdir -p "$VERSIONED_DIR"
 cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver"
 chmod +x "$VERSIONED_DIR/cua-driver"
 
+# Re-sign with a fresh ad-hoc signature.
+#
+# macOS 26+ Taskgated rejects the linker-emitted ad-hoc signature once
+# the binary has been copied (the kernel's cached signature for the new
+# inode doesn't match the embedded one strictly enough for the newer
+# CODESIGNING namespace). Result is `SIGKILL (Code Signature Invalid)
+# — Taskgated Invalid Signature` on first run, no stderr output, exit
+# code 137 — extremely confusing without a diagnostic-report dig. The
+# fix: re-sign in place. `codesign --force --sign -` emits a fresh
+# ad-hoc signature keyed to the new on-disk bytes, which Taskgated
+# accepts. Cheap (~50ms on a 40MB binary). macOS-only — no-op on Linux.
+if [ "$OS" = "Darwin" ]; then
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --sign - "$VERSIONED_DIR/cua-driver" 2>/dev/null \
+            || echo "${YELLOW}warning: codesign --force --sign - failed; first run may fail with SIGKILL on macOS 26+${NORMAL}" >&2
+    fi
+fi
+
 # Skill pack — stage from the repo so the `current` symlink below
 # transparently exposes it to agents. Mirrors what install.sh does
 # from a release tarball.
@@ -180,12 +235,24 @@ if [ -d "$SOURCE_SKILLS" ]; then
     echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
 fi
 
-# Atomic-ish swap of the `current` symlink.
+# Atomically point `current` at the new versioned release dir.
+#
+# Previous version used `ln -s … current.new` + `mv -Tf current.new current`
+# with a BSD `mv -f` fallback. The BSD fallback path is broken: when the
+# destination is a symlink-to-directory, BSD `mv` *follows* it and drops
+# the temp symlink INSIDE the directory as `current/current.new`, leaving
+# stale `current.new` orphans at both levels and the actual `current`
+# symlink untouched. macOS doesn't ship GNU `mv` so the `-Tf` path never
+# fires on this host.
+#
+# `ln -sfn` is the POSIX primitive that does what we wanted from the
+# start: replace the existing symlink atomically, without dereferencing.
+# Works the same on macOS BSD and Linux GNU coreutils. No temp file
+# means no orphan to clean up on partial failure.
 mkdir -p "$HOME_DIR/packages"
-TMP_LINK="$CURRENT_LINK.new"
-rm -f "$TMP_LINK"
-ln -s "$VERSIONED_DIR" "$TMP_LINK"
-mv -Tf "$TMP_LINK" "$CURRENT_LINK" 2>/dev/null || mv -f "$TMP_LINK" "$CURRENT_LINK"
+# Sweep any orphan temp from a previous (pre-fix) run before re-creating.
+rm -f "$CURRENT_LINK.new"
+ln -sfn "$VERSIONED_DIR" "$CURRENT_LINK"
 echo "${GREEN}current -> $VERSIONED_DIR${NORMAL}"
 echo ""
 
@@ -218,7 +285,14 @@ echo ""
 
 if [ "$INSTALL_AUTOSTART" = true ]; then
     if [ "$OS" = "Darwin" ]; then
-        PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
+        # Unload + remove any stale LaunchAgent from the pre-rename install
+        # so the new label doesn't race the old one.
+        LEGACY_PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
+        if [ -f "$LEGACY_PLIST_PATH" ]; then
+            launchctl unload "$LEGACY_PLIST_PATH" 2>/dev/null || true
+            rm -f "$LEGACY_PLIST_PATH"
+        fi
+        PLIST_PATH="$HOME/Library/LaunchAgents/com.trycua.cua-driver.plist"
         echo "${BOLD}Writing LaunchAgent → $PLIST_PATH${NORMAL}"
         mkdir -p "$(dirname "$PLIST_PATH")"
         cat >"$PLIST_PATH" <<EOF
@@ -226,7 +300,7 @@ if [ "$INSTALL_AUTOSTART" = true ]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.trycua.cua-driver-rs</string>
+  <key>Label</key><string>com.trycua.cua-driver</string>
   <key>ProgramArguments</key>
   <array>
     <string>$INSTALLED_BIN</string>
@@ -243,12 +317,19 @@ EOF
         launchctl load "$PLIST_PATH"
         echo "${GREEN}Loaded.${NORMAL} Manage with launchctl load / unload \"$PLIST_PATH\"."
     elif [ "$OS" = "Linux" ]; then
-        UNIT_PATH="$HOME/.config/systemd/user/cua-driver-rs.service"
+        # Stop + remove any pre-rename systemd unit so the new one doesn't
+        # race the old one.
+        LEGACY_UNIT_PATH="$HOME/.config/systemd/user/cua-driver-rs.service"
+        if [ -f "$LEGACY_UNIT_PATH" ]; then
+            systemctl --user disable --now cua-driver-rs.service 2>/dev/null || true
+            rm -f "$LEGACY_UNIT_PATH"
+        fi
+        UNIT_PATH="$HOME/.config/systemd/user/cua-driver.service"
         echo "${BOLD}Writing systemd user unit → $UNIT_PATH${NORMAL}"
         mkdir -p "$(dirname "$UNIT_PATH")"
         cat >"$UNIT_PATH" <<EOF
 [Unit]
-Description=cua-driver-rs serve daemon
+Description=cua-driver serve daemon
 After=graphical-session.target
 
 [Service]
@@ -260,8 +341,8 @@ RestartSec=2
 WantedBy=default.target
 EOF
         systemctl --user daemon-reload
-        systemctl --user enable --now cua-driver-rs.service
-        echo "${GREEN}Enabled.${NORMAL} Manage with systemctl --user {start|stop|status} cua-driver-rs."
+        systemctl --user enable --now cua-driver.service
+        echo "${GREEN}Enabled.${NORMAL} Manage with systemctl --user {start|stop|status} cua-driver."
     fi
     echo ""
 fi

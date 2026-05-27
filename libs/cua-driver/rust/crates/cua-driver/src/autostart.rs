@@ -34,7 +34,16 @@ use anyhow::{anyhow, Result};
 pub const TASK_NAME: &str = "cua-driver-serve";
 
 /// Reported by `status`.
+///
+/// `#[allow(dead_code)]` on the variants because they're constructed
+/// only inside the `#[cfg(target_os = "windows")]` `platform::status`
+/// (schtasks-backed), while the enum itself is cross-platform — the
+/// non-Windows stub returns `Err(NOT_YET)` instead. The variants ARE
+/// reachable from `Status::tag` on every platform via the match, but
+/// rustc's dead-code analysis runs after cfg-stripping, so on
+/// macOS/Linux it sees the variants without a constructor and warns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Status {
     /// No autostart entry registered.
     NotRegistered,

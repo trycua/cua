@@ -7,10 +7,10 @@
 //!   - **AX-tree fallback** (WKWebView / Tauri) — read-only, no JS.
 //!
 //! The MCP tool definition (name, schema, action dispatch) lives in
-//! `mcp_server::page` — this file only implements the backend.
+//! `cua_driver_core::page` — this file only implements the backend.
 
 use async_trait::async_trait;
-use mcp_server::page::PageBackend;
+use cua_driver_core::page::PageBackend;
 use std::sync::Arc;
 
 use super::ToolState;

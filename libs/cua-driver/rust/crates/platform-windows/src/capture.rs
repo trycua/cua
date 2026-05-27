@@ -230,7 +230,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
             Ok((pixels, w, h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&pixels, w, h)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w, h)?,
                     false, // WGC reads target's own pixels — never occluded by definition
                 ));
             }
@@ -246,7 +246,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match screenshot_via_screen_region(hwnd) {
             Ok((pixels, w, h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
                     occluded,
                 ));
             }
@@ -271,12 +271,11 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // button strip OUTSIDE the standard Win32 client area, so a
     // client-sized buffer loses the Save/Cancel/OK row at the bottom.
     // Window-sized buffer captures title bar + body + non-client trim
-    // correctly; the small extra rows at the top (window frame) are
-    // worth it to never silently truncate buttons.
-    let mut rect = RECT::default();
-    GetWindowRect(hwnd, &mut rect)?;
-    let w = (rect.right - rect.left) as i32;
-    let h = (rect.bottom - rect.top) as i32;
+    // correctly.
+    let mut win_rect = RECT::default();
+    GetWindowRect(hwnd, &mut win_rect)?;
+    let w = (win_rect.right - win_rect.left) as i32;
+    let h = (win_rect.bottom - win_rect.top) as i32;
     if w <= 0 || h <= 0 {
         bail!("Window has zero/negative size: {}x{}", w, h);
     }
@@ -290,6 +289,32 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     if !pw_ok.as_bool() {
         BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
     }
+
+    // Compute the DWM-extended-frame bounds. On Win10+ the OS draws an
+    // invisible drop-shadow margin around every top-level window that
+    // GetWindowRect counts in its dimensions but PrintWindow does NOT
+    // actually paint into — leaving a black trim around the body in the
+    // captured bitmap (except the title bar, which spans the full width
+    // and so doesn't pick up the artifact). DWMWA_EXTENDED_FRAME_BOUNDS
+    // returns the rectangle WITHOUT the shadow margin. We compute the
+    // offsets relative to GetWindowRect and crop the bitmap below.
+    //
+    // Best-effort: if the DWM call fails (e.g. very old Windows, hooked
+    // by some shell extension), we keep the full-window bitmap as-is —
+    // user sees a small dark border but no clipping.
+    let dwm_rect: Option<RECT> = {
+        use windows::Win32::Graphics::Dwm::{
+            DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
+        };
+        let mut r = RECT::default();
+        let hr = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut r as *mut _ as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        hr.ok().map(|_| r)
+    };
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -316,6 +341,45 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
 
     if ok == 0 { bail!("GetDIBits returned 0"); }
 
+    // Crop the bitmap to the DWM extended-frame bounds (computed above)
+    // to remove the invisible-shadow margin PrintWindow doesn't paint.
+    // Skipped on the DWM-failed branch — caller sees a thin dark trim
+    // around the body but the body itself is intact.
+    //
+    // INSET: DWMWA_EXTENDED_FRAME_BOUNDS reports the rect WITHOUT the
+    // invisible shadow margin, but Win11 dialogs paint a 1-2 px dark
+    // stroke at the rounded-corner edge that ends up at the very edge
+    // of the DWM-extended-frame rect. The visual artifact is a thin
+    // black hairline along (typically) the bottom or right edge of the
+    // captured bitmap. A 1-px inset on each side removes the hairline
+    // without losing actual UI content — anything that close to the
+    // edge is window-frame chrome, not content.
+    const DWM_CROP_INSET_PX: i32 = 1;
+    let (pixels, w, h) = if let Some(dwm) = dwm_rect {
+        let off_x = (dwm.left - win_rect.left) as i32 + DWM_CROP_INSET_PX;
+        let off_y = (dwm.top - win_rect.top) as i32 + DWM_CROP_INSET_PX;
+        let crop_w = (dwm.right - dwm.left) as i32 - 2 * DWM_CROP_INSET_PX;
+        let crop_h = (dwm.bottom - dwm.top) as i32 - 2 * DWM_CROP_INSET_PX;
+        if off_x >= 0 && off_y >= 0 && crop_w > 0 && crop_h > 0
+            && off_x + crop_w <= w && off_y + crop_h <= h
+        {
+            let stride_full = (w * 4) as usize;
+            let stride_crop = (crop_w * 4) as usize;
+            let mut cropped = vec![0u8; (crop_w * crop_h * 4) as usize];
+            for row in 0..crop_h as usize {
+                let src_row = (off_y as usize + row) * stride_full + (off_x as usize) * 4;
+                let dst_row = row * stride_crop;
+                cropped[dst_row..dst_row + stride_crop]
+                    .copy_from_slice(&pixels[src_row..src_row + stride_crop]);
+            }
+            (cropped, crop_w, crop_h)
+        } else {
+            (pixels, w, h)
+        }
+    } else {
+        (pixels, w, h)
+    };
+
     // CUA-542: detect the all-black bitmap PrintWindow returns for
     // DirectComposition-backed UWP / WinUI3 surfaces. Recovery order:
     //   1. WGC (occlusion-immune; works for UWP).
@@ -327,7 +391,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
             Ok((alt_pixels, w, h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
                     false,
                 ));
             }
@@ -343,7 +407,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         match screenshot_via_screen_region(hwnd) {
             Ok((alt_pixels, alt_w, alt_h)) => {
                 return Ok((
-                    mcp_server::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32)?,
+                    cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, alt_w as u32, alt_h as u32)?,
                     occluded,
                 ));
             }
@@ -369,21 +433,21 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // PrintWindow itself reads from the target's own DC, so the bitmap
     // we return here is the target's pixels even when occluded — no
     // occluded warning needed on this path.
-    Ok((mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?, false))
+    Ok((cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?, false))
 }
 
 // NOTE: previously this module carried a hand-rolled
 // `write_uncompressed_png` + `write_png_chunk` + `zlib_store` +
 // `adler32` + `crc32_ieee` (~110 lines) plus a local
 // `encode_bgra_to_png` that used them. All of that is replaced by
-// `mcp_server::image_utils::encode_bgra_to_png` which goes through
+// `cua_driver_core::image_utils::encode_bgra_to_png` which goes through
 // the `image` crate's PNG encoder — already a workspace dep,
 // produces ~5x smaller files than the uncompressed-store path.
 //
 // Same extraction applies to the four pub helpers below
 // (`png_bytes_to_jpeg`, `resize_png_if_needed`, `crosshair_png_bytes`,
 // `png_dimensions_pub`). They're now thin re-exports of the shared
-// `mcp_server::image_utils::*` so all three platform crates call the
+// `cua_driver_core::image_utils::*` so all three platform crates call the
 // same code. See `CUA_DRIVER_RS_DEDUP_AUDIT.md` for the full audit.
 
 /// Capture the primary display (full screen), returning raw PNG bytes.
@@ -414,39 +478,39 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
         if ok == 0 { bail!("GetDIBits returned 0"); }
-        mcp_server::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
+        cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)
     }
 }
 
 /// Capture primary display, returning (base64_png, width, height).
 pub fn screenshot_display() -> Result<(String, u32, u32)> {
     let png_bytes = screenshot_display_bytes()?;
-    let (w, h) = mcp_server::image_utils::png_dimensions(&png_bytes)?;
+    let (w, h) = cua_driver_core::image_utils::png_dimensions(&png_bytes)?;
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
 // PNG/JPEG/resize/crosshair helpers — re-exports of the shared
-// `mcp_server::image_utils` module. The previous file-local copies were
+// `cua_driver_core::image_utils` module. The previous file-local copies were
 // near-identical to the macOS and Linux versions; the dedup-audit
 // (2026-05) moved them all to one place.
 
 /// Convert PNG bytes to JPEG at the given quality (1–95).
 pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
-    mcp_server::image_utils::png_bytes_to_jpeg(png_bytes, quality)
+    cua_driver_core::image_utils::png_bytes_to_jpeg(png_bytes, quality)
 }
 
 /// Downscale `png_bytes` so neither dimension exceeds `max_dim`.
 /// If `max_dim == 0` or the image already fits, returns a copy of the
 /// original bytes unchanged.
 pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
-    mcp_server::image_utils::resize_png_if_needed(png_bytes, max_dim)
+    cua_driver_core::image_utils::resize_png_if_needed(png_bytes, max_dim)
 }
 
 /// Draw a red crosshair at pixel (cx, cy) on a PNG image and return
 /// modified PNG bytes. Used by recording's click-marker callback to
 /// produce click.png.
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
-    mcp_server::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
+    cua_driver_core::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
 
 /// Parse width and height from a PNG IHDR chunk.
@@ -454,6 +518,6 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 /// Suffixed `_pub` because an older private `png_dimensions` predated
 /// the `_pub` export; the public alias is what callers use today.
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
-    mcp_server::image_utils::png_dimensions(data)
+    cua_driver_core::image_utils::png_dimensions(data)
 }
 

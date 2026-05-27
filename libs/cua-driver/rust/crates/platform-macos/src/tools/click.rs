@@ -14,7 +14,7 @@
 //!   to full-window space using the most recent `zoom` context stored per-pid.
 
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -101,7 +101,7 @@ impl Tool for ClickTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
 
         let element_index = args.opt_u64("element_index").map(|v| v as usize);

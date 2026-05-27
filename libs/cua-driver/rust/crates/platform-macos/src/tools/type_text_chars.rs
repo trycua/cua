@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use mcp_server::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -46,12 +46,12 @@ impl Tool for TypeTextCharsTool {
     fn def(&self) -> &ToolDef { def() }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use mcp_server::tool_args::ArgsExt;
+        use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
         // Same trailing-protocol-tag scrub as TypeTextTool — see
-        // mcp_server::text_sanitize for rationale.
-        let text = mcp_server::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
+        // cua_driver_core::text_sanitize for rationale.
+        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         let element_index = args.opt_u64("element_index").map(|v| v as usize);

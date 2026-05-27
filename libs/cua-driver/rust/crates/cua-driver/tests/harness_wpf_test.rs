@@ -19,7 +19,7 @@
 //! Run via the sandbox runner:
 //!   .\sandbox\run-tests-in-sandbox.ps1 harness_wpf
 //!
-//! Or locally (requires .NET 8 SDK + `test-harness/build.ps1`):
+//! Or locally (requires .NET 8 SDK + `test-harness/build/windows.ps1`):
 //!   cargo test --test harness_wpf_test -- --ignored --nocapture
 //!
 //! Tests are `#[ignore]` so they don't run in plain `cargo test`. The
@@ -99,7 +99,7 @@ impl Harness {
     fn launch() -> Option<Self> {
         let exe = harness_exe();
         if !exe.exists() {
-            eprintln!("harness exe not found at {exe:?} — run test-harness/build.ps1 first");
+            eprintln!("harness exe not found at {exe:?} — run test-harness/build/windows.ps1 first");
             return None;
         }
         let app = Command::new(&exe)
@@ -669,5 +669,229 @@ fn harness_wpf_layered_popup_capture() {
             rgb.width(), rgb.height());
         println!("✅ harness_wpf_layered_popup_capture: capture has non-black pixels ({}x{})",
                  rgb.width(), rgb.height());
+    });
+}
+
+// ── slider / checkable / combo / list / menu coverage ────────────────────────
+
+#[test]
+#[ignore]
+fn harness_wpf_slider_drag() {
+    // Regression guard for the SendInput drag path. PostMessage drag
+    // doesn't update GetKeyState, so WPF's Thumb-drag handler (which
+    // polls Mouse.LeftButton via GetKeyState) never sees the button
+    // held — the thumb stays put. dispatch:"foreground" routes through
+    // send_drag_synthesized which goes via the system input queue and
+    // DOES update GetKeyState, so the thumb actually tracks.
+    //
+    // Foreground-lock caveat: SetForegroundWindow can be rejected from
+    // non-UIAccess processes during the daemon-process foreground swap.
+    // bring_to_front first to make the harness foreground (via
+    // AttachThreadInput), then SendInput's own SetForegroundWindow is a
+    // no-op success.
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        let pre = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&pre).contains("slider_value=0"),
+            "initial slider_value=0 missing");
+
+        let resp = tools_call(stdin, stdout, 30, "drag", serde_json::json!({
+            "pid": pid as i64, "window_id": wid,
+            // drag screen-coords path: send_drag_synthesized takes screen
+            // coords directly. The harness window is centered at
+            // (517, 66) with the slider track at client (50-330, 275);
+            // convert to screen via ClientToScreen approximation by
+            // offsetting by window position + non-client chrome
+            // (title bar + border ~30,8). screen coords here are
+            // re-derived in window-local form by the tool's existing
+            // ClientToScreen step.
+            "from_x": 50.0, "from_y": 275.0,
+            "to_x": 330.0,  "to_y": 275.0,
+            "duration_ms": 700, "steps": 40,
+            "dispatch": "foreground"
+        }));
+        let msg = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        println!("drag slider (foreground): {msg}");
+        assert!(msg.starts_with("✅"),
+            "drag tool returned non-success: {msg}");
+        std::thread::sleep(Duration::from_millis(500));
+
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        let text = snapshot_text(&post);
+        let advanced = text.lines().any(|l|
+            l.contains("slider_value=") && !l.contains("slider_value=0\""));
+        assert!(advanced,
+            "Slider value did not advance via SendInput drag. Lines: {}",
+            text.lines().filter(|l| l.contains("slider_value"))
+                .collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_slider_drag: thumb tracked via SendInput drag");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_slider_increase_large() {
+    // Companion to slider_drag — exercises UIA Invoke on the Slider's
+    // internal IncreaseLarge "page-up" button. Doesn't depend on screen
+    // coords, so it's the more robust slider integration test.
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        let snap = snapshot_elements(stdin, stdout, pid, wid);
+        let idx = find_element_index_by_aid(&snap, "IncreaseLarge")
+            .expect("slider IncreaseLarge button not in snapshot");
+        for i in 0..3 {
+            let resp = tools_call(stdin, stdout, 30 + i, "click", serde_json::json!({
+                "pid": pid as i64, "window_id": wid, "element_index": idx
+            }));
+            println!("invoke IncreaseLarge #{i}: {}", resp["result"]["content"][0]["text"]);
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        let text = snapshot_text(&post);
+        let advanced = text.lines().any(|l|
+            l.contains("slider_value=") && !l.contains("slider_value=0\""));
+        assert!(advanced, "slider IncreaseLarge invokes did not advance value. Lines: {}",
+            text.lines().filter(|l| l.contains("slider_value")).collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_slider_increase_large: advanced via UIA Invoke");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_checkbox_toggle() {
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        let snap = snapshot_elements(stdin, stdout, pid, wid);
+        let idx = find_element_index_by_aid(&snap, "chk-agreed")
+            .expect("chk-agreed missing");
+        // CheckBox exposes UIA TogglePattern (actions=[toggle]), not Invoke.
+        // cua-driver's click tool tries UIA Invoke first; for elements that
+        // don't support it the PostMessage fallback path runs. Use
+        // dispatch:"foreground" to land a SendInput click that WPF
+        // recognises as a real user click and processes through Toggle.
+        let resp = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx,
+            "dispatch": "foreground"
+        }));
+        println!("click chk-agreed: {}", resp["result"]["content"][0]["text"]);
+        std::thread::sleep(Duration::from_millis(400));
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&post).contains("agreed=True"),
+            "checkbox didn't toggle: {}",
+            snapshot_text(&post).lines().filter(|l| l.contains("agreed=")).collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_checkbox_toggle: agreed=True");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_radio_select() {
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        let snap = snapshot_elements(stdin, stdout, pid, wid);
+        let idx = find_element_index_by_aid(&snap, "rdo-high")
+            .expect("rdo-high missing");
+        // RadioButton exposes SelectionItem pattern (actions=[select]).
+        // Same dispatch:foreground rationale as the checkbox test.
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx,
+            "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&post).contains("prio=High"),
+            "radio didn't switch to High");
+        println!("✅ harness_wpf_radio_select: prio=High");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_combo_select() {
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        let snap = snapshot_elements(stdin, stdout, pid, wid);
+        let combo_idx = find_element_index_by_aid(&snap, "cbo-color")
+            .expect("cbo-color missing");
+        // WPF ComboBox UIA peer surfaces ExpandCollapsePattern (actions=[expand])
+        // but not ValuePattern — set_value at the parent is a no-op. Standard
+        // recipe: invoke the combo to expand the dropdown, re-snapshot so the
+        // item AIDs land in the element cache, then click the target item.
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
+            "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(500));
+
+        let snap2 = snapshot_elements(stdin, stdout, pid, wid);
+        let item_idx = find_element_index_by_aid(&snap2, "cbo-item-orange")
+            .expect("cbo-item-orange missing after expand");
+        let _ = tools_call(stdin, stdout, 31, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": item_idx,
+            "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(500));
+
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&post).contains("color=orange"),
+            "combo didn't switch to orange: {}",
+            snapshot_text(&post).lines().filter(|l| l.contains("color=")).collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_combo_select: color=orange");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_listbox_select() {
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        let snap = snapshot_elements(stdin, stdout, pid, wid);
+        let idx = find_element_index_by_aid(&snap, "lst-cherry")
+            .expect("lst-cherry missing");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": idx,
+            "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&post).contains("selected=cherry"),
+            "list didn't select cherry: {}",
+            snapshot_text(&post).lines().filter(|l| l.contains("selected=")).collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_listbox_select: selected=cherry");
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_wpf_menu_invoke() {
+    with_session(|pid, wid, stdin, stdout| {
+        focus_harness(stdin, stdout, pid, wid);
+        // Expand File menu first (UIA expand pattern on MenuItem)
+        let snap = snapshot_elements(stdin, stdout, pid, wid);
+        let file_idx = find_element_index_by_aid(&snap, "menu-file")
+            .expect("menu-file missing");
+        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": file_idx,
+            "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(400));
+
+        // Re-snapshot so menu-file-new is in the cache (it materialized
+        // when the menu expanded).
+        let snap2 = snapshot_elements(stdin, stdout, pid, wid);
+        let new_idx = find_element_index_by_aid(&snap2, "menu-file-new")
+            .expect("menu-file-new missing after expand");
+        let _ = tools_call(stdin, stdout, 31, "click", serde_json::json!({
+            "pid": pid as i64, "window_id": wid, "element_index": new_idx,
+            "dispatch": "foreground"
+        }));
+        std::thread::sleep(Duration::from_millis(500));
+
+        let post = snapshot_elements(stdin, stdout, pid, wid);
+        assert!(snapshot_text(&post).contains("menu_action=file_new"),
+            "File>New didn't invoke: {}",
+            snapshot_text(&post).lines().filter(|l| l.contains("menu_action=")).collect::<Vec<_>>().join(" / "));
+        println!("✅ harness_wpf_menu_invoke: menu_action=file_new");
     });
 }

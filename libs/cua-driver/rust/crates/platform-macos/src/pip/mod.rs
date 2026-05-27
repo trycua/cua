@@ -46,6 +46,29 @@ use std::sync::Mutex;
 
 use pip_preview::{PipBackend, PipBackendFactory, PipConfig, PipFrame};
 
+// ── CGColor objc2 encoding shim ────────────────────────────────────────────
+//
+// `[NSColor CGColor]` returns a `CGColorRef` whose Objective-C type encoding
+// is `^{CGColor=}`. objc2's strict msg_send! enforcement rejects bare
+// `*mut c_void` (`^v`) for both sides of that call. Declare a phantom
+// struct with the matching encoding so we can typed-cast through it
+// without pulling in a wider CGColor binding crate.
+
+#[repr(C)]
+struct CGColor {
+    _opaque: [u8; 0],
+}
+
+// RefEncode supplies an automatic Encode impl for `*mut CGColor` /
+// `*const CGColor` via objc2's blanket — that's the route msg_send! needs
+// for both setting layer.backgroundColor and reading [NSColor CGColor].
+// `ENCODING_REF` is the encoding for one level of indirection, so the
+// pointer wrap goes here (objc encoding `^{CGColor=}`).
+unsafe impl objc2::RefEncode for CGColor {
+    const ENCODING_REF: objc2::Encoding =
+        objc2::Encoding::Pointer(&objc2::Encoding::Struct("CGColor", &[]));
+}
+
 // ── Native AppKit pointer cell ─────────────────────────────────────────────
 //
 // Window, image view, and label pointers are stashed as `usize` so
@@ -250,15 +273,13 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let rect = NSRect::new(NSPoint::new(top_left_x, bottom_y), NSSize::new(w, h));
 
     // ── NSWindow ──
-    // Titled + Closable so the user can dismiss; no Resizable /
-    // Miniaturizable to keep the chrome minimal.
-    //   NSWindowStyleMaskTitled    = 1 << 0
-    //   NSWindowStyleMaskClosable  = 1 << 1
-    //   NSWindowStyleMaskNonactivatingPanel is panel-only — we use
-    //   NSWindow + a no-activate collection behavior instead, which
-    //   achieves the same "never steals focus" outcome without
-    //   forcing the caller to instantiate an NSPanel.
-    let style_mask: u64 = (1 << 0) | (1 << 1);
+    // Borderless so the image owns the whole rectangle. No close button
+    // / title bar — the window is owned by the daemon session lifecycle.
+    // The rounded-corner look comes from a CALayer-backed content view
+    // with cornerRadius + masksToBounds; the window itself stays
+    // transparent outside the rounded rect.
+    //   NSWindowStyleMaskBorderless = 0
+    let style_mask: u64 = 0;
     let backing_store_buffered: u64 = 2;
     let win: *mut AnyObject = {
         let alloc: *mut AnyObject = msg_send![class!(NSWindow), alloc];
@@ -274,19 +295,17 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         return;
     }
 
-    // Title — set via stringWithUTF8String.
-    if let Ok(cstr) = std::ffi::CString::new(cfg.title.clone()) {
-        let ns_str: *mut AnyObject = msg_send![
-            class!(NSString),
-            stringWithUTF8String: cstr.as_ptr() as *const u8
-        ];
-        if !ns_str.is_null() {
-            let _: () = msg_send![win, setTitle: ns_str];
-        }
-    }
+    // Transparent backing so the corners outside the CALayer-clipped
+    // content view show whatever's underneath — gives the floating-pill
+    // look. The shadow comes from AppKit's default `hasShadow: true`.
+    let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
+    let _: () = msg_send![win, setBackgroundColor: clear];
+    let _: () = msg_send![win, setOpaque: false];
+    let _: () = msg_send![win, setHasShadow: true];
+    // Draggable from anywhere since there's no title bar.
+    let _: () = msg_send![win, setMovableByWindowBackground: true];
 
-    // Floating window level (kCGFloatingWindowLevel = 3 above NSNormal).
-    // NSFloatingWindowLevel = 3.
+    // Floating window level (NSFloatingWindowLevel = 3).
     let _: () = msg_send![win, setLevel: 3i64];
 
     // Collection behavior: visible across all spaces, no Mission
@@ -298,39 +317,72 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
 
     let _: () = msg_send![win, setReleasedWhenClosed: false];
     let _: () = msg_send![win, setHidesOnDeactivate: false];
-    // Note: `becomesKeyOnlyIfNeeded` is an NSPanel-only selector and
-    // sending it to NSWindow crashes with NSInvalidArgumentException.
-    // We use `orderFrontRegardless` (below) instead of `makeKeyAndOrderFront`,
-    // which already avoids stealing key-window status from the user's
-    // frontmost app. Combined with the Transient / IgnoresCycle
-    // collection-behavior flags above, this is enough to keep the PiP
-    // window passive even when the user clicks inside it.
 
-    // ── Content view layout ──
-    // Image fills the top of the content view, leaving a 32pt strip
-    // at the bottom for the action label.
-    let label_height = 28.0_f64;
-    let image_rect = NSRect::new(
-        NSPoint::new(0.0, label_height),
-        NSSize::new(w, h - label_height),
-    );
-    let label_rect = NSRect::new(
-        NSPoint::new(8.0, 4.0),
-        NSSize::new(w - 16.0, label_height - 8.0),
-    );
+    // ── Content view: rounded-corner black backing ──
+    // wantsLayer + masksToBounds clips the image view to the rounded
+    // rect. The backing CALayer color shows wherever the (proportionally
+    // scaled) image leaves gaps above/below or left/right.
+    let content_view: *mut AnyObject = msg_send![win, contentView];
+    let _: () = msg_send![content_view, setWantsLayer: true];
+    let content_layer: *mut AnyObject = msg_send![content_view, layer];
+    let _: () = msg_send![content_layer, setCornerRadius: 12.0_f64];
+    let _: () = msg_send![content_layer, setMasksToBounds: true];
+    let black: *mut AnyObject = msg_send![
+        class!(NSColor),
+        colorWithCalibratedRed: 0.0_f64
+        green: 0.0_f64
+        blue: 0.0_f64
+        alpha: 1.0_f64
+    ];
+    let black_cg: *mut CGColor = msg_send![black, CGColor];
+    let _: () = msg_send![content_layer, setBackgroundColor: black_cg];
 
-    // NSImageView
+    // ── NSImageView: fills the entire content view ──
+    let image_rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(w, h));
     let image_view: *mut AnyObject = {
         let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
         msg_send![alloc, initWithFrame: image_rect]
     };
-    // NSImageScaleProportionallyUpOrDown = 3 (preserve aspect ratio,
-    // scale up or down to fit the view). AppKit types this as NSUInteger
-    // (`'Q'` / u64) — a signed i64 here triggers an objc2 type-encoding
-    // panic on macOS 26+.
+    // NSImageScaleProportionallyUpOrDown = 3 (preserve aspect ratio).
+    // AppKit types this as NSUInteger — passing signed i64 triggers
+    // an objc2 type-encoding panic on macOS 26+.
     let _: () = msg_send![image_view, setImageScaling: 3u64];
 
-    // NSTextField label
+    // ── Label overlay: pill at bottom-center ──
+    // Container NSView with semi-transparent black backing + rounded
+    // corners (half its height for a fully rounded pill). NSTextField
+    // sits inside, centered, white text on the dark backing.
+    let pill_height = 22.0_f64;
+    let pill_inset_x = 16.0_f64;
+    let pill_inset_bottom = 10.0_f64;
+    let pill_w = (w - pill_inset_x * 2.0).max(60.0);
+    let pill_rect = NSRect::new(
+        NSPoint::new(pill_inset_x, pill_inset_bottom),
+        NSSize::new(pill_w, pill_height),
+    );
+    let pill: *mut AnyObject = {
+        let alloc: *mut AnyObject = msg_send![class!(NSView), alloc];
+        msg_send![alloc, initWithFrame: pill_rect]
+    };
+    let _: () = msg_send![pill, setWantsLayer: true];
+    let pill_layer: *mut AnyObject = msg_send![pill, layer];
+    let _: () = msg_send![pill_layer, setCornerRadius: pill_height / 2.0];
+    let _: () = msg_send![pill_layer, setMasksToBounds: true];
+    let pill_bg: *mut AnyObject = msg_send![
+        class!(NSColor),
+        colorWithCalibratedRed: 0.0_f64
+        green: 0.0_f64
+        blue: 0.0_f64
+        alpha: 0.62_f64
+    ];
+    let pill_bg_cg: *mut CGColor = msg_send![pill_bg, CGColor];
+    let _: () = msg_send![pill_layer, setBackgroundColor: pill_bg_cg];
+
+    // NSTextField inside the pill — horizontal padding via frame inset.
+    let label_rect = NSRect::new(
+        NSPoint::new(10.0, 0.0),
+        NSSize::new(pill_w - 20.0, pill_height),
+    );
     let label: *mut AnyObject = {
         let alloc: *mut AnyObject = msg_send![class!(NSTextField), alloc];
         msg_send![alloc, initWithFrame: label_rect]
@@ -339,6 +391,12 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let _: () = msg_send![label, setDrawsBackground: false];
     let _: () = msg_send![label, setEditable: false];
     let _: () = msg_send![label, setSelectable: false];
+    // NSTextAlignment.center = 2 (NSInteger).
+    let _: () = msg_send![label, setAlignment: 2i64];
+    let white: *mut AnyObject = msg_send![class!(NSColor), whiteColor];
+    let _: () = msg_send![label, setTextColor: white];
+    let font: *mut AnyObject = msg_send![class!(NSFont), systemFontOfSize: 11.0_f64];
+    let _: () = msg_send![label, setFont: font];
     // Initial placeholder text — overwritten on the first frame.
     if let Ok(cstr) = std::ffi::CString::new("waiting for first action…") {
         let ns_str: *mut AnyObject = msg_send![
@@ -350,13 +408,11 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         }
     }
 
-    let content_view: *mut AnyObject = msg_send![win, contentView];
     let _: () = msg_send![content_view, addSubview: image_view];
-    let _: () = msg_send![content_view, addSubview: label];
+    let _: () = msg_send![pill, addSubview: label];
+    let _: () = msg_send![content_view, addSubview: pill];
 
-    // Show the window without making it key or activating the app —
-    // `orderFrontRegardless` brings it on screen without disturbing
-    // the active app's focus state.
+    // Show the window without making it key or activating the app.
     let _: () = msg_send![win, orderFrontRegardless];
 
     *HANDLES.lock().unwrap() = Some(NativeHandles {

@@ -33,8 +33,8 @@ pub struct PipGeometry {
 impl Default for PipGeometry {
     fn default() -> Self {
         Self {
-            width: 480,
-            height: 360,
+            width: 320,
+            height: 200,
             x: None,
             y: None,
         }

@@ -107,6 +107,7 @@ Tool names are `snake_case`, management subcommands are
 - `cua-driver stop` / `status`
 - `cua-driver list-tools`, `describe <tool>`
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
+- `cua-driver check-update [--json] [--no-cache]` — read-only "is a newer release available?" probe. Same payload as the `check_for_update` MCP tool; pair with `cua-driver update --apply` to install.
 
 Canonical multi-step workflow (example shape — platform-specific
 launch idioms in the per-OS companion file):

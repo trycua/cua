@@ -110,6 +110,10 @@ const VALUE_FLAGS: &[&str] = &[
     "--cursor-icon", "--cursor-id", "--cursor-palette",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
     "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
+    // Experimental PiP preview — value flag for the optional geometry
+    // override (--experimental-pip itself is a bare flag and doesn't
+    // need to be listed here).
+    "--experimental-pip-geometry",
 ];
 
 /// Parse the first non-flag positional argument from argv to determine which
@@ -152,6 +156,14 @@ pub fn parse_command() -> Command {
         println!();
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
+        println!();
+        println!("experimental options (default: off):");
+        println!("  --experimental-pip          Show a small always-on-top window with the latest");
+        println!("                              post-action screenshot + a 1-line label. macOS only");
+        println!("                              today; Win/Linux print a not-yet-implemented notice.");
+        println!("  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left");
+        println!("                                          origin). Defaults to 480x360 in the top-right");
+        println!("                                          corner of the main display.");
         std::process::exit(0);
     }
 

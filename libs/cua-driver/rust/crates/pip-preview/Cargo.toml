@@ -1,0 +1,8 @@
+[package]
+name = "pip-preview"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }

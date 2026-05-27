@@ -286,6 +286,7 @@ dependencies = [
  "flate2",
  "image",
  "libc",
+ "pip-preview",
  "platform-linux",
  "platform-macos",
  "platform-windows",
@@ -1191,6 +1192,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pip-preview"
+version = "0.2.18"
+dependencies = [
+ "anyhow",
+ "tracing",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1207,6 +1216,7 @@ dependencies = [
  "cursor-overlay",
  "image",
  "libc",
+ "pip-preview",
  "serde",
  "serde_json",
  "thiserror",
@@ -1236,6 +1246,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-quartz-core",
+ "pip-preview",
  "screencapturekit",
  "serde",
  "serde_json",
@@ -1257,6 +1268,7 @@ dependencies = [
  "cua-driver-core",
  "cursor-overlay",
  "image",
+ "pip-preview",
  "serde",
  "serde_json",
  "thiserror",

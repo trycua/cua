@@ -9,6 +9,7 @@ members = [
     "crates/platform-linux",
     "crates/cursor-overlay",
     "crates/focus-monitor-win",
+    "crates/pip-preview",
 ]
 
 [workspace.package]

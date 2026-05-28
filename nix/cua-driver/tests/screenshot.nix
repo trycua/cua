@@ -269,13 +269,12 @@ pkgs.testers.nixosTest {
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
         # Start openbox WM so _NET_CLIENT_LIST is populated for list_windows
         machine.execute("DISPLAY=:99 openbox >/dev/null 2>&1 &")
-        time.sleep(1)
+        machine.wait_until_succeeds("DISPLAY=:99 xdotool getactivewindow", timeout=10)
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
-        machine.execute("DISPLAY=:99 xterm -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
-        time.sleep(3)
-        # Verify xterm window exists via xdotool
-        machine.succeed("DISPLAY=:99 xdotool search --name xterm")
+        machine.execute("DISPLAY=:99 xterm -T 'CUA Test' -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
+        # Wait for xterm window to appear (poll inside the VM)
+        machine.wait_until_succeeds("DISPLAY=:99 xdotool search --name 'CUA Test'", timeout=15)
 
     with subtest("Screenshot via cua-driver MCP"):
         machine.copy_from_host("${mcpScreenshotTest}", "/tmp/mcp-screenshot-test.py")

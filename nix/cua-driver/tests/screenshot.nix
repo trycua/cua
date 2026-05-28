@@ -105,7 +105,7 @@ let
                 with open("/tmp/xterm-xid.txt") as f:
                     window_id = int(f.read().strip().split("\n")[0])
                 with open("/tmp/xterm-pid.txt") as f:
-                    pid = int(f.read().strip())
+                    pid = int(f.read().strip().split("\n")[0])
                 print(f"Found xterm window: pid={pid} window_id={window_id}", flush=True)
             except Exception as e:
                 print(f"ERROR: Could not read window info: {e}", flush=True)

@@ -209,13 +209,13 @@ pkgs.testers.nixosTest {
     with subtest("Screenshot with xterm"):
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
-        machine.execute("DISPLAY=:99 xterm -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh &")
-        machine.succeed("sleep 2")
-        # Capture the Xvfb display via xwd (X Window Dump) + convert to PPM then PNG-ish PPM
-        # xwd is more reliable than ImageMagick import in headless environments
-        machine.succeed("DISPLAY=:99 xwd -root -out /tmp/cua-driver-test.xwd")
-        machine.succeed("xwdtopnm /tmp/cua-driver-test.xwd > /tmp/cua-driver-test.pnm")
-        machine.succeed("pnmtopng /tmp/cua-driver-test.pnm > /tmp/cua-driver-test.png")
+        machine.execute("DISPLAY=:99 xterm -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
+        import time
+        time.sleep(3)
+        # Capture the Xvfb display via xwd + netpbm pipeline
+        machine.succeed("timeout 10 env DISPLAY=:99 xwd -root -out /tmp/cua-driver-test.xwd")
+        machine.succeed("xwdtopnm /tmp/cua-driver-test.xwd > /tmp/cua-driver-test.pnm 2>/dev/null")
+        machine.succeed("pnmtopng /tmp/cua-driver-test.pnm > /tmp/cua-driver-test.png 2>/dev/null")
         machine.copy_from_machine("/tmp/cua-driver-test.png", "")
   '';
 }

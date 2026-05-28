@@ -19,8 +19,8 @@ cua-driver autostart disable   # remove the entry
 | Platform | Mechanism | Where it lives |
 |---|---|---|
 | Windows | Scheduled Task `cua-driver-serve` with `LogonType: Interactive` | Task Scheduler (`schtasks /Query /TN cua-driver-serve`) |
-| macOS | Not yet implemented in the Rust port — use the manual `LaunchAgent` recipe ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/scripts/install-local.sh)) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` |
-| Linux | Not yet implemented in the Rust port — use the manual `systemd --user` unit ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/scripts/install-local.sh)) | `~/.config/systemd/user/cua-driver-rs.service` |
+| macOS | Not yet implemented in the Rust port — use the manual `LaunchAgent` recipe ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh)) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` |
+| Linux | Not yet implemented in the Rust port — use the manual `systemd --user` unit ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh)) | `~/.config/systemd/user/cua-driver-rs.service` |
 
 <Callout type="info">
 **Platform parity status.** `cua-driver autostart` is currently a Windows-only verb in the Rust port — the macOS / Linux cases return an error pointing at the manual recipe. A cross-platform native impl is tracked as a follow-up. The verb is documented as the cross-platform interface so existing scripts and skill-pack instructions land in the right place once parity ships.

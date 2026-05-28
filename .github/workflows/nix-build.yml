@@ -16,6 +16,7 @@ on:
       - 'flake.lock'
       - 'libs/cua-driver/rust/**'
       - '.github/workflows/nix-build.yml'
+  workflow_dispatch:
 
 permissions:
   id-token: write

@@ -179,8 +179,8 @@ pkgs.testers.nixosTest {
         assert "input_schema" in result, f"Unexpected describe output: {result[:200]}"
 
     with subtest("Start Xvfb"):
-        machine.succeed("Xvfb :99 -screen 0 1280x1024x24 &")
-        machine.succeed("sleep 2")
+        machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &")
+        machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
 
     with subtest("doctor with X11 display"):
         # Timeout doctor to 15s — AT-SPI/gdbus probes can hang without a session bus

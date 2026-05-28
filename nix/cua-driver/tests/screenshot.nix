@@ -235,8 +235,8 @@ pkgs.testers.nixosTest {
         # Wait for xterm window to appear (poll via xdotool inside the VM)
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --class xterm", timeout=15)
         # Save the xterm window ID and PID for the MCP screenshot test
-        machine.succeed("DISPLAY=:99 xdotool search --class xterm > /tmp/xterm-xid.txt")
-        machine.succeed("DISPLAY=:99 xdotool getwindowpid $(cat /tmp/xterm-xid.txt | head -1) > /tmp/xterm-pid.txt")
+        machine.succeed("DISPLAY=:99 xdotool search --class xterm | head -1 > /tmp/xterm-xid.txt")
+        machine.succeed("pgrep -x xterm > /tmp/xterm-pid.txt")
 
     with subtest("Screenshot via cua-driver MCP"):
         machine.copy_from_host("${mcpScreenshotTest}", "/tmp/mcp-screenshot-test.py")

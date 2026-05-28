@@ -83,11 +83,11 @@ jobs:
         run: nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
 
       - name: Sign and upload to Nix cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: always()
         run: |
           echo "Signing and uploading build artifacts to Nix cache..."
           nix store sign --key-file "${{ runner.temp }}/signing-key.sec" --all
-          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}" -L --all
+          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}&want-mass-query=true" --all -L
 
       - name: Cleanup signing key
         if: always()

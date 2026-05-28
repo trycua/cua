@@ -50,16 +50,6 @@
                   services.cua-driver.package = cuaDriverPackage;
                 };
               };
-
-              # Same test but captures a VM screenshot at the end
-              cua-driver-screenshot = import ./nix/cua-driver/tests/screenshot.nix {
-                inherit pkgs;
-                inherit (pkgs) lib;
-                cuaDriverModule = {
-                  imports = [ ./nix/cua-driver/module.nix ];
-                  services.cua-driver.package = cuaDriverPackage;
-                };
-              };
             };
         }
       )

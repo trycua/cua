@@ -35,7 +35,7 @@ The `display server` probe surfaces:
 
 ## AT-SPI prerequisite
 
-The accessibility-tree tools (`get_window_state`, `click` with `element_index`, anything that walks UIA-equivalent structure) talk to the **AT-SPI 2** D-Bus bus. AT-SPI is the Linux accessibility framework — same role as macOS's AX or Windows' UI Automation. cua-driver expects the AT-SPI bus to be reachable on your session bus.
+The accessibility-tree tools (`get_window_state`, `click` with `element_index`, anything that walks UIA-equivalent structure) talk to the **AT-SPI 2** D-Bus bus. AT-SPI is the Linux accessibility framework — same role as macOS's AX or Windows' UI Automation. Cua Driver expects the AT-SPI bus to be reachable on your session bus.
 
 cua-driver probes this at startup via `gdbus`:
 

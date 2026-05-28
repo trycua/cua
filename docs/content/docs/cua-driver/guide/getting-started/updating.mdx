@@ -5,7 +5,7 @@ description: Check whether a newer Cua Driver release is available, then apply i
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-cua-driver ships three update surfaces, all reading from the same GitHub releases endpoint and 20-hour on-disk cache:
+Cua Driver ships three update surfaces, all reading from the same GitHub releases endpoint and 20-hour on-disk cache:
 
 | Surface        | Verb                             | Use case                                                                        |
 | -------------- | -------------------------------- | ------------------------------------------------------------------------------- |
@@ -70,7 +70,7 @@ The non-zero-on-outdated convention (à la `brew outdated`) is intentionally not
 
 ## `cua-driver check-update --json` — scripted path
 
-Same check, JSON output. Use this when wiring cua-driver updates into Hermes, CI, or any wrapper script.
+Same check, JSON output. Use this when wiring Cua Driver updates into Hermes, CI, or any wrapper script.
 
 ```bash
 $ cua-driver check-update --json
@@ -122,7 +122,7 @@ $ cua-driver check-update --json
 
 ```bash
 if cua-driver check-update --json | jq -e '.update_available' > /dev/null; then
-    echo "cua-driver is outdated — applying update"
+    echo "Cua Driver is outdated — applying update"
     cua-driver update --apply
 fi
 ```
@@ -163,8 +163,8 @@ $ cua-driver update --apply
 Current version: 0.3.1
 Checking for updates…
 New version available: 0.3.2
-Downloading and installing cua-driver 0.3.2…
-Installed cua-driver 0.3.2.
+Downloading and installing Cua Driver 0.3.2…
+Installed Cua Driver 0.3.2.
 ```
 
 If a daemon was already running, restart it to pick up the new binary:

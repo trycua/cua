@@ -128,21 +128,25 @@ let
                 w = windows[0]
                 pid = w.get("pid")
                 window_id = w.get("window_id") or w.get("id") or w.get("xid")
-                print(f"Found window: pid={pid} window_id={window_id}", flush=True)
+                print(f"Found window via list_windows: pid={pid} window_id={window_id}", flush=True)
 
             if pid is None or window_id is None:
-                print("WARN: Could not find window, trying get_accessibility_tree", flush=True)
-                send_request("tools/call", {
-                    "name": "get_accessibility_tree",
-                    "arguments": {},
-                }, req_id=4)
-                resp = read_response(timeout=10)
-                content = resp.get("result", {}).get("content", [])
-                tree_text = content[0].get("text", "") if content else ""
-                print(f"Accessibility tree: {tree_text[:500]}", flush=True)
-                # Save tree output for debugging
-                with open("/tmp/a11y-tree.txt", "w") as f:
-                    f.write(tree_text)
+                # Fallback: use xdotool to get the xterm window ID and pid
+                print("WARN: list_windows empty, falling back to xdotool", flush=True)
+                try:
+                    xid_str = subprocess.check_output(
+                        ["xdotool", "search", "--name", "xterm"],
+                        env={**os.environ}, timeout=5
+                    ).decode().strip().split("\n")[0]
+                    window_id = int(xid_str)
+                    pid_str = subprocess.check_output(
+                        ["xdotool", "getwindowpid", xid_str],
+                        env={**os.environ}, timeout=5
+                    ).decode().strip()
+                    pid = int(pid_str)
+                    print(f"Found window via xdotool: pid={pid} window_id={window_id}", flush=True)
+                except Exception as e:
+                    print(f"xdotool fallback failed: {e}", flush=True)
 
             if pid is not None and window_id is not None:
                 # Use get_window_state with capture_mode=vision to get screenshot
@@ -238,6 +242,8 @@ pkgs.testers.nixosTest {
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
         xterm
+        openbox # lightweight WM needed for _NET_CLIENT_LIST
+        xdotool # window ID lookup fallback
         python3
         jq
         procps
@@ -258,13 +264,18 @@ pkgs.testers.nixosTest {
         assert "click" in result, f"click not in: {result}"
         assert "get_window_state" in result, f"get_window_state not in: {result}"
 
-    with subtest("Start Xvfb and xterm"):
+    with subtest("Start Xvfb, window manager, and xterm"):
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
+        # Start openbox WM so _NET_CLIENT_LIST is populated for list_windows
+        machine.execute("DISPLAY=:99 openbox >/dev/null 2>&1 &")
+        time.sleep(1)
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
         machine.execute("DISPLAY=:99 xterm -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
         time.sleep(3)
+        # Verify xterm window exists via xdotool
+        machine.succeed("DISPLAY=:99 xdotool search --name xterm")
 
     with subtest("Screenshot via cua-driver MCP"):
         machine.copy_from_host("${mcpScreenshotTest}", "/tmp/mcp-screenshot-test.py")

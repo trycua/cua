@@ -164,6 +164,7 @@ pkgs.testers.nixosTest {
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
         xterm
+        imagemagick
         python3
         jq
         procps
@@ -209,6 +210,8 @@ pkgs.testers.nixosTest {
         machine.succeed("chmod +x /tmp/test-page.sh")
         machine.execute("DISPLAY=:99 xterm -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh &")
         machine.succeed("sleep 2")
-        machine.screenshot("cua-driver-test")
+        # Capture the Xvfb display (not the QEMU console) via ImageMagick
+        machine.succeed("DISPLAY=:99 import -window root /tmp/cua-driver-test.png")
+        machine.copy_from_vm("/tmp/cua-driver-test.png", "")
   '';
 }

@@ -74,11 +74,12 @@ jobs:
       - name: Extract screenshot
         if: always()
         run: |
-          if [ -d result ]; then
-            cp result/*.png . 2>/dev/null || true
-            ls -la *.png 2>/dev/null || echo "No screenshots found in result/"
-            ls -la result/ || true
+          if [ -L result ]; then
+            echo "Contents of result/:"
+            find -L result/ -name '*.png' -type f 2>/dev/null
+            find -L result/ -name '*.png' -type f -exec cp {} . \; 2>/dev/null || true
           fi
+          ls -la *.png 2>/dev/null || echo "No screenshots found"
 
       - name: Upload screenshot artifact
         if: always()
@@ -94,9 +95,6 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const glob = require('glob');
-
-            // Find screenshot files
             const pngs = fs.readdirSync('.').filter(f => f.endsWith('.png'));
 
             let body = '## CUA Driver Screenshot Test\n\n';

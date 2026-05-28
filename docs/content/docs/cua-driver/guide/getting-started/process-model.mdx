@@ -137,7 +137,7 @@ MCPError.internalError("Cua Driver daemon not reachable on <socket>. Start it wi
 `open -n -g -a CuaDriver --args serve` and retry.")
 ```
 
-The MCP client surfaces this as a tool error. The mcp-client process **does not** auto-restart the daemon mid-session. The recommended client behavior is: catch the error, optionally restart the daemon yourself (`open -n -g -a CuaDriver --args serve`), reconnect the MCP transport, and retry.
+The MCP client surfaces this as a tool error. The mcp-client process **does not** auto-restart the daemon mid-session. The recommended client behavior is: catch the error, optionally restart the daemon yourself (`open -n -g -a CuaDriver --args serve`), reconnect the MCP transport, and retry. Hermes' wrapper in trycua/hermes#22821 implements exactly this pattern.
 
 ### Socket path ownership
 

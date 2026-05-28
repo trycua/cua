@@ -73,7 +73,7 @@ The `cua-driver autostart` verb family is **Windows-only today**. On Linux it cu
 
 ```text
 cua-driver autostart is currently Windows-only. macOS users: see
-libs/cua-driver/rust/scripts/install-local.sh --autostart for the
+libs/cua-driver/scripts/install-local.sh --autostart for the
 LaunchAgent recipe. Linux users: same script registers a systemd
 --user unit. A cross-platform impl is tracked as a follow-up.
 ```
@@ -82,7 +82,7 @@ The two working alternatives:
 
 ### Option A — Use `install-local.sh --autostart`
 
-The dev-loop install script registers a systemd user unit when invoked with `--autostart`. See [`libs/cua-driver/rust/scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/scripts/install-local.sh) — built for local development off a git checkout, but the systemd unit it writes is the same shape you'd use in production.
+The dev-loop install script registers a systemd user unit when invoked with `--autostart`. See [`libs/cua-driver/scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh) — built for local development off a git checkout, but the systemd unit it writes is the same shape you'd use in production.
 
 ### Option B — Write your own systemd user unit
 

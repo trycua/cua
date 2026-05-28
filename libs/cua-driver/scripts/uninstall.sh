@@ -277,24 +277,28 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # writes platform-dependent targets (the local copy under $HOME_DIR/
     # skills/cua-driver-rs/). The [[ -L ]] check is the load-bearing
     # safety bar.
-    for SKILL_LINK in \
-        "$HOME/.claude/skills/$SKILL_PACK_NAME" \
-        "$HOME/.agents/skills/$SKILL_PACK_NAME" \
-        "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
-        "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
-        "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
-        "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
-        "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
-        "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
-        if [[ -L "$SKILL_LINK" ]]; then
-            rm -f "$SKILL_LINK"
-            log "removed skill symlink $SKILL_LINK"
-        elif [[ -d "$SKILL_LINK" ]]; then
-            log "$SKILL_LINK is a real directory, not a symlink (skipping)"
-        else
-            log "no skill symlink at $SKILL_LINK (skipping)"
-        fi
-    done
+    if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+        for SKILL_LINK in \
+            "$HOME/.claude/skills/$SKILL_PACK_NAME" \
+            "$HOME/.agents/skills/$SKILL_PACK_NAME" \
+            "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
+            "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
+            "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
+            if [[ -L "$SKILL_LINK" ]]; then
+                rm -f "$SKILL_LINK"
+                log "removed skill symlink $SKILL_LINK"
+            elif [[ -d "$SKILL_LINK" ]]; then
+                log "$SKILL_LINK is a real directory, not a symlink (skipping)"
+            else
+                log "no skill symlink at $SKILL_LINK (skipping)"
+            fi
+        done
+    else
+        log "no Rust install marker; leaving agent skill symlinks untouched"
+    fi
 
     # --- Claude Code MCP registrations ---
     # Same scrub shape as the Swift branch, keyed on the cua-driver-rs

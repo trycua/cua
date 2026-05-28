@@ -1570,7 +1570,7 @@ fn cli_docs_json() -> serde_json::Value {
                         "discussion":"",
                         "arguments":[{"name":"output-dir","help":"Directory to write turn folders into.","type":"String","is_optional":false}],
                         "options":[],
-                        "flags":[{"name":"record-video","short_name":null,"help":"Also record a video when supported by the platform.","default_value":false}],
+                        "flags":[],
                         "subcommands":[]
                     },
                     {

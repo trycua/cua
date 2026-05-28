@@ -13,6 +13,7 @@
 
 import { execFileSync, execSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 // ============================================================================
@@ -113,7 +114,7 @@ function resolveCargoCommand(): string {
 
   const candidates = [
     'cargo',
-    path.join(process.env.HOME || '', '.cargo', 'bin', 'cargo'),
+    path.join(os.homedir() || '', '.cargo', 'bin', 'cargo'),
     '/opt/homebrew/bin/cargo',
     '/usr/local/bin/cargo',
   ];

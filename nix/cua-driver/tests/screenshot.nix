@@ -251,8 +251,6 @@ pkgs.testers.nixosTest {
     };
 
   testScript = ''
-    import time
-
     machine.start()
     machine.wait_for_unit("multi-user.target")
 

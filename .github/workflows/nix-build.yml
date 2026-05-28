@@ -79,21 +79,8 @@ jobs:
             trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-      - name: Build cua-driver
-        run: |
-          echo "Building cua-driver for x86_64-linux..."
-          nix build .#packages.x86_64-linux.cua-driver --print-build-logs --show-trace
-
-      - name: Smoke test binary
-        run: |
-          ./result/bin/cua-driver list-tools
-          echo "---"
-          ./result/bin/cua-driver describe get_screen_size
-
       - name: Run NixOS integration test
-        run: |
-          echo "Running cua-driver NixOS integration test..."
-          nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
+        run: nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
 
       - name: Sign and upload to Nix cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

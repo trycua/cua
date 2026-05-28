@@ -1,35 +1,41 @@
 ---
-title: Running cua-driver on Linux
-description: Display server (X11 / Wayland), AT-SPI prerequisites, autostart, and headless workflows for cua-driver on Linux.
+title: Linux pre-release
+description: Display server (X11 / Wayland), AT-SPI prerequisites, autostart, and headless workflows for the Linux pre-release backend.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-cua-driver-rs supports Linux as a first-class target — every action tool (`click`, `type_text`, `hotkey`, `drag`, `scroll`, `screenshot`, `launch_app`, `list_windows`, etc.) has a Linux implementation under [`crates/platform-linux/`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux/src). This page covers the bits that diverge from the macOS / Windows quickstart: which display server you're running, what accessibility plumbing needs to be alive, how to keep the daemon up at logon, and how headless / CI workflows look.
+The Linux backend is available as a **pre-release** target. It has Linux implementations under [`crates/platform-linux/`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux/src), but it has not completed the same official release and platform validation pass as macOS and Windows. Use it for early testing, expect gaps, and report issues before relying on it in production workflows.
 
-For the install one-liner itself, see [Installation](/cua-driver/guide/getting-started/installation) — the canonical script auto-detects Linux and routes to the Rust port.
+For the install one-liner itself, see [Installation](/cua-driver/guide/getting-started/installation) — the canonical script auto-detects Linux and routes to the pre-release Rust backend.
 
 ## Display server: X11 vs Wayland vs XWayland
 
-cua-driver's window enumeration, input synthesis, and screen capture talk to your display server directly. The Linux backend supports **X11** (including the XWayland compatibility server on Wayland sessions), and probes which one you're on at startup:
+Cua Driver's window enumeration, input synthesis, and screen capture talk to your display server directly. The Linux pre-release backend targets **X11** (including the XWayland compatibility server on Wayland sessions), and probes which one you're on at startup:
 
 ```bash
 cua-driver doctor
 ```
 
 The `display server` probe surfaces:
-- **`DISPLAY` set, `WAYLAND_DISPLAY` unset** — pure X11 session. Everything works.
+
+- **`DISPLAY` set, `WAYLAND_DISPLAY` unset** — pure X11 session. This is the expected path for the current pre-release backend.
 - **`WAYLAND_DISPLAY` set, `DISPLAY` set** — Wayland session with XWayland. cua-driver talks to XWayland (treats the session as X11). Native-Wayland-only apps that bypass XWayland aren't visible to the tools — call this out as a known limitation.
 - **`WAYLAND_DISPLAY` set, `DISPLAY` unset** — pure Wayland session, no XWayland. **Not supported today**. Run an X11 session, or install / enable XWayland.
 - **Neither set** — headless. Window-driving tools will return errors. See [Headless workflow](#headless-workflow) for `Xvfb`.
 
 <Callout type="warn">
-**Wayland caveat.** Wayland's security model deliberately isolates apps from each other's window state and input — exactly what cua-driver needs to do its job. The Rust port works around this by talking to XWayland, which acts as an X11 proxy for Wayland clients. **Apps that render natively against Wayland** (no XWayland) — most modern Firefox builds, GTK4 apps, etc. — won't show up in `list_windows` and aren't clickable. If your target app is one of those, run an X11 session (most distros let you pick X11 vs Wayland at the login screen).
+  **Wayland caveat.** Wayland's security model deliberately isolates apps from each other's window
+  state and input — exactly what cua-driver needs to do its job. The Rust port works around this by
+  talking to XWayland, which acts as an X11 proxy for Wayland clients. **Apps that render natively
+  against Wayland** (no XWayland) — most modern Firefox builds, GTK4 apps, etc. — won't show up in
+  `list_windows` and aren't clickable. If your target app is one of those, run an X11 session (most
+  distros let you pick X11 vs Wayland at the login screen).
 </Callout>
 
 ## AT-SPI prerequisite
 
-The accessibility-tree tools (`get_window_state`, `click` with `element_index`, anything that walks UIA-equivalent structure) talk to the **AT-SPI 2** D-Bus bus. AT-SPI is the Linux accessibility framework — same role as macOS's AX or Windows' UI Automation. cua-driver expects the AT-SPI bus to be reachable on your session bus.
+The accessibility-tree tools (`get_window_state`, `click` with `element_index`, anything that walks UIA-equivalent structure) talk to the **AT-SPI 2** D-Bus bus. AT-SPI is the Linux accessibility framework — same role as macOS's AX or Windows' UI Automation. Cua Driver expects the AT-SPI bus to be reachable on your session bus.
 
 cua-driver probes this at startup via `gdbus`:
 
@@ -44,17 +50,21 @@ cua-driver doctor
 
 If the probe fails, install the AT-SPI service and enable accessibility:
 
-| Distro | Package | Enable |
-|---|---|---|
-| Ubuntu / Debian | `at-spi2-core` (usually pre-installed under GNOME) | `gsettings set org.gnome.desktop.interface toolkit-accessibility true` |
-| Fedora | `at-spi2-core` | same `gsettings` command |
-| Arch | `at-spi2-core` (extra) | `gsettings set …` if running GNOME; KDE has its own toggle |
-| Alpine / minimal | `at-spi2-core dbus dbus-x11` | run `dbus-launch --exit-with-session` from your X startup script |
+| Distro           | Package                                            | Enable                                                                 |
+| ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
+| Ubuntu / Debian  | `at-spi2-core` (usually pre-installed under GNOME) | `gsettings set org.gnome.desktop.interface toolkit-accessibility true` |
+| Fedora           | `at-spi2-core`                                     | same `gsettings` command                                               |
+| Arch             | `at-spi2-core` (extra)                             | `gsettings set …` if running GNOME; KDE has its own toggle             |
+| Alpine / minimal | `at-spi2-core dbus dbus-x11`                       | run `dbus-launch --exit-with-session` from your X startup script       |
 
-You don't need accessibility enabled *system-wide* — it needs to be on for the user session that's running cua-driver. Most desktop environments toggle this automatically when an accessibility client connects.
+You don't need accessibility enabled _system-wide_ — it needs to be on for the user session that's running Cua Driver. Most desktop environments toggle this automatically when an accessibility client connects.
 
 <Callout type="info">
-**Why AT-SPI and not raw X11 properties?** Many Linux apps don't expose their UI structure through X11 window manager hints — only through AT-SPI. Without AT-SPI, `click` would have to fall back to raw pixel coordinates from screenshots (the same vision-only mode that works as a fallback). With AT-SPI, cua-driver can address elements by their accessible name / role / index, matching the agent ergonomics on macOS (AX) and Windows (UIA).
+  **Why AT-SPI and not raw X11 properties?** Many Linux apps don't expose their UI structure through
+  X11 window manager hints — only through AT-SPI. Without AT-SPI, `click` would have to fall back to
+  raw pixel coordinates from screenshots (the same vision-only mode that works as a fallback). With
+  AT-SPI, Cua Driver can address elements by their accessible name / role / index, matching the
+  agent ergonomics on macOS (AX) and Windows (UIA).
 </Callout>
 
 ## Autostart on Linux
@@ -110,7 +120,7 @@ See the [Autostart](/cua-driver/guide/getting-started/autostart) concept page fo
 
 ## Headless workflow
 
-Linux doesn't have Windows' Session 0 isolation — `sshd` spawns processes that inherit the user's environment cleanly, including `DISPLAY` / `WAYLAND_DISPLAY` when they're set. So the "SSH + daemon proxy" dance that's necessary on Windows ([Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh)) is *not* needed on Linux: as long as a display server is running on your session, `cua-driver serve` over SSH connects to it.
+Linux doesn't have Windows' Session 0 isolation — `sshd` spawns processes that inherit the user's environment cleanly, including `DISPLAY` / `WAYLAND_DISPLAY` when they're set. So the "SSH + daemon proxy" dance that's necessary on Windows ([Running Cua Driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh)) is _not_ needed on Linux: as long as a display server is running on your session, `cua-driver serve` over SSH connects to it.
 
 For **pure headless** (no display server at all — typical CI runner), use `Xvfb` to provide a virtual X server:
 
@@ -118,7 +128,7 @@ For **pure headless** (no display server at all — typical CI runner), use `Xvf
 # Install Xvfb (Ubuntu/Debian: xvfb; Fedora: xorg-x11-server-Xvfb; Arch: xorg-server-xvfb)
 sudo apt-get install -y xvfb at-spi2-core dbus-x11
 
-# Run cua-driver under a virtual X server:
+# Run Cua Driver under a virtual X server:
 xvfb-run -a cua-driver serve
 
 # Or, more explicitly, launch Xvfb yourself + point cua-driver at it:
@@ -127,15 +137,18 @@ export DISPLAY=:99
 dbus-launch --exit-with-session cua-driver serve
 ```
 
-This is the same recipe used by CI integrations that test cua-driver on Linux runners.
+This is a useful recipe for local CI experiments with the Linux pre-release backend.
 
 <Callout type="info">
-**Tools that don't need a display.** Even without `DISPLAY` set, the non-graphical tools (`list_apps`, `launch_app` via PATH lookup, `read_clipboard` if a clipboard daemon is up) still work. Only the desktop-touching tools (`click`, `screenshot`, `list_windows`, `get_window_state`) require a display server. `cua-driver doctor` makes this explicit per-tool.
+  **Tools that don't need a display.** Even without `DISPLAY` set, the non-graphical tools
+  (`list_apps`, `launch_app` via PATH lookup, `read_clipboard` if a clipboard daemon is up) still
+  work. Only the desktop-touching tools (`click`, `screenshot`, `list_windows`, `get_window_state`)
+  require a display server. `cua-driver doctor` makes this explicit per-tool.
 </Callout>
 
 ## Distro-specific notes
 
-The canonical install script (`/bin/bash -c "$(curl -fsSL …/install.sh)"`) is distro-neutral — it downloads a static-linked binary tarball from GitHub Releases, drops it into `~/.cua-driver-rs/packages/releases/<v>-x86_64-unknown-linux-gnu/`, and symlinks `~/.local/bin/cua-driver`. The same one-liner works on every modern distro.
+The canonical install script (`/bin/bash -c "$(curl -fsSL …/install.sh)"`) downloads a Linux x86_64 binary tarball from GitHub Releases, drops it into `~/.cua-driver-rs/packages/releases/<v>-x86_64-unknown-linux-gnu/`, and symlinks `~/.local/bin/cua-driver`. Because Linux support is pre-release, expect distro-specific gaps and prerequisites.
 
 The bit that varies is **what accessibility / display tooling is pre-installed**:
 
@@ -144,15 +157,15 @@ The bit that varies is **what accessibility / display tooling is pre-installed**
 - **Arch / Manjaro** — minimal install; you'll likely need to explicitly install `at-spi2-core` and ensure `dbus-launch` runs as part of your session startup.
 - **Alpine / busybox-style** — slimmest of all; needs `dbus`, `dbus-x11`, `at-spi2-core` plus likely an explicit `dbus-launch --exit-with-session` wrapper.
 
-If `cua-driver doctor` is happy after install, you're set.
+If `cua-driver doctor` is happy after install, you have a reasonable starting point for testing the pre-release backend.
 
-## Per-tool Linux verification matrix
+## Per-tool Linux implementation matrix
 
-See [`libs/cua-driver/rust/PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) for the per-tool Linux-VERIFIED matrix — every action tool is annotated with its Linux source file (`crates/platform-linux/src/tools/impl_.rs`) and which platform features it depends on (X11 root window for `get_cursor_position`, AT-SPI for accessibility tree, `xtest` for synthetic input, etc.).
+See [`libs/cua-driver/rust/PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) for the per-tool Linux implementation matrix. Treat it as implementation tracking, not an official support certification; the backend remains pre-release until Linux testing and release coverage are complete.
 
 ## See also
 
-- [Installation](/cua-driver/guide/getting-started/installation) — canonical one-liner that handles Linux automatically
+- [Installation](/cua-driver/guide/getting-started/installation) — canonical one-liner that handles the Linux pre-release backend
 - [Autostart](/cua-driver/guide/getting-started/autostart) — concept page (Windows-only verb family; Linux uses systemd)
-- Process attribution — Linux has none of the macOS-TCC or Windows-Session-0 weirdness. The [macOS process model](/cua-driver/guide/getting-started/process-model) and [SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) pages explain those problems and why Linux sidesteps them
-- [`PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) — per-tool platform verification matrix
+- [Process model](/cua-driver/guide/getting-started/process-model) — Linux has none of the macOS-TCC or Windows-Session-0 weirdness; this page explains what those problems are and why Linux sidesteps them
+- [`PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) — per-tool platform implementation matrix

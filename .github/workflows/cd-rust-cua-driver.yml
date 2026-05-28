@@ -408,8 +408,7 @@ jobs:
           # macos-15 and uses the BSD form (`sed -i ''`).
           # The Rust install logic now lives at
           # libs/cua-driver/scripts/_install-rust.sh (a private helper
-          # invoked by libs/cua-driver/scripts/install.sh on
-          # --backend=rust / non-macOS auto-detect).
+          # invoked by libs/cua-driver/scripts/install.sh by default).
           sed -i \
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
             libs/cua-driver/scripts/_install-rust.sh
@@ -442,24 +441,21 @@ jobs:
           # what gets copied here, so the per-tag release assets carry the
           # current version's baked default — not the previous version's.
           # Both user-facing installers live under libs/cua-driver/scripts/:
-          # install.sh is the Swift driver's installer that
-          # auto-delegates to the Rust _install-rust.sh helper on
-          # --experimental-rust / non-macOS hosts. install.ps1 is the
-          # canonical Windows installer (Rust port; Swift has no
-          # Windows build). The Rust install logic itself lives at
-          # _install-rust.sh — published as a release asset alongside
-          # the installers so curl|bash flows can fetch it.
+          # install.sh is the canonical macOS/Linux installer and delegates
+          # to the Rust _install-rust.sh helper by default. install.ps1 is
+          # the canonical Windows installer. The Rust install logic itself
+          # lives at _install-rust.sh — published as a release asset
+          # alongside the installers so curl|bash flows can fetch it.
           cp libs/cua-driver/scripts/install.sh         release-upload/install.sh
           cp libs/cua-driver/scripts/install.ps1        release-upload/install.ps1
           cp libs/cua-driver/scripts/_install-rust.sh   release-upload/_install-rust.sh
 
           # Uninstaller scripts — single canonical file per shell (no
-          # `_uninstall-rust.sh` helper). uninstall.sh handles both Swift
-          # (macOS default) and Rust (Linux auto-select, macOS opt-in via
-          # --experimental-rust / --backend=rust) inline. uninstall.ps1
-          # is the Windows uninstaller (cua-driver-rs only — no Swift
-          # Windows build) and self-elevates via UAC when an -AutoStart
-          # install (RunLevel=Highest task) needs to be torn down.
+          # `_uninstall-rust.sh` helper). uninstall.sh handles Rust by
+          # default and keeps an explicit --backend=swift legacy path for
+          # retired macOS installs. uninstall.ps1 is the Windows uninstaller
+          # and self-elevates via UAC when an -AutoStart install
+          # (RunLevel=Highest task) needs to be torn down.
           cp libs/cua-driver/scripts/uninstall.sh       release-upload/uninstall.sh
           cp libs/cua-driver/scripts/uninstall.ps1      release-upload/uninstall.ps1
 
@@ -529,43 +525,33 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release-upload/*
-          # The `prerelease: true` flag + the explicit BETA banner make it
-          # clear to anyone landing on the release page that cua-driver-rs
-          # is the cross-platform Rust port of the Swift cua-driver and is
-          # still in BETA — the Swift cua-driver remains the production
-          # macOS binary.
           prerelease: true
           body: |
-            > ⚠️ **BETA — cua-driver-rs**
+            > **cua-driver-rs**
             >
-            > `cua-driver-rs` is the **cross-platform Rust port** of the original Swift
+            > `cua-driver-rs` is the Rust implementation of
             > [`cua-driver`](https://github.com/trycua/cua/tree/main/libs/cua-driver),
-            > introducing **Windows and Linux support** to the cua-driver tool surface.
-            >
-            > - **Windows** and **Linux**: feature-complete, recommended for testing /
-            >   integration work.
-            > - **macOS**: parity with the Swift cua-driver is in progress; for production
-            >   macOS automation prefer the Swift binary
-            >   (`cua-driver-v*` releases, installed via the Swift `install.sh`).
+            > shipping the same user-facing `cua-driver` binary for macOS and
+            > Windows, plus Linux pre-release artifacts for early testing.
             >
             > The Rust port and the Swift driver publish to the same GitHub repo under
             > **distinct tag prefixes** (`cua-driver-rs-v*` vs `cua-driver-v*`), so their
-            > installers do not collide.
+            > release artifacts do not collide.
 
             ${{ steps.notes.outputs.RELEASE_NOTES }}
 
             ${{ steps.checksums.outputs.checksums }}
 
-            ### Install (Linux / macOS)
+            ### Install (macOS / Linux pre-release)
 
             ```bash
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
             ```
 
-            On macOS the installer defaults to the Swift driver; pass
-            `--experimental-rust` to get the cua-driver-rs Rust port.
-            On Linux it auto-detects the non-macOS host and installs
-            the Rust port directly.
+            The shell installer covers macOS and the Linux pre-release backend
+            and installs the Rust implementation by default. Linux artifacts are
+            published for early testing and are not yet an official supported
+            release tier.
 
             ### Install (Windows)
 
@@ -585,7 +571,7 @@ jobs:
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-x86_64.tar.gz` — same payload, named for x86_64 callers
             - `cua-driver-rs-${{ steps.version.outputs.version }}-darwin-universal-binary.tar.gz` — bare universal binary (single file at archive root; **no** .app — bypasses the TCC auto-relaunch path)
 
-            **Linux**
+            **Linux pre-release**
             - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — directory tarball
             - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — bare binary
 
@@ -596,9 +582,9 @@ jobs:
             - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-arm64-binary.zip` — bare `cua-driver.exe` (Windows on ARM)
 
             **Installer scripts**
-            - `install.sh` — Linux / macOS one-liner installer
+            - `install.sh` — macOS / Linux pre-release one-liner installer
             - `install.ps1` — Windows one-liner installer
-            - `uninstall.sh` — Linux / macOS one-liner uninstaller (mirrors the install flag set: Swift by default; `--experimental-rust` for the Rust port; non-macOS auto-detects)
+            - `uninstall.sh` — macOS / Linux pre-release one-liner uninstaller
             - `uninstall.ps1` — Windows one-liner uninstaller
           generate_release_notes: false
           make_latest: false
@@ -651,7 +637,7 @@ jobs:
           # (`sed -i ''`).
           # Rust install logic lives at libs/cua-driver/scripts/_install-rust.sh
           # (private helper invoked by the canonical libs/cua-driver/scripts/install.sh
-          # on --backend=rust / non-macOS auto-detect).
+          # by default).
           sed -i \
             "s/^CUA_DRIVER_RS_BAKED_VERSION=.*/CUA_DRIVER_RS_BAKED_VERSION=\"${VERSION}\"/" \
             libs/cua-driver/scripts/_install-rust.sh

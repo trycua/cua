@@ -1,13 +1,11 @@
 ---
 title: What is Cua Driver?
-description: Background computer-use driver for any agent — macOS, Windows, and Linux
+description: Background computer-use driver for any agent on macOS, Windows, and Linux pre-release.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver is a computer-use driver that speaks MCP over stdio. It lets any agent (Claude, GPT, Gemini, Codex, custom loops) click, type, scroll, and snapshot a native app without bringing the target to the foreground. Your frontmost app stays where it is; you keep typing in your editor while the agent drives something else in the background.
-
-It runs on macOS, Windows, and Linux from one tool surface. macOS ships the Swift driver (Accessibility / `CGEvent` / ScreenCaptureKit); Windows and Linux ship `cua-driver-rs`, the Rust port (UI Automation / `PostMessage` / AT-SPI). The tool names and arguments are the same everywhere — see the [MCP tools reference](/cua-driver/reference/mcp-tools).
+Cua Driver is a computer-use driver that speaks MCP over stdio and exposes the same tools as a direct CLI. It lets agents click, type, scroll, inspect accessibility trees, and capture window state on macOS and Windows while preserving the user's working context. A Linux backend is available as a pre-release target while platform testing is still in progress.
 
 <Callout type="info" title="MIT License">
   Cua Driver is open-source and MIT licensed. If you find it useful, we'd appreciate a [star on
@@ -15,57 +13,55 @@ It runs on macOS, Windows, and Linux from one tool surface. macOS ships the Swif
 </Callout>
 
 ```bash
-cua-driver call launch_app '{"name":"Calculator"}'
-cua-driver call get_window_state '{"pid":844,"window_id":10725}'
-cua-driver call click '{"pid":844,"window_id":10725,"element_index":14}'
+cua-driver launch_app '{"bundle_id":"com.apple.calculator"}'
+cua-driver get_window_state '{"pid":844,"window_id":10725}'
+cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
 ```
 
-A single binary. Run it as an MCP stdio server (`cua-driver mcp`), a long-running daemon (`cua-driver serve`), or invoke any tool from the shell (`cua-driver call <tool>`).
+A single binary can run as an MCP stdio server, a long-running daemon, or a one-shot shell command.
 
 ## The no-foreground contract
 
-One rule: the user's frontmost window does not change. Not during launch, not during a click, not during a keystroke, not during a re-snapshot. So:
+The user's frontmost app should not change. Not during launch, not during a click, not during a keystroke, not during a re-snapshot. Three corollaries follow:
 
 - The real cursor stays where the user left it. No warp.
-- The target window stays at its current z-order. No raise, no focus steal.
-- On macOS, the user's Space does not follow the target. No bounce.
+- The target window stays at its current z-rank unless a platform requires explicit activation for a foreground-only fallback.
+- The user's desktop or Space does not follow the target.
 
-Backgrounded dispatch is the default. `launch_app` runs hidden; element-indexed actions go through the accessibility API directly (no event synthesis); keyboard and pixel events are posted to a specific target rather than the system input queue. When a target's input stack would silently drop a backgrounded event — Chromium DOM content, some GTK widgets — the tool says so (`background_unavailable`) instead of failing quietly, and you opt into a one-time foreground swap with [`bring_to_front`](/cua-driver/reference/mcp-tools#bring_to_front) plus `dispatch: "foreground"`.
+Every dispatch path is designed around those invariants. On macOS that means scoped CoreGraphics, Accessibility, and SkyLight paths such as `CGEvent.postToPid`, `AXUIElementPerformAction`, and pid-routed mouse delivery. On Windows it means UI Automation, window-targeted messages, and `SendInput` only when the OS requires a foreground dispatch path. On Linux it means AT-SPI for element addressing and X11/XWayland for window state, capture, and input delivery.
 
-## Three capture modes
+## Three modalities
 
 `capture_mode` controls what `get_window_state` returns. Pick based on what the agent needs:
 
-- **`som`** (default) — set-of-mark: both the accessibility tree and a screenshot. The tree for element addressing, the screenshot for visual disambiguation when labels repeat or are empty.
-- **`ax`** — accessibility tree only. No screenshot cost; deterministic element addressing. Best for structured loops over apps with real accessibility coverage.
-- **`vision`** — window screenshot only, no tree walk. Best for vision-first models that ground on pixels. Pair with pixel-addressed clicks.
+- **`som`** (default) — set-of-mark. Accessibility tree plus screenshot. Tree for dispatch, screenshot for visual disambiguation when labels repeat or stay empty.
+- **`ax`** — accessibility tree only. No screen-capture cost, deterministic element addressing. Best for structured loops over apps with real accessibility coverage.
+- **`vision`** — window image only. No accessibility walk. Best for vision-first models that ground on pixels and don't use `element_index`.
 
-Switch with `cua-driver config set capture_mode som`.
+Backgrounded drive is the default across all three, not a mode you toggle. Switch modalities with `cua-driver config set capture_mode som`.
 
-## How it works
+## Platform backends
 
-The accessibility tree is the primary addressing surface on every platform; the driver walks it, tags each actionable node with an index, and caches the element against `(pid, window_id)`. Element-indexed clicks then dispatch through the accessibility API with no cursor move and no focus steal.
+- **macOS** uses Accessibility, ScreenCaptureKit, LaunchServices, and a signed `CuaDriver.app` bundle so TCC grants attach to the driver instead of the parent terminal.
+- **Windows** uses UI Automation, Win32 window APIs, named pipes, and an optional logon Scheduled Task so GUI tools run in the user's interactive session rather than Session 0.
+- **Linux pre-release** uses AT-SPI, X11/XWayland, XTest-style input, and normal user-session processes. Native Wayland-only apps remain a known platform limit because Wayland intentionally blocks cross-app automation. Treat this backend as pre-release until Linux testing and release coverage are complete.
 
-- **macOS** — the public Accessibility API for the tree and `AXUIElementPerformAction` for clicks; keyboard via `CGEvent.postToPid`; backgrounded pixel events via SkyLight's per-pid path. Chromium and Electron trees stay populated while occluded via an AX observer SPI.
-- **Windows** — UI Automation for the tree, `PostMessage` for input. XAML / WinUI3 / UWP hosts (Calculator, Settings, modern Notepad) are driven through a focus-steal bypass; an optional UIAccess worker (`cua-driver-uia.exe`) lifts UIPI for packaged apps.
-- **Linux** — AT-SPI for the tree over X11 / XWayland. See [Running on Linux](/cua-driver/guide/getting-started/linux).
-
-Non-accessible surfaces (canvas, WebGL, custom-drawn controls) fall back to pixel coordinates against the same window-local screenshot space.
+The tool names stay stable across platforms. A flow that uses `list_windows`, `get_window_state`, `click`, `type_text`, and `hotkey` can keep the same shape while the backend handles each OS's process, permission, and input model. Linux follows the same surface, but it is not yet an officially released or fully tested support tier.
 
 ## Who it's for
 
-- **Agent builders** who want their agent to operate a desktop without stealing the user's focus. Any MCP-capable client works: Claude Code, Cursor, Codex, Gemini, custom loops.
-- **Dev-loop automation.** An agent drives an app, reads the pixels or the accessibility tree, edits source, rebuilds, verifies — while the editor stays frontmost.
-- **Demo capture.** Record a trajectory while the user works elsewhere. Because the clicks are backgrounded, the overlay cursor the driver paints is the only cursor in the final video.
+- **Agent builders** who want a local desktop driver with MCP and shell entry points.
+- **Dev-loop automation** where an agent drives an app, reads pixels or accessibility state, edits source, rebuilds, and verifies while the editor stays usable.
+- **Remote Windows workflows** where the daemon runs in the interactive session and SSH-side MCP clients proxy through it.
+- **Trajectory capture** for replay, inspection, and training data.
 
 ## What it doesn't do
 
-- Not a VM. Cua Driver operates the real host, so grant accessibility permissions with intent. (macOS also needs Screen Recording for screenshots; Windows and Linux have no equivalent prompt.)
-- Right-click on Chromium **web content** via pixel coordinates fires as a left-click — the renderer drops the right-click subtype on synthetic paths. Use element-indexed `right_click` on accessible targets. See [Limits](/cua-driver/reference/limits).
-- Canvas apps (Blender, Unity, games) filter per-target events, so they need a brief foreground activation. Everything else stays backgrounded.
-
-See [Installation](/cua-driver/guide/getting-started/installation) for per-platform requirements.
+- Not a VM or sandbox. Cua Driver operates the real host, so grant Accessibility, Screen Recording, UI Automation, and desktop-session access with intent.
+- Not a Wayland security bypass. Linux apps that bypass XWayland may be invisible to the current backend.
+- Canvas, game-engine, and GPU-heavy apps can require a foreground-only fallback on some platforms because their event loops filter backgrounded synthetic input.
+- macOS off-Space SwiftUI windows can strip their accessibility tree by OS design. See [Limits](/cua-driver/reference/limits).
 
 ## Get started
 
-[Install Cua Driver](/cua-driver/guide/getting-started/installation), then drive your first app in the [Quickstart](/cua-driver/guide/getting-started/quickstart).
+Ready to try it? [Install Cua Driver](/cua-driver/guide/getting-started/installation) and drive your first app in the [Quickstart](/cua-driver/guide/getting-started/quickstart).

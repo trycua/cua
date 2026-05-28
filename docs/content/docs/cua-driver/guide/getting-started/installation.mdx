@@ -1,62 +1,19 @@
 ---
 title: Installation
-description: Install Cua Driver on your Mac
+description: Install Cua Driver on macOS, Windows, or the Linux pre-release backend
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Install Cua Driver with a single command:
+Install Cua Driver with the command for your platform. macOS and Windows are the official install targets; Linux is available as a pre-release backend while platform testing is still in progress.
 
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
-```
+| Platform          | Command                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| macOS             | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
+| Linux pre-release | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
+| Windows           | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 \| iex`                  |
 
-The installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `~/.local/bin/cua-driver`. The bundle is signed under `com.trycua.driver`, so TCC grants survive every release.
-
-The install runs **without sudo**: `/Applications` is user-writable on personal Macs, and the CLI symlink lives under `$HOME`. If `~/.local/bin` is not on your PATH, the installer detects your shell (`zsh` / `bash` / `fish`) and appends an `export PATH=...` line to the right rc file. Reload with `source ~/.zshrc` (or restart your terminal).
-
-<Callout type="info">
-**Power users:** override the install path with `--bin-dir` (or `CUA_DRIVER_BIN_DIR`). Use `--no-modify-path` if you'd rather edit your shell rc yourself.
-
-```bash
-/bin/bash -c "$(curl -fsSL .../install.sh)" -- --bin-dir=/usr/local/bin    # legacy system path (needs sudo)
-/bin/bash -c "$(curl -fsSL .../install.sh)" -- --no-modify-path            # don't touch shell rc
-```
-</Callout>
-
-<Callout type="warn">
-**Upgrading from v0.0.x?** The new installer puts the CLI at `~/.local/bin/cua-driver`. Any existing `/usr/local/bin/cua-driver` symlink is left in place so existing MCP client configs (Claude Code, Codex, etc.) keep working. Re-register them at your leisure to use the new path.
-</Callout>
-
-### Try the Rust backend (experimental)
-
-<Callout type="info">
-**`cua-driver-rs` is a cross-platform Rust port of Cua Driver** — same MCP tool surface, with native Windows and Linux support and macOS parity in progress. Opt in with a single flag to help us soak-test it ahead of GA:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" -- --experimental-rust
-```
-
-(Equivalent long form: `--backend=rust`.)
-
-The flag delegates to [`libs/cua-driver/scripts/_install-rust.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/_install-rust.sh) (a private helper colocated with the canonical `install.sh`), which:
-
-- Installs `CuaDriver.app` to `/Applications/` with bundle id `com.trycua.driver` — the same bundle id the Swift driver uses. If `/Applications/CuaDriver.app` already holds the Swift bundle, the installer replaces it in place. macOS TCC keys grants on bundle id, so the user's prior Accessibility / Screen Recording grants survive the upgrade and apply to the new binary; a one-time re-grant prompt may fire on first action because the cdhash differs.
-- Points `~/.local/bin/cua-driver` at the Rust binary.
-- Same `--bin-dir` / `--no-modify-path` flags as the Swift installer — anything you put after `--experimental-rust` is forwarded to the Rust installer verbatim.
-
-**Switch back to Swift:** the Swift driver still ships under its own release-tag prefix (`cua-driver-v*`). Re-run the canonical install script without `--experimental-rust` and it'll fetch the latest Swift release and replace the `.app` at `/Applications/CuaDriver.app` the same way (TCC grants survive, since bundle id is shared).
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
-```
-</Callout>
-
-### Install `cua-driver-rs` directly (Linux / Windows / macOS)
-
-Both canonical installers live under `libs/cua-driver/scripts/`. On macOS the `.sh` installer defaults to the Swift driver; pass `--experimental-rust` to get the Rust port. On Linux it auto-detects the non-macOS host and installs the Rust port directly.
-
-**Linux**
+**macOS / Linux pre-release**
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
@@ -68,27 +25,39 @@ Both canonical installers live under `libs/cua-driver/scripts/`. On macOS the `.
 irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
 ```
 
+On macOS, the installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `~/.local/bin/cua-driver`. The bundle is signed under `com.trycua.driver`, so TCC grants survive every release.
+
+On Linux, the pre-release backend installer downloads the release into `~/.cua-driver-rs/packages/releases/`, retargets `~/.cua-driver-rs/packages/current`, and symlinks `~/.local/bin/cua-driver`.
+
 <Callout type="warn">
-  **If `install.ps1` fails to parse on stock Windows PowerShell 5.1** (the version shipped with Windows 10 / Server 2019 / Server 2025; see [#1626](https://github.com/trycua/cua/issues/1626)), fall back to a manual zip install:
-
-  ```powershell
-  $version = "0.3.2"
-  $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x86_64' }
-  $url = "https://github.com/trycua/cua/releases/download/cua-driver-rs-v$version/cua-driver-rs-$version-windows-$arch-binary.zip"
-  iwr $url -OutFile $env:TEMP\cua.zip -UseBasicParsing
-  $dest = "$env:LOCALAPPDATA\Programs\Cua\cua-driver\bin"
-  New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  Expand-Archive -Force -Path $env:TEMP\cua.zip -DestinationPath $dest
-  # Idempotent User PATH update — only add $dest if not already present.
-  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $parts = @($userPath -split ';' | Where-Object { $_ -ne '' })
-  if ($parts -notcontains $dest) {
-    [Environment]::SetEnvironmentVariable('Path', "$dest;$userPath", 'User')
-  }
-  ```
-
-  PowerShell 7+ (`pwsh`) parses `install.ps1` correctly, so the one-liner works there.
+  **Linux is pre-release.** Linux artifacts and install paths are published for early testing, but
+  Linux has not completed the same official release and platform validation pass as macOS and
+  Windows. Expect gaps, report issues, and avoid treating Linux as a supported production target
+  until it is promoted out of pre-release.
 </Callout>
+
+On Windows, the installer downloads the release into `%USERPROFILE%\.cua-driver\packages\releases\`, retargets the `current` junction, and exposes `cua-driver.exe` through `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`.
+
+The install runs **without sudo/admin**. On macOS and Linux the CLI symlink lives under `$HOME`; on Windows the script updates the User-scope `Path`. If `~/.local/bin` is not on your PATH, the shell installer detects your shell (`zsh` / `bash` / `fish`) and appends an `export PATH=...` line to the right rc file. Reload with `source ~/.zshrc` (or restart your terminal).
+
+<Callout type="info">
+**Power users:** override the install path with `--bin-dir` (or `CUA_DRIVER_RS_INSTALL_DIR`). Use `--no-modify-path` if you'd rather edit your shell rc yourself.
+
+```bash
+/bin/bash -c "$(curl -fsSL .../install.sh)" -- --bin-dir=/usr/local/bin    # legacy system path (needs sudo)
+/bin/bash -c "$(curl -fsSL .../install.sh)" -- --no-modify-path            # don't touch shell rc
+```
+
+</Callout>
+
+<Callout type="warn">
+  **Upgrading from the retired Swift driver?** The Rust implementation uses the same
+  `/Applications/CuaDriver.app` bundle id (`com.trycua.driver`). Existing Accessibility / Screen
+  Recording grants usually transfer; macOS may ask for a one-time re-grant because the binary cdhash
+  changed.
+</Callout>
+
+Both canonical installers live under `libs/cua-driver/scripts/`. The shell installer covers macOS and the Linux pre-release backend; `install.ps1` covers Windows.
 
 The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
 
@@ -168,13 +137,13 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 
 #### Env-var overrides
 
-| Env var | Default (Linux/macOS) | Default (Windows) | What it controls |
-|---|---|---|---|
-| `CUA_DRIVER_RS_VERSION` | unset → use baked version | unset → use baked version | Pin a specific release (e.g. `0.2.0`). |
-| `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
-| `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
-| `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | use `-NoPathUpdate` switch on `install.ps1` | Skip the PATH append. On Windows the installer appends `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` to the User-scope `Path` by default; use the fetch+invoke form with `-NoPathUpdate` to opt out (see the Windows install section above for the exact one-liner). |
-| `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants. |
+| Env var                                              | Default (Linux/macOS)     | Default (Windows)                            | What it controls                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------- | ------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CUA_DRIVER_RS_VERSION`                              | unset → use baked version | unset → use baked version                    | Pin a specific release (e.g. `0.2.0`).                                                                                                                                                                                                                              |
+| `CUA_DRIVER_RS_INSTALL_DIR`                          | `~/.local/bin`            | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` | The visible PATH-entry directory. On Windows this is itself a junction.                                                                                                                                                                                             |
+| `CUA_DRIVER_RS_HOME`                                 | `~/.cua-driver-rs`        | `%USERPROFILE%\.cua-driver`                  | Package home — holds `packages/releases/<v>/` and `packages/current`.                                                                                                                                                                                               |
+| `CUA_DRIVER_RS_NO_MODIFY_PATH` _(Linux/macOS only)_  | `0`                       | use `-NoPathUpdate` switch on `install.ps1`  | Skip the PATH append. On Windows the installer appends `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` to the User-scope `Path` by default; use the fetch+invoke form with `-NoPathUpdate` to opt out (see the Windows install section above for the exact one-liner). |
+| `CUA_DRIVER_RS_KEEP_VERSIONS` _(Linux/Windows only)_ | `5`                       | `5`                                          | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants.                                                                                        |
 
 <Callout type="info">
 **How the installer picks a version.** Resolution order is:
@@ -184,6 +153,7 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 3. GitHub Releases API — fallback only, hit when the env override is absent **and** the baked line hasn't been updated yet (e.g. installing from a dev branch before its first release).
 
 So an API outage, an unauthenticated-rate-limit (60 req/hr per IP), or a transient network blip never breaks a default install from `main`. Power users who want the very latest tip (rather than the baked default) can set `CUA_DRIVER_RS_VERSION=<x.y.z>` explicitly.
+
 </Callout>
 
 <Callout type="info">
@@ -205,6 +175,7 @@ Two invariants worth knowing:
 - **Per-target filtering** — a multi-arch dev with both `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` directories under the same `$CUA_DRIVER_RS_HOME` (rare, but possible with shared/NFS homes) gets each target's history GC'd independently of the other.
 
 The macOS install path is unaffected — `/Applications/CuaDriver.app` is an in-place replacement with no per-version accumulation.
+
 </Callout>
 
 <Callout type="info">
@@ -225,7 +196,7 @@ cat ~/.cua-driver-rs/packages/.install.lock.d/info
 ```
 
 ```powershell
-Get-Content $env:USERPROFILE\.cua-driver\install.lock
+Get-Content $env:CUA_DRIVER_RS_HOME\install.lock
 # pid=43210
 # started=2026-05-17T09:14:22.123Z
 # invocation=install.ps1 -Release latest
@@ -235,29 +206,30 @@ Get-Content $env:USERPROFILE\.cua-driver\install.lock
 
 Lock locations:
 
-| Platform | Lock |
-|---|---|
-| Linux | `$CUA_DRIVER_RS_HOME/packages/.install.lock.d/` (mkdir-based mutex) |
-| Windows | `$env:CUA_DRIVER_RS_HOME\install.lock` (`FileShare::None` mutex) |
+| Platform | Lock                                                                |
+| -------- | ------------------------------------------------------------------- |
+| Linux    | `$CUA_DRIVER_RS_HOME/packages/.install.lock.d/` (mkdir-based mutex) |
+| Windows  | `$env:CUA_DRIVER_RS_HOME\install.lock` (`FileShare::None` mutex)    |
 
 Both primitives are unprivileged — no sudo, no admin elevation, no Developer Mode. The lock is released on every script exit path (success, error, Ctrl-C, `exit`).
+
 </Callout>
 
 ### Verify it worked
 
 ```bash
 cua-driver --version
-# cua-driver 0.3.2
+# cua-driver 0.1.0
 
 cua-driver --help
-# cua-driver 0.3.2 — cross-platform computer-use automation driver
+# OVERVIEW: macOS Accessibility-driven computer-use agent — MCP stdio server.
 ```
 
 For a structured environment + install report on any platform, run:
 
 ```bash
 cua-driver doctor
-# [ok  ] binary: cua-driver 0.3.2 (aarch64-macos)
+# [ok  ] binary: cua-driver 0.2.1 (aarch64-macos)
 # [ok  ] install dir: /Users/you/.local/bin/cua-driver
 # [ok  ] home dir: /Users/you/.cua-driver-rs (3 release dirs cached)
 # [ok  ] telemetry: enabled (install-id present)
@@ -272,7 +244,7 @@ Window-driving tools — `list_windows`, `click`, `type_text`, `screenshot`, `ge
 
 **Windows session model in one paragraph.** Every Windows process runs inside a numbered session. Session `0` is reserved for services and has no interactive desktop attached. Sessions `1`, `2`, ... are interactive logons — one per console / RDP user. SSH-launched processes (OpenSSH server) **default to Session 0** unless the SSH server is explicitly configured to spawn the shell inside the interactive session. The same applies to most Windows service hosts, scheduled tasks running under SYSTEM, and background invocations from CI agents.
 
-If `cua-driver` lands in Session 0, the window tools will silently return empty arrays and "no windows found" — that's the APIs working as designed against a session with no desktop, not a cua-driver bug.
+If `cua-driver` lands in Session 0, the window tools will silently return empty arrays and "no windows found" — that's the APIs working as designed against a session with no desktop, not a Cua Driver bug.
 
 **Diagnose with `cua-driver doctor`.** The Windows session probe surfaces this directly:
 
@@ -297,8 +269,8 @@ A healthy interactive logon reports the inverse:
 - **Run from RDP or the local console** — the simplest fix; both put your shell in your own interactive session, not Session 0.
 - **Run from a Windows Terminal / PowerShell launched by your logged-in user** — same effect.
 - **Register a logon Scheduled Task** (recommended, equivalent to macOS LaunchAgent) — see [Auto-start at logon](#auto-start-at-logon-windows) below, or the [Autostart concept page](/cua-driver/guide/getting-started/autostart) for the `cua-driver autostart enable` one-liner.
-- **Driving over SSH?** Register the autostart task once from an interactive session, then `cua-driver mcp` and `cua-driver call` over SSH proxy through the running daemon automatically. See [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
-- **Use a session-launcher utility** — if you must invoke from a service / SSH context *without* the daemon-proxy path, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
+- **Driving over SSH?** Register the autostart task once from an interactive session, then `cua-driver mcp` and `cua-driver call` over SSH proxy through the running daemon automatically. See [Running Cua Driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
+- **Use a session-launcher utility** — if you must invoke from a service / SSH context _without_ the daemon-proxy path, run the binary through a launcher that spawns it inside an explicit interactive session id rather than inheriting Session 0.
 
 Run `cua-driver doctor` after switching contexts to confirm the warning has cleared.
 
@@ -307,7 +279,12 @@ Run `cua-driver doctor` after switching contexts to confirm the warning has clea
 The Windows-native equivalent of macOS's LaunchAgent is a **Scheduled Task triggered at logon, running as your user, with `Run only when user is logged on`** (i.e. `LogonType: Interactive`). Once registered, `cua-driver serve` starts automatically every time you sign in via RDP or the console — no more pasting a startup one-liner.
 
 <Callout type="info">
-**One-liner:** `cua-driver autostart enable && cua-driver autostart kick` does everything the manual block below does. See the [Autostart concept page](/cua-driver/guide/getting-started/autostart) for the full `enable / disable / kick / status` verb family, and [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the recommended headless workflow on top of it.
+  **One-liner:** `cua-driver autostart enable && cua-driver autostart kick` does everything the
+  manual block below does. See the [Autostart concept
+  page](/cua-driver/guide/getting-started/autostart) for the full `enable / disable / kick / status`
+  verb family, and [Running Cua Driver under SSH on
+  Windows](/cua-driver/guide/getting-started/windows-ssh) for the recommended headless workflow on
+  top of it.
 </Callout>
 
 `install.ps1` prints the exact one-shot registration block on a successful install. To register it manually (substitute your install path if you built from source):
@@ -355,23 +332,23 @@ open -n -g -a CuaDriver --args serve
 Then trigger the prompts:
 
 ```bash
-cua-driver call check_permissions
+cua-driver check_permissions
 ```
 
 macOS raises the Accessibility and Screen Recording system dialogs. Grant both, then re-run the command to confirm:
 
 ```bash
-cua-driver call check_permissions
+cua-driver check_permissions
 # ✅ Accessibility: granted.
 # ✅ Screen Recording: granted.
 ```
 
 <Callout type="info">
-  `check_permissions` reports the TCC status of the *calling* process. Inside an IDE terminal (Claude
-  Code, Cursor, VS Code, Conductor) the shell inherits the IDE's TCC responsibility chain, so results
-  can read "NOT granted" even when you've granted both to `CuaDriver.app`. The daemon-first recipe
-  above sidesteps this because the CLI forwards through the daemon, which runs under
-  `CuaDriver.app`'s bundle id.
+  `check_permissions` reports the TCC status of the *calling* process. Inside an IDE terminal
+  (Claude Code, Cursor, VS Code, Conductor) the shell inherits the IDE's TCC responsibility chain,
+  so results can read "NOT granted" even when you've granted both to `CuaDriver.app`. The
+  daemon-first recipe above sidesteps this because the CLI forwards through the daemon, which runs
+  under `CuaDriver.app`'s bundle id.
 </Callout>
 
 If a grant still reads `NOT granted` after granting in the dialog, open **System Settings → Privacy & Security**, find `CuaDriver.app` under Accessibility and Screen Recording, and flip the toggle.
@@ -384,38 +361,39 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   second until you grant the missing items. When both grants are already
   active the gate is a transparent no-op.
 
-  **Experimental native panel.** A `CuaDriver Permissions` NSPanel with
-  live status rows + auto-dismiss is also available behind an opt-in env
-  var. The terminal flow is the safer default because the panel relies on
-  a chain of macOS behaviours that are easy to break in dev environments
-  (TCC responsible-process attribution, session-level TCC caches that
-  survive `tccutil reset`, ad-hoc codesign identity mismatches, AppKit
-  modal-run-loop modes). Opt in with:
+**Experimental native panel.** A `CuaDriver Permissions` NSPanel with
+live status rows + auto-dismiss is also available behind an opt-in env
+var. The terminal flow is the safer default because the panel relies on
+a chain of macOS behaviours that are easy to break in dev environments
+(TCC responsible-process attribution, session-level TCC caches that
+survive `tccutil reset`, ad-hoc codesign identity mismatches, AppKit
+modal-run-loop modes). Opt in with:
 
-  ```bash
-  CUA_DRIVER_RS_PERMISSIONS_PANEL=1 cua-driver serve
-  ```
+```bash
+CUA_DRIVER_RS_PERMISSIONS_PANEL=1 cua-driver serve
+```
 
-  Accepted "on" values (case-insensitive): `1`, `true`, `yes`, `on`. Any
-  other value (or unset) keeps the terminal flow. The panel also requires
-  the daemon to be launched from the bundled `.app` (e.g.
-  `open -n -g -a CuaDriver --args serve`); bare-binary launches always
-  use the terminal flow regardless of the env var.
+Accepted "on" values (case-insensitive): `1`, `true`, `yes`, `on`. Any
+other value (or unset) keeps the terminal flow. The panel also requires
+the daemon to be launched from the bundled `.app` (e.g.
+`open -n -g -a CuaDriver --args serve`); bare-binary launches always
+use the terminal flow regardless of the env var.
 
-  **CI / headless runners** should skip the entire gate so the daemon
-  does not block waiting for a TTY-attached human:
+**CI / headless runners** should skip the entire gate so the daemon
+does not block waiting for a TTY-attached human:
 
-  ```bash
-  # As a flag …
-  cua-driver serve --no-permissions-gate
+```bash
+# As a flag …
+cua-driver serve --no-permissions-gate
 
-  # … or as an env-var.
-  CUA_DRIVER_RS_PERMISSIONS_GATE=0 cua-driver serve
-  ```
+# … or as an env-var.
+CUA_DRIVER_RS_PERMISSIONS_GATE=0 cua-driver serve
+```
 
-  Accepted "off" values for the gate env-var (case-insensitive): `0`,
-  `false`, `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any
-  other value (including unset) leaves the gate active.
+Accepted "off" values for the gate env-var (case-insensitive): `0`,
+`false`, `no`, `off` — so `FALSE`, `Off`, `NO` etc. all work. Any
+other value (including unset) leaves the gate active.
+
 </Callout>
 
 <Callout type="info">
@@ -424,72 +402,97 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   check against the GitHub releases API at startup and print a small
   two-line banner to stderr when a newer `cua-driver-rs-v*` release exists:
 
-  ```
-  ✨ cua-driver v0.3.2 is available (you have v0.3.1).
-     Update with: cua-driver update
-     Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2
-  ```
+```
+✨ cua-driver v0.1.4 is available (you have v0.1.3).
+   Update with: cua-driver update
+   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
+```
 
-  The answer is cached at `~/.cua-driver-rs/version_check.json` for ~20
-  hours, so subsequent launches reuse the cached result without a network
-  call. Network failures are silent — the next launch retries.
+The answer is cached at `~/.cua-driver-rs/version_check.json` for ~20
+hours, so subsequent launches reuse the cached result without a network
+call. Network failures are silent — the next launch retries.
 
-  **Scripted / machine-readable entry points are NOT instrumented.**
-  The banner only fires from the long-running entry points (`mcp`,
-  `serve`, `doctor`). One-shot and machine-readable subcommands —
-  `--version`, `list-tools`, `describe`, `call`, `dump-docs`,
-  `mcp-config`, `update`, `stop`, `status`, `recording`, `config`,
-  `diagnose`, and `telemetry install-event` — all skip it so piped
-  output (`cua-driver list-tools | jq …`) stays clean.
+**Scripted / machine-readable entry points are NOT instrumented.**
+The banner only fires from the long-running entry points (`mcp`,
+`serve`, `doctor`). One-shot and machine-readable subcommands —
+`--version`, `list-tools`, `describe`, `call`, `dump-docs`,
+`mcp-config`, `update`, `stop`, `status`, `recording`, `config`,
+`diagnose`, and `telemetry install-event` — all skip it so piped
+output (`cua-driver list-tools | jq …`) stays clean.
 
-  **Disable per-invocation:**
+**Disable per-invocation:**
 
-  ```bash
-  CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve
-  ```
+```bash
+CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve
+```
 
-  Accepted "off" values (case-insensitive): `0`, `false`, `no`, `off`.
+Accepted "off" values (case-insensitive): `0`, `false`, `no`, `off`.
 
-  **Disable permanently** via the persisted config:
+**Disable permanently** via the persisted config:
 
-  ```bash
-  cua-driver config set update_check_enabled false
-  ```
+```bash
+cua-driver config set update_check_enabled false
+```
 
-  Source / dev builds (any `CARGO_PKG_VERSION` with a pre-release suffix
-  like `-dev`) auto-skip the check — there is no matching published
-  release for them to recommend.
+Source / dev builds (any `CARGO_PKG_VERSION` with a pre-release suffix
+like `-dev`) auto-skip the check — there is no matching published
+release for them to recommend.
+
 </Callout>
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later
-- Apple Silicon (M1/M2/M3/M4) or Intel Mac (x86_64)
-- 50 MB free disk space for the app bundle
+| Platform          | Requirements                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| macOS             | macOS 14 (Sonoma) or later; Apple Silicon or Intel; Accessibility and Screen Recording grants.             |
+| Linux pre-release | x86_64 Linux desktop session; X11 or XWayland; AT-SPI for accessibility-tree tools.                        |
+| Windows           | Windows 10/11 or Server with an interactive desktop session; PowerShell; UI Automation enabled by default. |
+
+Plan for roughly 50 MB for the app bundle or package directory, plus any retained old versions on Linux / Windows.
 
 ## Run the daemon
 
 Most workflows benefit from a persistent daemon. Element-indexed workflows require one: the per-pid element cache lives in-process, so one-shot CLI invocations lose it between calls.
 
-```bash
-# Start the daemon in the background.
-open -n -g -a CuaDriver --args serve
+**macOS**
 
-# Confirm it's up.
+```bash
+open -n -g -a CuaDriver --args serve
+```
+
+**Linux pre-release**
+
+```bash
+cua-driver serve &
+```
+
+**Windows**
+
+```powershell
+cua-driver autostart enable
+cua-driver autostart kick
+```
+
+Confirm it is up:
+
+```bash
 cua-driver status
-# cua-driver daemon is running
+# Cua Driver daemon is running
 #   socket: /Users/you/Library/Caches/cua-driver/cua-driver.sock
 #   pid: 12345
+```
 
-# Stop it cleanly when done.
+Stop it cleanly when done:
+
+```bash
 cua-driver stop
 ```
 
-`open -n -g -a CuaDriver --args serve` is the recommended form because LaunchServices attributes the process to `CuaDriver.app`'s bundle id, which is what the user actually granted TCC against. `cua-driver serve &` also works and auto-relaunches itself via `open` when it detects the wrong TCC context.
+On macOS, `open -n -g -a CuaDriver --args serve` is the recommended form because LaunchServices attributes the process to `CuaDriver.app`'s bundle id, which is what the user actually granted TCC against. `cua-driver serve &` also works and auto-relaunches itself via `open` when it detects the wrong TCC context.
 
 ## Register with an MCP client (optional)
 
-The MCP server is one of two ways to use cua-driver — skip this section if you only want the CLI (`cua-driver call list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
+The MCP server is one of two ways to use Cua Driver — skip this section if you only want the CLI (`cua-driver list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
 
 Cua Driver speaks MCP over stdio. Use `cua-driver mcp-config --client <name>` to print the right command for your client, or copy one of the snippets below directly:
 
@@ -536,20 +539,21 @@ cua-driver mcp-config | pbcopy
 ```
 
 <Callout type="info">
-**Pi (badlogic/pi-mono)** does not support MCP natively. Use cua-driver as a plain CLI from inside Pi instead — `cua-driver call list_apps`, `cua-driver call click '{...}'`, etc. — which is exactly the shape Pi is built around. Run `cua-driver mcp-config --client pi` for the full guidance, or see the [Quickstart](/cua-driver/guide/getting-started/quickstart) for CLI usage.
+**Pi (badlogic/pi-mono)** does not support MCP natively. Use cua-driver as a plain CLI from inside Pi instead — `cua-driver list_apps`, `cua-driver click '{...}'`, etc. — which is exactly the shape Pi is built around. Run `cua-driver mcp-config --client pi` for the full guidance, or see the [Quickstart](/cua-driver/guide/getting-started/quickstart) for CLI usage.
 </Callout>
 
 The client spawns `cua-driver mcp` on demand once registered.
 
 <Callout type="info">
-  **TCC auto-delegation.** When MCP clients spawn `cua-driver mcp` from an IDE terminal (Claude Code,
-  Cursor, VS Code, Warp), macOS attributes the subprocess to the terminal — not `CuaDriver.app` — so
-  AX probes would silently fail against the wrong bundle id. `mcp` detects this and auto-launches a
-  `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then proxies every tool call
-  through the daemon's Unix socket. The client sees an ordinary stdio MCP server; the daemon runs
-  under LaunchServices with the right TCC context. No Python bridge, no manual `serve` step required.
-  Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`) to opt out, e.g. when MCP is
-  launched from CuaDriver.app directly and already has the right TCC grants.
+  **TCC auto-delegation.** When MCP clients spawn `cua-driver mcp` from an IDE terminal (Claude
+  Code, Cursor, VS Code, Warp), macOS attributes the subprocess to the terminal — not
+  `CuaDriver.app` — so AX probes would silently fail against the wrong bundle id. `mcp` detects this
+  and auto-launches a `cua-driver serve` daemon via `open -n -g -a CuaDriver --args serve`, then
+  proxies every tool call through the daemon's Unix socket. The client sees an ordinary stdio MCP
+  server; the daemon runs under LaunchServices with the right TCC context. No Python bridge, no
+  manual `serve` step required. Pass `--no-daemon-relaunch` (or set `CUA_DRIVER_MCP_NO_RELAUNCH=1`)
+  to opt out, e.g. when MCP is launched from CuaDriver.app directly and already has the right TCC
+  grants.
 </Callout>
 
 <Callout type="info">
@@ -557,29 +561,29 @@ The client spawns `cua-driver mcp` on demand once registered.
   Windows and Linux, addressing the Session 0 / interactive-session problem rather than TCC: when
   `cua-driver mcp` starts up and detects a daemon already listening on the default socket, it
   proxies every tool call through to it instead of running in-process. Crucial for SSH on Windows,
-  where the SSH session lands in Session 0 (no desktop) but the daemon — registered via
-  `cua-driver autostart enable` — lives in the user's Session 1+ interactive logon. Same
-  `--no-daemon-relaunch` / `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` opt-out as macOS. See
-  [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the
-  full workflow.
+  where the SSH session lands in Session 0 (no desktop) but the daemon — registered via `cua-driver
+  autostart enable` — lives in the user's Session 1+ interactive logon. Same `--no-daemon-relaunch`
+  / `CUA_DRIVER_RS_MCP_NO_RELAUNCH=1` opt-out as macOS. See [Running Cua Driver under SSH on
+  Windows](/cua-driver/guide/getting-started/windows-ssh) for the full workflow.
 </Callout>
 
-## Agent skills (auto-wired)
+## Agent skills (optional)
 
-The bundle ships an Anthropic-format SKILL.md pack at `/Applications/CuaDriver.app/Contents/Resources/Skills/cua-driver/`. The installer detects the agents you have and creates symlinks pointing them at the bundle so the skill auto-loads:
+The installer does not modify agent instruction directories by default. To fetch the matching Anthropic-format skill pack and link it into detected agents, run:
 
-| Agent | Skills directory | Auto-wired by installer |
-|---|---|---|
-| Claude Code | `~/.claude/skills/cua-driver` | when `~/.claude/skills/` exists |
-| Codex | `~/.agents/skills/cua-driver` | when `~/.codex/` exists |
-| OpenClaw | `~/.openclaw/skills/cua-driver` | when `~/.openclaw/` exists |
-| OpenCode | `~/.config/opencode/skills/cua-driver` | when `~/.config/opencode/` exists |
+```bash
+cua-driver skills install
+```
 
-The installer creates the `skills/` subdirectory if missing, then drops the symlink. Symlinks survive auto-updates because `/Applications/CuaDriver.app` is replaced atomically — the link target stays valid across releases.
+| Agent       | Skills directory                                                                                           | Linked by `skills install` when present |
+| ----------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Claude Code | `~/.claude/skills/cua-driver`                                                                              | yes                                     |
+| Codex       | `~/.agents/skills/cua-driver`                                                                              | yes                                     |
+| OpenClaw    | `~/.openclaw/skills/cua-driver`                                                                            | yes                                     |
+| OpenCode    | `~/.config/opencode/skills/cua-driver` on macOS / Linux, `%APPDATA%\opencode\skills\cua-driver` on Windows | yes                                     |
+| Antigravity | `~/.gemini/skills/cua-driver`                                                                              | yes                                     |
 
-<Callout type="info">
-OpenCode also reads `~/.claude/skills/` natively, so users who have both Claude Code and OpenCode get the skill via the Claude path automatically.
-</Callout>
+`skills install` never overwrites an existing user-managed `cua-driver` link or directory. Use `cua-driver skills status`, `cua-driver skills update`, and `cua-driver skills uninstall` to inspect, refresh, or remove the pack.
 
 ### Agents without a SKILL.md auto-loader
 
@@ -588,38 +592,41 @@ Cursor, Hermes, and Pi each use a single-file system prompt (different format) i
 - **Cursor** (`~/.cursor/rules/*.mdc`): rules expect a different frontmatter shape (`description`/`globs`/`alwaysApply`), not Anthropic's `name`/`description`. Symlinking the SKILL.md as `.mdc` works but the frontmatter renders as a noisy comment block.
 - **Hermes** (`~/.hermes/SOUL.md`) and **Pi** (`~/.pi/agent/SYSTEM.md`): replace the entire system prompt — symlinking would clobber any custom prompt you've set.
 
-For these, paste the skill content manually into whatever instructions file the agent uses:
+For these, install the skill pack and paste its content manually into whatever instructions file the agent uses:
 
 ```bash
-cat /Applications/CuaDriver.app/Contents/Resources/Skills/cua-driver/SKILL.md | pbcopy
+cua-driver skills install
+cat "$(cua-driver skills path)/SKILL.md" | pbcopy
 ```
 
 ## Uninstall
 
-One canonical uninstall URL per platform mirrors the install side. Flag handling and auto-detection match `install.sh` exactly:
+One canonical uninstall URL per platform mirrors the install side:
 
-| Platform | Backend | Command |
-|---|---|---|
-| macOS | Swift (default) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
-| macOS | Rust port (`cua-driver-rs`) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)" -- --experimental-rust` |
-| Linux | Rust port (auto-detected — Swift binary is macOS-only) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
-| Windows | Rust port | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 \| iex` |
+| Platform | Command                                                                                                          |
+| -------- | ---------------------------------------------------------------------------------------------------------------- |
+| macOS    | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
+| Linux    | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"` |
+| Windows  | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 \| iex`             |
 
-`uninstall.sh` parses the same `--experimental-rust` / `--backend=rust` / `--backend=swift` flag set as `install.sh` and handles both backends inline — single file, no `_uninstall-rust.sh` helper (mirrors the one-file-per-shell shape of `uninstall.ps1`). On Linux (and any non-macOS `bash` host) it auto-detects and runs the Rust uninstall without any flag.
+`uninstall.sh` removes the Rust implementation by default on macOS and Linux. A legacy `--backend=swift` path remains for users explicitly removing an old Swift install.
 
 `uninstall.ps1` self-elevates via UAC when it detects an `-AutoStart` install — the `cua-driver-serve` Scheduled Task is registered at `RunLevel=Highest` (see [Autostart](../autostart)), so the daemon spawned by it runs at High IL and a non-elevated process (even the same user that installed it) can't terminate it or delete the task. The script detects either condition upfront and re-spawns itself elevated; the in-place path runs without UAC when no autostart artifacts are present.
 
 **What each uninstall removes**
 
-| Backend | Symlink / bin | App bundle / package home | Autostart entry | Skill links | Claude MCP registrations |
-|---|---|---|---|---|---|
-| Swift (macOS) | `~/.local/bin/cua-driver`, `/usr/local/bin/cua-driver` (legacy) | `/Applications/CuaDriver.app`, `~/.cua-driver`, `~/Library/Application Support/Cua Driver`, `~/Library/Caches/cua-driver` | `~/Library/LaunchAgents/com.trycua.cua_driver_updater.plist` (legacy ≤ 0.0.5) | `cua-driver` symlinks under `~/.claude/skills`, `~/.agents/skills`, `~/.openclaw/skills`, `~/.config/opencode/skills` | Scrubbed from `~/.claude.json` |
-| Rust — macOS | `~/.local/bin/cua-driver` *(only when it resolves into `CuaDriver.app` and `~/.cua-driver-rs/` exists)* | `/Applications/CuaDriver.app` (current), `/Applications/CuaDriverRs.app` (legacy, pre-rename), `~/.cua-driver-rs/` (entire tree) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` | `cua-driver-rs` symlinks under the same agent dirs | Scrubbed from `~/.claude.json` |
-| Rust — Linux | `~/.local/bin/cua-driver` *(when it resolves into `~/.cua-driver-rs/`)* | `~/.cua-driver-rs/` (entire tree) | `~/.config/systemd/user/cua-driver-rs.service` (stop + disable + remove) | Same as above | Scrubbed from `~/.claude.json` |
-| Rust — Windows | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` *(directory junction; legacy `Programs\trycua\cua-driver-rs\bin` also swept)* | `%USERPROFILE%\.cua-driver\` (entire tree, including `packages\current` junction; legacy `~\.cua-driver-rs\` also swept) | Scheduled Task `cua-driver-serve` (`schtasks /Delete`; needs UAC — script self-elevates) | Junctions under `%USERPROFILE%\.claude\skills`, `.agents\skills`, `.openclaw\skills`, `%APPDATA%\opencode\skills` | Not auto-edited — closing message prints `claude mcp remove cua-driver-rs` |
+| Platform | Symlink / bin                                                                                                              | App bundle / package home                                                                                                | Autostart entry                                                                          | Skill links                                                                                                                         | Claude MCP registrations                                                        |
+| -------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| macOS    | `~/.local/bin/cua-driver` _(when it resolves into `CuaDriver.app` and `~/.cua-driver-rs/` exists)_                         | `/Applications/CuaDriver.app` (current), `/Applications/CuaDriverRs.app` (legacy), `~/.cua-driver-rs/`                   | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist`                                  | `cua-driver` and legacy `cua-driver-rs` links under agent skill dirs                                                                | Scrubbed from `~/.claude.json`                                                  |
+| Linux    | `~/.local/bin/cua-driver` _(when it resolves into `~/.cua-driver-rs/`)_                                                    | `~/.cua-driver-rs/`                                                                                                      | `~/.config/systemd/user/cua-driver-rs.service` (stop + disable + remove)                 | Same as macOS                                                                                                                       | Scrubbed from `~/.claude.json`                                                  |
+| Windows  | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` _(directory junction; legacy `Programs\trycua\cua-driver-rs\bin` also swept)_ | `%USERPROFILE%\.cua-driver\` (entire tree, including `packages\current` junction; legacy `~\.cua-driver-rs\` also swept) | Scheduled Task `cua-driver-serve` (`schtasks /Delete`; script self-elevates when needed) | Junctions under `%USERPROFILE%\.claude\skills`, `.agents\skills`, `.openclaw\skills`, `%APPDATA%\opencode\skills`, `.gemini\skills` | Not auto-edited — closing message prints the manual `claude mcp remove` command |
 
 <Callout type="info">
-**Safety invariants** — every uninstall script (`uninstall.sh`, `uninstall.ps1`) refuses to clobber a real directory at a path where the matching installer could have only created a symlink / junction (Linux/macOS use `[[ -L ]]`; Windows checks `IO_REPARSE_TAG_MOUNT_POINT`). A user who hand-managed any of these dirs keeps theirs untouched. Re-running an uninstall on an already-clean system prints `nothing to remove` per item — never errors.
+  **Safety invariants** — every uninstall script (`uninstall.sh`, `uninstall.ps1`) refuses to
+  clobber a real directory at a path where the matching installer could have only created a symlink
+  / junction (Linux/macOS use `[[ -L ]]`; Windows checks `IO_REPARSE_TAG_MOUNT_POINT`). A user who
+  hand-managed any of these dirs keeps theirs untouched. Re-running an uninstall on an already-clean
+  system prints `nothing to remove` per item — never errors.
 </Callout>
 
 <Callout type="info">
@@ -638,6 +645,7 @@ Pre-rename Rust installs (`cua-driver-rs ≤ 0.2.3`) used a separate bundle id `
 tccutil reset Accessibility com.trycua.cuadriverrs 2>/dev/null
 tccutil reset ScreenCapture com.trycua.cuadriverrs 2>/dev/null
 ```
+
 </Callout>
 
 <Callout type="warn">
@@ -647,7 +655,8 @@ tccutil reset ScreenCapture com.trycua.cuadriverrs 2>/dev/null
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1))) -Force
 ```
 
-It also doesn't auto-edit `%USERPROFILE%\.claude.json` — the closing message prints the exact `claude mcp remove cua-driver-rs` command instead. The macOS / Linux uninstaller does auto-edit `~/.claude.json` when `python3` is on `PATH`; the Windows uninstaller skips the auto-edit unconditionally to keep the script dependency-free.
+It also doesn't auto-edit `%USERPROFILE%\.claude.json` — the closing message prints the manual `claude mcp remove` command instead. The macOS / Linux uninstaller does auto-edit `~/.claude.json` when `python3` is on `PATH`; the Windows uninstaller skips the auto-edit unconditionally to keep the script dependency-free.
+
 </Callout>
 
 ## Troubleshooting

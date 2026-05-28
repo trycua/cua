@@ -20,7 +20,7 @@ jobs:
       - run: uname -a
       - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
       - run: swift test
-        working-directory: ./libs/cua-driver
+        working-directory: ./libs/cua-driver/swift
   build:
     name: Release build
     runs-on: macos-15
@@ -29,4 +29,4 @@ jobs:
       - run: uname -a
       - run: sudo xcode-select -s /Applications/Xcode_16.3.app # Swift 6.1
       - run: swift build --configuration release
-        working-directory: ./libs/cua-driver
+        working-directory: ./libs/cua-driver/swift

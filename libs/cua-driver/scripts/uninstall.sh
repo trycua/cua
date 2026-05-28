@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# cua-driver uninstaller (Swift driver + Rust port, all platforms in a
-# single file). Mirrors uninstall.ps1 on Windows: one canonical script
-# per shell, no private `_uninstall-rust.sh` helper.
+# cua-driver uninstaller (Rust implementation by default, retired Swift
+# driver as an explicit legacy path on macOS). Mirrors uninstall.ps1 on
+# Windows: one canonical script per shell, no private `_uninstall-rust.sh`
+# helper.
 #
 # Behaviour by host + flag:
-#   macOS  + no flag                → Swift uninstall (today's default)
-#   macOS  + --backend=swift        → Swift uninstall (explicit no-op default)
-#   macOS  + --experimental-rust    → Rust port uninstall (Swift binary untouched)
-#   macOS  + --backend=rust         → same as --experimental-rust
-#   Linux/ + no flag                → auto-selects Rust uninstall
-#   other                             (Swift binary is macOS-only; nothing to remove on Linux)
-#   Linux/ + --backend=swift        → no-op (still allowed for compatibility)
+#   macOS/Linux + no flag           → Rust uninstall
+#   macOS  + --backend=swift        → retired Swift uninstall
+#   macOS  + --experimental-rust    → same as no flag (legacy alias)
+#   macOS  + --backend=rust         → same as no flag
+#   Linux/other + --backend=swift   → no-op (still allowed for compatibility)
 #
 # Swift uninstall removes:
 #   - ~/.local/bin/cua-driver symlink (+ legacy /usr/local/bin/cua-driver)
@@ -53,11 +52,6 @@
 # Usage:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)"
 #
-#   # cua-driver-rs (Rust port) — explicit opt-in on macOS:
-#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.sh)" -- --experimental-rust
-#
-#   # Linux auto-detects and removes the Rust port without any flag.
-#
 # Env overrides (mirror install side):
 #   CUA_DRIVER_RS_HOME    Rust package home to remove (default ~/.cua-driver-rs)
 set -euo pipefail
@@ -67,12 +61,7 @@ set -euo pipefail
 # stay bit-compatible across install/uninstall and a future Rust-only
 # flag flows through without edits.
 # ----------------------------------------------------------------------
-USE_RUST_BACKEND=0
-# Tracks whether the user explicitly named a backend. Needed so that
-# `--backend=swift` on Linux suppresses the auto-Rust dispatch below
-# (the doc says `--backend=swift` is an "explicit no-op default" —
-# without this flag the auto-Rust branch silently overrode it).
-BACKEND_EXPLICIT=0
+USE_RUST_BACKEND=1
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -80,9 +69,9 @@ while [[ $# -gt 0 ]]; do
         FORWARDED_ARGS+=("$1"); shift; continue
     fi
     case "$1" in
-        --experimental-rust) USE_RUST_BACKEND=1; BACKEND_EXPLICIT=1; shift ;;
-        --backend=rust)      USE_RUST_BACKEND=1; BACKEND_EXPLICIT=1; shift ;;
-        --backend=swift)     BACKEND_EXPLICIT=1; shift ;;  # explicit default — no-op
+        --experimental-rust) shift ;;  # legacy alias for default Rust path
+        --backend=rust)      shift ;;
+        --backend=swift)     USE_RUST_BACKEND=0; shift ;;
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -92,24 +81,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Auto-select Rust on non-macOS — but only when the user didn't pin a
-# backend. The Swift binary is macOS-only, so `--backend=swift` on
-# Linux is a deliberate no-op (the script reaches the Swift branch
-# below, finds nothing, exits clean). Same logic as install.sh so a
-# single canonical URL works on every platform.
+# The Swift binary is macOS-only, so `--backend=swift` on Linux is a
+# deliberate no-op (the script reaches the Swift branch below, finds
+# nothing, exits clean).
 OS="$(uname -s 2>/dev/null || echo unknown)"
-AUTO_RUST=0
-if [[ "$BACKEND_EXPLICIT" == "0" && "$USE_RUST_BACKEND" == "0" && "$OS" != "Darwin" ]]; then
-    USE_RUST_BACKEND=1
-    AUTO_RUST=1
-    printf 'note: detected non-macOS host (%s); auto-selecting the cua-driver-rs Rust uninstall.\n' "$OS" >&2
-    printf '      Pass --backend=swift to force the Swift uninstall path (will be a no-op on non-Darwin).\n' >&2
-fi
-
-if [[ "$USE_RUST_BACKEND" == "1" && "$AUTO_RUST" == "0" ]]; then
-    printf 'note: uninstalling cua-driver-rs (Rust port). The Swift binary won'"'"'t be touched.\n' >&2
-elif [[ "$USE_RUST_BACKEND" == "1" && "$AUTO_RUST" == "1" ]]; then
-    printf 'note: uninstalling cua-driver-rs (the Rust port — canonical on non-macOS).\n' >&2
+if [[ "$USE_RUST_BACKEND" == "1" ]]; then
+    if [[ "$OS" != "Darwin" ]]; then
+        printf 'note: detected non-macOS host (%s); uninstalling cua-driver via the Rust implementation.\n' "$OS" >&2
+    else
+        printf 'note: uninstalling cua-driver via the Rust implementation.\n' >&2
+    fi
 fi
 
 # ----------------------------------------------------------------------
@@ -139,7 +120,7 @@ resolve_link() {
 }
 
 # ----------------------------------------------------------------------
-# Rust uninstall branch (Linux + opt-in on macOS).
+# Rust uninstall branch (default on Linux + macOS).
 # ----------------------------------------------------------------------
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     USER_BIN_LINK="$HOME/.local/bin/cua-driver"
@@ -296,24 +277,28 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # writes platform-dependent targets (the local copy under $HOME_DIR/
     # skills/cua-driver-rs/). The [[ -L ]] check is the load-bearing
     # safety bar.
-    for SKILL_LINK in \
-        "$HOME/.claude/skills/$SKILL_PACK_NAME" \
-        "$HOME/.agents/skills/$SKILL_PACK_NAME" \
-        "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
-        "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
-        "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
-        "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
-        "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
-        "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
-        if [[ -L "$SKILL_LINK" ]]; then
-            rm -f "$SKILL_LINK"
-            log "removed skill symlink $SKILL_LINK"
-        elif [[ -d "$SKILL_LINK" ]]; then
-            log "$SKILL_LINK is a real directory, not a symlink (skipping)"
-        else
-            log "no skill symlink at $SKILL_LINK (skipping)"
-        fi
-    done
+    if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+        for SKILL_LINK in \
+            "$HOME/.claude/skills/$SKILL_PACK_NAME" \
+            "$HOME/.agents/skills/$SKILL_PACK_NAME" \
+            "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
+            "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
+            "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
+            if [[ -L "$SKILL_LINK" ]]; then
+                rm -f "$SKILL_LINK"
+                log "removed skill symlink $SKILL_LINK"
+            elif [[ -d "$SKILL_LINK" ]]; then
+                log "$SKILL_LINK is a real directory, not a symlink (skipping)"
+            else
+                log "no skill symlink at $SKILL_LINK (skipping)"
+            fi
+        done
+    else
+        log "no Rust install marker; leaving agent skill symlinks untouched"
+    fi
 
     # --- Claude Code MCP registrations ---
     # Same scrub shape as the Swift branch, keyed on the cua-driver-rs
@@ -361,9 +346,9 @@ def invokes_cua_driver_rs(server):
     # explicit ".cua-driver-rs" segment. Plain "cua-driver" alone is
     # ambiguous (the Swift binary uses the same filename). The shared
     # /Applications/CuaDriver.app path is ALSO ambiguous (Rust took
-    # over Swift's bundle id) — only count it as Rust when a Rust
-    # install marker is on disk; otherwise it's almost certainly a
-    # Swift registration we shouldn't scrub.
+    # over the Swift bundle id) — only count it as Rust when a Rust
+    # install marker is on disk; otherwise it is almost certainly a
+    # Swift registration we should not scrub.
     if home_dir and home_dir in joined:
         return True
     if "CuaDriverRs.app" in joined or ".cua-driver-rs" in joined or "cua-driver-rs" in joined:
@@ -450,7 +435,7 @@ PY
     if [[ "$OS" == "Darwin" ]]; then
         cat << 'FINALUNMSG'
 
-cua-driver-rs uninstalled.
+cua-driver uninstalled.
 
 TCC grants (Accessibility + Screen Recording) remain in System
 Settings > Privacy & Security. Reset them explicitly if you want a
@@ -467,15 +452,20 @@ FINALUNMSG
     else
         cat << 'FINALUNMSG'
 
-cua-driver-rs uninstalled.
+cua-driver uninstalled.
 FINALUNMSG
     fi
     exit 0
 fi
 
 # ----------------------------------------------------------------------
-# Swift uninstall branch (macOS, default).
+# Swift uninstall branch (macOS legacy, explicit --backend=swift only).
 # ----------------------------------------------------------------------
+if [[ "$OS" != "Darwin" ]]; then
+    log "legacy Swift uninstall requested on non-macOS host ($OS); nothing to remove"
+    exit 0
+fi
+
 USER_BIN_LINK="$HOME/.local/bin/cua-driver"
 SYSTEM_BIN_LINK="/usr/local/bin/cua-driver"
 APP_BUNDLE="/Applications/CuaDriver.app"

@@ -26,7 +26,7 @@
   <table>
     <tr>
       <td colspan="3" align="center">
-        <a href="#cua-driver---background-computer-use-on-macos">
+        <a href="#cua-driver---background-computer-use-on-macos-and-windows-with-linux-pre-release">
           <img src="img/card-cua-driver.png" alt="Cua Driver — The background computer-use agent" width="888">
         </a>
       </td>
@@ -53,17 +53,23 @@
 
 ---
 
-## Cua Driver - Background computer-use on macOS
+## Cua Driver - Background computer-use on macOS and Windows, with Linux pre-release
 
-Drive any native macOS app **in the background** — agents click, type, and verify without stealing the cursor, focus, or Space, even on non-AX surfaces like Chromium web content and canvas-based tools (Blender, Figma, DAWs, game engines). Use with the CLI or MCP server for Claude Code, Cursor, and custom clients. Every session records as a replayable trajectory.
+Drive native desktop apps **in the background** — agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
+
+**macOS / Linux pre-release**
 
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
 ```
 
-> Want to try the cross-platform Rust port early? Add `-- --experimental-rust` to the line above — it delegates to the [`cua-driver-rs`](libs/cua-driver/rust/) installer (separate bundle, coexists with the Swift binary).
+**Windows (PowerShell)**
 
-Full tool reference, architecture notes, and the Claude Code skill ship with the package: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+```powershell
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+```
+
+Full tool reference, architecture notes, and the optional agent skill pack live here: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
 
 ---
 

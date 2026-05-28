@@ -6,7 +6,7 @@ Next steps:
        {{BINARY}} list-tools
 
   2. Agent skill pack (optional):
-       {{BINARY}} skills install   # fetch + link the cua-driver-rs skill pack
+       {{BINARY}} skills install   # fetch + link the cua-driver skill pack
                                    # into Claude Code / Codex / OpenClaw / OpenCode.
                                    # The install never touches your agent dirs.
 

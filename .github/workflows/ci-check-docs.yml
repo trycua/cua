@@ -3,8 +3,10 @@ name: "CI: Check Docs"
 on:
   pull_request:
     paths:
-      # Cua Driver (Swift)
-      - "libs/cua-driver/Sources/**"
+      # Cua Driver (Rust)
+      - "libs/cua-driver/rust/crates/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
       # Lume (Swift)
       - "libs/lume/src/**"
       # Cua CLI (TypeScript)
@@ -69,7 +71,7 @@ jobs:
           GENERATORS=""
 
           # Source changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/Sources/\|^docs/content/docs/cua-driver/reference/"; then
+          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/rust/crates/\|^libs/cua-driver/rust/Cargo.toml\|^libs/cua-driver/rust/Cargo.lock\|^docs/content/docs/cua-driver/reference/"; then
             GENERATORS="$GENERATORS cua-driver"
           fi
           if echo "$CHANGED_FILES" | grep -q "^libs/lume/src/"; then
@@ -115,8 +117,8 @@ jobs:
 
       - name: Build cua-driver (if needed)
         if: contains(steps.changed.outputs.generators, 'cua-driver') || steps.changed.outputs.generators == 'all'
-        run: swift build --configuration release
-        working-directory: libs/cua-driver
+        run: cargo build -p cua-driver --release
+        working-directory: libs/cua-driver/rust
 
       - name: Build Lume (if needed)
         if: contains(steps.changed.outputs.generators, 'lume') || steps.changed.outputs.generators == 'all'

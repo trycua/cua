@@ -7,6 +7,14 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 `cua-driver mcp` runs in one of two modes depending on the TCC context it inherits from its parent process. Both expose the **exact same MCP tool surface** — same names, same arguments, same response shapes — so MCP clients never need to care which mode is active. This page documents how the two modes differ at the process level, so wrapper authors (Hermes, custom MCP shims, etc.) and operators debugging the lifecycle have a precise mental model.
 
+<Callout type="info">
+  This page describes the **macOS** driver, where the daemon proxy exists to inherit `CuaDriver.app`'s TCC
+  grants. The Rust port (`cua-driver-rs`) has the same daemon-proxy mechanism on Windows and Linux, but it
+  solves a different problem — reaching the interactive desktop from a Session 0 SSH login — and uses
+  `CUA_DRIVER_RS_MCP_NO_RELAUNCH` rather than `CUA_DRIVER_MCP_NO_RELAUNCH`. See
+  [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh).
+</Callout>
+
 ## The two modes
 
 ### In-process mode (default when TCC context is correct)
@@ -18,7 +26,7 @@ cua-driver.app (LaunchServices) → cua-driver mcp (stdio)
                                        attributed to com.trycua.driver
 ```
 
-When `cua-driver mcp` is spawned by `CuaDriver.app` directly (LaunchServices-attributed), the process inherits the bundle's TCC grants. Every tool runs in-process: AX walks, screenshots, click synthesis, the agent-cursor overlay, all of it. Lifecycle is dead simple — the process lives for the duration of the stdio session and exits when stdin closes.
+When `cua-driver mcp` is spawned by `CuaDriver.app` directly (LaunchServices-attributed), the process inherits the bundle's TCC grants. Every tool runs in-process: AX walks, screenshots, click synthesis, the agent-cursor overlay, all of it. The lifecycle is simple: the process lives for the duration of the stdio session and exits when stdin closes.
 
 ### Daemon-proxy mode (auto-engaged from IDE terminals)
 

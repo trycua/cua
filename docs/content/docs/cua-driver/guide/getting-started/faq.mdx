@@ -20,10 +20,10 @@ Two common causes:
 
 ```bash
 # Populate the cache for this exact (pid, window_id).
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
 
 # Then act with the same window_id.
-cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
+cua-driver call click '{"pid":844,"window_id":10725,"element_index":14}'
 ```
 
 If you're running one-shot CLI invocations without a daemon, the cache lives for one process lifetime. Start the daemon first:
@@ -107,8 +107,8 @@ A known Chromium renderer-IPC limit: the filter coerces synthetic right-click su
 HTML5's click-to-play handler rejects some synthetic click paths. Use keyboard instead:
 
 ```bash
-cua-driver press_key '{"pid":<pid>,"key":"k"}'     # YouTube play/pause
-cua-driver press_key '{"pid":<pid>,"key":"space"}' # generic video play/pause
+cua-driver call press_key '{"pid":<pid>,"key":"k"}'     # YouTube play/pause
+cua-driver call press_key '{"pid":<pid>,"key":"space"}' # generic video play/pause
 ```
 
 Keyboard events travel through a different auth envelope and reach the page.
@@ -118,7 +118,7 @@ Keyboard events travel through a different auth envelope and reach the page.
 Pass the URL to `launch_app`:
 
 ```bash
-cua-driver launch_app '{"bundle_id":"com.google.Chrome","urls":["https://trycua.com"]}'
+cua-driver call launch_app '{"bundle_id":"com.google.Chrome","urls":["https://trycua.com"]}'
 ```
 
 The URL opens in a new window via Chrome's `application(_:open:)` delegate. The driver's focus-restore guard catches Chrome's internal activation and clobbers the frontmost back to what it was before the call.
@@ -133,7 +133,7 @@ The URL opens in a new window via Chrome's `application(_:open:)` delegate. The 
 ### How do I disable the visual cursor overlay?
 
 ```bash
-cua-driver set_agent_cursor_enabled '{"enabled":false}'
+cua-driver call set_agent_cursor_enabled '{"enabled":false}'
 ```
 
 Or via config:
@@ -149,7 +149,7 @@ The overlay only renders when the driver has an AppKit run loop (inside `cua-dri
 Tune the motion knobs:
 
 ```bash
-cua-driver set_agent_cursor_motion '{"glide_duration_ms":300}'
+cua-driver call set_agent_cursor_motion '{"glide_duration_ms":300}'
 ```
 
 See `set_agent_cursor_motion` in the [MCP tools reference](/cua-driver/reference/mcp-tools) for every knob.
@@ -158,13 +158,13 @@ See `set_agent_cursor_motion` in the [MCP tools reference](/cua-driver/reference
 
 ### `check_permissions` says `NOT granted` but I granted both.
 
-TCC checks the calling process, not `CuaDriver.app`. Inside IDE terminals (Claude Code, Cursor, VS Code, Conductor), the shell inherits the IDE's TCC responsibility chain. So running `cua-driver check_permissions` in one of those shells reads against the IDE's bundle, not `com.trycua.driver`.
+TCC checks the calling process, not `CuaDriver.app`. Inside IDE terminals (Claude Code, Cursor, VS Code, Conductor), the shell inherits the IDE's TCC responsibility chain. So running `cua-driver call check_permissions` in one of those shells reads against the IDE's bundle, not `com.trycua.driver`.
 
 Start the daemon first, which runs through LaunchServices under the CuaDriver bundle:
 
 ```bash
 open -n -g -a CuaDriver --args serve
-cua-driver check_permissions   # forwards to the daemon — authoritative answer
+cua-driver call check_permissions   # forwards to the daemon — authoritative answer
 ```
 
 ### `cua-driver mcp` from an IDE terminal can't see Accessibility.

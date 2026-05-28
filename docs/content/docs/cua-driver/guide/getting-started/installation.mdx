@@ -69,10 +69,10 @@ irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/in
 ```
 
 <Callout type="warn">
-  **Known issue on Windows PowerShell 5.1**: `install.ps1` currently fails to parse on stock Windows PowerShell 5.1 (the version shipped with Windows 10 / Server 2019 / Server 2025) due to backtick + ampersand escaping in the post-install hint block — see [#1626](https://github.com/trycua/cua/issues/1626). Workaround until that lands: manual zip install:
+  **If `install.ps1` fails to parse on stock Windows PowerShell 5.1** (the version shipped with Windows 10 / Server 2019 / Server 2025; see [#1626](https://github.com/trycua/cua/issues/1626)), fall back to a manual zip install:
 
   ```powershell
-  $version = "0.2.9"
+  $version = "0.3.2"
   $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x86_64' }
   $url = "https://github.com/trycua/cua/releases/download/cua-driver-rs-v$version/cua-driver-rs-$version-windows-$arch-binary.zip"
   iwr $url -OutFile $env:TEMP\cua.zip -UseBasicParsing
@@ -171,9 +171,9 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 | Env var | Default (Linux/macOS) | Default (Windows) | What it controls |
 |---|---|---|---|
 | `CUA_DRIVER_RS_VERSION` | unset → use baked version | unset → use baked version | Pin a specific release (e.g. `0.2.0`). |
-| `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
-| `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver-rs` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
-| `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | use `-NoPathUpdate` switch on `install.ps1` | Skip the PATH append. On Windows the installer appends `%LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin` to the User-scope `Path` by default; use the fetch+invoke form with `-NoPathUpdate` to opt out (see the Windows install section above for the exact one-liner). |
+| `CUA_DRIVER_RS_INSTALL_DIR` | `~/.local/bin` | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` | The visible PATH-entry directory. On Windows this is itself a junction. |
+| `CUA_DRIVER_RS_HOME` | `~/.cua-driver-rs` | `%USERPROFILE%\.cua-driver` | Package home — holds `packages/releases/<v>/` and `packages/current`. |
+| `CUA_DRIVER_RS_NO_MODIFY_PATH` *(Linux/macOS only)* | `0` | use `-NoPathUpdate` switch on `install.ps1` | Skip the PATH append. On Windows the installer appends `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` to the User-scope `Path` by default; use the fetch+invoke form with `-NoPathUpdate` to opt out (see the Windows install section above for the exact one-liner). |
 | `CUA_DRIVER_RS_KEEP_VERSIONS` *(Linux/Windows only)* | `5` | `5` | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants. |
 
 <Callout type="info">
@@ -225,7 +225,7 @@ cat ~/.cua-driver-rs/packages/.install.lock.d/info
 ```
 
 ```powershell
-Get-Content $env:USERPROFILE\.cua-driver-rs\install.lock
+Get-Content $env:USERPROFILE\.cua-driver\install.lock
 # pid=43210
 # started=2026-05-17T09:14:22.123Z
 # invocation=install.ps1 -Release latest
@@ -247,17 +247,17 @@ Both primitives are unprivileged — no sudo, no admin elevation, no Developer M
 
 ```bash
 cua-driver --version
-# cua-driver 0.1.0
+# cua-driver 0.3.2
 
 cua-driver --help
-# OVERVIEW: macOS Accessibility-driven computer-use agent — MCP stdio server.
+# cua-driver 0.3.2 — cross-platform computer-use automation driver
 ```
 
 For a structured environment + install report on any platform, run:
 
 ```bash
 cua-driver doctor
-# [ok  ] binary: cua-driver 0.2.1 (aarch64-macos)
+# [ok  ] binary: cua-driver 0.3.2 (aarch64-macos)
 # [ok  ] install dir: /Users/you/.local/bin/cua-driver
 # [ok  ] home dir: /Users/you/.cua-driver-rs (3 release dirs cached)
 # [ok  ] telemetry: enabled (install-id present)
@@ -313,7 +313,7 @@ The Windows-native equivalent of macOS's LaunchAgent is a **Scheduled Task trigg
 `install.ps1` prints the exact one-shot registration block on a successful install. To register it manually (substitute your install path if you built from source):
 
 ```powershell
-$exe       = "$env:LOCALAPPDATA\Programs\trycua\cua-driver-rs\bin\cua-driver.exe"
+$exe       = "$env:LOCALAPPDATA\Programs\Cua\cua-driver\bin\cua-driver.exe"
 $user      = "$env:COMPUTERNAME\$env:USERNAME"
 $action    = New-ScheduledTaskAction -Execute $exe -Argument 'serve' -WorkingDirectory $env:USERPROFILE
 $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $user
@@ -355,13 +355,13 @@ open -n -g -a CuaDriver --args serve
 Then trigger the prompts:
 
 ```bash
-cua-driver check_permissions
+cua-driver call check_permissions
 ```
 
 macOS raises the Accessibility and Screen Recording system dialogs. Grant both, then re-run the command to confirm:
 
 ```bash
-cua-driver check_permissions
+cua-driver call check_permissions
 # ✅ Accessibility: granted.
 # ✅ Screen Recording: granted.
 ```
@@ -425,9 +425,9 @@ If a grant still reads `NOT granted` after granting in the dialog, open **System
   two-line banner to stderr when a newer `cua-driver-rs-v*` release exists:
 
   ```
-  ✨ cua-driver v0.1.4 is available (you have v0.1.3).
+  ✨ cua-driver v0.3.2 is available (you have v0.3.1).
      Update with: cua-driver update
-     Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
+     Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2
   ```
 
   The answer is cached at `~/.cua-driver-rs/version_check.json` for ~20
@@ -489,7 +489,7 @@ cua-driver stop
 
 ## Register with an MCP client (optional)
 
-The MCP server is one of two ways to use cua-driver — skip this section if you only want the CLI (`cua-driver list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
+The MCP server is one of two ways to use cua-driver — skip this section if you only want the CLI (`cua-driver call list_apps`, etc.). You can register both later, MCP and CLI work side-by-side.
 
 Cua Driver speaks MCP over stdio. Use `cua-driver mcp-config --client <name>` to print the right command for your client, or copy one of the snippets below directly:
 
@@ -536,7 +536,7 @@ cua-driver mcp-config | pbcopy
 ```
 
 <Callout type="info">
-**Pi (badlogic/pi-mono)** does not support MCP natively. Use cua-driver as a plain CLI from inside Pi instead — `cua-driver list_apps`, `cua-driver click '{...}'`, etc. — which is exactly the shape Pi is built around. Run `cua-driver mcp-config --client pi` for the full guidance, or see the [Quickstart](/cua-driver/guide/getting-started/quickstart) for CLI usage.
+**Pi (badlogic/pi-mono)** does not support MCP natively. Use cua-driver as a plain CLI from inside Pi instead — `cua-driver call list_apps`, `cua-driver call click '{...}'`, etc. — which is exactly the shape Pi is built around. Run `cua-driver mcp-config --client pi` for the full guidance, or see the [Quickstart](/cua-driver/guide/getting-started/quickstart) for CLI usage.
 </Callout>
 
 The client spawns `cua-driver mcp` on demand once registered.

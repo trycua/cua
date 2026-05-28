@@ -148,11 +148,7 @@ Some apps (Calculator, Settings, older UWPs) host their top-level window as a `W
 
 ## Why not just `cua-driver serve &` over SSH?
 
-A naively-spawned `cua-driver serve &` over SSH inherits the SSH session — which on Windows OpenSSH is **Session 0**, the non-interactive services session. The daemon comes up, but every GUI tool it answers (`list_windows`, `click`, `screenshot`, ...) bottoms out in Win32 APIs scoped to the calling session's WindowStation + Desktop, which Session 0 doesn't have. Tools silently return empty arrays.
-
-`autostart enable && kick` sidesteps this by running the daemon under the user's interactive logon (Session 1+) instead of inheriting whatever session called `serve`. The daemon then has a real desktop attached and GUI tools work.
-
-See [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the end-to-end SSH workflow.
+A `cua-driver serve &` spawned over SSH inherits the SSH session — Session 0 on Windows OpenSSH — which has no interactive desktop, so every GUI tool returns empty. `autostart enable && kick` runs the daemon under the user's interactive logon (Session 1+) instead, so it has a real desktop attached. [Running cua-driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) has the full reasoning and the end-to-end workflow.
 
 ## Uninstall behaviour
 

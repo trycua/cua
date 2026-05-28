@@ -1743,7 +1743,7 @@ setup per client / docs link) is sourced from a single shared file:
       raw.githubusercontent.com (remote install path) + bash `sed`.
     - `libs/cua-driver/scripts/install.ps1` — `Invoke-WebRequest` from
       raw.githubusercontent.com + PowerShell `-replace`.
-    - `libs/cua-driver/rust/scripts/install-local.sh` — direct disk read
+    - `libs/cua-driver/scripts/install-local.sh` — direct disk read
       from `../cua-driver/scripts/post-install-hints.txt` + `sed`.
     - `libs/cua-driver/rust/scripts/install-local.ps1` — direct disk read
       from `..\cua-driver\scripts\post-install-hints.txt` + `-replace`.
@@ -1765,7 +1765,7 @@ only branching case). The OS-specific block is 4-6 lines, naturally
 fits in the script that targets that OS, and is the only part that
 would need conditional rendering in a single-file design.
 
-**Status**: VERIFIED on macOS via `bash libs/cua-driver/rust/scripts/install-local.sh`
+**Status**: VERIFIED on macOS via `bash libs/cua-driver/scripts/install-local.sh`
 end-to-end. Windows VM verification pending.
 
 ---

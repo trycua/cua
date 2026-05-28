@@ -98,55 +98,17 @@ let
             assert "list_windows" in tool_names, f"list_windows missing"
             print(f"PASS: {len(tools)} tools", flush=True)
 
-            # List windows to find xterm
-            print("\n--- list_windows ---", flush=True)
-            send_request("tools/call", {
-                "name": "list_windows",
-                "arguments": {},
-            }, req_id=3)
-            resp = read_response(timeout=10)
-            print(f"list_windows response id={resp.get('id')}", flush=True)
-
-            # Parse window list to find xterm
-            content = resp.get("result", {}).get("content", [])
-            text = content[0].get("text", "") if content else ""
-            print(f"Windows: {text[:500]}", flush=True)
-
-            # Try to parse JSON from the response
-            windows = []
-            try:
-                windows = json.loads(text)
-            except (json.JSONDecodeError, TypeError):
-                # Might be markdown or plain text, try to find window info
-                pass
-
+            # Read xterm window ID and PID from files saved by the test setup
             pid = None
             window_id = None
-
-            if isinstance(windows, list) and len(windows) > 0:
-                # Pick the first window (should be xterm)
-                w = windows[0]
-                pid = w.get("pid")
-                window_id = w.get("window_id") or w.get("id") or w.get("xid")
-                print(f"Found window via list_windows: pid={pid} window_id={window_id}", flush=True)
-
-            if pid is None or window_id is None:
-                # Fallback: use xdotool to get the xterm window ID and pid
-                print("WARN: list_windows empty, falling back to xdotool", flush=True)
-                try:
-                    xid_str = subprocess.check_output(
-                        ["xdotool", "search", "--name", "xterm"],
-                        env={**os.environ}, timeout=5
-                    ).decode().strip().split("\n")[0]
-                    window_id = int(xid_str)
-                    pid_str = subprocess.check_output(
-                        ["xdotool", "getwindowpid", xid_str],
-                        env={**os.environ}, timeout=5
-                    ).decode().strip()
-                    pid = int(pid_str)
-                    print(f"Found window via xdotool: pid={pid} window_id={window_id}", flush=True)
-                except Exception as e:
-                    print(f"xdotool fallback failed: {e}", flush=True)
+            try:
+                with open("/tmp/xterm-xid.txt") as f:
+                    window_id = int(f.read().strip().split("\n")[0])
+                with open("/tmp/xterm-pid.txt") as f:
+                    pid = int(f.read().strip())
+                print(f"Found xterm window: pid={pid} window_id={window_id}", flush=True)
+            except Exception as e:
+                print(f"ERROR: Could not read window info: {e}", flush=True)
 
             if pid is not None and window_id is not None:
                 # Use get_window_state with capture_mode=vision to get screenshot
@@ -267,12 +229,14 @@ pkgs.testers.nixosTest {
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
         # Start openbox WM so _NET_CLIENT_LIST is populated for list_windows
         machine.execute("DISPLAY=:99 openbox >/dev/null 2>&1 &")
-        machine.wait_until_succeeds("DISPLAY=:99 xdotool getactivewindow", timeout=10)
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
         machine.execute("DISPLAY=:99 xterm -T 'CUA Test' -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
-        # Wait for xterm window to appear (poll inside the VM)
-        machine.wait_until_succeeds("DISPLAY=:99 xdotool search --name 'CUA Test'", timeout=15)
+        # Wait for xterm window to appear (poll via xdotool inside the VM)
+        machine.wait_until_succeeds("DISPLAY=:99 xdotool search --class xterm", timeout=15)
+        # Save the xterm window ID and PID for the MCP screenshot test
+        machine.succeed("DISPLAY=:99 xdotool search --class xterm > /tmp/xterm-xid.txt")
+        machine.succeed("DISPLAY=:99 xdotool getwindowpid $(cat /tmp/xterm-xid.txt | head -1) > /tmp/xterm-pid.txt")
 
     with subtest("Screenshot via cua-driver MCP"):
         machine.copy_from_host("${mcpScreenshotTest}", "/tmp/mcp-screenshot-test.py")

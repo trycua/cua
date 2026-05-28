@@ -80,6 +80,7 @@ jobs:
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
       - name: Run NixOS integration test
+        timeout-minutes: 8
         run: nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
 
       - name: Sign and upload to Nix cache

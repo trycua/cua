@@ -681,6 +681,19 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+        // Pulse the agent cursor onto the field being typed into (when an
+        // element_index is supplied) so the viewer sees *where* typing happens.
+        if let Some(idx) = args.opt_u64("element_index") {
+            let idx = idx as usize;
+            if let Ok(Ok((bx, by, bw, bh))) =
+                tokio::task::spawn_blocking(move || crate::atspi::get_element_bounds(pid, idx)).await
+            {
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                    x: bx as f64 + bw as f64 / 2.0,
+                    y: by as f64 + bh as f64 / 2.0,
+                });
+            }
+        }
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
             crate::input::send_type_text(xid, &text)
@@ -849,6 +862,18 @@ impl Tool for SetValueTool {
         let idx = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
         let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
         let value_for_task = value.clone();
+        // Pulse the agent cursor onto the target element before writing, so a
+        // value write gets the same visual feedback as a click — the viewer can
+        // see *where* the agent is acting. No-op when the element bounds can't
+        // be resolved or the overlay is disabled.
+        if let Ok(Ok((bx, by, bw, bh))) =
+            tokio::task::spawn_blocking(move || crate::atspi::get_element_bounds(pid, idx)).await
+        {
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                x: bx as f64 + bw as f64 / 2.0,
+                y: by as f64 + bh as f64 / 2.0,
+            });
+        }
         let result = tokio::task::spawn_blocking(move || {
             crate::atspi::set_value(pid, idx, &value_for_task)
         }).await;
@@ -1606,12 +1631,15 @@ impl Tool for GetConfigTool {
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         let cfg = self.state.config.read().unwrap();
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration")
             .with_structured(json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "linux",
                 "capture_mode": cfg.capture_mode,
-                "max_image_dimension": cfg.max_image_dimension
+                "max_image_dimension": cfg.max_image_dimension,
+                "experimental_pip": pip_enabled,
+                "experimental_pip_geometry": pip_geometry
             }))
     }
 }
@@ -1628,10 +1656,16 @@ impl Tool for SetConfigTool {
     fn def(&self) -> &ToolDef {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
-            description: "Update cua-driver-rs configuration. Changes take effect immediately.".into(),
+            description: "Update cua-driver-rs configuration. capture_mode / \
+                max_image_dimension take effect immediately. The experimental_pip \
+                keys persist to ~/.cua-driver/config.json and apply on next \
+                daemon restart (the PiP backend is initialised once at startup; \
+                Linux ships only the trait stub today — see issue #1729).".into(),
             input_schema: json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Default capture mode for get_window_state."},
-                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."}
+                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
+                "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
+                "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -1648,15 +1682,35 @@ impl Tool for SetConfigTool {
             cfg.max_image_dimension = dim as u32;
             parts.push(format!("max_image_dimension={dim}"));
         }
+        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
+            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled)) {
+                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+            }
+            parts.push(format!("experimental_pip={enabled} (next restart)"));
+        }
+        if let Some(geom) = args.opt_str("experimental_pip_geometry") {
+            if pip_preview::PipGeometry::parse(&geom).is_none() {
+                return ToolResult::error(format!(
+                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
+                ));
+            }
+            if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(geom.clone())) {
+                return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+            }
+            parts.push(format!("experimental_pip_geometry={geom} (next restart)"));
+        }
         let msg = if parts.is_empty() {
             "Config unchanged (no known parameters).".to_owned()
         } else {
             format!("Config updated: {}", parts.join(", "))
         };
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text(msg)
             .with_structured(json!({
                 "capture_mode": cfg.capture_mode,
-                "max_image_dimension": cfg.max_image_dimension
+                "max_image_dimension": cfg.max_image_dimension,
+                "experimental_pip": pip_enabled,
+                "experimental_pip_geometry": pip_geometry
             }))
     }
 }

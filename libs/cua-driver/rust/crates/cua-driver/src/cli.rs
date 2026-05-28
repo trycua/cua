@@ -64,7 +64,13 @@ pub enum Command {
     Status { socket: Option<String> },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
     DumpDocs { pretty: bool, doc_type: String },
-    Update { apply: bool },
+    Update { apply: bool, json: bool },
+    /// `cua-driver check-update [--json] [--no-cache]` — pure check verb.
+    /// Never installs; the apply path stays on `update --apply` so the
+    /// "did anything change on disk?" question is unambiguous from argv.
+    /// Mirror of the `check_for_update` MCP tool — both routes share
+    /// `crate::version_check::check_update_state`.
+    CheckUpdate { json: bool, no_cache: bool },
     Doctor { json: bool },
     Diagnose,
     Config {
@@ -110,6 +116,10 @@ const VALUE_FLAGS: &[&str] = &[
     "--cursor-icon", "--cursor-id", "--cursor-palette",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
     "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
+    // Experimental PiP preview — value flag for the optional geometry
+    // override (--experimental-pip itself is a bare flag and doesn't
+    // need to be listed here).
+    "--experimental-pip-geometry",
 ];
 
 /// Parse the first non-flag positional argument from argv to determine which
@@ -127,7 +137,17 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, doctor, diagnose, autostart, skills");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, autostart, skills");
+        println!();
+        println!("Updating cua-driver:");
+        println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
+        println!("                                  Default output is human-friendly text.");
+        println!("    --json                        Emit a machine-readable JSON payload (same shape as the");
+        println!("                                  check_for_update MCP tool). Hermes branches on update_available.");
+        println!("    --no-cache                    Skip the 20h on-disk cache and force a fresh GitHub round-trip.");
+        println!("  cua-driver update               Same check as above, then suggest --apply if outdated.");
+        println!("    --apply                       Download + install the latest release via the canonical installer.");
+        println!("    --json                        Emit the structured check payload (does not change --apply behaviour).");
         println!();
         println!("autostart options (Windows-only today):");
         println!("  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.");
@@ -152,6 +172,14 @@ pub fn parse_command() -> Command {
         println!();
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
+        println!();
+        println!("experimental options (default: off):");
+        println!("  --experimental-pip          Show a small always-on-top window with the latest");
+        println!("                              post-action screenshot + a 1-line label. macOS only");
+        println!("                              today; Win/Linux print a not-yet-implemented notice.");
+        println!("  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left");
+        println!("                                          origin). Defaults to 480x360 in the top-right");
+        println!("                                          corner of the main display.");
         std::process::exit(0);
     }
 
@@ -234,7 +262,13 @@ pub fn parse_command() -> Command {
         }
         Some("update") => {
             let apply = args.iter().any(|a| a == "--apply");
-            Command::Update { apply }
+            let json = args.iter().any(|a| a == "--json");
+            Command::Update { apply, json }
+        }
+        Some("check-update") => {
+            let json = args.iter().any(|a| a == "--json");
+            let no_cache = args.iter().any(|a| a == "--no-cache");
+            Command::CheckUpdate { json, no_cache }
         }
         Some("doctor") => {
             // `--json` switches to machine-readable output for scripting.
@@ -1267,10 +1301,30 @@ fn run_recording_render(args: &[String]) {
 /// tag filtering and HTTP semantics. `--apply` delegates to the canonical
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
-pub fn run_update_cmd(apply: bool) {
+pub fn run_update_cmd(apply: bool, json: bool) {
+    // `--json` short-circuits the text path entirely so scripted callers
+    // get a parseable payload regardless of `--apply`. The check itself
+    // routes through the same `check_update_state` the `check-update`
+    // verb and the MCP tool use, so all three surfaces agree.
+    if json {
+        let state = crate::version_check::check_update_state(false);
+        let val = serde_json::to_value(&state)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string());
+        println!("{pretty}");
+        // `--apply` still installs when JSON is on — the JSON is just the
+        // pre-install snapshot. Returning here when apply is false keeps
+        // the existing "check + suggest" behaviour off the JSON path.
+        if !apply {
+            return;
+        }
+    }
+
     let current = env!("CARGO_PKG_VERSION");
-    println!("Current version: {current}");
-    println!("Checking for updates…");
+    if !json {
+        println!("Current version: {current}");
+        println!("Checking for updates…");
+    }
 
     let latest = crate::version_check::fetch_latest_version();
     match latest {
@@ -1279,30 +1333,42 @@ pub fn run_update_cmd(apply: bool) {
             // the CLI surface — pass it through so the user can see why
             // (timeout, parse error, etc.) instead of just "unreachable".
             tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
-            println!("Could not reach GitHub — check your connection and try again.");
+            if !json {
+                println!("Could not reach GitHub — check your connection and try again.");
+            }
             process::exit(1);
         }
         Ok(v) if !crate::version_check::is_newer(&v, current) => {
-            println!("Already up to date.");
+            if !json {
+                println!("Already up to date.");
+            }
         }
         Ok(v) => {
-            println!("New version available: {v}");
+            if !json {
+                println!("New version available: {v}");
+            }
 
             if !apply {
-                println!();
-                println!("Run with --apply to download and install it:");
-                println!("  cua-driver update --apply");
-                println!();
-                println!("Or reinstall directly:");
-                println!("  {}", crate::updater::manual_install_one_liner());
+                if !json {
+                    println!();
+                    println!("Run with --apply to download and install it:");
+                    println!("  cua-driver update --apply");
+                    println!();
+                    println!("Or reinstall directly:");
+                    println!("  {}", crate::updater::manual_install_one_liner());
+                }
                 return;
             }
 
-            println!("Downloading and installing cua-driver {v}…");
+            if !json {
+                println!("Downloading and installing cua-driver {v}…");
+            }
             let daemon_was_running = crate::updater::daemon_is_running();
             match crate::updater::run_install_script(&v) {
                 Ok(s) if s.success() => {
-                    println!("Installed cua-driver {v}.");
+                    if !json {
+                        println!("Installed cua-driver {v}.");
+                    }
                     if daemon_was_running {
                         // The atomic swap (symlink retarget / junction flip)
                         // means the running daemon kept executing the old
@@ -1330,6 +1396,61 @@ pub fn run_update_cmd(apply: bool) {
                 }
             }
         }
+    }
+}
+
+/// `cua-driver check-update [--json] [--no-cache]` — pure check, never installs.
+///
+/// Mirror of the `check_for_update` MCP tool. Both routes call into
+/// [`crate::version_check::check_update_state`] so the CLI and MCP
+/// surfaces never disagree on which release is "latest".
+///
+/// Exit codes (mirror `brew outdated` / `npm outdated`):
+///   * `0` — the check itself succeeded (regardless of `update_available`)
+///   * `1` — the check failed (network down, parse error, GitHub 5xx)
+///
+/// We deliberately do NOT use a non-zero exit to mean "outdated" — that
+/// would conflict with every shell script's "non-zero means error"
+/// assumption. Hermes parses JSON; humans read text; the signal lives in
+/// the payload.
+pub fn run_check_update_cmd(json: bool, no_cache: bool) {
+    let state = crate::version_check::check_update_state(no_cache);
+
+    if json {
+        let val = serde_json::to_value(&state).unwrap_or_else(|_| serde_json::json!({}));
+        let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string());
+        println!("{pretty}");
+    } else {
+        println!("Current: {}", state.current_version);
+        match (&state.latest_version, &state.error) {
+            (Some(latest), _) => {
+                println!("Latest:  {latest}");
+                if state.update_available {
+                    println!();
+                    println!("Update available. Run `cua-driver update --apply` to install.");
+                    if let Some(url) = &state.release_notes_url {
+                        println!("Release notes: {url}");
+                    }
+                } else {
+                    println!();
+                    println!("You're on the latest release.");
+                }
+            }
+            (None, Some(err)) => {
+                println!("Latest:  <unavailable>");
+                println!();
+                println!("Could not reach GitHub: {err}");
+            }
+            (None, None) => {
+                // Network failed AND no cache existed — `error` should be set;
+                // fall through with a generic message in case it isn't.
+                println!("Latest:  <unavailable>");
+            }
+        }
+    }
+
+    if state.error.is_some() && state.latest_version.is_none() {
+        process::exit(1);
     }
 }
 
@@ -1947,6 +2068,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Config { .. } => event::CONFIG.to_owned(),
         Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
         Command::Update { .. } => "cua_driver_update".to_owned(),
+        Command::CheckUpdate { .. } => "cua_driver_check_update".to_owned(),
         Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
         // Per-subcommand event so dashboards can split enable / disable /

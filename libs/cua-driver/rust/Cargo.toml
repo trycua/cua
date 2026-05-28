@@ -9,10 +9,11 @@ members = [
     "crates/platform-linux",
     "crates/cursor-overlay",
     "crates/focus-monitor-win",
+    "crates/pip-preview",
 ]
 
 [workspace.package]
-version = "0.2.18"
+version = "0.3.2"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"

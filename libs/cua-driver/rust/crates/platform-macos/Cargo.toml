@@ -16,6 +16,7 @@ async-trait = "0.1"
 uuid = { workspace = true }
 cua-driver-core = { path = "../cua-driver-core" }
 cursor-overlay = { path = "../cursor-overlay" }
+pip-preview = { path = "../pip-preview" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # macOS system bindings
@@ -37,6 +38,11 @@ objc2-app-kit = { version = "0.2", features = [
     "NSApplication", "NSWindow", "NSScreen", "NSColor",
     "NSEvent", "NSRunningApplication", "NSWorkspace",
     "NSView", "NSGraphicsContext", "NSResponder",
+    # Picture-in-picture preview window (experimental) — NSImageView /
+    # NSImage for the post-action screenshot, NSTextField for the
+    # one-line action label, NSPanel/NSImageCell are reachable via
+    # transitive deps.
+    "NSImage", "NSImageView", "NSTextField", "NSControl", "NSCell",
     "block2", "libc",
 ] }
 

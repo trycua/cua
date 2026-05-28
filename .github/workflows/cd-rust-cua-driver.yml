@@ -163,13 +163,20 @@ jobs:
 
   # ── macOS universal (arm64 + x86_64 → lipo) ─────────────────────────────────
   # Mirrors cd-swift-cua-driver.yml's approach: build both arches in one job
-  # on macos-15, then combine into a universal binary via `lipo -create`.
+  # on macos-26, then combine into a universal binary via `lipo -create`.
   # The same universal binary is used in BOTH the arm64 and x86_64 named
   # tarballs (so callers that download by arch still get the universal
   # binary), plus a third `darwin-universal` tarball and a bare binary.
+  #
+  # Runner pinned to macos-26 because `screencapturekit` (added in PR #1720
+  # for the native ScreenCaptureKit recording backend) pulls in
+  # `apple-metal v0.8.7`, whose Swift bridge references macOS 26 Metal
+  # symbols (`MTLSamplerReductionMode`, `MTLSamplerDescriptor.reductionMode`,
+  # `.lodBias`). The macos-15 runner ships a macOS 15 SDK that doesn't
+  # expose those symbols, so the transitive Swift bridge fails to compile.
   build-macos-universal:
     name: darwin-universal
-    runs-on: macos-15
+    runs-on: macos-26
     # Notarize on tag push (real release); on workflow_dispatch honor the
     # `notarize` input so we can iterate on the build pipeline without
     # touching the Apple notary service.

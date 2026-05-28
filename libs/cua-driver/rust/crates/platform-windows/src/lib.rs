@@ -15,6 +15,7 @@ pub mod tools;
 pub mod overlay;
 pub mod diagnostics;
 pub mod recording_hooks;
+pub mod pip;
 
 #[cfg(target_os = "windows")]
 pub mod win32;

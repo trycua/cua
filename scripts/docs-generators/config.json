@@ -26,7 +26,8 @@
           "extractCommand": ".build/release/cua-driver dump-docs --type cli"
         }
       ],
-      "enabled": true
+      "enabled": false,
+      "notes": "Targets the Swift driver; the shipping cross-platform Rust port (cua-driver-rs) ships a stubbed `dump-docs --type cli`. Reference docs are hand-maintained from `cua-driver list-tools` / `describe` until the generator is repointed at the Rust binary."
     },
     "lume": {
       "name": "Lume VM Manager",

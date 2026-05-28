@@ -8,8 +8,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 `cua-driver mcp` is a stdio MCP server. Any agent that supports MCP can use it — no extra setup beyond adding it to the agent's MCP config.
 
 <Callout type="warn">
-  Grant Accessibility and Screen Recording permissions to cua-driver before connecting any agent.
-  Run `cua-driver check_permissions` to verify.
+  Grant the required permissions before connecting any agent — on macOS that's Accessibility and Screen
+  Recording (Windows and Linux have no equivalent prompt). Run `cua-driver call check_permissions` to verify.
 </Callout>
 
 ## Claude Code
@@ -132,7 +132,7 @@ If you are using a vision-capable model via Ollama, you must also declare its in
       "npm": "@ai-sdk/openai-compatible",
       "options": { "baseURL": "http://localhost:11434/v1" },
       "models": {
-        "gemma4:26b": {
+        "llama3.2-vision": {
           "modalities": {
             "input": ["text", "image"],
             "output": ["text"]

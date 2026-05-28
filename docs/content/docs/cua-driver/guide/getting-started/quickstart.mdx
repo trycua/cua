@@ -5,7 +5,14 @@ description: Drive your first macOS app with Cua Driver
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-In under 5 minutes, you'll launch a macOS app in the background, snapshot its AX tree, click a button by its element index, and verify the action landed.
+You'll launch an app in the background, snapshot its accessibility tree, click a button by element index, and verify the action landed.
+
+<Callout type="info">
+  The commands below use macOS (`open -n -g -a CuaDriver`, `⌘Q`). On Windows start the daemon with
+  [`cua-driver autostart`](/cua-driver/guide/getting-started/autostart) and on Linux with `cua-driver serve &`
+  ([Linux guide](/cua-driver/guide/getting-started/linux)); the `cua-driver call <tool>` invocations are identical
+  across platforms.
+</Callout>
 
 ## Start the daemon
 
@@ -33,7 +40,7 @@ cua-driver config set capture_mode som
 ## Launch an app (hidden)
 
 ```bash
-cua-driver launch_app '{"bundle_id":"com.apple.calculator"}'
+cua-driver call launch_app '{"bundle_id":"com.apple.calculator"}'
 ```
 
 Output:
@@ -51,7 +58,7 @@ The app's pid and a `windows` array come back in one call. `launch_app` is idemp
 ## Snapshot the window
 
 ```bash
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
 ```
 
 Output (trimmed):
@@ -75,13 +82,13 @@ Every actionable element is tagged with `[N]` — that's the `element_index` you
 
 <Callout type="info">
   Large trees (Finder is ~1600 elements) exceed most LLM context limits. Pass a `query` field to filter
-  the Markdown to matching lines plus their ancestors: `get_window_state '{"pid":844,"window_id":10725,"query":"Three"}'`.
+  the Markdown to matching lines plus their ancestors: `cua-driver call get_window_state '{"pid":844,"window_id":10725,"query":"Three"}'`.
 </Callout>
 
 ## Click by element_index
 
 ```bash
-cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
+cua-driver call click '{"pid":844,"window_id":10725,"element_index":14}'
 # ✅ Performed AXPress on [14] AXButton "Three".
 ```
 
@@ -92,7 +99,7 @@ No cursor moved. Calculator never came to the foreground. The click went through
 Re-snapshot and check the AX tree diff:
 
 ```bash
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
 ```
 
 Look for the display `AXStaticText` reading `3`. If the tree didn't change, the action failed silently, and you should say so rather than assume success.
@@ -103,10 +110,10 @@ Pixel clicks are for surfaces the AX tree doesn't reach: canvases, video players
 
 ```bash
 # Write the screenshot to disk. Works in every capture mode.
-cua-driver get_window_state '{"pid":844,"window_id":10725}' --screenshot-out-file /tmp/shot.png
+cua-driver call get_window_state '{"pid":844,"window_id":10725}' --screenshot-out-file /tmp/shot.png
 
 # Look at /tmp/shot.png, pick a target pixel, then:
-cua-driver click '{"pid":844,"window_id":10725,"x":120,"y":240}'
+cua-driver call click '{"pid":844,"window_id":10725,"x":120,"y":240}'
 # ✅ Posted click to pid 844.
 ```
 
@@ -121,7 +128,7 @@ The PNG is capped at 1568 px long-side by default (matching Anthropic's multimod
 
 ```bash
 # Quit the target app via a hotkey to its pid.
-cua-driver hotkey '{"pid":844,"keys":["cmd","q"]}'
+cua-driver call hotkey '{"pid":844,"keys":["cmd","q"]}'
 
 # Stop the daemon.
 cua-driver stop
@@ -135,16 +142,16 @@ Every multi-step workflow follows the same shape:
 open -n -g -a CuaDriver --args serve
 
 # 1. Launch the target (idempotent; returns pid + windows).
-cua-driver launch_app '{"bundle_id":"..."}'
+cua-driver call launch_app '{"bundle_id":"..."}'
 
 # 2. Snapshot the window you care about (populates the element cache).
-cua-driver get_window_state '{"pid":<pid>,"window_id":<wid>}'
+cua-driver call get_window_state '{"pid":<pid>,"window_id":<wid>}'
 
 # 3. Dispatch an action by element_index or pixel coordinates.
-cua-driver click '{"pid":<pid>,"window_id":<wid>,"element_index":<n>}'
+cua-driver call click '{"pid":<pid>,"window_id":<wid>,"element_index":<n>}'
 
 # 4. Re-snapshot to verify the action landed.
-cua-driver get_window_state '{"pid":<pid>,"window_id":<wid>}'
+cua-driver call get_window_state '{"pid":<pid>,"window_id":<wid>}'
 
 cua-driver stop
 ```

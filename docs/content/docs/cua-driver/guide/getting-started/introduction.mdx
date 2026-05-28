@@ -1,11 +1,13 @@
 ---
 title: What is Cua Driver?
-description: Background computer-use driver for any agent on macOS
+description: Background computer-use driver for any agent — macOS, Windows, and Linux
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver is a macOS computer-use driver that speaks MCP over stdio. It lets any agent (Claude, GPT, Gemini, Codex, custom loops) click, type, scroll, and snapshot a native macOS app without bringing the target to the foreground. Your frontmost app stays where it is; the user keeps typing in their editor while the agent drives something else in the background.
+Cua Driver is a computer-use driver that speaks MCP over stdio. It lets any agent (Claude, GPT, Gemini, Codex, custom loops) click, type, scroll, and snapshot a native app without bringing the target to the foreground. Your frontmost app stays where it is; you keep typing in your editor while the agent drives something else in the background.
+
+It runs on macOS, Windows, and Linux from one tool surface. macOS ships the Swift driver (Accessibility / `CGEvent` / ScreenCaptureKit); Windows and Linux ship `cua-driver-rs`, the Rust port (UI Automation / `PostMessage` / AT-SPI). The tool names and arguments are the same everywhere — see the [MCP tools reference](/cua-driver/reference/mcp-tools).
 
 <Callout type="info" title="MIT License">
   Cua Driver is open-source and MIT licensed. If you find it useful, we'd appreciate a [star on
@@ -13,56 +15,57 @@ Cua Driver is a macOS computer-use driver that speaks MCP over stdio. It lets an
 </Callout>
 
 ```bash
-cua-driver launch_app '{"bundle_id":"com.apple.calculator"}'
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
-cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
+cua-driver call launch_app '{"name":"Calculator"}'
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
+cua-driver call click '{"pid":844,"window_id":10725,"element_index":14}'
 ```
 
-A single binary. Launch it as an MCP stdio server, a long-running daemon, or invoke any tool directly from the shell.
+A single binary. Run it as an MCP stdio server (`cua-driver mcp`), a long-running daemon (`cua-driver serve`), or invoke any tool from the shell (`cua-driver call <tool>`).
 
 ## The no-foreground contract
 
-One rule: the user's frontmost app does not change. Not during launch, not during a click, not during a keystroke, not during a re-snapshot. Three corollaries follow:
+One rule: the user's frontmost window does not change. Not during launch, not during a click, not during a keystroke, not during a re-snapshot. So:
 
 - The real cursor stays where the user left it. No warp.
-- The target window stays at its current z-rank. No raise.
-- The user's Space does not follow the target. No bounce.
+- The target window stays at its current z-order. No raise, no focus steal.
+- On macOS, the user's Space does not follow the target. No bounce.
 
-Every dispatch path inside the driver honors those four invariants. `launch_app` runs hidden. Keyboard tools post via `CGEvent.postToPid` scoped to a named pid, so a driver-backgrounded app cannot leak keystrokes into the user's foreground app. Pixel clicks route through an auth-signed `SLEventPostToPid` recipe that borrows yabai's focus-without-raise pattern. Element-indexed clicks go through `AXUIElementPerformAction` directly and skip event synthesis entirely.
+Backgrounded dispatch is the default. `launch_app` runs hidden; element-indexed actions go through the accessibility API directly (no event synthesis); keyboard and pixel events are posted to a specific target rather than the system input queue. When a target's input stack would silently drop a backgrounded event — Chromium DOM content, some GTK widgets — the tool says so (`background_unavailable`) instead of failing quietly, and you opt into a one-time foreground swap with [`bring_to_front`](/cua-driver/reference/mcp-tools#bring_to_front) plus `dispatch: "foreground"`.
 
-## Three modalities
+## Three capture modes
 
 `capture_mode` controls what `get_window_state` returns. Pick based on what the agent needs:
 
-- **`som`** (default) — set-of-mark. Both the AX tree and the screenshot. Tree for dispatch, screenshot for visual disambiguation when labels repeat or stay empty. Works out of the box for element-indexed clicks.
-- **`ax`** — accessibility tree only. No Screen Recording cost, deterministic element addressing. Best for structured loops over apps with real AX coverage.
-- **`vision`** — window PNG only. No AX walk. Best for vision-first models that ground on pixels and don't use element_index. Pair with pixel-addressed clicks.
+- **`som`** (default) — set-of-mark: both the accessibility tree and a screenshot. The tree for element addressing, the screenshot for visual disambiguation when labels repeat or are empty.
+- **`ax`** — accessibility tree only. No screenshot cost; deterministic element addressing. Best for structured loops over apps with real accessibility coverage.
+- **`vision`** — window screenshot only, no tree walk. Best for vision-first models that ground on pixels. Pair with pixel-addressed clicks.
 
-Backgrounded drive is the default across all three, not a mode you toggle. Switch modalities with `cua-driver config set capture_mode som`.
+Switch with `cua-driver config set capture_mode som`.
 
 ## How it works
 
-Three dispatch paths, one per modality the target exposes.
+The accessibility tree is the primary addressing surface on every platform; the driver walks it, tags each actionable node with an index, and caches the element against `(pid, window_id)`. Element-indexed clicks then dispatch through the accessibility API with no cursor move and no focus steal.
 
-- **Accessibility elements, via public AX.** Where the target has a real AX tree, the driver walks it, tags every actionable node with an index, and caches the `AXUIElement` ref against `(pid, window_id)`. Clicks go through `AXUIElementPerformAction` directly.
-- **Chromium and Electron trees, via an AX observer SPI.** Chrome, Slack, VS Code, Discord, and every Electron app pause AX tree updates when occluded unless the observer is registered via a private SPI variant. The driver uses that variant so the tree stays populated through the full launch-snapshot-act loop without bringing the target forward.
-- **Non-AX surfaces, via `SLEventPostToPid`.** Canvas, WebView, HTML5 video, custom-drawn controls. A backgrounded click recipe stamps events through SkyLight's auth-signed per-pid path. The cursor never moves, the window never rises, Spaces never follows.
+- **macOS** — the public Accessibility API for the tree and `AXUIElementPerformAction` for clicks; keyboard via `CGEvent.postToPid`; backgrounded pixel events via SkyLight's per-pid path. Chromium and Electron trees stay populated while occluded via an AX observer SPI.
+- **Windows** — UI Automation for the tree, `PostMessage` for input. XAML / WinUI3 / UWP hosts (Calculator, Settings, modern Notepad) are driven through a focus-steal bypass; an optional UIAccess worker (`cua-driver-uia.exe`) lifts UIPI for packaged apps.
+- **Linux** — AT-SPI for the tree over X11 / XWayland. See [Running on Linux](/cua-driver/guide/getting-started/linux).
 
-Keyboard is simpler. Every key goes through `CGEvent.postToPid` scoped to the named pid. There is no frontmost-routed variant in the API surface.
+Non-accessible surfaces (canvas, WebGL, custom-drawn controls) fall back to pixel coordinates against the same window-local screenshot space.
 
 ## Who it's for
 
-- **Agent builders** who want their agent to operate macOS without stealing the user's focus. Any MCP-capable client works: Claude Code, Cursor, Codex, Gemini, custom loops.
-- **Dev-loop automation.** An agent drives an app, reads the pixels or the AX tree, edits source, rebuilds, verifies. The editor stays frontmost the entire time.
-- **Demo capture.** Record a trajectory while the user works in another app. Because the clicks are backgrounded, the overlay cursor the driver paints is the only cursor in the final video.
+- **Agent builders** who want their agent to operate a desktop without stealing the user's focus. Any MCP-capable client works: Claude Code, Cursor, Codex, Gemini, custom loops.
+- **Dev-loop automation.** An agent drives an app, reads the pixels or the accessibility tree, edits source, rebuilds, verifies — while the editor stays frontmost.
+- **Demo capture.** Record a trajectory while the user works elsewhere. Because the clicks are backgrounded, the overlay cursor the driver paints is the only cursor in the final video.
 
 ## What it doesn't do
 
-- Requires macOS 14 (Sonoma) or later. Works on Apple Silicon and Intel.
-- Not a VM. Cua Driver operates the real host, so grant Accessibility and Screen Recording with intent.
-- No right-click on Chromium web content through pixel synthesis: the renderer-IPC filter drops right-click subtype on non-HID-tap paths. Use `right_click({pid, element_index})` on AX-addressable targets. See [Limits](/cua-driver/reference/limits).
-- Canvas apps (Blender, Unity, games) need a brief frontmost activation because their event loops filter per-pid-routed events. Everything else stays backgrounded.
+- Not a VM. Cua Driver operates the real host, so grant accessibility permissions with intent. (macOS also needs Screen Recording for screenshots; Windows and Linux have no equivalent prompt.)
+- Right-click on Chromium **web content** via pixel coordinates fires as a left-click — the renderer drops the right-click subtype on synthetic paths. Use element-indexed `right_click` on accessible targets. See [Limits](/cua-driver/reference/limits).
+- Canvas apps (Blender, Unity, games) filter per-target events, so they need a brief foreground activation. Everything else stays backgrounded.
+
+See [Installation](/cua-driver/guide/getting-started/installation) for per-platform requirements.
 
 ## Get started
 
-Ready to try it? [Install Cua Driver](/cua-driver/guide/getting-started/installation) and drive your first app in the [Quickstart](/cua-driver/guide/getting-started/quickstart).
+[Install Cua Driver](/cua-driver/guide/getting-started/installation), then drive your first app in the [Quickstart](/cua-driver/guide/getting-started/quickstart).

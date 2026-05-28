@@ -1,6 +1,6 @@
 ---
 title: Known limits
-description: What cua-driver can't do in v0.1, and the workarounds
+description: What cua-driver can't do, and the workarounds
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -63,7 +63,7 @@ If you're automating Blender or a game, the no-foreground-steal contract does no
 3. Un-minimize the window (`hotkey({pid, keys: ["cmd", "m"]})` or click the Dock icon). Breaks the background contract for that window.
 
 <Callout type="info">
-`set_value` is the right answer 90% of the time. It sidesteps both the minimized-focus issue and the general "which event commits this field" ambiguity.
+`set_value` is usually the right answer. It sidesteps both the minimized-focus issue and the general "which event commits this field" ambiguity.
 </Callout>
 
 ## Permission boundaries

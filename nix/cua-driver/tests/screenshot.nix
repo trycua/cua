@@ -205,7 +205,8 @@ pkgs.testers.nixosTest {
         xorg.xorgserver
         xterm
         openbox # lightweight WM needed for _NET_CLIENT_LIST
-        xdotool # window ID lookup fallback
+        picom # compositing manager so X11 GetImage returns rendered pixels
+        xdotool # window ID lookup
         python3
         jq
         procps
@@ -229,6 +230,8 @@ pkgs.testers.nixosTest {
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
         # Start openbox WM so _NET_CLIENT_LIST is populated for list_windows
         machine.execute("DISPLAY=:99 openbox >/dev/null 2>&1 &")
+        # Start compositing manager so X11 GetImage returns rendered pixels
+        machine.execute("DISPLAY=:99 picom --backend xrender >/dev/null 2>&1 &")
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
         machine.execute("DISPLAY=:99 xterm -T 'CUA Test' -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
@@ -236,7 +239,10 @@ pkgs.testers.nixosTest {
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --class xterm", timeout=15)
         # Save the xterm window ID and PID for the MCP screenshot test
         machine.succeed("DISPLAY=:99 xdotool search --class xterm | head -1 > /tmp/xterm-xid.txt")
-        machine.succeed("pgrep -f 'xterm.*CUA Test' > /tmp/xterm-pid.txt")
+        machine.succeed("pgrep -f 'xterm.*CUA Test' | head -1 > /tmp/xterm-pid.txt")
+        # Focus and raise the window so it's fully rendered
+        machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(cat /tmp/xterm-xid.txt)")
+        machine.succeed("DISPLAY=:99 xdotool windowfocus --sync $(cat /tmp/xterm-xid.txt)")
 
     with subtest("Screenshot via cua-driver MCP"):
         machine.copy_from_host("${mcpScreenshotTest}", "/tmp/mcp-screenshot-test.py")

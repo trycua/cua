@@ -11,16 +11,15 @@
 #   _install-local-swift.sh   Builds CuaDriver.app from libs/cua-driver/swift
 #                             and installs to /Applications + ~/.local/bin
 #
-# Defaults (this script only — install.sh keeps the Swift default on macOS):
+# Defaults:
 #   all hosts → Rust backend
 #
-# Why the local installer defaults to Rust while the production install.sh
-# still gates it behind --experimental-rust: this script is for developers
-# working on the checked-out tree, where the Rust port is the active
-# development target across all three platforms (Windows / Linux / macOS)
-# and has the full integration-test surface attached (see
-# crates/cua-driver/tests/harness_*_test.rs). The production curl-pipe-bash
-# stays on Swift on macOS until the Rust port flips experimental → stable.
+# This script is for developers working on the checked-out tree, where the
+# Rust implementation is the active development target across all three
+# platforms (Windows / Linux / macOS) and has the full integration-test
+# surface attached (see crates/cua-driver/tests/harness_*_test.rs). The
+# production curl-pipe-bash path now delegates to the same Rust installer
+# unless --backend=swift is explicitly requested for legacy testing.
 #
 # Flags (forwarded verbatim to whichever helper runs):
 #   --backend=swift|rust   explicit backend selector (defaults to rust here)

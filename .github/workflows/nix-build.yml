@@ -1,0 +1,95 @@
+name: Nix Build & Integration Tests
+
+on:
+  pull_request:
+    paths:
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'libs/cua-driver/rust/**'
+      - '.github/workflows/nix-build.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'libs/cua-driver/rust/**'
+      - '.github/workflows/nix-build.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  NIX_CACHE_BUCKET: trycua-nix-cache
+  NIX_CACHE_SECRET: nix-cache/trycua-nix-cache/signing-key
+
+jobs:
+  build-and-test:
+    name: Build cua-driver & run integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-nix-cache
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Nix signing key
+        id: nix-key
+        run: |
+          SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${{ env.NIX_CACHE_SECRET }}" \
+            --query 'SecretString' --output text)
+
+          SECRET_KEY=$(echo "$SECRET" | jq -r '.secret_key')
+          echo "::add-mask::$SECRET_KEY"
+          echo "$SECRET_KEY" > "${{ runner.temp }}/signing-key.sec"
+          chmod 600 "${{ runner.temp }}/signing-key.sec"
+
+          PUBLIC_KEY=$(echo "$SECRET" | jq -r '.public_key')
+          echo "public_key=$PUBLIC_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Setup AWS credentials file for Nix
+        run: |
+          mkdir -p ~/.aws
+          printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\nregion = %s\n' \
+            "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_SESSION_TOKEN" "$AWS_REGION" > ~/.aws/credentials
+          chmod 600 ~/.aws/credentials
+
+          sudo mkdir -p /root/.aws
+          sudo bash -c "printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\nregion = %s\n' \
+            '$AWS_ACCESS_KEY_ID' '$AWS_SECRET_ACCESS_KEY' '$AWS_SESSION_TOKEN' '$AWS_REGION' > /root/.aws/credentials"
+          sudo chmod 600 /root/.aws/credentials
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }} https://cache.nixos.org
+            trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
+            trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Run NixOS integration test
+        timeout-minutes: 8
+        run: nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
+
+      - name: Sign and upload to Nix cache
+        if: always()
+        run: |
+          echo "Signing and uploading build artifacts to Nix cache..."
+          nix store sign --key-file "${{ runner.temp }}/signing-key.sec" --all
+          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}&want-mass-query=true" --all -L
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f "${{ runner.temp }}/signing-key.sec"

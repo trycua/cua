@@ -1470,15 +1470,15 @@ older clients that only read name/description still work.
 - Test: `crates/platform-windows/examples/daemon_lifecycle_parity.rs`
 
 ### Fixed
-**`stop` silent on success** — Rust was printing `"cua-driver daemon stopped."`
+**`stop` silent on success** — Rust was printing a daemon-stopped line
 on stdout after a successful stop.  Swift's `stop` exits silently with
 status 0.  Now matches Swift byte-for-byte.
 
 ### Already correct
-- `status` output: `"cua-driver daemon is running\n  socket: <path>\n  pid: <N>\n"` ✓
+- `status` output: `"Cua Driver daemon is running\n  socket: <path>\n  pid: <N>\n"` ✓
 - `status` exit code: 0 when running, 1 when not ✓
 - `stop` exit code: 0 when ran, 1 when no daemon ✓
-- Error wording on stderr: `"cua-driver daemon is not running"` ✓
+- Error wording on stderr: `"Cua Driver daemon is not running"` ✓
 
 ### Verified on Windows
 `daemon_lifecycle_parity.exe`:
@@ -1743,7 +1743,7 @@ setup per client / docs link) is sourced from a single shared file:
       raw.githubusercontent.com (remote install path) + bash `sed`.
     - `libs/cua-driver/scripts/install.ps1` — `Invoke-WebRequest` from
       raw.githubusercontent.com + PowerShell `-replace`.
-    - `libs/cua-driver/rust/scripts/install-local.sh` — direct disk read
+    - `libs/cua-driver/scripts/install-local.sh` — direct disk read
       from `../cua-driver/scripts/post-install-hints.txt` + `sed`.
     - `libs/cua-driver/rust/scripts/install-local.ps1` — direct disk read
       from `..\cua-driver\scripts\post-install-hints.txt` + `-replace`.
@@ -1765,7 +1765,7 @@ only branching case). The OS-specific block is 4-6 lines, naturally
 fits in the script that targets that OS, and is the only part that
 would need conditional rendering in a single-file design.
 
-**Status**: VERIFIED on macOS via `bash libs/cua-driver/rust/scripts/install-local.sh`
+**Status**: VERIFIED on macOS via `bash libs/cua-driver/scripts/install-local.sh`
 end-to-end. Windows VM verification pending.
 
 ---

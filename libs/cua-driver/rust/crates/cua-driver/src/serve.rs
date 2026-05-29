@@ -260,7 +260,7 @@ pub async fn run_serve(
     let listener = UnixListener::bind(socket_path)
         .map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
 
-    eprintln!("cua-driver daemon listening on {socket_path}");
+    eprintln!("Cua Driver daemon listening on {socket_path}");
 
     // Write PID file.
     if let Some(pid_path) = pid_file_path {
@@ -421,7 +421,7 @@ pub async fn run_serve(
                 });
             }
             _ = &mut shutdown_rx => {
-                eprintln!("cua-driver daemon shutting down.");
+                eprintln!("Cua Driver daemon shutting down.");
                 break;
             }
         }
@@ -615,7 +615,7 @@ pub async fn run_serve(
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    eprintln!("cua-driver daemon listening on {socket_path}");
+    eprintln!("Cua Driver daemon listening on {socket_path}");
 
     // Build the cross-IL security descriptor once, reuse on every pipe
     // instance. If this fails we fall back to the default-ACL `create`
@@ -789,7 +789,7 @@ pub async fn run_serve(
                 });
             }
             _ = &mut shutdown_rx => {
-                eprintln!("cua-driver daemon shutting down.");
+                eprintln!("Cua Driver daemon shutting down.");
                 break;
             }
         }
@@ -828,7 +828,7 @@ pub fn run_serve_cmd(
             .map(|pid| format!(" (pid {pid})"))
             .unwrap_or_default();
         eprintln!(
-            "cua-driver daemon is already running on {socket_path}{pid_hint}. \
+            "Cua Driver daemon is already running on {socket_path}{pid_hint}. \
              Run `cua-driver stop` first."
         );
         std::process::exit(1);
@@ -877,7 +877,7 @@ pub fn run_serve_cmd(
 /// `cua-driver stop` implementation.
 pub fn run_stop_cmd(socket_path: &str) {
     if !is_daemon_listening(socket_path) {
-        eprintln!("cua-driver daemon is not running");
+        eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
     }
 
@@ -899,7 +899,7 @@ pub fn run_stop_cmd(socket_path: &str) {
                     return;
                 }
                 if std::time::Instant::now() >= deadline {
-                    eprintln!("cua-driver daemon did not release socket within 2s");
+                    eprintln!("Cua Driver daemon did not release socket within 2s");
                     std::process::exit(1);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -915,7 +915,7 @@ pub fn run_stop_cmd(socket_path: &str) {
 /// `cua-driver status` implementation.
 pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     if is_daemon_listening(socket_path) {
-        println!("cua-driver daemon is running");
+        println!("Cua Driver daemon is running");
         println!("  socket: {socket_path}");
         if let Some(pid) = read_pid_file(pid_file_path) {
             println!("  pid: {pid}");
@@ -923,7 +923,7 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             println!("  pid: unknown (no pid file)");
         }
     } else {
-        eprintln!("cua-driver daemon is not running");
+        eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
     }
 }

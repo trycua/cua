@@ -23,30 +23,11 @@ import CuaDriverIconWhite from '@/assets/cua-driver-icon-white.png';
 
 const docsSites = [
   {
-    name: 'Cua',
-    label: 'Docs',
-    href: '/cua/guide/get-started/what-is-cua',
-    prefix: '/cua',
-    isDefault: true,
-    description: 'Computer Use Agent SDK',
-    logoBlack: LogoBlack,
-    logoWhite: LogoWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
-      { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
-      { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
-    ],
-  },
-  {
     name: 'Cua Driver',
     label: 'Docs',
     href: '/cua-driver/guide/getting-started/introduction',
     prefix: '/cua-driver',
-    isDefault: false,
+    isDefault: true,
     description: 'Background computer-use',
     logoBlack: CuaDriverIconBlack,
     logoWhite: CuaDriverIconWhite,
@@ -65,6 +46,25 @@ const docsSites = [
         href: '/cua-driver/reference/cli-reference',
         prefix: '/cua-driver/reference',
       },
+    ],
+  },
+  {
+    name: 'Cua',
+    label: 'Docs',
+    href: '/cua/guide/get-started/what-is-cua',
+    prefix: '/cua',
+    isDefault: false,
+    description: 'Computer Use Agent SDK',
+    logoBlack: LogoBlack,
+    logoWhite: LogoWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
+    navTabs: [
+      { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
+      { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
+      { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
     ],
   },
   {
@@ -317,9 +317,7 @@ export function CustomHeader() {
                   data-active={isActive ? 'true' : undefined}
                   className={cn(
                     'cds-header-link text-sm font-medium transition-colors',
-                    isActive
-                      ? 'text-white'
-                      : 'text-[var(--ink-muted)] hover:text-white'
+                    isActive ? 'text-white' : 'text-[var(--ink-muted)] hover:text-white'
                   )}
                 >
                   {tab.name}

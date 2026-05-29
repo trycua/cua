@@ -1,18 +1,18 @@
 ---
 title: Comparison
-description: How Cua Driver compares to other macOS computer-use tools
+description: How Cua Driver compares to other computer-use tools
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This page compares Cua Driver with other macOS computer-use tools. All are quality projects. The best choice depends on your workload.
+This page compares Cua Driver with other computer-use tools. The best choice depends on your workload. Several of the alternatives below are macOS-specific; Cua Driver runs on macOS and Windows, with Linux available as a pre-release backend.
 
 ## Quick comparison
 
 | Feature              | Cua Driver              | Codex Computer Use   | Claude Computer Use  | Lume                    |
 | -------------------- | ----------------------- | -------------------- | -------------------- | ----------------------- |
 | **License**          | MIT                     | Closed source        | Closed source        | MIT                     |
-| **Drives host Mac**  | Yes                     | Yes                  | No (sandbox only)    | No (hosts VMs)          |
+| **Drives host machine** | Yes                  | Yes                  | No (sandbox only)    | No (hosts VMs)          |
 | **Sandbox / VM**     | No                      | No                   | Yes (Cowork VM)      | Yes (macOS + Linux VMs) |
 | **Backgrounded**     | Default                 | Default              | N/A (sandbox)        | N/A                     |
 | **MCP server**       | Yes (stdio)             | No                   | No                   | Yes                     |
@@ -69,7 +69,7 @@ This is a different product shape. Cowork is sandbox-first: Claude operates an i
 
 Cua Driver fits when all of these are true:
 
-- You want an agent to drive real apps on your own Mac (not a VM).
+- You want an agent to drive real apps on your own machine (not a VM).
 - The user needs to keep working in another app while the agent operates.
 - You're building against any MCP-capable agent, not locked to one vendor.
 - MIT licensing matters.

@@ -2,7 +2,7 @@
 //!
 //! Delegates the actual install work to the canonical installer scripts:
 //! - Unix:    `libs/cua-driver/scripts/install.sh` (delegates to
-//!            `_install-rust.sh` when `--backend=rust`)
+//!            `_install-rust.sh` by default)
 //! - Windows: `libs/cua-driver/scripts/install.ps1`
 //!
 //! Why not reimplement the download / atomic-swap / GC in Rust? Those scripts
@@ -64,12 +64,9 @@ pub fn run_install_script(version: &str) -> std::io::Result<ExitStatus> {
 
     #[cfg(not(windows))]
     {
-        // Match the canonical curl-piped-to-bash invocation. `--backend=rust`
-        // is the explicit selector — without it the canonical install.sh
-        // auto-detects on macOS and would install the Swift driver instead.
-        let bash_cmd = format!(
-            "curl -fsSL {CANONICAL_INSTALL_SH} | bash -s -- install --backend=rust"
-        );
+        // Match the canonical curl-piped-to-bash invocation. install.sh
+        // delegates to the Rust implementation by default.
+        let bash_cmd = format!("curl -fsSL {CANONICAL_INSTALL_SH} | bash");
         Command::new("bash")
             .env(VERSION_PIN_ENV, version)
             .args(["-c", &bash_cmd])
@@ -94,6 +91,6 @@ pub fn manual_install_one_liner() -> String {
     }
     #[cfg(not(windows))]
     {
-        format!("curl -fsSL {CANONICAL_INSTALL_SH} | bash -s -- install --backend=rust")
+        format!("curl -fsSL {CANONICAL_INSTALL_SH} | bash")
     }
 }

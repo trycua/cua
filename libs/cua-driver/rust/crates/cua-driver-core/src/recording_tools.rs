@@ -72,7 +72,7 @@ impl Tool for StartRecordingTool {
                 `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of \
                 the session. Pass `record_video: false` to opt out.\n\n\
                 **macOS uses native ScreenCaptureKit** (in-process SCStream + \
-                SCRecordingOutput) so video inherits cua-driver's own Screen \
+                SCRecordingOutput) so video inherits Cua Driver's own Screen \
                 Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
                 Requires macOS 15.0+.\n\n\
                 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \

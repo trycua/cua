@@ -3,5 +3,18 @@
   "description": "Get up and running with Cua Driver",
   "icon": "Rocket",
   "defaultOpen": true,
-  "pages": ["introduction", "installation", "updating", "quickstart", "windows-ssh", "linux", "autostart", "pip-preview", "integrations", "swift-integration", "process-model", "comparison", "faq"]
+  "pages": [
+    "introduction",
+    "installation",
+    "updating",
+    "quickstart",
+    "windows-ssh",
+    "linux",
+    "autostart",
+    "pip-preview",
+    "integrations",
+    "process-model",
+    "comparison",
+    "faq"
+  ]
 }

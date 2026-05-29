@@ -34,11 +34,10 @@ dependencies = [
 
 [[package]]
 name = "apple-metal"
-version = "0.8.7"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "770ed47ba948122fc9ce0bc10a433cf9fabcf1c2ed6d44db5b7ad0d70ffede15"
+checksum = "c18fb446e23d198c984f319fe2a60c6db36141096c286765b9cbab283b4e218b"
 dependencies = [
- "doom-fish-utils",
  "libc",
 ]
 
@@ -276,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -306,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -321,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -336,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "image",
@@ -489,7 +488,7 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
 name = "focus-monitor-win"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "windows 0.58.0",
 ]
@@ -1193,7 +1192,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -1208,7 +1207,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform-linux"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1229,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1261,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",

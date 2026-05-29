@@ -903,6 +903,41 @@ pub fn run_call(
             crate::serve::default_socket_path()
         }
     };
+    // macOS: `check_permissions` with prompt:true raises a TCC dialog. Run
+    // in-process from a terminal, that dialog attributes to the *terminal*
+    // (LaunchServices' "responsible" process), not to com.trycua.driver —
+    // so the grant lands on the wrong app and never sticks for the driver.
+    // When we're a bundle CLI spawned from a terminal (should_use_daemon_proxy)
+    // and there's no daemon to route through, DON'T raise the mis-attributed
+    // prompt: degrade to report-only and tell the user the one launch that
+    // grants correctly (`open … CuaDriver --args serve`, which raises the
+    // dialog as CuaDriver and waits for the grant). We deliberately do NOT
+    // auto-spawn that daemon here — a `call` shouldn't leave a background
+    // daemon behind, and the first-launch gate can lag socket creation.
+    #[cfg(target_os = "macos")]
+    let json_args = {
+        let mut effective = json_args;
+        let wants_prompt = effective
+            .as_ref()
+            .and_then(|v| v.get("prompt"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true); // check_permissions defaults prompt:true
+        if tool == "check_permissions"
+            && wants_prompt
+            && !crate::serve::is_daemon_listening(&socket_path)
+            && should_use_daemon_proxy(false)
+        {
+            eprintln!(
+                "cua-driver-rs: reporting permission status only. A prompt raised from \
+                 this terminal would attribute to the terminal, not CuaDriver, so the \
+                 grant wouldn't apply to the driver. To grant correctly, launch the \
+                 driver as its own app:\n  open -n -g -a CuaDriver --args serve\n\
+                 then approve the CuaDriver dialog in System Settings."
+            );
+            effective = Some(serde_json::json!({ "prompt": false }));
+        }
+        effective
+    };
     if crate::serve::is_daemon_listening(&socket_path) {
         let args_for_daemon = json_args.clone()
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));

@@ -296,6 +296,25 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         log "removed legacy package home $LEGACY_HOME_DIR"
     fi
 
+    # --- Swift-era macOS data dirs (leave nothing behind) ---
+    # The .app bundle + bundle id are shared with the retired Swift driver,
+    # so a default (Rust) uninstall already removes the shared bundle. Sweep
+    # the two Swift-only support/cache dirs here too so one `uninstall.sh`
+    # leaves nothing behind regardless of which backend originally installed
+    # — no second `--backend=swift` pass needed. Gated on the Rust marker
+    # for the same reason the shared bundle is: a Swift-only Mac that runs
+    # the default uninstall by mistake keeps its data.
+    if [[ "$OS" == "Darwin" && "$RUST_INSTALL_PRESENT" == "1" ]]; then
+        for SWIFT_DATA_DIR in \
+            "$HOME/Library/Application Support/Cua Driver" \
+            "$HOME/Library/Caches/cua-driver"; do
+            if [[ -d "$SWIFT_DATA_DIR" ]]; then
+                rm -rf "$SWIFT_DATA_DIR"
+                log "removed $SWIFT_DATA_DIR"
+            fi
+        done
+    fi
+
     # --- Agent skill symlinks ---
     # Only remove when the link is a symlink — never clobber a real
     # directory (a dev user with a hand-managed skills dir is safe).

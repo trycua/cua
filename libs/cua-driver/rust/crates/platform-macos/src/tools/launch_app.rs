@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
+use std::path::PathBuf;
 
 pub struct LaunchAppTool;
 
@@ -92,6 +93,26 @@ impl Tool for LaunchAppTool {
             return ToolResult::error(
                 "Provide either bundle_id or name to identify the app to launch."
             );
+        }
+        if let Some(ref bid) = bundle_id {
+            if crate::apps::resolve_bundle_id_to_locator(bid).is_none() {
+                return structured_launch_error(
+                    "APP_NOT_INSTALLED",
+                    format!("No installed macOS app found for bundle_id '{bid}'."),
+                    serde_json::json!({ "bundle_id": bid }),
+                );
+            }
+        } else if let Some(ref n) = name {
+            if crate::apps::locate_by_name(n).is_none() {
+                return structured_launch_error(
+                    "APP_NOT_INSTALLED",
+                    format!("No installed macOS app found for name '{n}'."),
+                    serde_json::json!({ "name": n }),
+                );
+            }
+        }
+        if let Some(err) = preflight_file_urls(&urls) {
+            return err;
         }
 
         // Build additional arguments (e.g., CDP port).
@@ -457,4 +478,158 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
         }
     }
     vec![]
+}
+
+fn structured_launch_error(
+    code: &str,
+    message: String,
+    details: serde_json::Value,
+) -> ToolResult {
+    let mut payload = serde_json::json!({
+        "error": code,
+    });
+
+    match details {
+        serde_json::Value::Object(details) => {
+            if let serde_json::Value::Object(payload) = &mut payload {
+                payload.extend(details);
+            }
+        }
+        details => {
+            if let serde_json::Value::Object(payload) = &mut payload {
+                payload.insert("details".to_string(), details);
+            }
+        }
+    }
+
+    ToolResult::error(message).with_structured(payload)
+}
+
+fn preflight_file_urls(urls: &[String]) -> Option<ToolResult> {
+    for raw in urls {
+        let Some(path) = local_file_target(raw) else {
+            continue;
+        };
+        if !path.exists() {
+            return Some(structured_launch_error(
+                "FILE_NOT_FOUND",
+                format!(
+                    "Local launch_app url target does not exist: {}",
+                    path.display()
+                ),
+                serde_json::json!({
+                    "url": raw,
+                    "path": path.display().to_string(),
+                }),
+            ));
+        }
+    }
+    None
+}
+
+fn local_file_target(raw: &str) -> Option<PathBuf> {
+    if raw.is_empty() {
+        return Some(PathBuf::from(raw));
+    }
+    if let Some(rest) = raw.strip_prefix("file://") {
+        let path = rest.strip_prefix("localhost").unwrap_or(rest);
+        let decoded = percent_decode_path(path);
+        return Some(expand_tilde(&decoded));
+    }
+    let looks_like_url = raw.contains(':') && !raw.starts_with('/') && !raw.starts_with('~');
+    if looks_like_url {
+        return None;
+    }
+    Some(expand_tilde(raw))
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home);
+        }
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
+fn percent_decode_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                decoded.push((high << 4) | low);
+                i += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{local_file_target, preflight_file_urls};
+    use std::path::PathBuf;
+
+    #[test]
+    fn local_file_target_treats_plain_paths_as_files() {
+        assert_eq!(
+            local_file_target("/tmp/does-not-exist.md"),
+            Some(PathBuf::from("/tmp/does-not-exist.md"))
+        );
+        assert_eq!(
+            local_file_target("relative/path.md"),
+            Some(PathBuf::from("relative/path.md"))
+        );
+    }
+
+    #[test]
+    fn local_file_target_skips_remote_and_custom_schemes() {
+        assert_eq!(local_file_target("https://example.com"), None);
+        assert_eq!(local_file_target("about:blank"), None);
+        assert_eq!(local_file_target("myapp://open/item"), None);
+    }
+
+    #[test]
+    fn preflight_file_urls_returns_structured_file_not_found() {
+        let missing = "/tmp/cua-driver-definitely-missing-file-for-test.md".to_string();
+        let result = preflight_file_urls(&[missing]).expect("missing file should error");
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["error"], "FILE_NOT_FOUND");
+        assert_eq!(structured["path"], "/tmp/cua-driver-definitely-missing-file-for-test.md");
+        assert!(structured.get("details").is_none());
+    }
+
+    #[test]
+    fn local_file_target_percent_decodes_file_urls_before_path_checks() {
+        assert_eq!(
+            local_file_target("file:///tmp/My%20Doc.txt"),
+            Some(PathBuf::from("/tmp/My Doc.txt"))
+        );
+        assert_eq!(
+            local_file_target("file://localhost/tmp/%E2%9C%93.txt"),
+            Some(PathBuf::from("/tmp/✓.txt"))
+        );
+    }
 }

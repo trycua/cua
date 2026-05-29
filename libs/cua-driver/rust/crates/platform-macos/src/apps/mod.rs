@@ -302,7 +302,7 @@ pub(crate) fn resolve_bundle_id_to_locator(bundle_id: &str) -> Option<AppLocator
 /// 3. (skipped) full localized-name scan — not yet needed by current
 ///    integration tests; can be added if we hit a non-English-name app
 ///    in the wild.
-fn locate_by_name(name: &str) -> Option<AppLocator> {
+pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
     let app_name = if name.ends_with(".app") {
         name.to_owned()
     } else {

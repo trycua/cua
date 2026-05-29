@@ -256,11 +256,65 @@ ln -sfn "$VERSIONED_DIR" "$CURRENT_LINK"
 echo "${GREEN}current -> $VERSIONED_DIR${NORMAL}"
 echo ""
 
-# --- Visible-bin symlink ------------------------------------------------
+# --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
+#
+# TCC keys Accessibility / Screen-Recording grants on the bundle
+# identifier (com.trycua.driver), not the bare executable path. A loose
+# binary gets grants attributed to its ad-hoc cdhash, which changes on
+# every rebuild — so permissions silently reset and never appear cleanly
+# under System Settings. Mirror the production path (install.sh) + the CD
+# bundle-assembly step: drop the freshly built binary into the checked-in
+# CuaDriverBundle skeleton, install the bundle to /Applications, and point
+# the visible bin at the binary INSIDE the bundle. Linux/Windows have no
+# .app concept and keep the bare-binary symlink below.
+APP_DEST="/Applications/CuaDriver.app"
+if [ "$OS" = "Darwin" ]; then
+    SKELETON="$REPO_ROOT/scripts/CuaDriverBundle"
+    if [ ! -d "$SKELETON/Contents" ]; then
+        echo "${RED}Error: bundle skeleton missing at $SKELETON${NORMAL}" >&2
+        exit 1
+    fi
+    APP_STAGE="$VERSIONED_DIR/CuaDriver.app"
+    rm -rf "$APP_STAGE"
+    mkdir -p "$APP_STAGE/Contents/MacOS"
+    cp -R "$SKELETON/Contents/." "$APP_STAGE/Contents/"
+    cp "$VERSIONED_DIR/cua-driver" "$APP_STAGE/Contents/MacOS/cua-driver"
+    chmod +x "$APP_STAGE/Contents/MacOS/cua-driver"
+    rm -f "$APP_STAGE/Contents/MacOS/.gitkeep"
+    # Stamp the local build version so the bundle reports something sane.
+    if command -v plutil >/dev/null 2>&1; then
+        plutil -replace CFBundleShortVersionString -string "$VERSION_TAG" \
+            "$APP_STAGE/Contents/Info.plist" 2>/dev/null || true
+        plutil -replace CFBundleVersion -string "$VERSION_TAG" \
+            "$APP_STAGE/Contents/Info.plist" 2>/dev/null || true
+    fi
+    # Install to /Applications (user-writable for admins; no sudo — same
+    # as install.sh). Replace any prior bundle wholesale.
+    rm -rf "$APP_DEST"
+    ditto "$APP_STAGE" "$APP_DEST"
+    # Ad-hoc re-sign the whole bundle (--deep covers the inner binary).
+    # Required on macOS 26+ where Taskgated rejects a copied binary's
+    # stale signature, and gives the bundle a consistent cdhash for TCC.
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --deep --sign - "$APP_DEST" 2>/dev/null \
+            || echo "${YELLOW}warning: codesign of $APP_DEST failed; first run may hit a Gatekeeper/Taskgated prompt${NORMAL}" >&2
+    fi
+    echo "${GREEN}installed $APP_DEST${NORMAL}"
+fi
 
+# --- Visible-bin symlink ------------------------------------------------
+#
+# On macOS point at the binary INSIDE the installed bundle so the process
+# that actually runs carries the com.trycua.driver identity (TCC keys
+# grants on it). On Linux/Windows point at the versioned-store binary.
 mkdir -p "$BIN_DIR"
-ln -sf "$CURRENT_LINK/cua-driver" "$BIN_DIR/cua-driver"
-echo "${GREEN}$BIN_DIR/cua-driver -> $CURRENT_LINK/cua-driver${NORMAL}"
+if [ "$OS" = "Darwin" ]; then
+    BIN_TARGET="$APP_DEST/Contents/MacOS/cua-driver"
+else
+    BIN_TARGET="$CURRENT_LINK/cua-driver"
+fi
+ln -sf "$BIN_TARGET" "$BIN_DIR/cua-driver"
+echo "${GREEN}$BIN_DIR/cua-driver -> $BIN_TARGET${NORMAL}"
 echo ""
 
 INSTALLED_BIN="$BIN_DIR/cua-driver"

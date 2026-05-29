@@ -25,22 +25,27 @@
 # Rust uninstall removes:
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
-#       cua-driver-rs path — a Swift-driver symlink is left in place)
-#     - ~/.cua-driver-rs/ (entire package home: telemetry id, install
-#       marker, versioned releases, current symlink, lockfile)
+#       cua-driver path — a Swift-driver symlink is left in place)
+#     - ~/.cua-driver/ (current package home) + legacy ~/.cua-driver-rs/
+#       (telemetry id, config.json, versioned releases, current symlink)
 #     - ~/.config/systemd/user/cua-driver-rs.service (if --autostart
 #       was used via install-local.sh — stop + disable + remove)
-#     - Skill symlinks under ~/.claude/skills/cua-driver-rs, ~/.agents/
-#       skills/cua-driver-rs, ~/.openclaw/skills/cua-driver-rs,
-#       ~/.config/opencode/skills/cua-driver-rs
+#     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), ~/.agents/
+#       skills/…, ~/.openclaw/skills/…, ~/.config/opencode/skills/…
 #   macOS:
 #     - /Applications/CuaDriver.app bundle (+ legacy CuaDriverRs.app)
 #     - ~/.local/bin/cua-driver symlink (only when it resolves into
 #       /Applications/CuaDriver.app)
-#     - ~/.cua-driver-rs/ (entire package home)
+#     - ~/.cua-driver/ (current package home) + legacy ~/.cua-driver-rs/
 #     - ~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist (if
 #       --autostart was used via install-local.sh — unload + remove)
-#     - Skill symlinks under ~/.claude/skills/cua-driver-rs, etc.
+#     - Skill symlinks under ~/.claude/skills/cua-driver(-rs), etc.
+#
+# Shared-path safety: /Applications/CuaDriver.app + its ~/.local/bin
+# symlink use the same bundle id (com.trycua.driver) as the Swift driver,
+# so they're only removed when an unambiguous Rust marker is on disk
+# (~/.cua-driver/packages/, legacy ~/.cua-driver-rs/, CuaDriverRs.app,
+# or the LaunchAgent/systemd unit).
 #
 # Also scrubs Claude MCP registrations in ~/.claude.json that match
 # the active backend.
@@ -131,7 +136,17 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # Legacy bundle path from earlier Rust releases that coexisted with
     # Swift under a separate name. Cleaned up if found.
     LEGACY_APP_BUNDLE="/Applications/CuaDriverRs.app"
-    HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
+    # Canonical package home is ~/.cua-driver (renamed from ~/.cua-driver-rs
+    # in v0.2.16 / PR #1644). The old name is swept too — uninstall.sh
+    # was missed in that rename and kept defaulting to the stale dir, so a
+    # current install left nothing matching and the whole uninstall no-op'd.
+    HOME_DIR="${CUA_DRIVER_HOME:-${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}}"
+    LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+    # The versioned package store (`packages/releases/*` + `current`) is
+    # written only by the Rust install-local / self-updater path — it's the
+    # one unambiguous on-disk Rust discriminator now that the .app bundle +
+    # bundle id are shared with Swift.
+    PACKAGES_DIR="$HOME_DIR/packages"
     LAUNCHAGENT_PLIST="$HOME/Library/LaunchAgents/com.trycua.cua-driver-rs.plist"
     SYSTEMD_USER_UNIT="$HOME/.config/systemd/user/cua-driver-rs.service"
     SKILL_PACK_NAME="cua-driver"
@@ -140,21 +155,21 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # `uninstall.sh --backend=rust`.
     LEGACY_SKILL_PACK_NAME="cua-driver-rs"
 
-    # Rust-install marker. The post-rename Rust bundle path
-    # `/Applications/CuaDriver.app` is shared with the Swift driver
-    # (same bundle id `com.trycua.driver`), so we can't use that path
-    # alone as a Rust-install discriminator — a Swift-only Mac that
-    # runs `uninstall.sh --experimental-rust` by mistake would lose
-    # its Swift bundle, symlink, and Claude MCP registrations. This
-    # marker says "there's at least one unambiguously-Rust artifact
-    # on disk." We gate every shared-path removal below on it.
+    # Rust-install marker. The Rust bundle path `/Applications/CuaDriver.app`
+    # is shared with the Swift driver (same bundle id `com.trycua.driver`),
+    # so we can't use that path alone as a discriminator — a Swift-only Mac
+    # that runs `uninstall.sh --backend=rust` by mistake would lose its
+    # Swift bundle, symlink, and Claude MCP registrations. This marker says
+    # "there's at least one unambiguously-Rust artifact on disk." We gate
+    # every shared-path removal below on it.
     #
     # Markers (any one suffices):
-    #   - $HOME_DIR exists (~/.cua-driver-rs/ — Rust-only state dir)
-    #   - /Applications/CuaDriverRs.app exists (legacy, pre-rename)
-    #   - LaunchAgent plist exists (autostart was used)
+    #   - ~/.cua-driver/packages/ exists (Rust install-local / updater store)
+    #   - ~/.cua-driver-rs/ exists (legacy Rust state dir, pre-rename)
+    #   - /Applications/CuaDriverRs.app exists (legacy bundle, pre-rename)
+    #   - LaunchAgent plist / systemd unit exists (autostart was used)
     RUST_INSTALL_PRESENT=0
-    if [[ -d "$HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" ]]; then
+    if [[ -d "$PACKAGES_DIR" || -d "$LEGACY_HOME_DIR" || -d "$LEGACY_APP_BUNDLE" || -f "$LAUNCHAGENT_PLIST" || -f "$SYSTEMD_USER_UNIT" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
@@ -252,7 +267,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 $SUDO rm -rf "$APP_BUNDLE"
                 log "removed $APP_BUNDLE"
             else
-                log "$APP_BUNDLE exists but no Rust marker on disk (~/.cua-driver-rs/, CuaDriverRs.app, LaunchAgent, systemd unit); leaving it (looks like a Swift-only install)"
+                log "$APP_BUNDLE exists but no Rust marker on disk (~/.cua-driver/packages/, ~/.cua-driver-rs/, CuaDriverRs.app, LaunchAgent, systemd unit); leaving it (looks like a Swift-only install)"
             fi
         else
             log "no app bundle at $APP_BUNDLE (skipping)"
@@ -260,14 +275,25 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- Package home ---
-    # Everything under $CUA_DRIVER_RS_HOME (default ~/.cua-driver-rs):
-    # telemetry id, install marker, versioned releases, current
-    # symlink, lockfile, local skill copy, version_check.json cache.
+    # Everything under $HOME_DIR (default ~/.cua-driver): telemetry id,
+    # config.json, versioned releases, current symlink, local skill copy,
+    # version_check.json cache. This is the live runtime home now (post
+    # v0.2.16 rename), so gate its removal on the Rust marker — don't nuke
+    # a Swift-only Mac's ~/.cua-driver/config.json on a mistaken run.
     if [[ -d "$HOME_DIR" ]]; then
-        rm -rf "$HOME_DIR"
-        log "removed $HOME_DIR"
+        if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+            rm -rf "$HOME_DIR"
+            log "removed $HOME_DIR"
+        else
+            log "$HOME_DIR exists but no Rust marker on disk; leaving it (looks like a Swift-only / shared config dir)"
+        fi
     else
         log "no package home at $HOME_DIR (skipping)"
+    fi
+    # Legacy pre-rename home is unambiguously Rust — always sweep it.
+    if [[ -d "$LEGACY_HOME_DIR" ]]; then
+        rm -rf "$LEGACY_HOME_DIR"
+        log "removed legacy package home $LEGACY_HOME_DIR"
     fi
 
     # --- Agent skill symlinks ---

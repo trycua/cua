@@ -78,12 +78,25 @@ impl Tool for GetWindowStateTool {
         let capture_mode = if capture_mode == "tree" { "ax".to_owned() } else { capture_mode };
         let tree_result = if capture_mode != "vision" {
             let q = query.clone();
-            let result = tokio::task::spawn_blocking(move || {
+            // Wrap the blocking AX walk in a 30-second timeout. Heavy webview apps
+            // (Arc, Safari with many tabs, Electron) can block
+            // AXUIElementCopyAttributeValue indefinitely via XPC — without a
+            // deadline the MCP server hangs forever (issue #1537).
+            let walk_future = tokio::task::spawn_blocking(move || {
                 crate::ax::tree::walk_tree(pid, Some(window_id), q.as_deref())
-            }).await;
-            match result {
-                Ok(r) => Some(r),
-                Err(e) => return ToolResult::error(format!("AX tree walk failed: {e}")),
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(30), walk_future).await {
+                Ok(Ok(r)) => Some(r),
+                Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
+                Err(_elapsed) => {
+                    return ToolResult::error(format!(
+                        "AX tree walk for pid={pid} timed out after 30 s. \
+                         The app (likely Arc, Electron, or Safari with many tabs) has a \
+                         pathologically large accessibility tree. \
+                         Workarounds: switch to capture_mode=vision for pixel-click \
+                         workflows, or use capture_mode=ax with a depth-limited scan."
+                    ));
+                }
             }
         } else {
             None

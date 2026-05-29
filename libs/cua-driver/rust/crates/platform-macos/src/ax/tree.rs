@@ -12,6 +12,8 @@
 
 use super::bindings::*;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 /// Maximum depth for AX tree walks. Deep menus and complex web views can
 /// nest deeply; 25 covers realistic app chrome without exploding on
@@ -24,6 +26,19 @@ const MAX_DEPTH: usize = 25;
 /// When the cap is hit the walk stops early and the partial tree is returned
 /// with a warning line appended (mirrors Swift reference implementation).
 const MAX_ELEMENTS: usize = 2_000;
+
+/// Per-call ceiling for blocking AX messages. A wedged element (e.g. a busy
+/// renderer materializing its tree over XPC) fails with
+/// `kAXErrorCannotComplete` after this instead of blocking the whole walk
+/// indefinitely. Inherited by every descendant once set on the app element.
+const MESSAGING_TIMEOUT_SECS: f32 = 1.5;
+
+/// Wall-clock budget for a single tree walk. Checked between AX calls as a
+/// belt-and-braces backstop layered under the outer thread-level timeout: it
+/// cannot abort an in-flight blocking call (that is the messaging timeout's
+/// job) but it caps cumulative time across many slow-but-completing calls.
+/// When this trips the partial tree is returned flagged as truncated.
+const MAX_WALK_TIME: Duration = Duration::from_secs(5);
 
 /// A single node in the AX tree.
 #[derive(Debug, Clone)]
@@ -49,7 +64,8 @@ pub struct AXNode {
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    /// True when the walk was cut short — either by the MAX_ELEMENTS cap or by
+    /// the wall-clock deadline backstop.
     pub truncated: bool,
 }
 
@@ -73,8 +89,9 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
     let mut index_counter = 0usize;
     // Shared visited-node counter passed into walk_element to enforce MAX_ELEMENTS.
     let mut visited_count = 0usize;
-    // Set to true only when walk_element actually stops early due to the cap —
-    // avoids a false-positive when the tree naturally ends on exactly MAX_ELEMENTS.
+    // Set to true when walk_element actually stops early — either the node cap
+    // tripped or the wall-clock deadline was hit. Avoids a false-positive when
+    // the tree naturally ends on exactly MAX_ELEMENTS.
     let mut truncated = false;
 
     unsafe {
@@ -82,6 +99,14 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         if app_elem.is_null() {
             return TreeWalkResult { tree_markdown: String::new(), nodes, truncated: false };
         }
+
+        // Bound every blocking AX call for the duration of this walk. Reading an
+        // attribute is a synchronous XPC round-trip to the target app; a busy
+        // renderer (heavy webview) can leave that round-trip pending indefinitely,
+        // wedging the whole walk. The timeout is inherited by every descendant
+        // element vended through `app_elem`, so one wedged element fails fast with
+        // `kAXErrorCannotComplete` instead of hanging the traversal.
+        AXUIElementSetMessagingTimeout(app_elem, MESSAGING_TIMEOUT_SECS);
 
         // Union AXChildren + AXWindows — the only way to see background windows.
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
@@ -115,8 +140,20 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         };
 
         // Walk each top-level child at depth 0.
+        let deadline = Instant::now() + MAX_WALK_TIME;
+        let mut visited: HashSet<usize> = HashSet::new();
         for child in walk_these {
-            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter, &mut visited_count, &mut truncated);
+            walk_element(
+                child,
+                0,
+                &mut nodes,
+                &mut lines,
+                &mut index_counter,
+                &mut visited_count,
+                &mut truncated,
+                &mut visited,
+                deadline,
+            );
         }
 
         // Release all top-level elements (copy_children / copy_ax_windows both retain).
@@ -147,6 +184,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
     TreeWalkResult { tree_markdown, nodes, truncated: truncated_flag }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
@@ -155,8 +193,27 @@ unsafe fn walk_element(
     counter: &mut usize,
     visited_count: &mut usize,
     truncated: &mut bool,
+    visited: &mut HashSet<usize>,
+    deadline: Instant,
 ) {
     if depth > MAX_DEPTH { return; }
+
+    // Wall-clock backstop: once the walk has consumed its budget, bail and flag
+    // the result as truncated, the same marker the node cap uses. Checked between
+    // calls — it cannot interrupt one in-flight call (the messaging timeout
+    // covers that), but it caps cumulative time across many slow-but-completing
+    // nodes so the partial tree is still returned to the caller.
+    if Instant::now() >= deadline {
+        *truncated = true;
+        return;
+    }
+
+    // Cycle/re-entrancy guard: AX is a graph, not a strict tree, and a malformed
+    // hierarchy can re-vend an element we already walked. Keying on the pointer
+    // address keeps a pathological tree from inflating the walk. This is dedup,
+    // not truncation, so it does not set the truncated marker.
+    if !visited.insert(element as usize) { return; }
+
     // Enforce total-node cap — mirrors Swift's maxElements guard.
     // Set the truncated flag only when we actually stop early.
     if *visited_count >= MAX_ELEMENTS {
@@ -173,7 +230,7 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting.
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth, nodes, lines, counter, visited_count, truncated);
+            walk_element(child, depth, nodes, lines, counter, visited_count, truncated, visited, deadline);
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -206,7 +263,7 @@ unsafe fn walk_element(
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
+            walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated, visited, deadline);
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -250,7 +307,7 @@ unsafe fn walk_element(
 
     let children = copy_children(element);
     for child in children {
-        walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
+        walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated, visited, deadline);
         CFRelease(child as CFTypeRef);
     }
 }

@@ -8,9 +8,16 @@
 # Usage (one-liner — recommended):
 #   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 | iex
 #
-# Force (no prompts):
-#   $forceArgs = @('-Force')
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1))) @forceArgs
+# Force (skip all prompts):
+#   $env:CUA_DRIVER_RS_UNINSTALL_FORCE = '1'
+#   irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/uninstall.ps1 | iex
+#
+# Why an env var and not a `-Force` parameter: `iex` (Invoke-Expression)
+# refuses to parse a script that opens with `[CmdletBinding()] param(...)`
+# — the natural one-liner above otherwise fails with
+# "Unexpected attribute 'CmdletBinding'" at parse time. Reading the flag
+# from $env: keeps the body iex-safe, and the env var inherits across
+# the self-elevation re-exec for free (no -ArgumentList forwarding).
 #
 # What gets removed:
 #   - Scheduled Task 'cua-driver-serve' (autostart entry registered by
@@ -46,11 +53,13 @@
 #                                     v0.2.13 and earlier used .cua-driver-rs —
 #                                     that legacy path is always cleaned up too)
 #
-# Params:
-#   -Force      non-interactive: skip the "remove? [y/N]" prompt before
+# Env (force mode):
+#   $env:CUA_DRIVER_RS_UNINSTALL_FORCE
+#               non-interactive: skip the "remove? [y/N]" prompt before
 #               each major delete. The one-liner is interactive by
 #               default so a stray paste doesn't accidentally wipe a
-#               working install.
+#               working install. Inherited automatically by the elevated
+#               re-exec child (see Elevation below).
 #
 # Elevation:
 #   `install.ps1 -AutoStart` (and `cua-driver autostart enable`) register
@@ -64,14 +73,18 @@
 #   we self-elevate via UAC; otherwise we run in-place. Mirrors the
 #   install side's elevation pattern in autostart.rs:215-223.
 
-[CmdletBinding()]
-param(
-    [switch]$Force
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# $Force is read from the environment so the script body stays iex-safe.
+# `[CmdletBinding()]` / `param()` declarations are only legal at the start
+# of a script-file, function, or scriptblock — NOT inside an
+# Invoke-Expression'd string — so `irm <url> | iex` parses with
+# "Unexpected attribute 'CmdletBinding'" if we keep a formal param block.
+# Env var also inherits across the self-elevation re-exec automatically,
+# so we don't need to plumb -Force through -ArgumentList.
+$Force = [bool]$env:CUA_DRIVER_RS_UNINSTALL_FORCE
 
 # ---------- Elevation pre-check -------------------------------------------
 
@@ -109,8 +122,10 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
     # from a file on disk; empty when piped through `irm ... | iex` (the
     # canonical one-liner). For the iex case we materialize the script body
     # to a tempfile and re-exec from there — RunAs needs a file path.
-    $forwarded = @()
-    if ($Force) { $forwarded += '-Force' }
+    #
+    # No -Force forwarding needed: $env:CUA_DRIVER_RS_UNINSTALL_FORCE
+    # already lives in this process's env if the user opted in, and
+    # Start-Process inherits the current env into the elevated child.
 
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
@@ -120,7 +135,7 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
         $scriptPath = $tmp
     }
 
-    $argList = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $scriptPath) + $forwarded
+    $argList = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $scriptPath)
     try {
         $proc = Start-Process -FilePath powershell.exe -ArgumentList $argList -Verb RunAs -PassThru -Wait -ErrorAction Stop
         exit $proc.ExitCode

@@ -68,6 +68,14 @@ extern "C" {
         value: CFTypeRef,
     ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
+    /// Set a ceiling on how long any blocking message to `element` (and every
+    /// element it vends) may wait on the target app before returning
+    /// `kAXErrorCannotComplete`. The value is inherited by descendants, so
+    /// setting it once on the application element bounds the entire walk.
+    pub fn AXUIElementSetMessagingTimeout(
+        element: AXUIElementRef,
+        timeoutInSeconds: f32,
+    ) -> AXError;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with
     /// `{kAXTrustedCheckOptionPrompt: true}` raises the system Accessibility

@@ -520,11 +520,6 @@ Settings > Privacy & Security. Reset them explicitly — or re-run with
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver
-
-  (Note: `com.trycua.driver` is shared with the Swift cua-driver.
-  Resetting it clears grants for both backends. If you still use the
-  Swift driver, skip this step and let macOS keep the grants — the
-  next Swift launch will re-use them.)
 FINALUNMSG
         fi
     else

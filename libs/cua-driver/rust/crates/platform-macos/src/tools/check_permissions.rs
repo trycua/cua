@@ -9,6 +9,72 @@ use crate::permissions::status::{
 
 pub struct CheckPermissionsTool;
 
+/// (A) Real ScreenCaptureKit capability probe — what THIS process can
+/// actually capture right now, independent of the CGPreflight cache.
+///
+/// `CGPreflightScreenCaptureAccess()` (used by `screen_recording_granted`)
+/// answers from a per-process cache that goes stale after `tccutil reset`
+/// and is unreliable for CLI / child processes — the same finding Peekaboo
+/// documents. `SCShareableContent::get()` does a live query: it only
+/// returns displays when the answering process can genuinely capture. When
+/// it disagrees with the preflight boolean, the preflight one is lying.
+fn screen_recording_capturable() -> bool {
+    use screencapturekit::prelude::SCShareableContent;
+    SCShareableContent::get()
+        .map(|c| !c.displays().is_empty())
+        .unwrap_or(false)
+}
+
+/// (B) Which TCC identity the booleans in this response reflect.
+///
+/// macOS attributes Accessibility / Screen-Recording to the *responsible
+/// process* (the LaunchServices launching app), not the executable path.
+/// So `check_permissions` answered in-process reflects:
+///   - the **CuaDriver daemon** (`com.trycua.driver`) when we're the bundle
+///     binary reparented to launchd (ppid == 1) — the real driver status;
+///     this is the forced bundle/daemon path.
+///   - the **calling app** otherwise — e.g. the terminal/IDE that spawned
+///     `cua-driver call …`. That grant is NOT the driver's, which is why a
+///     standalone check can read `true` while `tccutil … com.trycua.driver`
+///     reports no record.
+fn permission_source() -> serde_json::Value {
+    let pid = unsafe { libc::getpid() };
+    let ppid = unsafe { libc::getppid() };
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| p.to_str().map(str::to_owned))
+        .unwrap_or_default();
+    let is_driver_daemon =
+        exe.contains("/CuaDriver.app/Contents/MacOS/") && ppid == 1;
+
+    let (attribution, note) = if is_driver_daemon {
+        (
+            "driver-daemon",
+            "These booleans reflect the CuaDriver daemon's own TCC identity \
+             (com.trycua.driver) — the process that does the work.",
+        )
+    } else {
+        (
+            "caller",
+            "These booleans reflect the TCC identity of the app that launched \
+             this process (e.g. your terminal/IDE), NOT the CuaDriver daemon \
+             (com.trycua.driver). A standalone check can read `true` here while \
+             `tccutil … com.trycua.driver` reports no record. For the driver's \
+             own status, query via the MCP daemon or run \
+             `open -n -g -a CuaDriver --args serve`.",
+        )
+    };
+
+    serde_json::json!({
+        "attribution": attribution,
+        "pid": pid,
+        "responsible_ppid": ppid,
+        "executable": exe,
+        "note": note,
+    })
+}
+
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 fn def() -> &'static ToolDef {
@@ -19,7 +85,14 @@ fn def() -> &'static ToolDef {
             By default also raises the system permission dialogs for any missing grants — \
             Apple's request APIs are no-ops when the grant is already active, so this is \
             safe to call repeatedly. Pass {\"prompt\": false} for a purely read-only \
-            status check.".into(),
+            status check.\n\n\
+            Returns: `accessibility` + `screen_recording` (booleans from the TCC \
+            preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit \
+            probe — if it disagrees with `screen_recording`, the preflight grant \
+            belongs to a different process), and `source` (which TCC identity the \
+            booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
+            macOS attributes grants to the responsible process, so a standalone call \
+            from a terminal reports the terminal's grants, not the driver's.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -53,6 +126,11 @@ impl Tool for CheckPermissionsTool {
         }
         let accessibility = accessibility_granted();
         let screen_recording = screen_recording_granted();
+        // (A) Authoritative live probe — see `screen_recording_capturable`.
+        let screen_recording_capturable = screen_recording_capturable();
+        // (B) Which identity the booleans above belong to.
+        let source = permission_source();
+        let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
 
         // Text format mirrors Swift 1:1:
         //   "✅ Accessibility: granted.\n✅ Screen Recording: granted."
@@ -60,14 +138,30 @@ impl Tool for CheckPermissionsTool {
         let sr_prefix  = if screen_recording { "✅" } else { "❌" };
         let ax_state   = if accessibility   { "granted" } else { "NOT granted" };
         let sr_state   = if screen_recording { "granted" } else { "NOT granted" };
-        let summary = format!(
+        let mut summary = format!(
             "{ax_prefix} Accessibility: {ax_state}.\n{sr_prefix} Screen Recording: {sr_state}."
         );
+        // Flag a preflight/probe disagreement (the false-positive tell).
+        if screen_recording && !screen_recording_capturable {
+            summary.push_str(
+                "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
+                 the grant likely belongs to a different process, not this one.",
+            );
+        }
+        // Make the attribution explicit when answering for the caller (not the daemon).
+        if is_caller {
+            summary.push_str(
+                "\nℹ️  Status reflects the launching app's TCC identity, not the CuaDriver \
+                 daemon (com.trycua.driver). See `source` for details.",
+            );
+        }
 
         ToolResult::text(summary)
             .with_structured(serde_json::json!({
-                "accessibility":    accessibility,
-                "screen_recording": screen_recording,
+                "accessibility":               accessibility,
+                "screen_recording":            screen_recording,
+                "screen_recording_capturable": screen_recording_capturable,
+                "source":                      source,
             }))
     }
 }

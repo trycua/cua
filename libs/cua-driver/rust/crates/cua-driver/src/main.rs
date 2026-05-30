@@ -229,24 +229,9 @@ fn main() {
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            // First-launch permissions gate (Swift PermissionsGate parity).
-            // Runs on every `serve` start; no-op when both grants are
-            // already active.  Honors --no-permissions-gate and
-            // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
-            //
-            // Failures (e.g. deadline elapsed without grants) are logged
-            // and the daemon continues to start — individual tool calls
-            // will then fail with the underlying TCC error, mirroring
-            // Swift's "user closed the panel" fallback.
             let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
                 no_permissions_gate,
             );
-            if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
-                eprintln!("[cua-driver] permissions gate: {e}");
-                eprintln!("[cua-driver] continuing serve startup anyway — \
-                           expect tool calls touching AX or Screen Recording \
-                           to fail until you grant the missing TCC permissions.");
-            }
             cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
                 if let Some(wid) = window_id {
                     platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
@@ -278,27 +263,66 @@ fn main() {
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
-            // PiP needs the AppKit main run loop to process the
-            // dispatch_async_f calls that push frames into NSImageView.
-            // When --experimental-pip is on, move the serve loop onto
-            // a background thread and park the main thread in
-            // NSApplication.run() so the dispatched blocks actually
-            // execute. Without this, frames queue forever and the
-            // window stays blank. The non-PiP path keeps the original
-            // run-on-main semantics so we don't change behaviour for
-            // existing users.
-            if pip_cfg.enabled {
-                std::thread::Builder::new()
-                    .name("cua-serve".into())
-                    .spawn(move || {
-                        serve::run_serve_cmd(reg, &sp, Some(&pid_path));
-                        std::process::exit(0);
-                    })
-                    .expect("spawn serve thread");
-                platform_macos::pip::run_appkit_main_loop();
-                return;
+
+            // Bind the Unix socket FIRST, on a background thread, BEFORE
+            // running the (blocking) permissions gate (#1761).
+            //
+            // The gate's `wait_for_grants` blocks while `com.trycua.driver`
+            // is ungranted — it prompts and re-exec-loops until the user
+            // grants or the deadline elapses. If serve ran after the gate,
+            // the daemon's socket wouldn't appear for minutes on first
+            // launch, so `permissions grant` / MCP clients launched via
+            // `open -n -g -a CuaDriver --args serve` (the correct-TCC-
+            // attribution path) couldn't reach the daemon to even report
+            // "pending". Binding the socket first makes the daemon
+            // reachable within ~1s while the gate works toward the grant.
+            //
+            // A Unix socket + tokio accept loop has no main-thread
+            // requirement, so serve runs on a background thread. The gate
+            // stays on the MAIN thread: its prompt APIs
+            // (`request_accessibility` / `request_screen_recording`) and
+            // the NSPanel must run on main. On grant, the gate's
+            // `reexec_self()` execvp's the whole daemon — the socket
+            // re-binds fast on restart (run_serve unlinks the stale socket
+            // file first) and stabilizes once the grant sticks.
+            let serve_handle = std::thread::Builder::new()
+                .name("cua-serve".into())
+                .spawn(move || {
+                    serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+                    std::process::exit(0);
+                })
+                .expect("spawn serve thread");
+
+            // Socket is binding/bound now → daemon reachable while we gate.
+            //
+            // First-launch permissions gate (Swift PermissionsGate parity).
+            // Runs on every `serve` start; no-op when both grants are
+            // already active.  Honors --no-permissions-gate and
+            // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
+            //
+            // Failures (e.g. deadline elapsed without grants) are logged
+            // and the daemon continues to serve — individual tool calls
+            // will then fail with the underlying TCC error, mirroring
+            // Swift's "user closed the panel" fallback.
+            if let Err(e) = platform_macos::permissions::run_if_needed(gate_opts) {
+                eprintln!("[cua-driver] permissions gate: {e}");
+                eprintln!("[cua-driver] continuing — tool calls touching AX or \
+                           Screen Recording fail until you grant the missing TCC \
+                           permissions.");
             }
-            serve::run_serve_cmd(reg, &sp, Some(&pid_path));
+
+            // Keep the main thread alive for the daemon.
+            //
+            // PiP needs the AppKit main run loop to process the
+            // dispatch_async_f calls that push frames into NSImageView;
+            // park main in NSApplication.run() when --experimental-pip is
+            // on. Otherwise just join the serve thread so the process
+            // stays up as long as the daemon does.
+            if pip_cfg.enabled {
+                platform_macos::pip::run_appkit_main_loop();
+            } else {
+                let _ = serve_handle.join();
+            }
             return;
         }
         cli::Command::Stop { socket } => {

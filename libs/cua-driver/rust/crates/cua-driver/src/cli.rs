@@ -1559,19 +1559,45 @@ fn run_permissions_grant() {
                 process::exit(1);
             }
         }
+        // Since #1761 the daemon binds its socket IMMEDIATELY — before the
+        // permissions gate completes — so the first `check_permissions`
+        // query returns "pending" while the grant is still missing. Poll
+        // the daemon until both grants flip true (success) or we time out.
+        //
+        // The gate re-execs the daemon (~every 25s) to pick up an
+        // Accessibility grant — `AXIsProcessTrusted` is cached per process
+        // and only a fresh process image sees a later grant. During each
+        // restart the socket briefly disappears, so tolerate transient
+        // connection failures rather than bailing on the first one.
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
         };
-        let structured = crate::serve::send_request(&socket, &req)
-            .ok()
-            .filter(|r| r.ok)
-            .and_then(|r| r.result)
-            .and_then(|res| res.get("structuredContent").cloned())
-            .unwrap_or_else(|| serde_json::json!({}));
-        let ax = structured.get("accessibility").and_then(|v| v.as_bool()).unwrap_or(false);
-        let sr = structured.get("screen_recording").and_then(|v| v.as_bool()).unwrap_or(false);
+        let poll_deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let mut ax = false;
+        let mut sr = false;
+        loop {
+            if let Some(structured) = crate::serve::send_request(&socket, &req)
+                .ok()
+                .filter(|r| r.ok)
+                .and_then(|r| r.result)
+                .and_then(|res| res.get("structuredContent").cloned())
+            {
+                ax = structured.get("accessibility").and_then(|v| v.as_bool()).unwrap_or(false);
+                sr = structured.get("screen_recording").and_then(|v| v.as_bool()).unwrap_or(false);
+                if ax && sr {
+                    break;
+                }
+            }
+            // `send_request` failing (None / !ok) means the daemon is
+            // mid-restart (re-exec) or briefly down — keep polling.
+            if std::time::Instant::now() >= poll_deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
         if ax && sr {
             println!("\n✅ CuaDriver has Accessibility + Screen Recording. You're set.");
         } else {
@@ -1581,10 +1607,10 @@ fn run_permissions_grant() {
                 (true, false) => "Screen Recording",
                 (true, true) => unreachable!(),
             };
-            println!("\n⚠️  CuaDriver is running but still missing: {missing}.");
+            println!("\n⚠️  Timed out waiting on: {missing}.");
             println!(
-                "Approve it for \u{201c}Cua Driver\u{201d} in System Settings \u{2192} Privacy & \
-                 Security, then re-run `cua-driver permissions status`."
+                "Approve CuaDriver for \u{201c}Cua Driver\u{201d} in System Settings \u{2192} \
+                 Privacy & Security, then re-run `cua-driver permissions grant`."
             );
         }
     }

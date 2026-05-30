@@ -65,11 +65,24 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
 
+    // Tracks whether THIS proxy session has an outstanding recording it started
+    // (#1764). The proxy is one long-lived process whose lifetime == the MCP
+    // session; the daemon outlives it. When the MCP client disconnects (stdin
+    // EOF), the proxy exits but the daemon keeps the SCStream recording running
+    // (~6 GB/h). We flip this flag on a successful start/stop_recording forward,
+    // then on exit send a `stop_recording` to the daemon iff it's still set.
+    //
+    // A plain `bool` is correct ONLY because this read/dispatch loop is strictly
+    // sequential (one `read_line` → one `handle_proxy_request` await at a time).
+    // If `forward_tool_call` is ever made concurrent/pipelined, this must become
+    // an atomic.
+    let mut session_started_recording = false;
+
     loop {
         line.clear();
         let n = reader.read_line(&mut line).await?;
         if n == 0 {
-            break; // EOF
+            break; // EOF — MCP client disconnected (stdin closed).
         }
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -88,7 +101,30 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
             }
             Ok(req) => {
                 let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-                handle_proxy_request(req, id, &socket_path, &cached_tools_list).await
+                // Capture the tool name (if this is a tools/call) before `req`
+                // is moved, so we can update the recording-ownership flag based
+                // on the daemon's response below.
+                let called_tool = if req.method == "tools/call" {
+                    req.tool_call().ok().map(|c| c.name)
+                } else {
+                    None
+                };
+                let resp =
+                    handle_proxy_request(req, id, &socket_path, &cached_tools_list).await;
+                // Flip the ownership flag ONLY on a successful daemon call,
+                // mirroring the daemon-side ownership intent. A successful
+                // forwarded tool call maps to a JSON-RPC `result` (not `error`)
+                // with `result.isError != true`.
+                if let Some(tool) = called_tool.as_deref() {
+                    if proxy_call_succeeded(&resp) {
+                        if tool == "start_recording" {
+                            session_started_recording = true;
+                        } else if tool == "stop_recording" {
+                            session_started_recording = false;
+                        }
+                    }
+                }
+                resp
             }
         };
 
@@ -104,7 +140,53 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
         writer.flush().await?;
     }
 
+    // Loop exited: either stdin EOF (n == 0 break above) or an I/O error on
+    // `read_line` (the `?` propagates after this — but a Drop won't run async
+    // code, so we handle the common disconnect path here). This is the real
+    // "MCP client disconnected" seam. If this session has an outstanding
+    // recording with no matching stop, tear it down on the daemon so the
+    // SCStream doesn't keep capturing after we exit (#1764).
+    //
+    // Best-effort: the daemon may already be gone; never fail the exit. The
+    // daemon services this exactly like any other per-call connection — its
+    // existing `"call"` handler runs `stop_recording`, then the connection EOFs.
+    if session_started_recording {
+        let stop_req = DaemonRequest {
+            method: "call".into(),
+            name: Some("stop_recording".into()),
+            args: Some(serde_json::json!({})),
+        };
+        // `send_request` is sync + blocking; we're past the read loop and about
+        // to exit, so a direct blocking call on this thread is fine (no reactor
+        // starvation concern). It inherits send_request's connect/read timeouts,
+        // bounding a wedged-daemon delay to ~10s — acceptable for a teardown.
+        match crate::serve::send_request(&socket_path, &stop_req) {
+            Ok(r) if !r.ok => {
+                warn!("proxy-exit stop_recording rejected: {:?}", r.error)
+            }
+            Err(e) => warn!("proxy-exit stop_recording transport error: {e}"),
+            _ => debug!("proxy-exit stop_recording sent"),
+        }
+    }
+
     Ok(())
+}
+
+/// Whether a proxy `Response` represents a successful forwarded tool call:
+/// a JSON-RPC `result` (not `error`) whose `isError` is not `true`. Mirrors the
+/// daemon-side success semantics used to gate recording-ownership tracking.
+fn proxy_call_succeeded(resp: &Response) -> bool {
+    let value = match serde_json::to_value(resp) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    if value.get("error").is_some() {
+        return false;
+    }
+    match value.get("result") {
+        Some(result) => result.get("isError").and_then(|v| v.as_bool()) != Some(true),
+        None => false,
+    }
 }
 
 /// One-shot daemon `list` over the UDS, reshaped into a MCP

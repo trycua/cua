@@ -68,9 +68,10 @@ impl Tool for StartRecordingTool {
                   red dot drawn at the click point.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
-                **Video is on by default** — the main display is captured to \
-                `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of \
-                the session. Pass `record_video: false` to opt out.\n\n\
+                **Video is off by default.** Pass `record_video: true` to also \
+                capture the main display to `<output_dir>/recording.mp4` (H.264 / \
+                30 fps) for the lifetime of the session. The recording is torn \
+                down automatically when the MCP client disconnects.\n\n\
                 **macOS uses native ScreenCaptureKit** (in-process SCStream + \
                 SCRecordingOutput) so video inherits Cua Driver's own Screen \
                 Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
@@ -96,8 +97,9 @@ impl Tool for StartRecordingTool {
                     "record_video": {
                         "type": "boolean",
                         "description": "Capture the main display to <output_dir>/recording.mp4. \
-                            Default: true. Set to false to record only the per-turn \
-                            screenshots + JSON. On macOS this uses native \
+                            Default: false. Set to true to also capture the main \
+                            display to recording.mp4 (otherwise only the per-turn \
+                            screenshots + JSON are recorded). On macOS this uses native \
                             ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
                             Windows + Linux it requires ffmpeg on PATH."
                     }
@@ -117,7 +119,7 @@ impl Tool for StartRecordingTool {
         if output_dir.as_deref().map(str::is_empty).unwrap_or(true) {
             return ToolResult::error("`output_dir` is required.");
         }
-        let record_video = args.bool_or("record_video", true);
+        let record_video = args.bool_or("record_video", false);
 
         match self.session.start(output_dir.as_deref().unwrap(), record_video) {
             Ok(()) => {

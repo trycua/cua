@@ -153,9 +153,12 @@ impl RecordingSession {
     /// Enable recording at `output_dir`, optionally with video capture.
     /// Counterpart to `stop()`. Returns the resulting state.
     ///
-    /// `record_video=true` (the default for callers that don't opt out)
-    /// spawns ffmpeg writing `<output_dir>/recording.mp4` for the lifetime
-    /// of the session. If ffmpeg isn't on PATH the start still succeeds —
+    /// `record_video=true` spawns ffmpeg writing `<output_dir>/recording.mp4`
+    /// for the lifetime of the session. NOTE: the MCP `start_recording` tool
+    /// now defaults `record_video` to *false* (opt-in) — see
+    /// `recording_tools.rs` — so video only records when explicitly requested.
+    /// The legacy CLI `recording start` path via `configure()` still forces
+    /// video on. If ffmpeg isn't on PATH the start still succeeds —
     /// the per-turn capture (action.json + screenshot.png) is independent
     /// of video — but the structured state carries the ffmpeg error so
     /// the caller can surface it.

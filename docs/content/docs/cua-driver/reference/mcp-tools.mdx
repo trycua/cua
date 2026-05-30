@@ -452,7 +452,7 @@ Start trajectory recording. Every subsequent action-tool invocation (click, righ
 
 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
 
-**Video is on by default** — the main display is captured to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. Pass `record_video: false` to opt out.
+**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. On the daemon-proxy path (the default macOS `cua-driver mcp` flow), recording is stopped automatically when the MCP client disconnects, so a forgotten session no longer keeps writing to disk; a daemon-side idle timeout (~5 min of no tool activity) is a backstop in case the client is killed before it can clean up.
 
 **macOS uses native ScreenCaptureKit** (in-process SCStream + SCRecordingOutput) so video inherits Cua Driver's own Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
 
@@ -463,7 +463,7 @@ State persists for the life of the daemon / MCP session; a restart resets to dis
 **Arguments:**
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
-- `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: true. Set to false to record only the per-turn screenshots + JSON. On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}

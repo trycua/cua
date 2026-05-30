@@ -19,6 +19,67 @@
 
 use serde::{Deserialize, Serialize};
 
+// ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
+
+/// Default TTL of zero `call` activity after which an active recording is
+/// auto-stopped. Generous: a single agent turn can be slow. Overridable via the
+/// `CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS` env var (used by the #1764 verify
+/// harness to exercise the backstop quickly).
+const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
+
+/// Wall-clock seconds since the Unix epoch. Same idiom `recording.rs` uses for
+/// `now_ms`.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Resolve the recording idle TTL, honoring the env override.
+fn recording_idle_ttl_secs() -> u64 {
+    std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(RECORDING_IDLE_TTL_SECS_DEFAULT)
+}
+
+/// Spawn a detached daemon task that auto-stops a recording after the idle TTL.
+///
+/// Defense-in-depth for #1764: the primary teardown is the MCP proxy's
+/// stop-on-exit hook (`proxy.rs`). This TTL covers the case the proxy can't run
+/// its hook — proxy SIGKILL/crash, or a non-proxy client that dies holding a
+/// connection. It MUST NOT stop a still-active session: it only reaps when BOTH
+/// the recording is enabled AND there has been no `call` activity for the full
+/// TTL. As long as a session keeps issuing tool calls, `last_activity` is bumped
+/// every turn and the idle window never reaches the TTL. `stop()` is idempotent,
+/// so racing with the proxy-exit hook or an explicit `stop_recording` is benign.
+fn spawn_recording_idle_backstop(
+    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    last_activity: std::sync::Arc<std::sync::atomic::AtomicU64>,
+) {
+    let ttl = recording_idle_ttl_secs();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            if registry.recording.current_state().enabled {
+                let idle = now_unix_secs().saturating_sub(
+                    last_activity.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                if idle >= ttl {
+                    tracing::warn!(
+                        "recording idle {idle}s ≥ {ttl}s TTL; auto-stopping \
+                         (proxy-exit hook likely missed)"
+                    );
+                    let _ = registry.recording.stop();
+                }
+            }
+        }
+    });
+}
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /// Returns the platform default socket/pipe path.
@@ -274,12 +335,25 @@ pub async fn run_serve(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
 
+    // Idle-TTL recording backstop (#1764). The recorder is a daemon-global
+    // singleton; the primary teardown path is the MCP proxy's exit hook
+    // (proxy.rs), which sends `stop_recording` when the client disconnects.
+    // This TTL is defense-in-depth for the case the proxy can't run its hook
+    // (SIGKILL/crash, or a non-proxy client that holds a connection and dies).
+    // We track the last `call` activity timestamp; a background task auto-stops
+    // the recording after `RECORDING_IDLE_TTL_SECS` of zero tool activity. It is
+    // keyed on call activity (NOT connection liveness), so an actively-used
+    // session — one issuing tool calls every turn — is never reaped.
+    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
+    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
                 let reg = registry.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
+                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.into_split();
@@ -357,6 +431,12 @@ pub async fn run_serve(
                                 }
                             }
                             "call" => {
+                                // Recording idle-TTL liveness: any serviced tool
+                                // call counts as activity (#1764).
+                                last_activity.store(
+                                    now_unix_secs(),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
                                 let raw_name = req.name.as_deref().unwrap_or("").to_owned();
                                 // Deprecated alias: `type_text_chars` → `type_text`.
                                 // Mirrors Swift's `ToolRegistry.call` aliasing.
@@ -651,6 +731,11 @@ pub async fn run_serve(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
 
+    // Idle-TTL recording backstop (#1764). See the unix branch above for the
+    // full rationale; the leak (record_video via ffmpeg) is platform-independent.
+    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
+    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+
     loop {
         // Create a new pipe server instance to accept the next client.
         // Use create_with_security_attributes_raw so Medium-IL clients can
@@ -677,6 +762,7 @@ pub async fn run_serve(
 
                 let reg = registry.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
+                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = tokio::io::split(server);
@@ -739,6 +825,11 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
+                                // Recording idle-TTL liveness (#1764).
+                                last_activity.store(
+                                    now_unix_secs(),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
                                 let raw_name = req.name.as_deref().unwrap_or("").to_owned();
                                 let tool_name = if raw_name == "type_text_chars" {
                                     eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");

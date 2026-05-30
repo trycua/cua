@@ -60,9 +60,8 @@ fn permission_source() -> serde_json::Value {
             "These booleans reflect the TCC identity of the app that launched \
              this process (e.g. your terminal/IDE), NOT the CuaDriver daemon \
              (com.trycua.driver). A standalone check can read `true` here while \
-             `tccutil … com.trycua.driver` reports no record. For the driver's \
-             own status, query via the MCP daemon or run \
-             `open -n -g -a CuaDriver --args serve`.",
+             `tccutil … com.trycua.driver` reports no record. To grant for the \
+             driver, run `cua-driver permissions grant`.",
         )
     };
 

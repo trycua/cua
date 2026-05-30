@@ -73,6 +73,10 @@ pub enum Command {
     CheckUpdate { json: bool, no_cache: bool },
     Doctor { json: bool },
     Diagnose,
+    /// `cua-driver permissions status|grant [--json]` — report TCC status
+    /// (with source attribution + a live capture probe) or raise the
+    /// correctly-attributed grant by launching CuaDriver via LaunchServices.
+    Permissions { subcommand: String, json: bool },
     Config {
         /// `show` | `get` | `set` | `reset` (None → show)
         subcommand: Option<String>,
@@ -137,7 +141,16 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, autostart, skills");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills");
+        println!();
+        println!("permissions options (macOS):");
+        println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
+        println!("                                  Routes through a running daemon when one is up, so the answer carries");
+        println!("                                  the CuaDriver identity; otherwise reads the calling process's grants");
+        println!("                                  and labels them as such (`source`). Add --json for the raw payload.");
+        println!("  cua-driver permissions grant    Launch CuaDriver via LaunchServices so the permission dialog attributes");
+        println!("                                  to com.trycua.driver (not your terminal), wait for the grant, then");
+        println!("                                  confirm the driver's own status. This is the correct way to grant.");
         println!();
         println!("Updating cua-driver:");
         println!("  cua-driver check-update         Ask GitHub whether a newer release is available. Read-only.");
@@ -277,6 +290,11 @@ pub fn parse_command() -> Command {
             Command::Doctor { json }
         }
         Some("diagnose") => Command::Diagnose,
+        Some("permissions") => {
+            let subcommand = pos.next().unwrap_or("status").to_string();
+            let json = args.iter().any(|a| a == "--json");
+            Command::Permissions { subcommand, json }
+        }
         Some("config") => {
             let subcommand = pos.next().map(str::to_owned);
             let key = pos.next().map(str::to_owned);
@@ -1434,6 +1452,149 @@ pub fn run_update_cmd(apply: bool, json: bool) {
     }
 }
 
+/// `cua-driver permissions status|grant`.
+pub fn run_permissions_cmd(
+    registry: std::sync::Arc<ToolRegistry>,
+    subcommand: &str,
+    json: bool,
+) {
+    match subcommand {
+        "status" => run_permissions_status(registry, json),
+        "grant" => run_permissions_grant(),
+        other => {
+            eprintln!("unknown permissions subcommand '{other}'. Valid: status, grant.");
+            process::exit(2);
+        }
+    }
+}
+
+/// Report TCC status with source attribution + the live capture probe.
+/// Routes through a running daemon when one is up (so the answer carries the
+/// com.trycua.driver identity); otherwise reads in-process (the caller's
+/// identity, clearly labelled). Never raises a prompt — `grant` does that.
+fn run_permissions_status(registry: std::sync::Arc<ToolRegistry>, json: bool) {
+    let socket = crate::serve::default_socket_path();
+    let structured: serde_json::Value = if crate::serve::is_daemon_listening(&socket) {
+        let req = crate::serve::DaemonRequest {
+            method: "call".into(),
+            name: Some("check_permissions".into()),
+            args: Some(serde_json::json!({ "prompt": false })),
+        };
+        crate::serve::send_request(&socket, &req)
+            .ok()
+            .filter(|r| r.ok)
+            .and_then(|r| r.result)
+            .and_then(|res| res.get("structuredContent").cloned())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        rt.block_on(registry.invoke(
+            "check_permissions",
+            serde_json::json!({ "prompt": false }),
+        ))
+        .structured_content
+        .unwrap_or_else(|| serde_json::json!({}))
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string())
+        );
+        return;
+    }
+
+    let b = |k: &str| structured.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let ax = b("accessibility");
+    let sr = b("screen_recording");
+    let cap = b("screen_recording_capturable");
+    let source = structured.get("source");
+    let attribution = source
+        .and_then(|s| s.get("attribution"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    println!("Accessibility:    {}", if ax { "✅ granted" } else { "❌ not granted" });
+    println!("Screen Recording: {}", if sr { "✅ granted" } else { "❌ not granted" });
+    if sr && !cap {
+        println!(
+            "  ⚠️  preflight reports granted, but a live capture probe failed — the grant \
+             likely belongs to another process, not this one."
+        );
+    }
+    println!("Source: {attribution}");
+    if attribution == "caller" {
+        if let Some(note) = source.and_then(|s| s.get("note")).and_then(|v| v.as_str()) {
+            println!("  {note}");
+        }
+        println!("  → To grant for the driver, run: cua-driver permissions grant");
+    }
+}
+
+/// Launch CuaDriver via LaunchServices so the permission prompt attributes to
+/// com.trycua.driver, wait (user-paced) for the daemon to come up — its socket
+/// only appears once the permissions gate passes, i.e. the grant was given —
+/// then report the driver's own status.
+fn run_permissions_grant() {
+    #[cfg(target_os = "macos")]
+    {
+        let socket = crate::serve::default_socket_path();
+        if crate::serve::is_daemon_listening(&socket) {
+            println!("CuaDriver daemon already running — checking its permissions…");
+        } else {
+            println!("Launching CuaDriver to request permissions.");
+            println!(
+                "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
+                 and Screen Recording in System Settings, then this command continues."
+            );
+            if let Err(e) = launch_daemon_and_wait(&socket, 180) {
+                eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
+                eprintln!(
+                    "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
+                     in System Settings, then re-run `cua-driver permissions grant`."
+                );
+                process::exit(1);
+            }
+        }
+        let req = crate::serve::DaemonRequest {
+            method: "call".into(),
+            name: Some("check_permissions".into()),
+            args: Some(serde_json::json!({ "prompt": false })),
+        };
+        let structured = crate::serve::send_request(&socket, &req)
+            .ok()
+            .filter(|r| r.ok)
+            .and_then(|r| r.result)
+            .and_then(|res| res.get("structuredContent").cloned())
+            .unwrap_or_else(|| serde_json::json!({}));
+        let ax = structured.get("accessibility").and_then(|v| v.as_bool()).unwrap_or(false);
+        let sr = structured.get("screen_recording").and_then(|v| v.as_bool()).unwrap_or(false);
+        if ax && sr {
+            println!("\n✅ CuaDriver has Accessibility + Screen Recording. You're set.");
+        } else {
+            let missing = match (ax, sr) {
+                (false, false) => "Accessibility + Screen Recording",
+                (false, true) => "Accessibility",
+                (true, false) => "Screen Recording",
+                (true, true) => unreachable!(),
+            };
+            println!("\n⚠️  CuaDriver is running but still missing: {missing}.");
+            println!(
+                "Approve it for \u{201c}Cua Driver\u{201d} in System Settings \u{2192} Privacy & \
+                 Security, then re-run `cua-driver permissions status`."
+            );
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        eprintln!("`cua-driver permissions grant` is macOS-only.");
+        process::exit(1);
+    }
+}
+
 /// `cua-driver check-update [--json] [--no-cache]` — pure check, never installs.
 ///
 /// Mirror of the `check_for_update` MCP tool. Both routes call into
@@ -2346,6 +2507,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::Update { .. } => "cua_driver_update".to_owned(),
         Command::CheckUpdate { .. } => "cua_driver_check_update".to_owned(),
         Command::Doctor { .. } => "cua_driver_doctor".to_owned(),
+        Command::Permissions { .. } => "cua_driver_permissions".to_owned(),
         Command::Diagnose => "cua_driver_diagnose".to_owned(),
         // Per-subcommand event so dashboards can split enable / disable /
         // status / kick separately — they have very different meanings

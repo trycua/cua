@@ -345,6 +345,11 @@ fn main() {
             cli::run_diagnose_cmd(reg);
             return;
         }
+        cli::Command::Permissions { subcommand, json } => {
+            let reg = Arc::new(build_macos_registry());
+            cli::run_permissions_cmd(reg, &subcommand, json);
+            return;
+        }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
             return;
@@ -573,6 +578,11 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Diagnose => {
             let reg = Arc::new(build_registry_no_cursor());
             cli::run_diagnose_cmd(reg);
+            return Ok(());
+        }
+        cli::Command::Permissions { subcommand, json } => {
+            let reg = Arc::new(build_registry_no_cursor());
+            cli::run_permissions_cmd(reg, &subcommand, json);
             return Ok(());
         }
         cli::Command::Autostart { subcommand } => {

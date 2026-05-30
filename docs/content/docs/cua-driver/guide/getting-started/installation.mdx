@@ -349,6 +349,13 @@ cua-driver check_permissions
   so results can read "NOT granted" even when you've granted both to `CuaDriver.app`. The
   daemon-first recipe above sidesteps this because the CLI forwards through the daemon, which runs
   under `CuaDriver.app`'s bundle id.
+
+  **Prefer the `permissions` verbs.** `cua-driver permissions grant` launches CuaDriver via
+  LaunchServices so the dialog attributes to `com.trycua.driver` (not your terminal), then waits for
+  and confirms the grant — the one-step authoritative path. `cua-driver permissions status` reads
+  the driver's real grant state *through the daemon*; when no daemon is running it reports
+  `❓ unknown` rather than your terminal's grants, so it can never claim `granted` when the driver
+  has none.
 </Callout>
 
 If a grant still reads `NOT granted` after granting in the dialog, open **System Settings → Privacy & Security**, find `CuaDriver.app` under Accessibility and Screen Recording, and flip the toggle.

@@ -12,11 +12,13 @@
 #                        ~/.local/bin (e.g. /usr/local/bin — that target needs sudo)
 #   --no-modify-path     skip auto-appending an `export PATH=...` line to your
 #                        shell rc when ~/.local/bin is missing from PATH
-#   --backend=swift      install the retired Swift macOS implementation
-#                        instead of the Rust implementation. Legacy escape
-#                        hatch only; unsupported on non-macOS hosts.
-#   --experimental-rust  legacy no-op alias for the default Rust path.
-#                        Also accepted as --backend=rust.
+#   --backend=rust       install the Rust implementation instead of the
+#                        default Swift macOS implementation. The Rust path
+#                        is also used automatically on non-macOS hosts,
+#                        where the Swift build can't run.
+#   --experimental-rust  legacy alias for --backend=rust.
+#   --backend=swift      explicit default — install the Swift macOS
+#                        implementation. macOS-only.
 #
 # Env overrides:
 #   CUA_DRIVER_RS_VERSION=0.3.1      pin a specific Rust release tag
@@ -52,13 +54,18 @@ RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-d
 #      That bucket is what we'd hand off to the Rust installer. Recognised
 #      shared flags (--bin-dir, --no-modify-path) are consumed in this pass
 #      and applied to local state.
-#   2. Unless --backend=swift was seen, exec into the Rust installer with
-#      FORWARDED_ARGS and never reach the legacy Swift install path below.
+#   2. Only when --backend=rust (or --experimental-rust) was seen — or the
+#      host isn't macOS — exec into the Rust installer with FORWARDED_ARGS.
+#      Otherwise fall through to the default Swift install path below.
 #
-# This lets legacy backend flags appear at any position, lets `--` end flag
+# This lets backend flags appear at any position, lets `--` end flag
 # parsing without breaking forwarding, and keeps both installers' argv shapes
 # (--bin-dir, --no-modify-path) bit-compatible.
-USE_RUST_BACKEND=1
+#
+# Default backend is the Swift macOS implementation. The Rust implementation
+# is opt-in via --backend=rust / --experimental-rust, and is used
+# automatically on non-macOS hosts where the Swift build can't run.
+USE_RUST_BACKEND=0
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -66,9 +73,9 @@ while [[ $# -gt 0 ]]; do
         FORWARDED_ARGS+=("$1"); shift; continue
     fi
     case "$1" in
-        --experimental-rust) shift ;;                 # legacy alias for default Rust path
-        --backend=rust)      shift ;;                 # explicit default — no-op
-        --backend=swift)     USE_RUST_BACKEND=0; shift ;;
+        --experimental-rust) USE_RUST_BACKEND=1; shift ;;  # legacy alias for --backend=rust
+        --backend=rust)      USE_RUST_BACKEND=1; shift ;;  # opt into the Rust implementation
+        --backend=swift)     USE_RUST_BACKEND=0; shift ;;  # explicit default — no-op
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -86,12 +93,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- Default delegation to the Rust implementation ----------------------
+# --- Opt-in delegation to the Rust implementation -----------------------
 #
-# Hand the rest of argv to _install-rust.sh and exit. The legacy Swift
-# install path below is only reached when --backend=swift is explicit.
+# The default backend is the Swift macOS implementation, but Swift only
+# runs on macOS — so on any non-macOS host we transparently promote to the
+# Rust implementation, which is the only one that builds there.
+OS="$(uname -s 2>/dev/null || echo unknown)"
+if [[ "$USE_RUST_BACKEND" == "0" && "$OS" != "Darwin" ]]; then
+    printf 'note: Swift backend is macOS-only; falling back to the Rust implementation on %s.\n' "$OS" >&2
+    USE_RUST_BACKEND=1
+fi
+
+# Hand the rest of argv to _install-rust.sh and exit. The default Swift
+# install path below is only reached when the Rust backend was not selected.
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
-    OS="$(uname -s 2>/dev/null || echo unknown)"
     if [[ "$OS" != "Darwin" ]]; then
         printf 'note: detected non-macOS host (%s); installing cua-driver via the Rust implementation.\n' "$OS" >&2
     else

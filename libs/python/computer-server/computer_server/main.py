@@ -1154,7 +1154,30 @@ async def agent_response_endpoint(
             parts = [normalize_key(p) for p in parts]
 
             if len(parts) == 1:
-                await self._auto.press_key(parts[0])
+                key = parts[0]
+                # Route single printable characters through type_text so the
+                # insertion is layout-independent. press_key uses a physical-key
+                # path (pynput keyboard.press/release) that follows the active
+                # input source — under a Russian or CJK layout it inserts the
+                # layout-mapped character instead of the intended ASCII one.
+                # type_text uses pynput keyboard.type() which bypasses the
+                # layout and inserts the literal Unicode codepoint.
+                #
+                # A key is "printable" when it is exactly one character long
+                # and unicodedata.category is not a control category (Cc/Cs).
+                # Special keys (return, tab, escape, arrows, f1-f12, …) are
+                # multi-character strings or map to a Key enum — those still
+                # go through press_key unchanged.
+                #
+                # See: https://github.com/trycua/cua/issues/1605
+                import unicodedata
+                if (
+                    len(key) == 1
+                    and unicodedata.category(key) not in ("Cc", "Cs", "Cn")
+                ):
+                    await self._auto.type_text(key)
+                else:
+                    await self._auto.press_key(key)
             else:
                 await self._auto.hotkey(parts)
 

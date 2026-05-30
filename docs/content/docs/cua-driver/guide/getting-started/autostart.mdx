@@ -29,7 +29,8 @@ cua-driver autostart disable   # remove the entry
   and the grants persist across reboots — every `cua-driver call` / `mcp` then routes through the
   always-on, correctly-attributed daemon. Without autostart, a prompt raised from a terminal
   attributes to the terminal and the grant never applies to the driver — run
-  `cua-driver permissions status` to see which identity your grants belong to, or
+  `cua-driver permissions status` to read the driver's real grant state (it answers via the daemon,
+  or reports `unknown` when none is running rather than your terminal's grants), or
   `cua-driver permissions grant` to grant correctly without autostart. Autostart stays opt-in
   because a standing computer-control daemon with these grants is a deliberate choice, not a default.
 </Callout>

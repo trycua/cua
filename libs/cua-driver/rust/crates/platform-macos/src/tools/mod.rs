@@ -180,13 +180,80 @@ pub fn write_driver_config_key(key: &str, value: &serde_json::Value) -> Result<(
     Ok(())
 }
 
+/// Per-session config overrides layered over the global persisted `DriverConfig`.
+///
+/// The cua-driver daemon is one shared process: every `cua-driver mcp` proxy
+/// connects to it and shares its `ToolState`. `DriverConfig` is therefore
+/// multi-tenant AND persisted to disk — so without session scoping, session A's
+/// `set_config capture_mode=vision` clobbers session B's value and flips the
+/// on-disk default under everyone. These overrides fix that: a named MCP session
+/// gets an in-memory, non-persisted override keyed by its `_session_id`; the
+/// anonymous session (CLI / one-shot `call`) still writes the shared global +
+/// disk. `None` fields mean "fall through to the global layer".
+#[derive(Clone, Default)]
+pub struct ConfigOverrides {
+    pub capture_mode: Option<String>,
+    pub max_image_dimension: Option<u32>,
+}
+
+/// Thread-safe map of `session_id` → `ConfigOverrides`, mirroring
+/// `CursorRegistry`'s registry shape. Cleared per session on `session_end`.
+pub struct SessionConfigRegistry {
+    inner: std::sync::Mutex<HashMap<String, ConfigOverrides>>,
+}
+
+impl SessionConfigRegistry {
+    pub fn new() -> Self { Self { inner: std::sync::Mutex::new(HashMap::new()) } }
+
+    /// Merge `delta` into `session`'s overrides (only the `Some` fields of
+    /// `delta` overwrite; existing overrides for unset fields are preserved).
+    pub fn set(&self, session: &str, delta: ConfigOverrides) {
+        let mut map = self.inner.lock().unwrap();
+        let entry = map.entry(session.to_owned()).or_default();
+        if delta.capture_mode.is_some() {
+            entry.capture_mode = delta.capture_mode;
+        }
+        if delta.max_image_dimension.is_some() {
+            entry.max_image_dimension = delta.max_image_dimension;
+        }
+    }
+
+    /// Resolve the effective config for `session`, layering its overrides over
+    /// the global `DriverConfig`. `session = None` (anonymous) returns the
+    /// global values verbatim — today's behavior.
+    pub fn effective(&self, session: Option<&str>, global: &DriverConfig) -> (String, u32) {
+        let ov = session.and_then(|s| self.inner.lock().unwrap().get(s).cloned());
+        match ov {
+            Some(ov) => (
+                ov.capture_mode.unwrap_or_else(|| global.capture_mode.clone()),
+                ov.max_image_dimension.unwrap_or(global.max_image_dimension),
+            ),
+            None => (global.capture_mode.clone(), global.max_image_dimension),
+        }
+    }
+
+    /// Drop `session`'s overrides. No-op for an unknown id (so `session_end`
+    /// for an anonymous / never-set session is harmless).
+    pub fn clear(&self, session: &str) {
+        self.inner.lock().unwrap().remove(session);
+    }
+}
+
+impl Default for SessionConfigRegistry {
+    fn default() -> Self { Self::new() }
+}
+
 /// Shared state passed to all tools.
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
+    /// Global, disk-persisted config — the base layer and the only one the
+    /// anonymous session / CLI writes.
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
+    /// Per-MCP-session in-memory config overrides layered over `config`.
+    pub session_config: Arc<SessionConfigRegistry>,
 }
 
 impl Default for ToolState {
@@ -199,6 +266,7 @@ impl Default for ToolState {
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
+            session_config: Arc::new(SessionConfigRegistry::new()),
         }
     }
 }
@@ -212,6 +280,16 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
     crate::recording_hooks::set_element_cache(state.element_cache.clone());
+
+    // Drop a disconnecting session's config overrides on `session_end`. The
+    // daemon fans the session id out to this hook; recording ownership is
+    // handled separately on the core RecordingSession.
+    {
+        let session_config = state.session_config.clone();
+        cua_driver_core::session::register_session_end_hook(move |session_id| {
+            session_config.clear(session_id);
+        });
+    }
 
     registry.register(Box::new(list_apps::ListAppsTool));
     registry.register(Box::new(list_windows::ListWindowsTool));

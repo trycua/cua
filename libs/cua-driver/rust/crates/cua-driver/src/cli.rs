@@ -963,6 +963,8 @@ pub fn run_call(
             method: "call".into(),
             name: Some(tool.to_owned()),
             args: Some(args_for_daemon),
+            // CLI one-shot is its own ephemeral, anonymous/global session.
+            session_id: None,
         };
         match crate::serve::send_request(&socket_path, &req) {
             Ok(resp) => {
@@ -1202,6 +1204,9 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 args: Some(serde_json::json!({
                     "output_dir": output_dir
                 })),
+                // CLI `recording start` is anonymous — the recording is owned by
+                // nobody, so only an unconditional stop (CLI / manual) reaps it.
+                session_id: None,
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1211,6 +1216,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                         method: "call".into(),
                         name: Some("get_recording_state".into()),
                         args: Some(serde_json::json!({})),
+                        session_id: None,
                     };
                     if let Ok(sr) = crate::serve::send_request(&socket_path, &state_req) {
                         if let Some(result) = sr.result {
@@ -1235,6 +1241,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 method: "call".into(),
                 name: Some("stop_recording".into()),
                 args: Some(serde_json::json!({})),
+                session_id: None,
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),
@@ -1251,6 +1258,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 method: "call".into(),
                 name: Some("get_recording_state".into()),
                 args: Some(serde_json::json!({})),
+                session_id: None,
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1491,6 +1499,7 @@ fn run_permissions_status(json: bool) {
             method: "call".into(),
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
+            session_id: None,
         };
         crate::serve::send_request(&socket, &req)
             .ok()
@@ -1617,6 +1626,7 @@ fn run_permissions_grant() {
             method: "call".into(),
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
+            session_id: None,
         };
         let poll_deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(180);
@@ -2311,6 +2321,8 @@ pub fn run_config_cmd(
                     method: "call".into(),
                     name: Some("get_config".into()),
                     args: Some(serde_json::json!({})),
+                    // CLI `config get` reads the persisted global (anonymous).
+                    session_id: None,
                 };
                 if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
                     if resp.ok {
@@ -2389,6 +2401,9 @@ pub fn run_config_cmd(
                     method: "call".into(),
                     name: Some("set_config".into()),
                     args: Some(args.clone()),
+                    // CLI `config set` is anonymous → writes the persisted
+                    // global default (the only writer of the on-disk config).
+                    session_id: None,
                 };
                 if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
                     if resp.ok {
@@ -2398,6 +2413,7 @@ pub fn run_config_cmd(
                             method: "call".into(),
                             name: Some("get_config".into()),
                             args: Some(serde_json::json!({})),
+                            session_id: None,
                         };
                         if let Ok(r2) = crate::serve::send_request(&socket_path, &req2) {
                             if let Some(result) = r2.result {

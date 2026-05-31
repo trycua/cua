@@ -19,6 +19,77 @@
 
 use serde::{Deserialize, Serialize};
 
+// ── Recording idle-TTL backstop (#1764) ─────────────────────────────────────────
+
+/// Default TTL of zero `call` activity after which an active recording is
+/// auto-stopped. Generous: a single agent turn can be slow. Overridable via the
+/// `CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS` env var (used by the #1764 verify
+/// harness to exercise the backstop quickly).
+const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
+
+/// Wall-clock seconds since the Unix epoch. Same idiom `recording.rs` uses for
+/// `now_ms`.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Resolve the recording idle TTL, honoring the env override.
+fn recording_idle_ttl_secs() -> u64 {
+    std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(RECORDING_IDLE_TTL_SECS_DEFAULT)
+}
+
+/// Spawn a detached daemon task that auto-stops a recording after the idle TTL.
+///
+/// Defense-in-depth for #1764: the primary teardown is the MCP proxy's
+/// stop-on-exit hook (`proxy.rs`). This TTL covers the case the proxy can't run
+/// its hook — proxy SIGKILL/crash, or a non-proxy client that dies holding a
+/// connection. It MUST NOT stop a still-active session: it only reaps when BOTH
+/// the recording is enabled AND there has been no `call` activity for the full
+/// TTL. As long as a session keeps issuing tool calls, `last_activity` is bumped
+/// every turn and the idle window never reaches the TTL. `stop()` is idempotent,
+/// so racing with the proxy-exit hook or an explicit `stop_recording` is benign.
+fn spawn_recording_idle_backstop(
+    registry: std::sync::Arc<cua_driver_core::tool::ToolRegistry>,
+    last_activity: std::sync::Arc<std::sync::atomic::AtomicU64>,
+) {
+    let ttl = recording_idle_ttl_secs();
+    tokio::spawn(async move {
+        // 30s tick granularity: reap latency is `ttl` rounded up to the next
+        // tick, so a sub-30s TTL override (e.g. in tests) still fires no sooner
+        // than ~30s. Fine for the 300s production default.
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            if registry.recording.current_state().enabled {
+                let idle = now_unix_secs().saturating_sub(
+                    last_activity.load(std::sync::atomic::Ordering::Relaxed),
+                );
+                if idle >= ttl {
+                    tracing::warn!(
+                        "recording idle {idle}s ≥ {ttl}s TTL; auto-stopping \
+                         (proxy-exit hook likely missed)"
+                    );
+                    // Unconditional (`None`): the idle backstop is a last-resort
+                    // GLOBAL kill of whatever recording is active after global
+                    // inactivity — not an owner reclaiming a specific session.
+                    // It already targets the live recording by definition, so a
+                    // requester id would be redundant and could only make it
+                    // wrongly no-op. Session-scoped teardown is the proxy-exit
+                    // `session_end` path (#1764 / session-identity work).
+                    let _ = registry.recording.stop_owner(None);
+                }
+            }
+        }
+    });
+}
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /// Returns the platform default socket/pipe path.
@@ -85,6 +156,16 @@ pub struct DaemonRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<serde_json::Value>,
+    /// MCP-session identity minted once per `cua-driver mcp` proxy process and
+    /// stamped on every forwarded request. The daemon uses it to OWN and CLEAN
+    /// UP session-scoped state (recording, config overrides). Absent (`None`)
+    /// means an anonymous/"global" session — a one-shot `cua-driver call` or a
+    /// legacy proxy that predates this field — which keeps today's behavior.
+    /// `skip_serializing_if = Option::is_none` makes the absent case
+    /// byte-identical on the wire, so old clients and daemons interoperate.
+    /// serde defaults a missing field to `None` on deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -149,7 +230,7 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let req = DaemonRequest { method: "list".into(), name: None, args: None };
+        let req = DaemonRequest { method: "list".into(), name: None, args: None, session_id: None };
         send_request(socket_path, &req)
             .ok()
             .map(|r| r.ok)
@@ -274,12 +355,25 @@ pub async fn run_serve(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
 
+    // Idle-TTL recording backstop (#1764). The recorder is a daemon-global
+    // singleton; the primary teardown path is the MCP proxy's exit hook
+    // (proxy.rs), which sends `stop_recording` when the client disconnects.
+    // This TTL is defense-in-depth for the case the proxy can't run its hook
+    // (SIGKILL/crash, or a non-proxy client that holds a connection and dies).
+    // We track the last `call` activity timestamp; a background task auto-stops
+    // the recording after `RECORDING_IDLE_TTL_SECS` of zero tool activity. It is
+    // keyed on call activity (NOT connection liveness), so an actively-used
+    // session — one issuing tool calls every turn — is never reaped.
+    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
+    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
                 let reg = registry.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
+                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.into_split();
@@ -357,6 +451,12 @@ pub async fn run_serve(
                                 }
                             }
                             "call" => {
+                                // Recording idle-TTL liveness: any serviced tool
+                                // call counts as activity (#1764).
+                                last_activity.store(
+                                    now_unix_secs(),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
                                 let raw_name = req.name.as_deref().unwrap_or("").to_owned();
                                 // Deprecated alias: `type_text_chars` → `type_text`.
                                 // Mirrors Swift's `ToolRegistry.call` aliasing.
@@ -364,9 +464,30 @@ pub async fn run_serve(
                                     eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                                     "type_text".to_owned()
                                 } else { raw_name.clone() };
-                                let args = req.args.unwrap_or(serde_json::Value::Object(
+                                let mut args = req.args.unwrap_or(serde_json::Value::Object(
                                     serde_json::Map::new()
                                 ));
+                                // Inject the proxy-minted session identity into
+                                // the tool args under the reserved `_session_id`
+                                // key so session-aware tools can read it via
+                                // ArgsExt (the same path cursor_id uses). Only
+                                // when the client sent a session_id AND the args
+                                // is an object that doesn't already carry the
+                                // key (so an explicit client value wins, and a
+                                // non-object arg is left untouched). The daemon
+                                // never validates args against input_schema, so
+                                // this extra key is safe; recording strips all
+                                // `_`-prefixed keys before persisting a turn.
+                                if let Some(sid) = &req.session_id {
+                                    if let Some(obj) = args.as_object_mut() {
+                                        if !obj.contains_key("_session_id") {
+                                            obj.insert(
+                                                "_session_id".to_owned(),
+                                                serde_json::Value::String(sid.clone()),
+                                            );
+                                        }
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(
                                         format!("Unknown tool: {tool_name}"), 64
@@ -404,6 +525,26 @@ pub async fn run_serve(
                                 } else {
                                     DaemonResponse::ok(result_obj)
                                 };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "session_end" => {
+                                // Session lifecycle teardown: the proxy sends
+                                // this best-effort on stdin EOF (client
+                                // disconnect), carrying its own session_id. Drop
+                                // that session's owned state — stop its recording
+                                // (no-op if a later session clobbered it) and
+                                // clear its config overrides via the registered
+                                // platform cleanup hooks. Always ACK ok so the
+                                // proxy's best-effort teardown sees success.
+                                if let Some(sid) = req.session_id.as_deref() {
+                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    cua_driver_core::session::fire_session_end(sid);
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"session_end": true})
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -651,6 +792,11 @@ pub async fn run_serve(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
 
+    // Idle-TTL recording backstop (#1764). See the unix branch above for the
+    // full rationale; the leak (record_video via ffmpeg) is platform-independent.
+    let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
+    spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+
     loop {
         // Create a new pipe server instance to accept the next client.
         // Use create_with_security_attributes_raw so Medium-IL clients can
@@ -677,6 +823,7 @@ pub async fn run_serve(
 
                 let reg = registry.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
+                let last_activity = last_activity.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = tokio::io::split(server);
@@ -739,12 +886,32 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "call" => {
+                                // Recording idle-TTL liveness (#1764).
+                                last_activity.store(
+                                    now_unix_secs(),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
                                 let raw_name = req.name.as_deref().unwrap_or("").to_owned();
                                 let tool_name = if raw_name == "type_text_chars" {
                                     eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                                     "type_text".to_owned()
                                 } else { raw_name.clone() };
-                                let args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                let mut args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                // Inject the proxy-minted session identity under
+                                // the reserved `_session_id` key (see the unix
+                                // branch above for the full rationale). Only when
+                                // a session_id was sent and the args object
+                                // doesn't already carry the key.
+                                if let Some(sid) = &req.session_id {
+                                    if let Some(obj) = args.as_object_mut() {
+                                        if !obj.contains_key("_session_id") {
+                                            obj.insert(
+                                                "_session_id".to_owned(),
+                                                serde_json::Value::String(sid.clone()),
+                                            );
+                                        }
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
                                     let _ = writer.write_all(
@@ -774,6 +941,21 @@ pub async fn run_serve(
                                 } else {
                                     DaemonResponse::ok(result_obj)
                                 };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "session_end" => {
+                                // Session lifecycle teardown (see the unix branch
+                                // above). Drop the disconnecting session's owned
+                                // recording + config overrides, then ACK ok.
+                                if let Some(sid) = req.session_id.as_deref() {
+                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    cua_driver_core::session::fire_session_end(sid);
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"session_end": true})
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -881,7 +1063,7 @@ pub fn run_stop_cmd(socket_path: &str) {
         std::process::exit(1);
     }
 
-    let req = DaemonRequest { method: "shutdown".into(), name: None, args: None };
+    let req = DaemonRequest { method: "shutdown".into(), name: None, args: None, session_id: None };
     match send_request(socket_path, &req) {
         Ok(_) => {
             // Poll until daemon stops responding (up to 2 seconds).

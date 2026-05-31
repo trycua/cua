@@ -201,7 +201,15 @@ impl Tool for ClickTool {
                         "debug_image_out requires window_id."
                     ),
                     Some(wid) => {
-                        let max_dim = self.state.config.read().unwrap().max_image_dimension;
+                        // Session-effective max dimension so debug_image_out
+                        // matches the resize the calling session sees in
+                        // get_window_state (precedence: session override > global).
+                        let max_dim = self.state.session_config
+                            .effective(
+                                args.opt_str("_session_id").as_deref(),
+                                &self.state.config.read().unwrap(),
+                            )
+                            .1;
                         let dbg_path_c = dbg_path.clone();
                         let dbg_result = tokio::task::spawn_blocking(move || {
                             let png = crate::capture::screenshot_window_bytes(wid)?;

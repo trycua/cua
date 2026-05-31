@@ -31,8 +31,16 @@ fn def() -> &'static ToolDef {
 impl Tool for GetConfigTool {
     fn def(&self) -> &ToolDef { def() }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let cfg = self.state.config.read().unwrap();
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        // Resolve effective values for the CALLING session: a named session
+        // sees its own override layered over the global; the anonymous session
+        // (absent `_session_id`) sees the raw global — today's behavior.
+        let session_id = args.opt_str("_session_id");
+        let (capture_mode, max_image_dimension) = {
+            let cfg = self.state.config.read().unwrap();
+            self.state.session_config.effective(session_id.as_deref(), &cfg)
+        };
         let cursor_enabled = self.state.cursor_registry.all_states()
             .first()
             .map(|s| s.config.enabled)
@@ -46,8 +54,8 @@ impl Tool for GetConfigTool {
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "macos",
-                "capture_mode": cfg.capture_mode,
-                "max_image_dimension": cfg.max_image_dimension,
+                "capture_mode": capture_mode,
+                "max_image_dimension": max_image_dimension,
                 "agent_cursor": {
                     "enabled": cursor_enabled,
                 },

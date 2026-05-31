@@ -1,0 +1,73 @@
+---
+title: Changelog
+description: Release history for cua-driver
+---
+
+# cua-driver Changelog
+
+All notable changes to cua-driver are documented here.
+
+These are the `cua-driver-rs` (Rust port) releases. The Rust port ships the same
+user-facing `cua-driver` binary for macOS and Windows, plus Linux pre-release
+artifacts for early testing. All versions are currently published as GitHub
+**prereleases** under the `cua-driver-rs-v*` tag prefix (distinct from the Swift
+driver's `cua-driver-v*` tags so their artifacts don't collide).
+
+The canonical, always-current source is the
+[GitHub releases page](https://github.com/trycua/cua/releases). Each GitHub
+release body is auto-generated per release from the commits touching
+`libs/cua-driver/rust`, including SHA256 checksums and install instructions.
+
+## 0.4.1 (2026-05-31)
+
+- macOS: per-session agent cursors, so concurrent sessions each get their own
+  visual agent cursor (#1779).
+- macOS: ship `AppIcon.icns` in the bundle so `CuaDriver.app` no longer shows a
+  blank icon (#1780, #1496).
+- macOS: guard AppKit initialization so `mcp` runs headless instead of
+  SIGABRT-ing (#1781, #1724).
+
+## 0.4.0 (2026-05-31)
+
+- Daemon session-identity model: the daemon now owns and cleans up
+  session-scoped recording and config, tying that state to the session that
+  created it (#1776).
+
+## 0.3.6 (2026-05-30)
+
+- macOS: fix permissions status so it reports the caller's actual TCC grants
+  rather than the daemon's (#1774).
+
+## 0.3.5 (2026-05-30)
+
+- macOS: bind the `serve` socket before the permissions gate, so clients can
+  connect even while permissions are still being resolved (#1761, #1773).
+
+## 0.3.4 (2026-05-30)
+
+- Maintenance release (no path-specific changes).
+
+## 0.3.3 (2026-05-30)
+
+- Maintenance release (no path-specific changes).
+
+## 0.3.2 (2026-05-27)
+
+- Add a `check-update` CLI verb and a `check_for_update` MCP tool so clients can
+  detect when a newer driver is available (#1734).
+
+## 0.3.1 (2026-05-27)
+
+- First release in the 0.3.x line, which began the macOS TCC / permissions
+  hardening series.
+
+## 0.2.x (2026-05-17 – 2026-05-21)
+
+- Pre-release iteration on the Rust port across versions 0.2.0–0.2.18,
+  including cross-platform build and packaging work for the macOS, Windows, and
+  Linux pre-release artifacts.
+
+## 0.1.x (2026-05-14)
+
+- Initial `cua-driver-rs` pre-releases. See the
+  [GitHub releases](https://github.com/trycua/cua/releases) for details.

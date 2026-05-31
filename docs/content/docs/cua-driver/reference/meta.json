@@ -2,5 +2,5 @@
   "title": "Reference",
   "description": "CLI and MCP reference documentation",
   "icon": "FileText",
-  "pages": ["cli-reference", "mcp-tools", "limits"]
+  "pages": ["cli-reference", "mcp-tools", "limits", "changelog"]
 }

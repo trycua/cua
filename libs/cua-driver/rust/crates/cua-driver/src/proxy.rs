@@ -182,11 +182,20 @@ async fn run_control_connection(socket_path: String, session_id: String) {
     #[cfg(unix)]
     {
         use tokio::net::UnixStream;
-        let mut stream = match UnixStream::connect(&socket_path).await {
-            Ok(s) => s,
-            Err(e) => {
-                debug!(session_id = %session_id, "control connect failed (daemon starting?): {e}");
-                return;
+        // Retry the connect briefly — the daemon may still be spinning up
+        // (mirrors the windows pipe-open retry below). The is_daemon_listening
+        // precheck makes the window tiny, but keep both paths symmetric.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut stream = loop {
+            match UnixStream::connect(&socket_path).await {
+                Ok(s) => break s,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(e) => {
+                    debug!(session_id = %session_id, "control connect failed (daemon starting?): {e}");
+                    return;
+                }
             }
         };
         if let Err(e) = stream.write_all(line.as_bytes()).await {

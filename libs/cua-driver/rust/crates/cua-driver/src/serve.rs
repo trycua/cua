@@ -498,6 +498,38 @@ pub async fn run_serve(
                                         }
                                     }
                                 }
+                                // Resurrection guard: a call carrying a session
+                                // id whose session has already ended (control
+                                // connection EOF → fire_session_end) must NOT
+                                // run. The render-side overlay tombstone blocks
+                                // the visible ghost cursor, but the metadata
+                                // CursorRegistry and config-override map are
+                                // get-or-create — an in-flight per-call request
+                                // that lands AFTER session_end (a slow AX click,
+                                // a racing set_config) would re-create
+                                // session-owned state that is never reaped
+                                // again. Skip the invoke and return a benign ok
+                                // so no registry/override/recording state is
+                                // created or mutated. ONLY gate when a session
+                                // id is present AND ended — a live session and
+                                // anonymous/one-shot calls (no session id) pass
+                                // through unchanged.
+                                if let Some(sid) = &req.session_id {
+                                    if cua_driver_core::session::is_session_ended(sid) {
+                                        let resp = DaemonResponse::ok(serde_json::json!({
+                                            "content": [{
+                                                "type": "text",
+                                                "text": "session ended; tool call ignored"
+                                            }],
+                                            "isError": false,
+                                            "sessionEnded": true
+                                        }));
+                                        let _ = writer.write_all(
+                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                        ).await;
+                                        continue;
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(
                                         format!("Unknown tool: {tool_name}"), 64
@@ -597,7 +629,18 @@ pub async fn run_serve(
                     // idempotent, so racing a legacy explicit session_end is
                     // benign.
                     if let Some(sid) = control_session_id {
-                        let _ = reg.recording.stop_owner(Some(&sid));
+                        // stop_owner can SYNCHRONOUSLY finalize the recording's
+                        // mp4 — on macOS it hits SCStream::stop_capture(), which
+                        // blocks on disk I/O (video_sckit.rs). Run it on a
+                        // blocking thread so it does not stall a runtime worker.
+                        // fire_session_end stays inline: its hooks (overlay
+                        // Remove, config-override clear) are non-blocking.
+                        let reg2 = reg.clone();
+                        let sid_for_stop = sid.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            reg2.recording.stop_owner(Some(&sid_for_stop))
+                        })
+                        .await;
                         cua_driver_core::session::fire_session_end(&sid);
                     }
                 });
@@ -960,6 +1003,30 @@ pub async fn run_serve(
                                         }
                                     }
                                 }
+                                // Resurrection guard (see the unix branch above
+                                // for the full rationale): a call carrying an
+                                // already-ended session id must NOT run — it
+                                // would re-create session-owned metadata
+                                // (CursorRegistry / config override) that the
+                                // reaper has already passed. Skip + benign ok.
+                                // Only when a session id is present AND ended;
+                                // live and anonymous calls pass through.
+                                if let Some(sid) = &req.session_id {
+                                    if cua_driver_core::session::is_session_ended(sid) {
+                                        let resp = DaemonResponse::ok(serde_json::json!({
+                                            "content": [{
+                                                "type": "text",
+                                                "text": "session ended; tool call ignored"
+                                            }],
+                                            "isError": false,
+                                            "sessionEnded": true
+                                        }));
+                                        let _ = writer.write_all(
+                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                        ).await;
+                                        continue;
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
                                     let _ = writer.write_all(
@@ -1038,7 +1105,15 @@ pub async fn run_serve(
                     // the full rationale). Per-call connections leave
                     // control_session_id None.
                     if let Some(sid) = control_session_id {
-                        let _ = reg.recording.stop_owner(Some(&sid));
+                        // Run stop_owner off the reactor (see the unix branch):
+                        // recording finalize can be a synchronous blocking call.
+                        // fire_session_end stays inline (non-blocking hooks).
+                        let reg2 = reg.clone();
+                        let sid_for_stop = sid.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            reg2.recording.stop_owner(Some(&sid_for_stop))
+                        })
+                        .await;
                         cua_driver_core::session::fire_session_end(&sid);
                     }
                 });
@@ -1180,5 +1255,178 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     } else {
         eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(all(test, unix))]
+mod gate_tests {
+    //! Ended-session resurrection guard wired into the `call` dispatch.
+    //!
+    //! Closes PR #1779's gap: `is_session_ended()` was dead code, so an
+    //! in-flight per-call request landing AFTER `session_end` fired would
+    //! re-create session-owned metadata (cursor registry / config override)
+    //! the reaper already passed. The gate skips a `call` carrying an ended
+    //! session id (benign ok); live and anonymous calls pass through.
+
+    use super::{run_serve, send_request, DaemonRequest};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use cua_driver_core::protocol::ToolResult;
+    use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
+    use serde_json::Value;
+
+    static PROBE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    struct ProbeTool {
+        def: ToolDef,
+    }
+
+    impl ProbeTool {
+        fn new() -> Self {
+            Self {
+                def: ToolDef {
+                    name: "probe".into(),
+                    description: "test probe; bumps a shared invocation counter".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: false,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for ProbeTool {
+        fn def(&self) -> &ToolDef {
+            &self.def
+        }
+        async fn invoke(&self, _args: Value) -> ToolResult {
+            PROBE_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
+            ToolResult::text("probe ran")
+        }
+    }
+
+    fn call_req(sid: Option<&str>) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some("probe".into()),
+            args: Some(serde_json::json!({})),
+            session_id: sid.map(|s| s.to_owned()),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ended_session_call_is_gated_live_and_anon_pass() {
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(ProbeTool::new()));
+        let registry = Arc::new(reg);
+
+        // Unique temp socket — never the default socket / CuaDriver.app daemon.
+        let socket = format!(
+            "/tmp/cua-driver-gate-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let reg_for_server = registry.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(reg_for_server, &socket_for_server, None).await;
+        });
+
+        // Wait for the daemon to bind.
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let sid = "gate-test-session-A1B2C3";
+
+        // 1. LIVE session call → tool runs.
+        let socket1 = socket.clone();
+        let s1 = sid.to_owned();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket1, &call_req(Some(&s1))))
+            .await
+            .unwrap()
+            .expect("live call response");
+        assert!(resp.ok, "live-session call should succeed");
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "live-session call must invoke the tool"
+        );
+
+        // 2. End the session (mirrors the control-conn EOF reaper path).
+        let socket2 = socket.clone();
+        let end = DaemonRequest {
+            method: "session_end".into(),
+            name: None,
+            args: None,
+            session_id: Some(sid.to_owned()),
+        };
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket2, &end))
+            .await
+            .unwrap()
+            .expect("session_end response");
+        assert!(resp.ok, "session_end should ack ok");
+
+        // 3. ENDED session call carrying the same sid → GATED. Tool must NOT run.
+        let socket3 = socket.clone();
+        let s3 = sid.to_owned();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket3, &call_req(Some(&s3))))
+            .await
+            .unwrap()
+            .expect("ended call response");
+        assert!(resp.ok, "gated call returns a benign ok");
+        assert_eq!(
+            resp.result
+                .as_ref()
+                .and_then(|r| r.get("sessionEnded"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "gated response must carry sessionEnded:true"
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "ended-session call must be a no-op (counter unchanged) — resurrection closed"
+        );
+
+        // 4. Anonymous call (no session id) still passes — no false positive.
+        let socket4 = socket.clone();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket4, &call_req(None)))
+            .await
+            .unwrap()
+            .expect("anon call response");
+        assert!(resp.ok, "anonymous call should succeed");
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            2,
+            "anonymous (no session id) call must still invoke the tool"
+        );
+
+        // Tear down the daemon.
+        let socket5 = socket.clone();
+        let shutdown = DaemonRequest {
+            method: "shutdown".into(),
+            name: None,
+            args: None,
+            session_id: None,
+        };
+        let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
     }
 }

@@ -11,7 +11,7 @@
 use anyhow::Result;
 use std::thread::sleep;
 use std::time::Duration;
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;

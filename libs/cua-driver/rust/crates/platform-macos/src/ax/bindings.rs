@@ -6,7 +6,7 @@
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
 
 use core_foundation::{
-    array::CFArrayRef,
+    array::{CFArrayRef, CFIndex},
     base::{CFRelease, CFRetain, CFTypeID, CFTypeRef},
     string::CFStringRef,
 };
@@ -68,6 +68,39 @@ extern "C" {
         value: CFTypeRef,
     ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
+
+    /// Fetch several attributes of an element in a single IPC round-trip.
+    /// `attributes` is a CFArray of attribute-name CFStrings; `values` is set
+    /// to a parallel CFArray with one slot per requested attribute (same order).
+    /// With `options = 0` a per-attribute failure is reported as an AXValue of
+    /// error type in that slot rather than aborting the whole batch; passing
+    /// `0x1` (StopOnError) would instead bail on the first failing attribute.
+    pub fn AXUIElementCopyMultipleAttributeValues(
+        element: AXUIElementRef,
+        attributes: CFArrayRef,
+        options: u32,
+        values: *mut CFArrayRef,
+    ) -> AXError;
+
+    /// Fetch a contiguous range (`index`..`index+maxValues`) of an
+    /// array-valued attribute in one IPC round-trip. Used to cap how many
+    /// children of a single node we materialize.
+    pub fn AXUIElementCopyAttributeValues(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        index: CFIndex,
+        maxValues: CFIndex,
+        values: *mut CFArrayRef,
+    ) -> AXError;
+
+    /// Total element count of an array-valued attribute, without fetching it.
+    pub fn AXUIElementGetAttributeValueCount(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        count: *mut CFIndex,
+    ) -> AXError;
+
+    pub fn AXValueGetTypeID() -> CFTypeID;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with
     /// `{kAXTrustedCheckOptionPrompt: true}` raises the system Accessibility
@@ -127,6 +160,130 @@ pub unsafe fn copy_action_names(element: AXUIElementRef) -> Vec<String> {
             Some(cf.to_string())
         })
         .collect()
+}
+
+/// Fetch several string attributes of an element in ONE IPC round-trip.
+///
+/// Returns one `Option<String>` per requested attribute, in the same order as
+/// `attr_names`:
+/// - `Some(s)` when the slot came back as a CFString (including the empty
+///   string `""` — an attribute that is *present but empty* stays distinct from
+///   an *absent* attribute, which is critical for the AXTitle-vs-AXDescription
+///   None-vs-empty semantics the tree formatter relies on);
+/// - `None` when the attribute is unsupported/has no value (the slot is an
+///   AXValue error placeholder) or is present but not a string.
+///
+/// `options` is hard-coded to `0` (NOT StopOnError): one failing attribute must
+/// not abort the batch — its slot is simply filtered out by position.
+pub unsafe fn copy_multiple_attrs(
+    element: AXUIElementRef,
+    attr_names: &[&str],
+) -> Vec<Option<String>> {
+    if attr_names.is_empty() {
+        return Vec::new();
+    }
+
+    // Build the CFArray of attribute-name CFStrings.
+    let cf_names: Vec<CFStr> = attr_names.iter().map(|n| CFStr::new(n)).collect();
+    let names_array = CFArray::from_CFTypes(&cf_names);
+
+    let mut values: CFArrayRef = std::ptr::null();
+    let err = AXUIElementCopyMultipleAttributeValues(
+        element,
+        names_array.as_concrete_TypeRef(),
+        0, // options = 0: do NOT stop on the first failing attribute.
+        &mut values,
+    );
+    if err != kAXErrorSuccess || values.is_null() {
+        // Whole-batch failure — report every slot as absent.
+        return vec![None; attr_names.len()];
+    }
+
+    let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(values as _);
+    let cf_string_type_id = CFStr::type_id();
+    let len = arr.len() as usize;
+
+    (0..attr_names.len())
+        .map(|i| {
+            if i >= len {
+                return None;
+            }
+            let item = match arr.get(i as CFIndex) {
+                Some(it) => *it,
+                None => return None,
+            };
+            if item.is_null() {
+                return None;
+            }
+            // Per-slot failures come back as an AXValue of error type, not a
+            // CFString — filter them out by type so they read as "absent".
+            if core_foundation::base::CFGetTypeID(item) != cf_string_type_id {
+                return None;
+            }
+            // Borrow (get-rule): the array owns the element; clone into a String.
+            let s = CFStr::wrap_under_get_rule(item as _);
+            Some(s.to_string())
+        })
+        .collect()
+}
+
+/// Fetch up to `max` children of an element in ONE IPC round-trip via the
+/// ranged-attribute API, instead of pulling the entire (possibly huge)
+/// AXChildren array. Returns a Vec of retained AXUIElementRefs the caller must
+/// release, plus a flag that is `true` when the node has MORE children than
+/// were returned (i.e. the list was clipped at `max`).
+pub unsafe fn copy_children_ranged(
+    element: AXUIElementRef,
+    max: CFIndex,
+) -> (Vec<AXUIElementRef>, bool) {
+    let attr = CFStr::new("AXChildren");
+
+    // How many children does this node actually have? Used only to decide
+    // whether the ranged fetch clipped anything.
+    let mut total: CFIndex = 0;
+    let count_err = AXUIElementGetAttributeValueCount(
+        element,
+        attr.as_concrete_TypeRef(),
+        &mut total,
+    );
+    let total_known = count_err == kAXErrorSuccess;
+
+    let mut value: CFArrayRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValues(
+        element,
+        attr.as_concrete_TypeRef(),
+        0,
+        max,
+        &mut value,
+    );
+    if err != kAXErrorSuccess || value.is_null() {
+        return (vec![], false);
+    }
+
+    let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
+    let ax_type_id = AXUIElementGetTypeID();
+    let children: Vec<AXUIElementRef> = (0..arr.len())
+        .filter_map(|i| {
+            let item = *arr.get(i)?;
+            if core_foundation::base::CFGetTypeID(item) == ax_type_id {
+                // Retain so we own it — caller is responsible for releasing.
+                CFRetain(item);
+                Some(item as AXUIElementRef)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Clipped when the node reports more children than we fetched. If the count
+    // call failed we fall back to "fetched exactly max" as the clip heuristic.
+    let clipped = if total_known {
+        total > max
+    } else {
+        arr.len() >= max
+    };
+
+    (children, clipped)
 }
 
 /// Read the on-screen center of an AX element (AXPosition + AXSize → center).

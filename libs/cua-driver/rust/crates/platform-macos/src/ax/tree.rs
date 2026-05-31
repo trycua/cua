@@ -25,6 +25,14 @@ const MAX_DEPTH: usize = 25;
 /// with a warning line appended (mirrors Swift reference implementation).
 const MAX_ELEMENTS: usize = 2_000;
 
+/// Per-node cap on how many children we fetch via the ranged-children API.
+/// Distinct from MAX_ELEMENTS (a total-walk cap): this bounds a single
+/// pathological node (e.g. a virtualized list/grid exposing thousands of
+/// rows) so one node can't dominate the walk, while the total cap bounds the
+/// walk as a whole. When a node's children are clipped here a per-node note
+/// is appended to the tree.
+const MAX_CHILDREN: core_foundation::array::CFIndex = 200;
+
 /// A single node in the AX tree.
 #[derive(Debug, Clone)]
 pub struct AXNode {
@@ -165,16 +173,32 @@ unsafe fn walk_element(
     }
     *visited_count += 1;
 
-    let role = copy_string_attr(element, "AXRole")
-        .unwrap_or_else(|| "AXUnknown".into());
+    // Batch every string attribute we care about into ONE IPC round-trip
+    // instead of ~7 separate AXUIElementCopyAttributeValue calls. Order is
+    // load-bearing — each slot is indexed by position below.
+    const ATTRS: [&str; 7] = [
+        "AXRole",            // 0
+        "AXTitle",           // 1
+        "AXValue",           // 2
+        "AXPlaceholderValue",// 3 — fallback for empty text fields
+        "AXDescription",     // 4
+        "AXIdentifier",      // 5
+        "AXHelp",            // 6
+    ];
+    let attrs = copy_multiple_attrs(element, &ATTRS);
+
+    let role = attrs[0].clone().unwrap_or_else(|| "AXUnknown".into());
 
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
         // Still recurse — children may be interesting.
-        let children = copy_children(element);
+        let (children, child_clipped) = copy_children_ranged(element, MAX_CHILDREN);
         for child in children {
             walk_element(child, depth, nodes, lines, counter, visited_count, truncated);
             CFRelease(child as CFTypeRef);
+        }
+        if child_clipped {
+            note_clipped_children(lines, depth);
         }
         return;
     }
@@ -184,14 +208,22 @@ unsafe fn walk_element(
     // This is critical for Calculator where AXTitle="" but AXDescription="2"
     // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
     // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = copy_string_attr(element, "AXTitle");
-    let value = copy_string_attr(element, "AXValue");
-    // AXPlaceholderValue as fallback for empty text fields.
-    let value = value.filter(|v| !v.trim().is_empty())
-        .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
-    let description = copy_string_attr(element, "AXDescription");
-    let identifier = copy_string_attr(element, "AXIdentifier");
-    let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
+    //
+    // None-vs-empty matters here: an attribute that is present-but-empty ("")
+    // must stay distinct from an absent attribute. copy_multiple_attrs preserves
+    // that — a present empty slot is Some("") and an unsupported slot is None —
+    // so the AXTitle="" / AXDescription="2" Calculator case is unaffected by
+    // batching.
+    let title = attrs[1].clone();
+    // AXValue, with AXPlaceholderValue as fallback when AXValue is missing/blank.
+    let value = attrs[2].clone()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| attrs[3].clone());
+    let description = attrs[4].clone();
+    let identifier = attrs[5].clone();
+    let help = attrs[6].clone().filter(|h| !h.trim().is_empty());
+    // Action names remain a separate call — they come from a different AX API
+    // (AXUIElementCopyActionNames) and can't ride the attribute batch.
     let actions = copy_action_names(element);
 
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
@@ -204,10 +236,13 @@ unsafe fn walk_element(
     let is_actionable = !actions.is_empty();
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let children = copy_children(element);
+        let (children, child_clipped) = copy_children_ranged(element, MAX_CHILDREN);
         for child in children {
             walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
             CFRelease(child as CFTypeRef);
+        }
+        if child_clipped {
+            note_clipped_children(lines, depth + 1);
         }
         return;
     }
@@ -248,11 +283,25 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
 
-    let children = copy_children(element);
+    let (children, child_clipped) = copy_children_ranged(element, MAX_CHILDREN);
     for child in children {
         walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
         CFRelease(child as CFTypeRef);
     }
+    if child_clipped {
+        note_clipped_children(lines, depth + 1);
+    }
+}
+
+/// Append a per-node truncation note when a node's children were clipped at the
+/// per-node `MAX_CHILDREN` cap. This is a *different concern* from the total
+/// MAX_ELEMENTS node cap: a single node with thousands of children (a giant
+/// list/grid) is capped locally without aborting the whole walk.
+fn note_clipped_children(lines: &mut Vec<(usize, String)>, depth: usize) {
+    lines.push((
+        depth,
+        format!("- … (children clipped at {MAX_CHILDREN})"),
+    ));
 }
 
 fn format_node_line(node: &AXNode) -> String {

@@ -36,6 +36,8 @@ pub mod recording_hooks;
 pub mod video_sckit;
 #[cfg(target_os = "macos")]
 pub mod pip;
+#[cfg(target_os = "macos")]
+pub mod session;
 
 use cua_driver_core::tool::ToolRegistry;
 

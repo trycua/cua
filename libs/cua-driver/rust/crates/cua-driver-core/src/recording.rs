@@ -93,16 +93,18 @@ pub struct RecordingSession {
 
 struct RecordingInner {
     enabled: bool,
-    /// Monotonically-increasing ownership token, bumped on every successful
-    /// `start()` (gen 1 for the first session, 2 for the next, …). The
-    /// daemon-global recorder is a singleton, so when client A starts a
-    /// recording and client B later starts another (clobbering A's session),
-    /// A's disconnect must NOT stop B's recording. The proxy-exit hook
-    /// captures the generation it started with and passes it to `stop()`,
-    /// which no-ops when the live generation has moved on. Never reset in
-    /// `stop()` — it must keep climbing so a stale token never collides with
-    /// a future live one (#1764).
-    generation: u64,
+    /// Session that owns the live recording, stamped on every successful
+    /// `start()` from the daemon-injected `_session_id`. The daemon-global
+    /// recorder is a singleton, so when session A starts a recording and
+    /// session B later starts another (clobbering A's), A's disconnect must
+    /// NOT stop B's recording. The proxy-exit `session_end` hook passes its
+    /// own session id to `stop_owner()`, which no-ops when the live owner has
+    /// moved on. `None` means the recording was started anonymously (CLI
+    /// one-shot / legacy `configure()` shim) and is owned by nobody — only an
+    /// unconditional `stop_owner(None)` can tear it down. Supersedes the
+    /// #1775 generation token: a session id is a stable owner identity rather
+    /// than a monotonic counter, and it doubles as the config-override key.
+    owner: Option<String>,
     output_dir: Option<PathBuf>,
     next_turn: u32,
     session_start_ms: u64,
@@ -140,11 +142,13 @@ pub struct RecordingState {
     /// Path to the most recently finalized video file, if any. Populated
     /// after a stop; cleared on next start.
     pub last_video_path: Option<String>,
-    /// Ownership token of the current (or most recent) session. Bumped on
-    /// every successful `start()`. Surfaced so the proxy-exit hook can
-    /// capture the generation it started a recording with and pass it back
-    /// to `stop()` to avoid stopping a recording a later client now owns.
-    pub generation: u64,
+    /// Session id that owns the current (or most recent) recording, stamped on
+    /// `start()` from the daemon-injected `_session_id`. `None` for an
+    /// anonymously-started recording (CLI one-shot / legacy shim). Surfaced so
+    /// callers can see who owns the live recording; the proxy-exit teardown
+    /// drives ownership via `session_end` (it already knows its own id) rather
+    /// than reading this back.
+    pub owner: Option<String>,
 }
 
 impl RecordingSession {
@@ -152,7 +156,7 @@ impl RecordingSession {
         Self {
             inner: Mutex::new(RecordingInner {
                 enabled: false,
-                generation: 0,
+                owner: None,
                 output_dir: None,
                 next_turn: 1,
                 session_start_ms: 0,
@@ -178,7 +182,12 @@ impl RecordingSession {
     /// the per-turn capture (action.json + screenshot.png) is independent
     /// of video — but the structured state carries the ffmpeg error so
     /// the caller can surface it.
-    pub fn start(&self, output_dir: &str, record_video: bool) -> anyhow::Result<()> {
+    ///
+    /// `owner` stamps the session that owns this recording (the daemon-injected
+    /// `_session_id`). `None` marks an anonymous start (CLI one-shot / legacy
+    /// `configure()` shim) owned by nobody. See `stop_owner()` for how this
+    /// gates teardown.
+    pub fn start(&self, output_dir: &str, record_video: bool, owner: Option<&str>) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         // If a previous session is still open, gracefully tear it down
         // first so the caller doesn't accidentally leak an ffmpeg process.
@@ -244,15 +253,12 @@ impl RecordingSession {
             &session_payload,
         );
 
-        // Bump the ownership token on every successful start so each session
-        // gets a fresh, monotonically-increasing generation (gen 1 for the
-        // first start(), 2 for the next, …). Reached only on the success path
-        // — start() returns early via `?` on `create_dir_all` failure above,
-        // so a failed start does not consume a generation. Deliberately NOT
-        // reset in stop() so a stale token can never collide with a future
-        // live one. `wrapping_add` avoids a debug-overflow panic at the
-        // (astronomically improbable) 2^64th start (#1764).
-        inner.generation = inner.generation.wrapping_add(1);
+        // Stamp the owning session on every successful start (reached only on
+        // the success path — start() returns early via `?` on `create_dir_all`
+        // failure above). `owner` clobbers any previous owner, which is correct:
+        // the daemon-global recorder is a singleton, so the latest start() owns
+        // it. The previous owner's disconnect then no-ops in stop_owner().
+        inner.owner = owner.map(str::to_owned);
         inner.enabled = true;
         inner.output_dir = Some(dir);
         inner.next_turn = 1;
@@ -269,27 +275,33 @@ impl RecordingSession {
     /// gracefully terminated and the finalized metadata is folded into
     /// `session.json`.
     ///
-    /// `expected_generation` is the ownership guard for the proxy-exit hook
-    /// (#1764). When `Some(gen)`, the stop only acts if `gen` matches the
-    /// live generation — a stale token (a disconnecting client whose session
-    /// was already clobbered by a newer `start()`) is a silent no-op, leaving
-    /// the recording owned by the newer generation running. When `None`
-    /// (manual `stop_recording`, the legacy `configure()` shim, and the
-    /// idle-TTL backstop), the stop is unconditional — current behavior.
-    /// The guard lives inside the lock so it is race-free against a
-    /// concurrent `start()`.
-    pub fn stop(&self, expected_generation: Option<u64>) -> anyhow::Result<()> {
+    /// `requester` is the ownership guard for session-driven teardown
+    /// (`session_end` / proxy-exit). Semantics:
+    ///   - `None` — unconditional stop. Manual `stop_recording`, the legacy
+    ///     `configure()` shim, the CLI one-shot path, and the idle-TTL backstop
+    ///     all pass `None` to preserve today's manual-stop behavior.
+    ///   - `Some(sid)` where `sid` owns the live recording — stop + clear owner.
+    ///   - `Some(sid)` where `sid` does NOT own it (a disconnecting session
+    ///     whose recording was already clobbered by a newer `start()`, or which
+    ///     never started a recording) — silent no-op, leaving the current
+    ///     owner's recording running.
+    /// The guard lives inside the lock so it is race-free against a concurrent
+    /// `start()`. Supersedes the #1775 generation-token `stop()`.
+    pub fn stop_owner(&self, requester: Option<&str>) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled {
             return Ok(());
         }
-        if let Some(expected) = expected_generation {
-            if expected != inner.generation {
-                // Stale token: the active recording is owned by a newer
-                // generation. Leave it running.
+        if let Some(req) = requester {
+            // A targeted stop only acts when the requester owns the live
+            // recording. An anonymously-owned recording (owner == None) is
+            // never torn down by a session-scoped stop — only an unconditional
+            // `stop_owner(None)` reaches it.
+            if inner.owner.as_deref() != Some(req) {
                 return Ok(());
             }
         }
+        inner.owner = None;
         let dir = inner.output_dir.clone();
         let video_meta = inner.video.take().and_then(|rec| rec.stop().ok());
         let cursor_samples = inner.cursor.take().map(|c| c.stop()).unwrap_or(0);
@@ -335,11 +347,12 @@ impl RecordingSession {
     /// `recording_tools.rs`), but the CLI `recording start` keeps video on.
     pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
         if !enabled {
-            return self.stop(None);
+            return self.stop_owner(None);
         }
         let dir = output_dir
             .ok_or_else(|| anyhow::anyhow!("output_dir is required when enabling recording"))?;
-        self.start(dir, true)
+        // Legacy CLI path: anonymous owner (no MCP session id available here).
+        self.start(dir, true, None)
     }
 
     /// Return a snapshot of the current state (non-blocking).
@@ -353,7 +366,7 @@ impl RecordingSession {
             video_active: inner.video.is_some(),
             last_video_path: inner.last_video.as_ref()
                 .map(|m| m.path.to_string_lossy().into_owned()),
-            generation: inner.generation,
+            owner: inner.owner.clone(),
         }
     }
 
@@ -380,10 +393,17 @@ impl RecordingSession {
             (out.join(format!("turn-{idx:05}")), inner.session_start_ms)
         };
 
+        // Strip the daemon-injected `_session_id` (and any other reserved
+        // `_`-prefixed internal keys) before recording so the UUID never lands
+        // in action.json's `arguments`. The injection point is the daemon
+        // `call` branch (serve.rs); recording is the single chokepoint where
+        // those internal keys must not leak into the persisted trajectory.
+        let args = strip_internal_keys(args);
+
         if let Err(e) = write_turn(
             &turn_dir,
             tool_name,
-            args,
+            args.as_ref(),
             result_text,
             start_ms,
             session_start_ms,
@@ -399,6 +419,24 @@ impl Default for RecordingSession {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/// Drop reserved internal keys (any `_`-prefixed key, e.g. the daemon-injected
+/// `_session_id`) from a tool-call args object so they never persist into a
+/// recorded `action.json`. Returns the value unchanged when it isn't an object
+/// or carries no internal keys (cheap clone-free fast path).
+fn strip_internal_keys(args: &Value) -> std::borrow::Cow<'_, Value> {
+    match args.as_object() {
+        Some(map) if map.keys().any(|k| k.starts_with('_')) => {
+            let cleaned: serde_json::Map<String, Value> = map
+                .iter()
+                .filter(|(k, _)| !k.starts_with('_'))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            std::borrow::Cow::Owned(Value::Object(cleaned))
+        }
+        _ => std::borrow::Cow::Borrowed(args),
+    }
+}
 
 fn write_turn(
     turn_dir: &Path,

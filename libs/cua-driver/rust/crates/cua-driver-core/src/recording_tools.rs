@@ -120,8 +120,12 @@ impl Tool for StartRecordingTool {
             return ToolResult::error("`output_dir` is required.");
         }
         let record_video = args.bool_or("record_video", false);
+        // Daemon-injected ownership key (absent for one-shot CLI / anonymous
+        // sessions). Stamps the recording so a session-scoped teardown
+        // (session_end) only stops the recording its own session started.
+        let owner = args.opt_str("_session_id");
 
-        match self.session.start(output_dir.as_deref().unwrap(), record_video) {
+        match self.session.start(output_dir.as_deref().unwrap(), record_video, owner.as_deref()) {
             Ok(()) => {
                 let state = self.session.current_state();
                 // When the caller asked for video and it failed (e.g. macOS
@@ -167,24 +171,14 @@ impl Tool for StopRecordingTool {
                 so the mp4's moov atom is finalized (the file is playable). Calling \
                 stop on an already-stopped session is a no-op. The response carries \
                 `last_video_path` pointing at the finalized mp4 (when video was on).\n\n\
-                **Optional `generation` (ownership guard, #1764).** When present, the \
-                stop only acts if it matches the current recording's generation token \
-                (surfaced in `start_recording`'s `structuredContent.generation`); a \
-                stale token is a silent no-op. This is used by the MCP proxy's \
-                disconnect auto-stop so a client exiting doesn't stop a recording a \
-                later client started. Omit it for a normal manual stop — that \
-                unconditionally stops the active recording.".into(),
+                A manual `stop_recording` is **unconditional** — it stops whatever \
+                recording is active regardless of which session started it. \
+                Ownership-scoped teardown (so one MCP client disconnecting can't stop a \
+                recording a later client started) is handled by the daemon's \
+                `session_end` lifecycle signal, not by this tool.".into(),
             input_schema: json!({
                 "type": "object",
-                "properties": {
-                    "generation": {
-                        "type": "integer",
-                        "description": "Ownership token from a prior start_recording's \
-                            structuredContent.generation. When set, stop only acts if \
-                            it matches the live recording's generation (stale = no-op). \
-                            Omit for an unconditional manual stop."
-                    }
-                },
+                "properties": {},
                 "additionalProperties": false
             }),
             read_only: false,
@@ -194,11 +188,11 @@ impl Tool for StopRecordingTool {
         })
     }
 
-    async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::tool_args::ArgsExt;
-        // Optional ownership token (#1764). `None` (omitted) → unconditional
-        // manual stop; `Some(gen)` → guarded stop that no-ops on a stale token.
-        match self.session.stop(args.opt_u64("generation")) {
+    async fn invoke(&self, _args: Value) -> ToolResult {
+        // Manual stop is unconditional — `None` requester tears down whatever
+        // recording is active. Session-scoped teardown is driven by the
+        // daemon's `session_end` arm (serve.rs), which calls `stop_owner(sid)`.
+        match self.session.stop_owner(None) {
             Ok(()) => {
                 let state = self.session.current_state();
                 let video_note = state.last_video_path.as_deref()
@@ -460,10 +454,11 @@ fn recording_state_json(state: &RecordingState) -> Value {
         "last_error": state.last_error,
         "video_active": state.video_active,
         "last_video_path": state.last_video_path,
-        // Ownership token for the proxy-exit teardown guard (#1764). The
-        // disconnect auto-stop captures this off a successful start_recording
-        // and passes it back so it can't stop a recording a later client owns.
-        "generation": state.generation,
+        // Session that owns the live recording (the daemon-injected
+        // `_session_id`), or null when started anonymously. Informational; the
+        // proxy-exit teardown drives ownership via the daemon `session_end`
+        // signal rather than reading this back.
+        "owner": state.owner,
     })
 }
 

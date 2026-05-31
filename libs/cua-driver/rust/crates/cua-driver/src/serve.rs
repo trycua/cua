@@ -79,11 +79,11 @@ fn spawn_recording_idle_backstop(
                     // Unconditional (`None`): the idle backstop is a last-resort
                     // GLOBAL kill of whatever recording is active after global
                     // inactivity — not an owner reclaiming a specific session.
-                    // It already targets the current generation by definition,
-                    // so a token would be redundant and could only make it
-                    // wrongly no-op. The generation guard exists solely for the
-                    // proxy-exit hook (#1764).
-                    let _ = registry.recording.stop(None);
+                    // It already targets the live recording by definition, so a
+                    // requester id would be redundant and could only make it
+                    // wrongly no-op. Session-scoped teardown is the proxy-exit
+                    // `session_end` path (#1764 / session-identity work).
+                    let _ = registry.recording.stop_owner(None);
                 }
             }
         }
@@ -156,6 +156,16 @@ pub struct DaemonRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<serde_json::Value>,
+    /// MCP-session identity minted once per `cua-driver mcp` proxy process and
+    /// stamped on every forwarded request. The daemon uses it to OWN and CLEAN
+    /// UP session-scoped state (recording, config overrides). Absent (`None`)
+    /// means an anonymous/"global" session — a one-shot `cua-driver call` or a
+    /// legacy proxy that predates this field — which keeps today's behavior.
+    /// `skip_serializing_if = Option::is_none` makes the absent case
+    /// byte-identical on the wire, so old clients and daemons interoperate.
+    /// serde defaults a missing field to `None` on deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,7 +230,7 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let req = DaemonRequest { method: "list".into(), name: None, args: None };
+        let req = DaemonRequest { method: "list".into(), name: None, args: None, session_id: None };
         send_request(socket_path, &req)
             .ok()
             .map(|r| r.ok)
@@ -454,9 +464,30 @@ pub async fn run_serve(
                                     eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                                     "type_text".to_owned()
                                 } else { raw_name.clone() };
-                                let args = req.args.unwrap_or(serde_json::Value::Object(
+                                let mut args = req.args.unwrap_or(serde_json::Value::Object(
                                     serde_json::Map::new()
                                 ));
+                                // Inject the proxy-minted session identity into
+                                // the tool args under the reserved `_session_id`
+                                // key so session-aware tools can read it via
+                                // ArgsExt (the same path cursor_id uses). Only
+                                // when the client sent a session_id AND the args
+                                // is an object that doesn't already carry the
+                                // key (so an explicit client value wins, and a
+                                // non-object arg is left untouched). The daemon
+                                // never validates args against input_schema, so
+                                // this extra key is safe; recording strips all
+                                // `_`-prefixed keys before persisting a turn.
+                                if let Some(sid) = &req.session_id {
+                                    if let Some(obj) = args.as_object_mut() {
+                                        if !obj.contains_key("_session_id") {
+                                            obj.insert(
+                                                "_session_id".to_owned(),
+                                                serde_json::Value::String(sid.clone()),
+                                            );
+                                        }
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(
                                         format!("Unknown tool: {tool_name}"), 64
@@ -494,6 +525,26 @@ pub async fn run_serve(
                                 } else {
                                     DaemonResponse::ok(result_obj)
                                 };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "session_end" => {
+                                // Session lifecycle teardown: the proxy sends
+                                // this best-effort on stdin EOF (client
+                                // disconnect), carrying its own session_id. Drop
+                                // that session's owned state — stop its recording
+                                // (no-op if a later session clobbered it) and
+                                // clear its config overrides via the registered
+                                // platform cleanup hooks. Always ACK ok so the
+                                // proxy's best-effort teardown sees success.
+                                if let Some(sid) = req.session_id.as_deref() {
+                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    cua_driver_core::session::fire_session_end(sid);
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"session_end": true})
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -845,7 +896,22 @@ pub async fn run_serve(
                                     eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                                     "type_text".to_owned()
                                 } else { raw_name.clone() };
-                                let args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                let mut args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                // Inject the proxy-minted session identity under
+                                // the reserved `_session_id` key (see the unix
+                                // branch above for the full rationale). Only when
+                                // a session_id was sent and the args object
+                                // doesn't already carry the key.
+                                if let Some(sid) = &req.session_id {
+                                    if let Some(obj) = args.as_object_mut() {
+                                        if !obj.contains_key("_session_id") {
+                                            obj.insert(
+                                                "_session_id".to_owned(),
+                                                serde_json::Value::String(sid.clone()),
+                                            );
+                                        }
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
                                     let _ = writer.write_all(
@@ -875,6 +941,21 @@ pub async fn run_serve(
                                 } else {
                                     DaemonResponse::ok(result_obj)
                                 };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "session_end" => {
+                                // Session lifecycle teardown (see the unix branch
+                                // above). Drop the disconnecting session's owned
+                                // recording + config overrides, then ACK ok.
+                                if let Some(sid) = req.session_id.as_deref() {
+                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    cua_driver_core::session::fire_session_end(sid);
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"session_end": true})
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -982,7 +1063,7 @@ pub fn run_stop_cmd(socket_path: &str) {
         std::process::exit(1);
     }
 
-    let req = DaemonRequest { method: "shutdown".into(), name: None, args: None };
+    let req = DaemonRequest { method: "shutdown".into(), name: None, args: None, session_id: None };
     match send_request(socket_path, &req) {
         Ok(_) => {
             // Poll until daemon stops responding (up to 2 seconds).

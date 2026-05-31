@@ -452,7 +452,7 @@ Start trajectory recording. Every subsequent action-tool invocation (click, righ
 
 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
 
-**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. On the daemon-proxy path (the default macOS `cua-driver mcp` flow), recording is stopped automatically when the MCP client disconnects, so a forgotten session no longer keeps writing to disk; a daemon-side idle timeout (~5 min of no tool activity) is a backstop in case the client is killed before it can clean up.
+**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. On the daemon-proxy path (the default macOS `cua-driver mcp` flow), recording is stopped automatically when the MCP client disconnects (the proxy sends a `session_end` signal carrying its session identity, and the daemon stops only the recording that session owns), so a forgotten session no longer keeps writing to disk; a daemon-side idle timeout (~5 min of no tool activity) is a backstop in case the client is killed before it can clean up.
 
 **macOS uses native ScreenCaptureKit** (in-process SCStream + SCRecordingOutput) so video inherits Cua Driver's own Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
 
@@ -460,7 +460,7 @@ Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restar
 
 State persists for the life of the daemon / MCP session; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
 
-The result's `structuredContent` includes a `generation` token (an integer that increments on every successful `start_recording`) identifying this session. The daemon-proxy disconnect auto-stop captures it and passes it back to `stop_recording` so a client exiting can't stop a recording a later client started — see `stop_recording`'s `generation` argument.
+The result's `structuredContent` includes an `owner` field — the session that owns the live recording (the proxy-minted session identity), or `null` when started anonymously. Ownership is what lets the daemon-proxy disconnect auto-stop (a `session_end` signal) stop only the recording this session started, even when a later client clobbered the singleton recorder with its own `start_recording`. (This `owner` field supersedes the earlier `generation` token.)
 
 **Arguments:**
 
@@ -475,9 +475,11 @@ The result's `structuredContent` includes a `generation` token (an integer that 
 
 Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
+A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one MCP client disconnecting can't stop a recording a later client started) is handled by the daemon's `session_end` lifecycle signal, not by this tool — so `stop_recording` takes no arguments.
+
 **Arguments:**
 
-- `generation` (integer, optional): Ownership token from a prior `start_recording`'s `structuredContent.generation`. When present, the stop only acts if it matches the current recording's generation — a stale token (a session already clobbered by a newer `start_recording`) is a silent no-op. This is used by the MCP proxy's disconnect auto-stop so a client exiting doesn't stop a recording a later client started. Omit it for a normal manual stop, which unconditionally stops the active recording.
+_None._
 
 ### replay_trajectory
 
@@ -503,6 +505,8 @@ Caveats:
 ### set_config
 
 Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).
+
+**Per-session isolation (daemon-proxy path).** The daemon is one shared process: every `cua-driver mcp` client shares its state. To stop concurrent MCP sessions from clobbering each other (and the on-disk default), `set_config` from a proxy-backed MCP session writes an **in-memory, session-scoped override** — it does NOT touch the global `DriverConfig` or persist to `~/.cua-driver/config.json`. `get_config` and the capture tools then resolve effective values as call-arg &gt; session override &gt; global default, and the override is dropped automatically when the client disconnects. Only the anonymous path — the `cua-driver config set` CLI and one-shot `cua-driver call` — writes the persisted global default that survives a daemon restart. (`capture_mode` / `max_image_dimension` session-scoping is macOS-only today; Windows/Linux still write the shared config — tracked as a follow-up.)
 
 **Arguments:**
 

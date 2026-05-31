@@ -98,12 +98,24 @@ cua-driver status
 #   pid: 12345
 ```
 
+### Session identity and shared daemon state
+
+The daemon drives **one** physical machine, and every `cua-driver mcp` client shares its `ToolState`. Some of that state is "set once, affects later calls" — the trajectory recorder is a singleton, and `set_config` mutates a process-global config — so two concurrent MCP sessions would otherwise clobber each other.
+
+To scope that state, each `cua-driver mcp` proxy mints a **session identity** once at startup and stamps it on every request it forwards to the daemon. The daemon uses it to OWN and CLEAN UP session-scoped state:
+
+- **Recording ownership.** `start_recording` stamps the live recording with the calling session. On disconnect the proxy sends a best-effort `session_end` signal; the daemon stops only the recording that session owns — so if a later client started its own recording (clobbering the singleton), the earlier client's disconnect can't stop it. A manual `stop_recording`, the CLI, and the daemon idle-TTL backstop all stop unconditionally.
+- **Per-session config.** `set_config` from a proxy-backed session writes an in-memory override keyed by the session, not the shared/persisted global — see [set_config](/cua-driver/reference/mcp-tools#set_config). The override is dropped on `session_end`. Only the anonymous CLI / one-shot path writes the persisted default.
+
+This solves state **ownership and cleanup**, not safe concurrent screen/input control — the daemon still drives one machine, so two sessions clicking at once still contend for the same desktop. Backward-compatible: a one-shot `cua-driver call` (or an older proxy that predates the session field) carries no session identity and behaves exactly as before — anonymous/global, writing the persisted config and owning no session-scoped state.
+
 ### mcp-client lifecycle (proxy mode)
 
 The `cua-driver mcp` process in proxy mode is a thin stdio→UDS pump:
 
 - Lives for the duration of the stdio session — exits cleanly when the MCP client (parent) closes stdin or the host process is killed.
 - Does **not** terminate the daemon on exit. The daemon stays running, ready for the next mcp client.
+- On a clean stdin EOF it sends one best-effort `session_end` so the daemon drops this session's owned state (recording + config overrides). A SIGKILL skips this; the daemon idle-TTL backstop still bounds a leaked recording.
 - Holds no AX caches or per-pid state of its own — everything lives on the daemon side. Restarting just the mcp client preserves whatever element-index caches the daemon has built up.
 
 ### mcp-client lifecycle (in-process mode)

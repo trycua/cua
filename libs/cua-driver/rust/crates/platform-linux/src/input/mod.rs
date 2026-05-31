@@ -13,10 +13,46 @@ use std::thread::sleep;
 use std::time::Duration;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
+use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
+
+fn xtest_available(conn: &RustConnection) -> bool {
+    conn.extension_information(x11rb::protocol::xtest::X11_EXTENSION_NAME)
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+fn xtest_key_press(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
+    conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)?;
+    conn.flush()?;
+    Ok(())
+}
+
+fn xtest_key_release(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
+    conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)?;
+    conn.flush()?;
+    Ok(())
+}
+
+fn xtest_settle(conn: &RustConnection) -> Result<()> {
+    // Force a round-trip so the server processes the synthetic release before
+    // this short-lived connection is dropped or the next tool call starts.
+    conn.get_input_focus()?.reply()?;
+    Ok(())
+}
+
+fn xtest_key_tap(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
+    xtest_key_press(conn, root, keycode)?;
+    sleep(Duration::from_millis(KEY_DELAY_MS));
+    xtest_key_release(conn, root, keycode)?;
+    xtest_settle(conn)?;
+    sleep(Duration::from_millis(KEY_DELAY_MS));
+    Ok(())
+}
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {

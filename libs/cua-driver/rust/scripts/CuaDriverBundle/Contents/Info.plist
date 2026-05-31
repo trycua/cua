@@ -44,6 +44,14 @@
     <string>Cua Driver</string>
     <key>CFBundleExecutable</key>
     <string>cua-driver</string>
+    <!-- Bundle icon shown in Finder / Launchpad / Get Info. Resolves to
+         Contents/Resources/AppIcon.icns. LSUIElement (below) suppresses
+         the Dock icon, but Finder and Launchpad still render this — without
+         it the app shows a blank placeholder (see issue #1496). -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <!-- Version values are placeholders. The CD workflow's

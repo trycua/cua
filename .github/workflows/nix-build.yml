@@ -29,10 +29,32 @@ env:
   NIX_CACHE_SECRET: nix-cache/trycua-nix-cache/signing-key
 
 jobs:
-  build-and-test:
-    name: Build cua-driver & run integration tests
+  nix-checks:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: NixOS integration test
+            check_attr: cua-driver-integration
+            timeout_minutes: 8
+            visual: false
+            result_link: result-cua-driver-integration
+            artifact_name: ""
+          - name: Linux cursor click GIF test
+            check_attr: cua-driver-linux-cursor-click-gif
+            timeout_minutes: 12
+            visual: true
+            result_link: result-linux-cursor-click-gif
+            artifact_name: cua-driver-linux-cursor-click-gif
+          - name: Linux background terminal GIF test
+            check_attr: cua-driver-linux-background-terminal-gif
+            timeout_minutes: 12
+            visual: true
+            result_link: result-linux-background-terminal-gif
+            artifact_name: cua-driver-linux-background-terminal-gif
 
     steps:
       - name: Checkout
@@ -80,59 +102,62 @@ jobs:
             trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-      - name: Run NixOS integration test
-        timeout-minutes: 8
-        run: nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
-
-      - name: Run Linux cursor click GIF test
-        timeout-minutes: 12
+      - name: Run ${{ matrix.name }}
+        timeout-minutes: ${{ matrix.timeout_minutes }}
         run: |
-          nix build .#checks.x86_64-linux.cua-driver-linux-cursor-click-gif \
+          nix build .#checks.x86_64-linux.${{ matrix.check_attr }} \
             --print-build-logs --show-trace \
-            -o result-linux-cursor-click-gif
+            -o ${{ matrix.result_link }}
 
-      - name: Run Linux background terminal GIF test
-        timeout-minutes: 12
+      - name: Collect GIF artifacts
+        if: always() && matrix.visual
         run: |
-          nix build .#checks.x86_64-linux.cua-driver-linux-background-terminal-gif \
-            --print-build-logs --show-trace \
-            -o result-linux-background-terminal-gif
+          mkdir -p artifacts
+          find -L "${{ matrix.result_link }}/" -name '*.gif' -type f -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -la artifacts/ 2>/dev/null || echo "No GIF artifacts found"
 
-      - name: Collect Linux visual artifacts
-        if: always()
-        run: |
-          find -L result-linux-cursor-click-gif/ result-linux-background-terminal-gif/ \
-            -name '*.gif' -type f -exec cp {} . \; 2>/dev/null || true
-          ls -la *.gif 2>/dev/null || echo "No GIF artifacts found"
-
-      - name: Upload Linux visual artifacts
-        if: always()
+      - name: Upload GIF artifacts
+        if: always() && matrix.visual
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cua-driver-linux-visual-gifs
-          path: "*.gif"
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/*.gif
           if-no-files-found: warn
 
+      - name: Sign and upload to Nix cache
+        if: always()
+        run: |
+          echo "Signing and uploading build artifacts to Nix cache..."
+          nix store sign --key-file "${{ runner.temp }}/signing-key.sec" --all
+          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}&want-mass-query=true" --all -L
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f "${{ runner.temp }}/signing-key.sec"
+
+  comment-linux-visual-artifacts:
+    name: Comment Linux visual artifacts
+    if: always() && github.event_name == 'pull_request'
+    needs: [nix-checks]
+    runs-on: ubuntu-latest
+    steps:
       - name: Comment Linux visual artifacts on PR
-        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         with:
           script: |
-            const fs = require('fs');
             const marker = '<!-- cua-driver-linux-visual-gifs -->';
-            const gifs = fs.readdirSync('.').filter(f => f.endsWith('.gif')).sort();
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactNames = [
+              'cua-driver-linux-cursor-click-gif',
+              'cua-driver-linux-background-terminal-gif',
+            ];
 
             let body = `${marker}\n## Linux visual regression artifacts\n\n`;
-            if (gifs.length > 0) {
-              body += 'The NixOS PR tests produced these GIFs:\n';
-              for (const gif of gifs) {
-                body += `- \`${gif}\`\n`;
-              }
-              body += `\n[Open workflow run and download artifacts](${runUrl})\n`;
-            } else {
-              body += `No GIFs were collected. Check the [workflow run](${runUrl}) for logs.\n`;
+            body += 'Matrix jobs now run independently. Download GIF artifacts from this workflow run:\n';
+            for (const artifactName of artifactNames) {
+              body += `- \`${artifactName}\`\n`;
             }
+            body += `\n[Open workflow run and download artifacts](${runUrl})\n`;
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
@@ -159,14 +184,3 @@ jobs:
                 body,
               });
             }
-
-      - name: Sign and upload to Nix cache
-        if: always()
-        run: |
-          echo "Signing and uploading build artifacts to Nix cache..."
-          nix store sign --key-file "${{ runner.temp }}/signing-key.sec" --all
-          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}&want-mass-query=true" --all -L
-
-      - name: Cleanup signing key
-        if: always()
-        run: rm -f "${{ runner.temp }}/signing-key.sec"

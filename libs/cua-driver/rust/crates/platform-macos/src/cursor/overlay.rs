@@ -207,17 +207,86 @@ pub fn current_motion(key: &str) -> MotionConfig {
         .unwrap_or_default()
 }
 
+/// Seed a brand-new (sentinel-positioned) cursor at an on-screen start point
+/// offset up-left of `(target_x, target_y)` so the immediately-following
+/// `MoveTo` glides INTO the target instead of silently snapping. Without this,
+/// a cursor's very first action (common on a pure-AX run — launch app, AX-press
+/// a button) produces no visible motion: `animate_cursor_to` early-returned at
+/// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
+/// miss. See the AX-no-glide report.
+///
+/// No-op when the cursor is already on-screen (pos.0 > -50.0) or absent. The
+/// seed is clamped to the main screen frame so it never starts off-display.
+/// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
+/// is now primed to glide).
+fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+    let mut guard = RENDER.lock().unwrap();
+    let Some(map) = guard.as_mut() else { return false };
+    seed_start_in_map(map, key, target_x, target_y)
+}
+
+/// Pure seed step operating on a borrowed [`RenderMap`] — factored out of
+/// `seed_start_if_sentinel` so the get-or-create + clamp logic is unit-testable
+/// without the global `RENDER` static or AppKit.
+fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+    // Offset the start up-left of the target so the Dubins path has room to
+    // curve in; 140pt is enough to read as motion at 900pt/s peak speed.
+    const SEED_OFFSET: f64 = 140.0;
+    let (win_w, win_h) = (map.win_w, map.win_h);
+    // Respect the resurrection guard: never seed (and thus re-create) a cursor
+    // whose session already ended.
+    if map.ended.contains(key) {
+        return false;
+    }
+    // Get-or-create the cursor so the very first AX action seeds + glides even
+    // when the lazy render-thread creation hasn't drained the PinAbove yet
+    // (the render loop's drain would otherwise win the race and the seed read
+    // an absent cursor). Mirrors apply_msg's entry().or_insert_with.
+    let template = map.template.clone();
+    let k = key.clone();
+    let rs = map
+        .cursors
+        .entry(key.clone())
+        .or_insert_with(|| render_state_for_key(&template, &k));
+    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
+        return false;
+    }
+    let mut sx = target_x - SEED_OFFSET;
+    let mut sy = target_y - SEED_OFFSET;
+    // Clamp into the screen frame when we know it (win_w/h are 0 until the
+    // AppKit window is up; in that headless case the unclamped seed is still
+    // on-screen-by-construction for any realistic target).
+    if win_w > 0.0 && win_h > 0.0 {
+        sx = sx.clamp(2.0, win_w - 2.0);
+        sy = sy.clamp(2.0, win_h - 2.0);
+        // If clamping collapsed the seed onto the target (target in a corner),
+        // nudge it the other way so there is still a visible glide distance.
+        if (sx - target_x).abs() < 8.0 && (sy - target_y).abs() < 8.0 {
+            sx = (target_x + SEED_OFFSET).min(win_w - 2.0);
+            sy = (target_y + SEED_OFFSET).min(win_h - 2.0);
+        }
+    }
+    rs.core.pos = (sx, sy);
+    true
+}
+
 /// Animate the overlay cursor to `(x, y)` and suspend until the Dubins path
 /// completes and the spring overshoot begins.
 ///
 /// Mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-/// Returns immediately (no animation) when:
-/// - the overlay is disabled, or
-/// - the cursor is still at the off-screen sentinel `(-200, -200)` — in that
-///   case the caller should rely on `ClickPulse` to snap the cursor.
+/// Returns immediately (no animation) only when the overlay is disabled for
+/// this cursor. A brand-new cursor still at the off-screen sentinel is first
+/// seeded on-screen via [`seed_start_if_sentinel`] so its FIRST action glides
+/// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
+/// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
-    // Check whether animation should run for THIS cursor. A not-yet-created
-    // cursor (sentinel position) relies on ClickPulse to snap, same as before.
+    // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
+    // being short-circuited. After this the cursor's pos.0 > -50.0, so the
+    // should-animate check passes on the first action just like later ones.
+    seed_start_if_sentinel(&key, x, y);
+
+    // Check whether animation should run for THIS cursor. A disabled cursor
+    // never animates; an absent cursor (seed found nothing to prime) is skipped.
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
@@ -897,6 +966,46 @@ mod tests {
         let resolved = apply_msg(&mut map, move_msg("default", 5.0, 5.0));
         assert_eq!(resolved.as_deref(), Some("default"));
         assert!(map.cursors.contains_key("default"));
+    }
+
+    #[test]
+    fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
+        // BUG 2 regression: a brand-new session cursor at the sentinel must be
+        // seeded on-screen (pos.0 > -50) so the immediately-following MoveTo
+        // glides instead of silently snapping via ClickPulse.
+        let mut map = empty_map(); // 100x100 frame
+        // No "sessA" cursor exists yet — the seed must get-or-create it.
+        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        assert!(seeded, "sentinel cursor must be seeded");
+        let pos = map.cursors["sessA"].core.pos;
+        assert!(pos.0 > -50.0 && pos.1 > -50.0, "seed must be on-screen, got {pos:?}");
+        // And it must be a DIFFERENT point from the target so there is a glide.
+        assert!((pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
+            "seed must differ from target to produce a visible glide, got {pos:?}");
+    }
+
+    #[test]
+    fn seed_is_noop_when_cursor_already_on_screen() {
+        // A second action: the cursor already landed somewhere on-screen, so the
+        // seed must NOT move it (the MoveTo path should start from where it is).
+        let mut map = empty_map();
+        // Put sessA on-screen first.
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
+        let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
+        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
+        assert_eq!(map.cursors["sessA"].core.pos, (30.0, 30.0), "pos must be untouched");
+    }
+
+    #[test]
+    fn seed_does_not_resurrect_ended_session() {
+        // The seed shares the resurrection guard: it must not re-create a cursor
+        // whose session already ended.
+        let mut map = empty_map();
+        map.ended.insert("sessA".to_owned());
+        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        assert!(!seeded, "ended session must not be seeded");
+        assert!(!map.cursors.contains_key("sessA"), "ended session must not be resurrected");
     }
 
     #[test]

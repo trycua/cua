@@ -224,7 +224,7 @@ fn main() {
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             return;
         }
-        cli::Command::Serve { socket, no_permissions_gate } => {
+        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
@@ -259,7 +259,12 @@ fn main() {
                 None => pip_preview::PipConfig::from_args(),
             };
             maybe_init_pip();
-            let reg = Arc::new(build_macos_registry());
+            // Honour the compat flag forwarded by the MCP proxy
+            // (launch_daemon_and_wait passes `serve
+            // --claude-code-computer-use-compat`). The Serve arm is the daemon
+            // the proxy talks to, so without this the proxy path always served
+            // the full screenshot tool regardless of the client's request.
+            let reg = Arc::new(build_macos_registry_with_compat(claude_code_compat));
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
@@ -401,7 +406,7 @@ fn main() {
             // attribution and forwards stdio MCP through its socket.
             // Issue #1525 / mirror of Swift PR #1479.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
                     eprintln!("cua-driver-rs: {e}");
                     std::process::exit(1);
                 }
@@ -540,14 +545,17 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Serve { socket, no_permissions_gate } => {
+        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored.
+            // CLI uniformity and ignored. The Claude-Code compat screenshot
+            // surface is likewise macOS-only (register_tools_with_compat),
+            // so the flag is accepted-and-ignored here for CLI uniformity.
             let _ = no_permissions_gate;
+            let _ = claude_code_compat;
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let reg = Arc::new(build_registry(cursor_cfg));
@@ -641,7 +649,7 @@ fn main() -> anyhow::Result<()> {
             // Code over SSH lands in Session 0 and every desktop
             // tool returns empty. See `cli::should_use_daemon_proxy`.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
                     eprintln!("cua-driver-rs: {e}");
                     std::process::exit(1);
                 }

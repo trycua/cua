@@ -18,6 +18,20 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## 0.4.3 (2026-05-31)
+
+- macOS: the agent-cursor overlay now actually renders in the `serve` daemon.
+  It was only wired into the in-process `mcp` path, so in the daemon-proxy
+  setup (the default) every cursor command was a silent no-op and the agent
+  cursor never appeared (#1790).
+- macOS: `cua-driver permissions grant` no longer spams the TCC prompt — it
+  raises a single dialog and then polls silently, and the gate honours its
+  deadline instead of re-prompting (and restarting the daemon) on every
+  ~25s re-exec (#1791).
+- Dev: `install-local` now signs the bundle with a stable self-signed
+  identity, so TCC grants (Accessibility / Screen Recording) survive rebuilds
+  instead of resetting on every install (#1792).
+
 ## 0.4.2 (2026-05-31)
 
 - macOS: guard the SkyLight auth-message selector on macOS 14 Sonoma so the

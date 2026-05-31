@@ -84,7 +84,14 @@ fn spawn_recording_idle_backstop(
                     // requester id would be redundant and could only make it
                     // wrongly no-op. Session-scoped teardown is the proxy-exit
                     // `session_end` path (#1764 / session-identity work).
-                    let _ = registry.recording.stop_owner(None);
+                    // stop_owner can SYNCHRONOUSLY finalize the recording's mp4
+                    // (SCStream::stop_capture blocks on disk I/O), so run it on a
+                    // blocking thread to keep the reactor free (see the EOF reaper).
+                    let reg2 = registry.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        reg2.recording.stop_owner(None)
+                    })
+                    .await;
                 }
             }
         }
@@ -598,7 +605,16 @@ pub async fn run_serve(
                                 // proxies never send it — the control-connection
                                 // EOF is the single teardown path. Always ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    // stop_owner can SYNCHRONOUSLY finalize the
+                                    // recording's mp4 — run it off the reactor on
+                                    // a blocking thread (see the EOF reaper).
+                                    // fire_session_end stays inline (non-blocking).
+                                    let reg2 = reg.clone();
+                                    let sid_for_stop = sid.to_owned();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        reg2.recording.stop_owner(Some(&sid_for_stop))
+                                    })
+                                    .await;
                                     cua_driver_core::session::fire_session_end(sid);
                                 }
                                 let resp = DaemonResponse::ok(
@@ -1080,7 +1096,16 @@ pub async fn run_serve(
                                 // connection; control_session_id stays None so no
                                 // EOF double-fire. fire_session_end is idempotent.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    // stop_owner can SYNCHRONOUSLY finalize the
+                                    // recording's mp4 — run it off the reactor on
+                                    // a blocking thread (see the EOF reaper).
+                                    // fire_session_end stays inline (non-blocking).
+                                    let reg2 = reg.clone();
+                                    let sid_for_stop = sid.to_owned();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        reg2.recording.stop_owner(Some(&sid_for_stop))
+                                    })
+                                    .await;
                                     cua_driver_core::session::fire_session_end(sid);
                                 }
                                 let resp = DaemonResponse::ok(

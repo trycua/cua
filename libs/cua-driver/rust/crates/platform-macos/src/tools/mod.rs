@@ -208,6 +208,15 @@ impl SessionConfigRegistry {
     /// Merge `delta` into `session`'s overrides (only the `Some` fields of
     /// `delta` overwrite; existing overrides for unset fields are preserved).
     pub fn set(&self, session: &str, delta: ConfigOverrides) {
+        // Write-boundary resurrection guard: keyed by session_id, so an
+        // in-flight set_config that lands AFTER session_end (passed the dispatch
+        // gate, then the proxy died and the reaper cleared this session's
+        // overrides) must NOT re-create the entry — it would be invisible and
+        // never reaped again. `fire_session_end` marks ENDED_SESSIONS *before*
+        // running the config-clear hook, so this check is authoritative.
+        if cua_driver_core::session::is_session_ended(session) {
+            return;
+        }
         let mut map = self.inner.lock().unwrap();
         let entry = map.entry(session.to_owned()).or_default();
         if delta.capture_mode.is_some() {
@@ -346,4 +355,91 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     )));
     // Recording / replay tools are platform-independent — live in mcp-server.
     registry.register_recording_tools();
+}
+
+#[cfg(test)]
+mod session_config_guard_tests {
+    use super::*;
+    use cua_driver_core::session::fire_session_end;
+
+    fn overrides(mode: &str) -> ConfigOverrides {
+        ConfigOverrides { capture_mode: Some(mode.to_owned()), max_image_dimension: None }
+    }
+
+    #[test]
+    fn ended_session_config_set_is_noop() {
+        // THE FIX (config side): an ended session id keys the overrides map, so
+        // an in-flight set_config after session_end must not re-create the entry
+        // the reaper's clear hook removed. effective() then falls back to global.
+        let reg = SessionConfigRegistry::new();
+        let global = DriverConfig::default();
+        let sid = "wb-config-ended-Q9R8S7";
+        fire_session_end(sid);
+        assert!(cua_driver_core::session::is_session_ended(sid));
+
+        reg.set(sid, overrides("raw"));
+        let (mode, _) = reg.effective(Some(sid), &global);
+        assert_eq!(mode, global.capture_mode, "ended session must not get an override entry");
+    }
+
+    #[test]
+    fn live_session_config_set_takes_effect() {
+        let reg = SessionConfigRegistry::new();
+        let global = DriverConfig::default();
+        let sid = "wb-config-live-T1U2V3";
+        assert!(!cua_driver_core::session::is_session_ended(sid));
+        reg.set(sid, overrides("raw"));
+        let (mode, _) = reg.effective(Some(sid), &global);
+        assert_eq!(mode, "raw", "live session override must apply");
+    }
+}
+
+// RecordingSession lives in cua-driver-core, but its `start()` pulls in the
+// macOS cursor sampler (CoreGraphics), so the start-guard test runs here in
+// platform-macos where build.rs links the frameworks — the core crate's test
+// binary has no CoreGraphics linkage.
+#[cfg(test)]
+mod recording_start_guard_tests {
+    use cua_driver_core::recording::RecordingSession;
+    use cua_driver_core::session::fire_session_end;
+
+    #[test]
+    fn start_refuses_for_ended_session_owner() {
+        // THE FIX (recording side): an in-flight start_recording owned by a
+        // session that already ended would leak an ffmpeg/SCStream process owned
+        // by a dead session that is never reaped. start() must refuse.
+        let rec = RecordingSession::new();
+        let sid = "wb-recording-ended-W4X5Y6";
+        fire_session_end(sid);
+        assert!(cua_driver_core::session::is_session_ended(sid));
+
+        let dir = std::env::temp_dir().join("wb-rec-ended");
+        let err = rec.start(dir.to_str().unwrap(), false, Some(sid));
+        assert!(err.is_err(), "start for an ended session owner must error");
+        assert!(!rec.current_state().enabled, "no recording may start for a dead session");
+    }
+
+    #[test]
+    fn start_succeeds_for_live_session_owner() {
+        let rec = RecordingSession::new();
+        let sid = "wb-recording-live-Z7A8B9";
+        assert!(!cua_driver_core::session::is_session_ended(sid));
+        let dir = std::env::temp_dir().join("wb-rec-live");
+        // record_video=false avoids spawning ffmpeg in the test.
+        let ok = rec.start(dir.to_str().unwrap(), false, Some(sid));
+        assert!(ok.is_ok(), "start for a live session owner must succeed");
+        assert!(rec.current_state().enabled);
+        let _ = rec.stop_owner(Some(sid));
+    }
+
+    #[test]
+    fn start_succeeds_for_anonymous_owner() {
+        // owner = None (CLI one-shot / legacy shim) is never gated.
+        let rec = RecordingSession::new();
+        let dir = std::env::temp_dir().join("wb-rec-anon");
+        let ok = rec.start(dir.to_str().unwrap(), false, None);
+        assert!(ok.is_ok(), "anonymous start must never be gated");
+        assert!(rec.current_state().enabled);
+        let _ = rec.stop_owner(None);
+    }
 }

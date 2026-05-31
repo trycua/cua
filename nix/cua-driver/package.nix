@@ -15,7 +15,7 @@
 
 pkgs.rustPlatform.buildRustPackage {
   pname = "cua-driver";
-  version = "0.3.2";
+  version = "0.4.1";
 
   inherit src;
 
@@ -23,7 +23,7 @@ pkgs.rustPlatform.buildRustPackage {
   # the workspace Cargo.lock includes macOS-only crates (apple-metal, apple-cf)
   # that may be unreachable from crates.io. fetchCargoVendor handles this
   # gracefully via `cargo vendor`.
-  cargoHash = "sha256-nkVI+O2P/QSTx15dCraNNGDAsEw3m7c/u/V6BXXSTww=";
+  cargoHash = pkgs.lib.fakeHash;
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win

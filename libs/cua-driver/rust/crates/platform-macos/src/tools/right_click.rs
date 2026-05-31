@@ -78,6 +78,7 @@ impl Tool for RightClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         let element_index = args.opt_u64("element_index").map(|v| v as usize);
         let window_id     = args.opt_u64("window_id").map(|v| v as u32);
@@ -162,12 +163,16 @@ impl Tool for RightClickTool {
         // Pin overlay above the target window before animating.
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
             );
         }
         // Animate cursor to the click point; wait for arrival before firing.
-        crate::cursor::overlay::animate_cursor_to(screen_x, screen_y).await;
-        crate::cursor::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y });
+        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
+        );
 
         let mod_suffix = if modifiers.is_empty() {
             String::new()

@@ -383,7 +383,7 @@ Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor —
 
 **Arguments:**
 
-- `cursor_id` (string, optional): Cursor instance to move. Default: 'default'.
+- `cursor_id` (string, optional): Explicit cursor-instance override. Omit it and the move targets the calling session's own cursor (macOS); the anonymous path targets 'default'. See the per-session agent cursors note under [set_agent_cursor_enabled](#set_agent_cursor_enabled).
 - `x` (number, required)
 - `y` (number, required)
 
@@ -515,9 +515,11 @@ Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimens
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
 
+**Per-session agent cursors (macOS).** The agent cursor is owned per MCP session. On the daemon-proxy path every `cua-driver mcp` client mints a session identity, and that identity is the cursor key when the caller passes no explicit `cursor_id` — so two concurrent sessions each drive their own overlay cursor (distinct auto-assigned colour) drawn simultaneously, instead of clobbering one shared cursor last-writer-wins. The key is resolved with the precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**: an explicit `cursor_id` stays an orthogonal, user-facing handle, so a wrapper can deliberately share or override a cursor across sessions by passing the same `cursor_id`. When a session disconnects (`session_end`), that session's cursor is removed from the overlay automatically. The anonymous / one-shot `cua-driver call` path (no session identity, no `cursor_id`) maps to the seeded `"default"` cursor, which is never removed — backward compatible. (Windows/Linux keep the single shared cursor today.)
+
 ### set_agent_cursor_enabled
 
-Show or hide the agent cursor overlay for a cursor instance.
+Show or hide the agent cursor overlay for a cursor instance. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).
 
 **Arguments:**
 

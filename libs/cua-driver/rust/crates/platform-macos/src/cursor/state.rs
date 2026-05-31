@@ -86,9 +86,13 @@ impl CursorRegistry {
 
     pub fn update_position(&self, cursor_id: &str, x: f64, y: f64) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(state) = inner.get_mut(cursor_id) {
-            state.position = Some(CursorPosition { x, y });
-        }
+        // Get-or-create so a per-session cursor that moves before any explicit
+        // enable/style call still shows up in get_agent_cursor_state.
+        let state = inner.entry(cursor_id.to_owned()).or_insert_with(|| CursorState {
+            config: CursorConfig { cursor_id: cursor_id.to_owned(), ..Default::default() },
+            position: None,
+        });
+        state.position = Some(CursorPosition { x, y });
     }
 
     pub fn set_enabled(&self, cursor_id: &str, enabled: bool) {
@@ -102,6 +106,17 @@ impl CursorRegistry {
 
     pub fn all_states(&self) -> Vec<CursorState> {
         self.inner.lock().unwrap().values().cloned().collect()
+    }
+
+    /// Remove a cursor instance's metadata (fired from the `session_end` hook
+    /// when a session disconnects). The `"default"` cursor backs the
+    /// anonymous / one-shot path and is never removed — guarding here AND in
+    /// the overlay Remove arm keeps the backward-compatibility contract intact.
+    pub fn remove(&self, cursor_id: &str) {
+        if cursor_id == "default" {
+            return;
+        }
+        self.inner.lock().unwrap().remove(cursor_id);
     }
 }
 

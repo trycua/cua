@@ -101,6 +101,7 @@ impl Tool for DragTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
@@ -191,10 +192,11 @@ impl Tool for DragTool {
         // Animate agent cursor along drag path (start → end).
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
             );
         }
-        crate::cursor::overlay::animate_cursor_to(from_sx, from_sy).await;
+        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), from_sx, from_sy).await;
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Drags can trigger drag-and-drop side-effects that spawn helper
@@ -234,10 +236,11 @@ impl Tool for DragTool {
         let changes = snapshot.detect_async().await;
 
         // Animate cursor to end position.
-        crate::cursor::overlay::animate_cursor_to(to_sx, to_sy).await;
+        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), to_sx, to_sy).await;
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
             );
         }
 

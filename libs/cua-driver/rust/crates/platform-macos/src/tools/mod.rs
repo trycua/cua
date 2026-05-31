@@ -281,13 +281,22 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     // resolve element_index → window-local screenshot coords for click.png.
     crate::recording_hooks::set_element_cache(state.element_cache.clone());
 
-    // Drop a disconnecting session's config overrides on `session_end`. The
-    // daemon fans the session id out to this hook; recording ownership is
-    // handled separately on the core RecordingSession.
+    // Drop a disconnecting session's config overrides + owned cursor on
+    // `session_end`. The daemon fans the session id out to this hook;
+    // recording ownership is handled separately on the core RecordingSession.
     {
         let session_config = state.session_config.clone();
+        let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_session_end_hook(move |session_id| {
             session_config.clear(session_id);
+            // Per-session agent cursor: the session_id is the cursor key when
+            // the caller gave no explicit cursor_id, so dropping it here both
+            // prunes the metadata registry and stops the overlay painting that
+            // session's cursor. Both paths guard "default" so the anonymous /
+            // one-shot cursor survives. Anonymous sessions that never created a
+            // cursor are a harmless no-op.
+            cursor_registry.remove(session_id);
+            crate::cursor::overlay::remove_cursor(session_id.to_owned());
         });
     }
 

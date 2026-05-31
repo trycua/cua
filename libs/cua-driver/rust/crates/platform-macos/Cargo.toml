@@ -14,6 +14,10 @@ base64 = { workspace = true }
 image = { workspace = true }
 async-trait = "0.1"
 uuid = { workspace = true }
+# Insertion-ordered map for the keyed per-session cursor render collection.
+# IndexMap gives deterministic iteration order = stable cursor z-order frame
+# to frame (a plain HashMap would flicker overlapping cursors).
+indexmap = "2"
 cua-driver-core = { path = "../cua-driver-core" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }

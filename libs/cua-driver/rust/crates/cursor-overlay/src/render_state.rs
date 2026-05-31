@@ -463,9 +463,30 @@ pub fn render_frame(
     let h = height.max(1);
     let mut pm = tiny_skia::Pixmap::new(w, h)
         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect);
+    pm
+}
 
+/// Paint a single cursor (bloom + click-pulse + optional focus-rect + arrow)
+/// into a caller-owned [`tiny_skia::Pixmap`]. tiny-skia's `fill_*` / `stroke_*`
+/// are alpha-over, so painting several cursors into the same pixmap composites
+/// them with later calls drawn on top — this is what lets the macOS overlay
+/// render N owned cursors into one buffer / one NSWindow.
+///
+/// `origin_x` / `origin_y` are subtracted from `core.pos` before drawing
+/// (Windows passes the virtual-screen origin; macOS / Linux pass `(0.0, 0.0)`).
+///
+/// Quiescent / hidden cursors early-return before touching the pixmap, so an
+/// idle session costs essentially nothing in the per-frame composite loop.
+pub fn paint_cursor(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    focus_rect: Option<FocusRect>,
+) {
     if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
-        return pm;
+        return;
     }
 
     let (px, py) = (core.pos.0 - origin_x, core.pos.1 - origin_y);
@@ -614,7 +635,7 @@ pub fn render_frame(
             Some(&core.gradient_colors)
         };
         draw_default_arrow(
-            &mut pm,
+            pm,
             &core.palette,
             grad_override,
             px as f32,
@@ -623,8 +644,6 @@ pub fn render_frame(
             alpha_scale,
         );
     }
-
-    pm
 }
 
 /// Rasterise the built-in gradient arrow at `(px, py)` rotated by

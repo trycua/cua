@@ -46,14 +46,14 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = match args.require_f64("x") { Ok(v) => v, Err(e) => return e };
         let y = match args.require_f64("y") { Ok(v) => v, Err(e) => return e };
-        let cursor_id_owned = args.str_or("cursor_id", "default");
-        let cursor_id = cursor_id_owned.as_str();
+        let cursor_id = super::cursor_tools::resolve_cursor_key(&args);
 
-        self.state.cursor_registry.update_position(cursor_id, x, y);
-        // Drive the visual overlay (no-op when overlay is disabled).
-        // End pointing upper-left (45°) — matches Swift's
+        self.state.cursor_registry.update_position(&cursor_id, x, y);
+        // Drive the visual overlay for THIS session's cursor (no-op when the
+        // overlay is disabled). End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention.
         crate::cursor::overlay::send_command(
+            cursor_id.clone(),
             cursor_overlay::OverlayCommand::MoveTo { x, y, end_heading_radians: std::f64::consts::FRAC_PI_4 }
         );
         ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))

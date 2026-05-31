@@ -187,6 +187,17 @@ impl GateOpts {
     }
 }
 
+/// Set by `reexec_self` on the restarted process so its `run_if_needed`
+/// polls SILENTLY instead of re-raising the TCC prompts on every ~25s
+/// re-exec (which otherwise spams the user with "Cua Driver" dialogs).
+const GATE_REEXEC_ENV: &str = "CUA_DRIVER_RS_GATE_REEXEC";
+
+/// Persists the gate's original start time (unix seconds) across re-execs
+/// so the `deadline` is cumulative. Without it each re-exec'd process resets
+/// `start`, and since a re-exec fires (~25s) well before the deadline
+/// (~10min) the deadline never triggers and the daemon re-execs forever.
+const GATE_START_ENV: &str = "CUA_DRIVER_RS_GATE_START_UNIX";
+
 /// Run the gate if needed.  When called and the process already has both
 /// grants, this returns immediately without printing anything — the
 /// `serve` happy path is unaffected.
@@ -214,6 +225,17 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
         // Fast path: everything already green.  No banner, no polling —
         // the user sees nothing different from before this gate existed.
         return Ok(());
+    }
+
+    // A gate re-exec (`wait_for_grants` restarts the daemon ~every 25s to
+    // refresh the per-process TCC trust cache) re-runs this function. The
+    // FIRST process already raised the TCC prompts + showed the panel;
+    // re-doing that on every re-exec spams a fresh "Cua Driver" dialog at the
+    // user (forever, since a stale/never-granted state keeps re-execing). A
+    // re-exec'd process polls SILENTLY instead — skip the prompts + panel and
+    // go straight to the wait loop, which re-checks the grant and re-execs.
+    if std::env::var(GATE_REEXEC_ENV).is_ok() {
+        return wait_for_grants(&opts);
     }
 
     let missing = missing_from_status(initial);
@@ -359,7 +381,27 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
 /// line. If the grant has been given the new process picks it up
 /// instantly; otherwise it falls back into the same wait loop.
 pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
-    let start = Instant::now();
+    // Anchor the deadline to the ORIGINAL gate start, persisted across
+    // re-execs via GATE_START_ENV. A re-exec'd process shifts `start` back by
+    // the elapsed wall time so `start.elapsed()` keeps growing across
+    // restarts and the deadline is cumulative — otherwise each restart resets
+    // the clock, re-exec fires before the deadline, and the gate (and the
+    // daemon + cursor overlay it restarts) churns forever when ungranted.
+    let start = {
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        match std::env::var(GATE_START_ENV).ok().and_then(|s| s.parse::<u64>().ok()) {
+            Some(orig) => Instant::now()
+                .checked_sub(Duration::from_secs(now_unix.saturating_sub(orig)))
+                .unwrap_or_else(Instant::now),
+            None => {
+                std::env::set_var(GATE_START_ENV, now_unix.to_string());
+                Instant::now()
+            }
+        }
+    };
     let mut last_status_print = start;
     let mut last_missing: Vec<MissingPermission> = check_required_permissions();
     let mut polls_without_change: u32 = 0;
@@ -487,6 +529,17 @@ fn reexec_self() {
             return;
         }
     };
+
+    // Mark the restarted process as a gate re-exec so its `run_if_needed`
+    // polls silently (no re-prompt), and anchor the original gate start so
+    // the deadline is cumulative across re-execs. execvp inherits the
+    // environment, so the new image sees these.
+    std::env::set_var(GATE_REEXEC_ENV, "1");
+    if std::env::var(GATE_START_ENV).is_err() {
+        if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            std::env::set_var(GATE_START_ENV, d.as_secs().to_string());
+        }
+    }
 
     // execvp returns -1 on failure; on success it does not return.
     // SAFETY: argv_ptrs is NULL-terminated; exe_c outlives the call.

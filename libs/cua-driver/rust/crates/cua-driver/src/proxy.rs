@@ -65,18 +65,22 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
 
-    // Tracks whether THIS proxy session has an outstanding recording it started
+    // Tracks the ownership token of the recording THIS proxy session started
     // (#1764). The proxy is one long-lived process whose lifetime == the MCP
     // session; the daemon outlives it. When the MCP client disconnects (stdin
     // EOF), the proxy exits but the daemon keeps the SCStream recording running
-    // (~6 GB/h). We flip this flag on a successful start/stop_recording forward,
-    // then on exit send a `stop_recording` to the daemon iff it's still set.
+    // (~6 GB/h). We capture the `generation` token from a successful
+    // start_recording response, clear it on a successful stop_recording, then on
+    // exit send a *guarded* `stop_recording` carrying that token iff it's still
+    // set. The daemon's stop() no-ops if a later client clobbered our session
+    // (its generation has moved on), so our disconnect can't stop a recording we
+    // no longer own.
     //
-    // A plain `bool` is correct ONLY because this read/dispatch loop is strictly
+    // A plain field is correct ONLY because this read/dispatch loop is strictly
     // sequential (one `read_line` → one `handle_proxy_request` await at a time).
     // If `forward_tool_call` is ever made concurrent/pipelined, this must become
-    // an atomic.
-    let mut session_started_recording = false;
+    // synchronized.
+    let mut owned_generation: Option<u64> = None;
 
     loop {
         line.clear();
@@ -111,16 +115,28 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 };
                 let resp =
                     handle_proxy_request(req, id, &socket_path, &cached_tools_list).await;
-                // Flip the ownership flag ONLY on a successful daemon call,
+                // Update the ownership token ONLY on a successful daemon call,
                 // mirroring the daemon-side ownership intent. A successful
                 // forwarded tool call maps to a JSON-RPC `result` (not `error`)
                 // with `result.isError != true`.
                 if let Some(tool) = called_tool.as_deref() {
                     if proxy_call_succeeded(&resp) {
                         if tool == "start_recording" {
-                            session_started_recording = true;
+                            // Capture the generation the daemon assigned this
+                            // session off the response's structuredContent.
+                            // Defensive: if it's absent (a future refactor that
+                            // strips structuredContent on the in-process path),
+                            // fall back to a guard-disabling `None` would silently
+                            // leak — so we warn loudly and still record None.
+                            let gen = response_generation(&resp);
+                            if gen.is_none() {
+                                warn!("start_recording succeeded but response carried no \
+                                       `generation` token; proxy-exit auto-stop will be \
+                                       skipped for this session (recording may leak, #1764)");
+                            }
+                            owned_generation = gen;
                         } else if tool == "stop_recording" {
-                            session_started_recording = false;
+                            owned_generation = None;
                         }
                     }
                 }
@@ -152,11 +168,15 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // Best-effort: the daemon may already be gone; never fail the exit. The
     // daemon services this exactly like any other per-call connection — its
     // existing `"call"` handler runs `stop_recording`, then the connection EOFs.
-    if session_started_recording {
+    if let Some(gen) = owned_generation {
+        // Guarded stop: pass the generation we started with. The daemon's
+        // stop() no-ops if a later client clobbered our session (its live
+        // generation has moved past `gen`), so we can't stop a recording we
+        // no longer own (#1764).
         let stop_req = DaemonRequest {
             method: "call".into(),
             name: Some("stop_recording".into()),
-            args: Some(serde_json::json!({})),
+            args: Some(serde_json::json!({ "generation": gen })),
         };
         // `send_request` is sync + blocking; we're past the read loop and about
         // to exit, so a direct blocking call on this thread is fine (no reactor
@@ -189,6 +209,20 @@ fn proxy_call_succeeded(resp: &Response) -> bool {
         Some(result) => result.get("isError").and_then(|v| v.as_bool()) != Some(true),
         None => false,
     }
+}
+
+/// Extract the recording `generation` ownership token from a proxy
+/// `Response`'s `result.structuredContent.generation` (#1764). Returns
+/// `None` when the field is absent (non-recording tool, or a response shape
+/// that doesn't carry it). The daemon populates this in start_recording's
+/// structuredContent via `recording_state_json()`.
+fn response_generation(resp: &Response) -> Option<u64> {
+    let value = serde_json::to_value(resp).ok()?;
+    value
+        .get("result")?
+        .get("structuredContent")?
+        .get("generation")?
+        .as_u64()
 }
 
 /// One-shot daemon `list` over the UDS, reshaped into a MCP

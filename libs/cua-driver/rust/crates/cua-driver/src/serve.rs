@@ -76,7 +76,14 @@ fn spawn_recording_idle_backstop(
                         "recording idle {idle}s ≥ {ttl}s TTL; auto-stopping \
                          (proxy-exit hook likely missed)"
                     );
-                    let _ = registry.recording.stop();
+                    // Unconditional (`None`): the idle backstop is a last-resort
+                    // GLOBAL kill of whatever recording is active after global
+                    // inactivity — not an owner reclaiming a specific session.
+                    // It already targets the current generation by definition,
+                    // so a token would be redundant and could only make it
+                    // wrongly no-op. The generation guard exists solely for the
+                    // proxy-exit hook (#1764).
+                    let _ = registry.recording.stop(None);
                 }
             }
         }

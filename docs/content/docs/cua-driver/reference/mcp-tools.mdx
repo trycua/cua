@@ -460,6 +460,8 @@ Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restar
 
 State persists for the life of the daemon / MCP session; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
 
+The result's `structuredContent` includes a `generation` token (an integer that increments on every successful `start_recording`) identifying this session. The daemon-proxy disconnect auto-stop captures it and passes it back to `stop_recording` so a client exiting can't stop a recording a later client started — see `stop_recording`'s `generation` argument.
+
 **Arguments:**
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
@@ -473,7 +475,9 @@ State persists for the life of the daemon / MCP session; a restart resets to dis
 
 Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
-**Arguments:** none.
+**Arguments:**
+
+- `generation` (integer, optional): Ownership token from a prior `start_recording`'s `structuredContent.generation`. When present, the stop only acts if it matches the current recording's generation — a stale token (a session already clobbered by a newer `start_recording`) is a silent no-op. This is used by the MCP proxy's disconnect auto-stop so a client exiting doesn't stop a recording a later client started. Omit it for a normal manual stop, which unconditionally stops the active recording.
 
 ### replay_trajectory
 

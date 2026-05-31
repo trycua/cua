@@ -166,10 +166,25 @@ impl Tool for StopRecordingTool {
                 and, when video was enabled, gracefully terminates the ffmpeg subprocess \
                 so the mp4's moov atom is finalized (the file is playable). Calling \
                 stop on an already-stopped session is a no-op. The response carries \
-                `last_video_path` pointing at the finalized mp4 (when video was on).".into(),
+                `last_video_path` pointing at the finalized mp4 (when video was on).\n\n\
+                **Optional `generation` (ownership guard, #1764).** When present, the \
+                stop only acts if it matches the current recording's generation token \
+                (surfaced in `start_recording`'s `structuredContent.generation`); a \
+                stale token is a silent no-op. This is used by the MCP proxy's \
+                disconnect auto-stop so a client exiting doesn't stop a recording a \
+                later client started. Omit it for a normal manual stop — that \
+                unconditionally stops the active recording.".into(),
             input_schema: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "generation": {
+                        "type": "integer",
+                        "description": "Ownership token from a prior start_recording's \
+                            structuredContent.generation. When set, stop only acts if \
+                            it matches the live recording's generation (stale = no-op). \
+                            Omit for an unconditional manual stop."
+                    }
+                },
                 "additionalProperties": false
             }),
             read_only: false,
@@ -179,8 +194,11 @@ impl Tool for StopRecordingTool {
         })
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        match self.session.stop() {
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use crate::tool_args::ArgsExt;
+        // Optional ownership token (#1764). `None` (omitted) → unconditional
+        // manual stop; `Some(gen)` → guarded stop that no-ops on a stale token.
+        match self.session.stop(args.opt_u64("generation")) {
             Ok(()) => {
                 let state = self.session.current_state();
                 let video_note = state.last_video_path.as_deref()
@@ -442,6 +460,10 @@ fn recording_state_json(state: &RecordingState) -> Value {
         "last_error": state.last_error,
         "video_active": state.video_active,
         "last_video_path": state.last_video_path,
+        // Ownership token for the proxy-exit teardown guard (#1764). The
+        // disconnect auto-stop captures this off a successful start_recording
+        // and passes it back so it can't stop a recording a later client owns.
+        "generation": state.generation,
     })
 }
 

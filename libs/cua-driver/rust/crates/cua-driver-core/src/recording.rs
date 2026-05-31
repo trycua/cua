@@ -93,6 +93,16 @@ pub struct RecordingSession {
 
 struct RecordingInner {
     enabled: bool,
+    /// Monotonically-increasing ownership token, bumped on every successful
+    /// `start()` (gen 1 for the first session, 2 for the next, …). The
+    /// daemon-global recorder is a singleton, so when client A starts a
+    /// recording and client B later starts another (clobbering A's session),
+    /// A's disconnect must NOT stop B's recording. The proxy-exit hook
+    /// captures the generation it started with and passes it to `stop()`,
+    /// which no-ops when the live generation has moved on. Never reset in
+    /// `stop()` — it must keep climbing so a stale token never collides with
+    /// a future live one (#1764).
+    generation: u64,
     output_dir: Option<PathBuf>,
     next_turn: u32,
     session_start_ms: u64,
@@ -130,6 +140,11 @@ pub struct RecordingState {
     /// Path to the most recently finalized video file, if any. Populated
     /// after a stop; cleared on next start.
     pub last_video_path: Option<String>,
+    /// Ownership token of the current (or most recent) session. Bumped on
+    /// every successful `start()`. Surfaced so the proxy-exit hook can
+    /// capture the generation it started a recording with and pass it back
+    /// to `stop()` to avoid stopping a recording a later client now owns.
+    pub generation: u64,
 }
 
 impl RecordingSession {
@@ -137,6 +152,7 @@ impl RecordingSession {
         Self {
             inner: Mutex::new(RecordingInner {
                 enabled: false,
+                generation: 0,
                 output_dir: None,
                 next_turn: 1,
                 session_start_ms: 0,
@@ -228,6 +244,15 @@ impl RecordingSession {
             &session_payload,
         );
 
+        // Bump the ownership token on every successful start so each session
+        // gets a fresh, monotonically-increasing generation (gen 1 for the
+        // first start(), 2 for the next, …). Reached only on the success path
+        // — start() returns early via `?` on `create_dir_all` failure above,
+        // so a failed start does not consume a generation. Deliberately NOT
+        // reset in stop() so a stale token can never collide with a future
+        // live one. `wrapping_add` avoids a debug-overflow panic at the
+        // (astronomically improbable) 2^64th start (#1764).
+        inner.generation = inner.generation.wrapping_add(1);
         inner.enabled = true;
         inner.output_dir = Some(dir);
         inner.next_turn = 1;
@@ -243,10 +268,27 @@ impl RecordingSession {
     /// session is a no-op. If a video subprocess is running, it's
     /// gracefully terminated and the finalized metadata is folded into
     /// `session.json`.
-    pub fn stop(&self) -> anyhow::Result<()> {
+    ///
+    /// `expected_generation` is the ownership guard for the proxy-exit hook
+    /// (#1764). When `Some(gen)`, the stop only acts if `gen` matches the
+    /// live generation — a stale token (a disconnecting client whose session
+    /// was already clobbered by a newer `start()`) is a silent no-op, leaving
+    /// the recording owned by the newer generation running. When `None`
+    /// (manual `stop_recording`, the legacy `configure()` shim, and the
+    /// idle-TTL backstop), the stop is unconditional — current behavior.
+    /// The guard lives inside the lock so it is race-free against a
+    /// concurrent `start()`.
+    pub fn stop(&self, expected_generation: Option<u64>) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled {
             return Ok(());
+        }
+        if let Some(expected) = expected_generation {
+            if expected != inner.generation {
+                // Stale token: the active recording is owned by a newer
+                // generation. Leave it running.
+                return Ok(());
+            }
         }
         let dir = inner.output_dir.clone();
         let video_meta = inner.video.take().and_then(|rec| rec.stop().ok());
@@ -293,7 +335,7 @@ impl RecordingSession {
     /// `recording_tools.rs`), but the CLI `recording start` keeps video on.
     pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
         if !enabled {
-            return self.stop();
+            return self.stop(None);
         }
         let dir = output_dir
             .ok_or_else(|| anyhow::anyhow!("output_dir is required when enabling recording"))?;
@@ -311,6 +353,7 @@ impl RecordingSession {
             video_active: inner.video.is_some(),
             last_video_path: inner.last_video.as_ref()
                 .map(|m| m.path.to_string_lossy().into_owned()),
+            generation: inner.generation,
         }
     }
 

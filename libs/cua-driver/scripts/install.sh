@@ -62,10 +62,9 @@ RUST_INSTALLER_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-d
 # parsing without breaking forwarding, and keeps both installers' argv shapes
 # (--bin-dir, --no-modify-path) bit-compatible.
 #
-# Default backend is the Swift macOS implementation. The Rust implementation
-# is opt-in via --backend=rust / --experimental-rust, and is used
-# automatically on non-macOS hosts where the Swift build can't run.
-USE_RUST_BACKEND=0
+# Default backend is the cross-platform Rust implementation. The Swift macOS
+# implementation is opt-in via --backend=swift, and only runs on macOS.
+USE_RUST_BACKEND=1
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -75,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --experimental-rust) USE_RUST_BACKEND=1; shift ;;  # legacy alias for --backend=rust
         --backend=rust)      USE_RUST_BACKEND=1; shift ;;  # opt into the Rust implementation
-        --backend=swift)     USE_RUST_BACKEND=0; shift ;;  # explicit default — no-op
+        --backend=swift)     USE_RUST_BACKEND=0; shift ;;  # opt into the macOS-only Swift implementation
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -95,8 +94,8 @@ done
 
 # --- Opt-in delegation to the Rust implementation -----------------------
 #
-# The default backend is the Swift macOS implementation, but Swift only
-# runs on macOS — so on any non-macOS host we transparently promote to the
+# The Swift backend only runs on macOS — so if it was explicitly requested
+# via --backend=swift on any non-macOS host, transparently fall back to the
 # Rust implementation, which is the only one that builds there.
 OS="$(uname -s 2>/dev/null || echo unknown)"
 if [[ "$USE_RUST_BACKEND" == "0" && "$OS" != "Darwin" ]]; then
@@ -104,8 +103,8 @@ if [[ "$USE_RUST_BACKEND" == "0" && "$OS" != "Darwin" ]]; then
     USE_RUST_BACKEND=1
 fi
 
-# Hand the rest of argv to _install-rust.sh and exit. The default Swift
-# install path below is only reached when the Rust backend was not selected.
+# Hand the rest of argv to _install-rust.sh and exit. The Swift install path
+# below is only reached when --backend=swift was selected on macOS.
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     if [[ "$OS" != "Darwin" ]]; then
         printf 'note: detected non-macOS host (%s); installing cua-driver via the Rust implementation.\n' "$OS" >&2

@@ -67,6 +67,7 @@ set -euo pipefail
 # flag flows through without edits.
 # ----------------------------------------------------------------------
 USE_RUST_BACKEND=1
+RESET_TCC=0
 FORWARDED_ARGS=()
 PASSTHROUGH=0
 while [[ $# -gt 0 ]]; do
@@ -77,6 +78,7 @@ while [[ $# -gt 0 ]]; do
         --experimental-rust) shift ;;  # legacy alias for default Rust path
         --backend=rust)      shift ;;
         --backend=swift)     USE_RUST_BACKEND=0; shift ;;
+        --reset-tcc)         RESET_TCC=1; shift ;;  # also revoke TCC grants (opt-in)
         --backend=*)
             printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
             exit 2
@@ -102,6 +104,34 @@ fi
 # Shared helpers
 # ----------------------------------------------------------------------
 log() { printf '==> %s\n' "$*"; }
+
+# Opt-in TCC revocation (`--reset-tcc`). Off by default: the bundle id
+# com.trycua.driver is shared with the retired Swift driver, and keeping
+# grants across a reinstall avoids a re-prompt — so wiping privacy state
+# is a deliberate, explicit choice, not a side effect of uninstall.
+# When the flag is set, revoke Accessibility + Screen-Recording +
+# Automation for com.trycua.driver. macOS-only; no-op elsewhere.
+maybe_reset_tcc() {
+    [[ "$RESET_TCC" == "1" ]] || return 0
+    if [[ "$OS" != "Darwin" ]]; then
+        log "--reset-tcc is macOS-only; nothing to revoke on $OS"
+        return 0
+    fi
+    if ! command -v tccutil >/dev/null 2>&1; then
+        log "--reset-tcc: tccutil not found; skipping"
+        return 0
+    fi
+    log "revoking TCC grants for com.trycua.driver (--reset-tcc)"
+    log "  note: com.trycua.driver is shared with the retired Swift driver;"
+    log "  this clears grants for both. The next launch will re-prompt."
+    for SVC in Accessibility ScreenCapture AppleEvents; do
+        if tccutil reset "$SVC" com.trycua.driver >/dev/null 2>&1; then
+            log "  reset $SVC"
+        else
+            log "  $SVC: nothing to reset (or reset failed)"
+        fi
+    done
+}
 
 # Resolve a symlink target to an absolute path. realpath -e fails when
 # the target is missing — we want to inspect dangling symlinks too (a
@@ -477,23 +507,21 @@ PY
     fi
 
     # --- Closing message ---
+    maybe_reset_tcc
     if [[ "$OS" == "Darwin" ]]; then
-        cat << 'FINALUNMSG'
-
-cua-driver uninstalled.
+        echo ""
+        echo "cua-driver uninstalled."
+        if [[ "$RESET_TCC" != "1" ]]; then
+            cat << 'FINALUNMSG'
 
 TCC grants (Accessibility + Screen Recording) remain in System
-Settings > Privacy & Security. Reset them explicitly if you want a
-clean re-install flow:
+Settings > Privacy & Security. Reset them explicitly — or re-run with
+--reset-tcc — if you want a clean re-install flow:
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver
-
-  (Note: `com.trycua.driver` is shared with the Swift cua-driver.
-  Resetting it clears grants for both backends. If you still use the
-  Swift driver, skip this step and let macOS keep the grants — the
-  next Swift launch will re-use them.)
 FINALUNMSG
+        fi
     else
         cat << 'FINALUNMSG'
 
@@ -715,14 +743,18 @@ else
     log "claude CLI not found (skipping Claude MCP CLI cleanup)"
 fi
 
-cat << 'FINALUNMSG'
+maybe_reset_tcc
 
-cua-driver uninstalled.
+echo ""
+echo "cua-driver uninstalled."
+if [[ "$RESET_TCC" != "1" ]]; then
+    cat << 'FINALUNMSG'
 
 TCC grants (Accessibility + Screen Recording) remain in System
-Settings > Privacy & Security. Reset them explicitly if you want a
-clean re-install flow:
+Settings > Privacy & Security. Reset them explicitly — or re-run with
+--reset-tcc — if you want a clean re-install flow:
 
   tccutil reset Accessibility com.trycua.driver
   tccutil reset ScreenCapture com.trycua.driver
 FINALUNMSG
+fi

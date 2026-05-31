@@ -384,14 +384,22 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
         // On macOS, when polling has gone several iterations without
         // any change, re-exec the binary to invalidate the per-process
         // TCC cache. See the function-level doc for the rationale.
-        // Threshold of 5 polls (~5s) is tuned to feel snappy without
-        // exec-spinning when the user is mid-grant.
+        //
+        // Since #1761 the serve loop runs concurrently with this gate on
+        // a background thread, so every `reexec_self()` restarts the whole
+        // daemon — including re-binding the Unix socket. A tight re-exec
+        // cadence would therefore make the socket flap (clients see brief
+        // connection failures on each restart). We trade grant-detection
+        // latency (fine for the grant flow — the user is clicking through
+        // System Settings on a human timescale) for socket stability:
+        // ~25 polls (~25s) between re-execs instead of ~5s.
         #[cfg(target_os = "macos")]
         {
-            const EXEC_AFTER_POLLS: u32 = 5;
+            const EXEC_AFTER_POLLS: u32 = 25;
             if polls_without_change >= EXEC_AFTER_POLLS {
                 println!(
-                    "[cua-driver] rechecking permissions (still missing: {})",
+                    "[cua-driver] rechecking permissions — restarting daemon \
+                     (still missing: {})",
                     fmt_missing(&last_missing)
                 );
                 let _ = std::io::stdout().flush();

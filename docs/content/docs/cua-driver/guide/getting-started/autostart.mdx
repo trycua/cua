@@ -19,8 +19,21 @@ cua-driver autostart disable   # remove the entry
 | Platform | Mechanism                                                                                                                                                                                                     | Where it lives                                          |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | Windows  | Scheduled Task `cua-driver-serve` with `LogonType: Interactive`                                                                                                                                          | Task Scheduler (`schtasks /Query /TN cua-driver-serve`) |
-| macOS    | Not yet implemented in the Rust port — use the manual `LaunchAgent` recipe ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh))  | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist` |
-| Linux    | Not yet implemented in the Rust port — use the manual `systemd --user` unit ([`scripts/install-local.sh --autostart`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh)) | `~/.config/systemd/user/cua-driver-rs.service`          |
+| macOS    | Not yet in the `cua-driver autostart` verb — use `install-local.sh --autostart`, which writes a `RunAtLoad` + `KeepAlive` LaunchAgent running `cua-driver serve` ([`scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh))  | `~/Library/LaunchAgents/com.trycua.cua-driver.plist` |
+| Linux    | Not yet in the `cua-driver autostart` verb — use `install-local.sh --autostart`, which writes a `systemd --user` unit ([`scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh)) | `~/.config/systemd/user/cua-driver-rs.service`          |
+
+<Callout type="info">
+  **macOS bonus — autostart fixes TCC attribution.** A LaunchAgent daemon is started by `launchd`,
+  so it's attributed to `com.trycua.driver` (not the terminal that would otherwise spawn it). That
+  means permission prompts say "Cua Driver", you grant **Accessibility + Screen Recording once**,
+  and the grants persist across reboots — every `cua-driver call` / `mcp` then routes through the
+  always-on, correctly-attributed daemon. Without autostart, a prompt raised from a terminal
+  attributes to the terminal and the grant never applies to the driver — run
+  `cua-driver permissions status` to read the driver's real grant state (it answers via the daemon,
+  or reports `unknown` when none is running rather than your terminal's grants), or
+  `cua-driver permissions grant` to grant correctly without autostart. Autostart stays opt-in
+  because a standing computer-control daemon with these grants is a deliberate choice, not a default.
+</Callout>
 
 <Callout type="info">
   **Platform parity status.** `cua-driver autostart` is currently a Windows-only verb in the Rust

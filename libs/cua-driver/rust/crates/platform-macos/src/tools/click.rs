@@ -137,6 +137,10 @@ impl Tool for ClickTool {
                     cursor_overlay::OverlayCommand::PinAbove(wid as u64)
                 );
                 crate::cursor::overlay::animate_cursor_to(cx, cy).await;
+                // Keep the registry in sync with the overlay so
+                // get_agent_cursor_state reports a truthful position even when
+                // the click was dispatched via the AX path (no pixel coords).
+                self.state.cursor_registry.update_position("default", cx, cy);
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -286,6 +290,8 @@ impl Tool for ClickTool {
             // Animate the visual cursor to the click point and wait for it to
             // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
             crate::cursor::overlay::animate_cursor_to(screen_x, screen_y).await;
+            // Keep the registry in sync with the overlay (see AX path above).
+            self.state.cursor_registry.update_position("default", screen_x, screen_y);
             // Show click-pulse on the agent cursor overlay.
             crate::cursor::overlay::send_command(
                 cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y }

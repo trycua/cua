@@ -100,6 +100,10 @@ while [ "$#" -gt 0 ]; do
             echo "  --autostart   Also register a logon-time daemon:"
             echo "                  macOS: LaunchAgent under ~/Library/LaunchAgents"
             echo "                  Linux: systemd --user unit"
+            echo "                On macOS this also fixes TCC: a launchd-started daemon"
+            echo "                is attributed to com.trycua.driver (not your terminal),"
+            echo "                so you grant Accessibility + Screen Recording once and"
+            echo "                every cua-driver call/mcp routes through it correctly."
             echo "  --help        Show this help."
             echo ""
             echo "Examples:"
@@ -426,7 +430,11 @@ fi
 if [ "$INSTALL_AUTOSTART" != true ]; then
     echo ""
     if [ "$OS" = "Darwin" ]; then
-        echo "Auto-start (optional): re-run with --autostart to register a LaunchAgent."
+        echo "Auto-start (recommended on macOS): re-run with --autostart to register a LaunchAgent."
+        echo "  A launchd-started daemon is attributed to com.trycua.driver (not your terminal),"
+        echo "  so permission prompts say \"Cua Driver\" and grants stick — grant Accessibility +"
+        echo "  Screen Recording once and every cua-driver call/mcp routes through it correctly."
+        echo "  (Without it, a prompt raised from a terminal attributes to the terminal instead.)"
     else
         echo "Auto-start (optional): re-run with --autostart to register a systemd user unit."
     fi

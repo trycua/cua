@@ -141,12 +141,14 @@ share* one cursor across sessions. When a session ends (the MCP client
 disconnects) its cursor is removed automatically.
 
 **Visibility caveat (AX runs).** On a pure accessibility-action run
-(clicking by `element_index`), the cursor does **not** glide to the very
-first target the way a long Bezier path would — its first action seeds
-on-screen and pulses, which is easy to miss in a recording. If you want
-a clearly *gliding* cursor for a demo or screen recording, do a pixel
-click (`click({pid,x,y})`) or a `move_agent_cursor` first to put the
-cursor on-screen; subsequent AX actions then glide normally.
+(clicking by `element_index`), the first action **seeds the cursor
+on-screen a short distance from the target and plays a brief glide +
+pulse** — not the long Bezier sweep a cursor already on-screen would
+trace from its previous spot. It's subtle and easy to miss in a
+recording. If you want a clearly *gliding* cursor for a demo or screen
+recording, do a pixel click (`click({pid,x,y})`) or a `move_agent_cursor`
+first to put the cursor on-screen; subsequent AX actions then glide the
+full path normally.
 
 Requires the daemon process's UI runloop, which `cua-driver serve` /
 `mcp` bootstraps. One-shot CLI invocations skip the overlay entirely.

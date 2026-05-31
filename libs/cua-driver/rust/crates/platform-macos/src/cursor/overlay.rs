@@ -145,6 +145,21 @@ pub fn run_on_main_thread() {
         loop { std::thread::park(); }
     }
 
+    // AppKit's `+[NSApplication sharedApplication]` registers the process with
+    // the Window Server and ABORTS the whole process (SIGABRT in
+    // `_RegisterApplication`) when there's no graphic-session access — e.g.
+    // `mcp` run as a stdio child from SSH, a LaunchDaemon, or headless CI.
+    // Detect that without touching AppKit and run headless: the MCP server
+    // keeps serving on its background thread while this thread just parks,
+    // exactly as it does when the overlay is disabled. See issue #1724.
+    if !crate::session::has_graphic_access() {
+        tracing::warn!(
+            "no Window Server / graphic-session access — skipping cursor \
+             overlay and running headless (issue #1724)"
+        );
+        loop { std::thread::park(); }
+    }
+
     // ------------------------------------------------------------------
     // AppKit setup (all on the main thread).
     // ------------------------------------------------------------------

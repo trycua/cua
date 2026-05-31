@@ -288,8 +288,9 @@ impl RecordingSession {
 
     /// Legacy toggle API kept as a thin shim over `start()`/`stop()` so
     /// existing callers (CLI subcommand, tests) keep compiling during the
-    /// rename window. Defaults `record_video` to true to match the new
-    /// surface.
+    /// rename window. Forces `record_video` on for this legacy CLI path — the
+    /// MCP `start_recording` tool now defaults video OFF (see
+    /// `recording_tools.rs`), but the CLI `recording start` keeps video on.
     pub fn configure(&self, enabled: bool, output_dir: Option<&str>) -> anyhow::Result<()> {
         if !enabled {
             return self.stop();

@@ -61,6 +61,9 @@ fn spawn_recording_idle_backstop(
 ) {
     let ttl = recording_idle_ttl_secs();
     tokio::spawn(async move {
+        // 30s tick granularity: reap latency is `ttl` rounded up to the next
+        // tick, so a sub-30s TTL override (e.g. in tests) still fires no sooner
+        // than ~30s. Fine for the 300s production default.
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             tick.tick().await;

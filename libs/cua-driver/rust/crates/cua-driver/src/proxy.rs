@@ -140,12 +140,14 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
         writer.flush().await?;
     }
 
-    // Loop exited: either stdin EOF (n == 0 break above) or an I/O error on
-    // `read_line` (the `?` propagates after this — but a Drop won't run async
-    // code, so we handle the common disconnect path here). This is the real
-    // "MCP client disconnected" seam. If this session has an outstanding
-    // recording with no matching stop, tear it down on the daemon so the
-    // SCStream doesn't keep capturing after we exit (#1764).
+    // Reached on a clean stdin EOF (the `n == 0` break above) — the normal
+    // "MCP client disconnected" seam, which is what real clients do when they
+    // close stdio. (An I/O error inside the loop instead propagates via `?`
+    // and skips this block; that rare path is covered by the daemon-side
+    // recording idle-TTL backstop in `serve.rs`, so the SCStream still can't
+    // run forever.) If this session has an outstanding recording with no
+    // matching stop, tear it down on the daemon so the SCStream doesn't keep
+    // capturing after we exit (#1764).
     //
     // Best-effort: the daemon may already be gone; never fail the exit. The
     // daemon services this exactly like any other per-call connection — its

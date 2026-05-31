@@ -146,6 +146,13 @@ impl Changes {
     }
 }
 
+/// Returns true if the window belongs to the cua-driver daemon process
+/// (e.g. the AgentCursorOverlayWindow). Used by `detect_with` to exclude
+/// the daemon's own windows from "new window" reports.
+pub(crate) fn is_daemon_window(w: &WindowInfo) -> bool {
+    w.pid == std::process::id() as i32
+}
+
 /// Default poll deadline — new windows triggered by a click typically
 /// appear within ~200ms on macOS; 1.0s gives the wildcard suppressor
 /// time to fire and settle.
@@ -251,6 +258,7 @@ impl Snapshot {
             let new_windows: Vec<WindowEvent> = current
                 .iter()
                 .filter(|w| !self.window_ids.contains(&w.window_id))
+                .filter(|w| !is_daemon_window(w))
                 .map(|w| WindowEvent {
                     window_id: w.window_id,
                     pid: w.pid,
@@ -299,6 +307,10 @@ impl Snapshot {
     /// Kept `pub(crate)` because the doc comment near the top of this
     /// `impl` block calls it out as the entry point for unit-testing the
     /// diff logic without driving the live window enumerator.
+    ///
+    /// **Note:** this is a pure set-difference — it does NOT filter out
+    /// the daemon's own windows (see `detect_with` for that). Callers
+    /// must apply their own `pid != daemon_pid` filter if needed.
     #[allow(dead_code)]
     pub(crate) fn diff(
         snapshot_ids: &HashSet<u32>,
@@ -472,6 +484,56 @@ mod tests {
         };
         // No title → just the app name, no parentheses.
         assert_eq!(c.result_suffix(), "\n\n🪟 Action opened new window(s): Finder.");
+    }
+
+    /// Tests `is_daemon_window` — the production predicate used by
+    /// `detect_with` to filter the cursor overlay. If `is_daemon_window`
+    /// is removed from `detect_with`, this test still passes, BUT the
+    /// predicate itself would fail the negative case below.
+    /// Regression test for trycua/cua#1592 (Bug 2).
+    #[test]
+    fn is_daemon_window_filters_own_pid() {
+        use super::is_daemon_window;
+
+        let daemon = win(2, std::process::id() as i32, "Cua Driver", "");
+        let other = win(3, 101, "Mail", "Inbox");
+
+        assert!(is_daemon_window(&daemon));
+        assert!(!is_daemon_window(&other));
+    }
+
+    /// End-to-end: `diff()` + `is_daemon_window` filter produces the
+    /// same result that `detect_with` would for a window list containing
+    /// a daemon-owned overlay.
+    #[test]
+    fn detect_with_would_exclude_daemon_window() {
+        use super::is_daemon_window;
+
+        let snap: HashSet<u32> = [1].into_iter().collect();
+        let cur = vec![
+            win(1, 100, "Safari", "Home"),
+            win(2, std::process::id() as i32, "Cua Driver", ""),
+            win(3, 101, "Mail", "Inbox"),
+        ];
+        let (opened, _closed) = Snapshot::diff(&snap, &cur);
+        assert_eq!(opened.len(), 2);
+        let filtered: Vec<&WindowEvent> = opened
+            .iter()
+            .filter(|w| !is_daemon_window(&WindowInfo {
+                window_id: w.window_id,
+                pid: w.pid,
+                app_name: w.app_name.clone(),
+                title: w.title.clone(),
+                bounds: WindowBounds { x: 0., y: 0., width: 0., height: 0. },
+                layer: 0,
+                z_index: 0,
+                is_on_screen: true,
+                on_current_space: None,
+                space_ids: None,
+            }))
+            .collect();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].app_name, "Mail");
     }
 
     /// Regression: `snapshot(prior_front)` must store the caller's

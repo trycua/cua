@@ -259,6 +259,21 @@ fn main() {
                 None => pip_preview::PipConfig::from_args(),
             };
             maybe_init_pip();
+
+            // Agent-cursor overlay. The DAEMON is the process that actually
+            // performs clicks / AX presses, so the overlay NSWindow + render
+            // loop must run HERE — not only in the in-process `mcp` arm. In the
+            // daemon-proxy setup (`mcp` relaunches `open -n -g … serve` and
+            // proxies to it), the proxy never renders and, before this, neither
+            // did the daemon — so every cursor command was a silent no-op and
+            // the agent cursor never appeared. Init the channel before spawning
+            // the serve thread so `run_on_main_thread()` always finds it ready
+            // (mirrors the Mcp arm).
+            let cursor_cfg = cursor_overlay::CursorConfig::from_args();
+            if cursor_cfg.enabled {
+                platform_macos::cursor::overlay::init(cursor_cfg.clone());
+            }
+
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
@@ -325,6 +340,15 @@ fn main() {
             // stays up as long as the daemon does.
             if pip_cfg.enabled {
                 platform_macos::pip::run_appkit_main_loop();
+            } else if cursor_cfg.enabled {
+                // Render the agent-cursor overlay: park the main thread in the
+                // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
+                // self-guards on `has_graphic_access()` and returns immediately
+                // when the daemon has no Window Server session — fall through to
+                // join so the daemon still serves headless. The serve thread runs
+                // on its background thread regardless.
+                platform_macos::cursor::overlay::run_on_main_thread();
+                let _ = serve_handle.join();
             } else {
                 let _ = serve_handle.join();
             }

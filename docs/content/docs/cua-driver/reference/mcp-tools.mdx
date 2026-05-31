@@ -521,7 +521,9 @@ Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimens
 
 ### set_agent_cursor_enabled
 
-Show or hide the agent cursor overlay for a cursor instance. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).
+Show or hide the agent cursor overlay for a cursor instance. The overlay is **ON by default** and each MCP session automatically owns its own cursor — you do not need to call this to make the cursor appear; use it only to hide (`enabled:false`) or re-show (`enabled:true`) it. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).
+
+> **Visibility caveat (AX runs).** On a pure accessibility-action run (clicking by `element_index`), the session cursor seeds on-screen and pulses on its very first action rather than playing a long glide, so it is easy to miss in a screen recording. For a clearly *gliding* cursor in a demo, issue a pixel `click({pid,x,y})` or a `move_agent_cursor` first to put the cursor on-screen; subsequent AX clicks then glide normally.
 
 **Arguments:**
 

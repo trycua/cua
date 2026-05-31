@@ -197,7 +197,7 @@ Workflow per turn:
 4. click/type_text/press_key using element_index from step 3
 5. get_window_state(pid, window_id) again → verify the action landed
 
-Agent cursor: set_agent_cursor_* tools visualise where the agent is acting without affecting the real mouse pointer.
+Agent cursor: a per-session overlay cursor (ON by default, one per MCP session) visualises where the agent is acting without affecting the real mouse pointer; it is removed when the session ends. set_agent_cursor_* tools hide/show/customise it. Note: a pure accessibility-action (element_index) click snaps the cursor with a brief pulse on its very first action rather than a long glide, so it can be easy to miss — issue a pixel click or move_agent_cursor first for a visibly gliding demo/recording.
 
 If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )

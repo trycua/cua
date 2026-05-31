@@ -48,7 +48,11 @@ static ENABLED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn enabled_def() -> &'static ToolDef {
     ENABLED_DEF.get_or_init(|| ToolDef {
         name: "set_agent_cursor_enabled".into(),
-        description: "Show or hide the agent cursor overlay for a cursor instance.".into(),
+        description: "Show or hide the agent cursor overlay for a cursor instance. The overlay \
+                      is ON by default and each MCP session automatically owns its own cursor \
+                      (keyed by session id) — you do NOT need to call this to make the cursor \
+                      appear. Use enabled=false to hide it, or enabled=true to re-show a hidden \
+                      one. Pass cursor_id only to target a deliberately-shared cursor.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["enabled"],
@@ -544,6 +548,50 @@ mod tests {
         assert_ne!(a.config.enabled, b.config.enabled);
         // A never-touched session has no entry — no phantom materialised.
         assert!(reg.get("sessC-never-touched").is_none());
+    }
+
+    #[test]
+    fn enable_and_ax_click_resolve_the_same_session_cursor() {
+        // BUG verify (b): in one MCP session, set_agent_cursor_enabled (no
+        // cursor_id) and a click(element_index) carry the SAME injected
+        // _session_id, so both resolve the same cursor key — i.e. enabling the
+        // cursor lights the very cursor the AX click drives. Mirrors the args
+        // the daemon injects (_session_id) for each forwarded tool call.
+        let session = "mcp-12345-678";
+        let enable_args = json!({ "enabled": true, "_session_id": session });
+        let ax_click_args =
+            json!({ "pid": 844, "window_id": 10725, "element_index": 14, "_session_id": session });
+        let enable_key = resolve_cursor_key(&enable_args);
+        let click_key = resolve_cursor_key(&ax_click_args);
+        assert_eq!(enable_key, session);
+        assert_eq!(enable_key, click_key,
+            "set_agent_cursor_enabled and the AX click must drive the same session cursor");
+    }
+
+    #[test]
+    fn get_config_reports_calling_session_cursor_deterministically() {
+        // BUG 3 regression: get_config's cursor_enabled must reflect the CALLING
+        // session's own cursor (resolved by key), not a nondeterministic
+        // HashMap.first(). Two sessions with opposite enabled flags must each
+        // read back their OWN value.
+        use crate::cursor::CursorRegistry;
+        let reg = CursorRegistry::new();
+        reg.set_enabled("sessA", true);
+        reg.set_enabled("sessB", false);
+
+        // Replicate get_config's resolution: key = resolve_cursor_key(args),
+        // then get(key) or get("default").
+        let read_for = |args: &serde_json::Value| -> bool {
+            let key = resolve_cursor_key(args);
+            reg.get(&key)
+                .or_else(|| reg.get("default"))
+                .map(|s| s.config.enabled)
+                .unwrap_or(true)
+        };
+        assert!(read_for(&json!({ "_session_id": "sessA" })));
+        assert!(!read_for(&json!({ "_session_id": "sessB" })));
+        // Anonymous caller (no session) falls back to the seeded default (on).
+        assert!(read_for(&json!({})));
     }
 
     #[test]

@@ -175,15 +175,15 @@ pkgs.testers.nixosTest {
     with subtest("Record GIF and execute command in inactive terminal"):
         machine.copy_from_host("${mcpBackgroundTerminalTest}", "/tmp/mcp-background-terminal-gif-test.py")
         machine.execute(
-            "DISPLAY=:99 ffmpeg -y -video_size 1280x1024 -framerate 10 -f x11grab -i :99 "
+            "sh -lc 'DISPLAY=:99 ffmpeg -y -video_size 1280x1024 -framerate 10 -f x11grab -i :99 "
             "-t 6 -vf \"fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse\" "
-            "/tmp/cua-driver-linux-background-terminal.gif >/tmp/ffmpeg-background.log 2>&1 &"
+            "/tmp/cua-driver-linux-background-terminal.gif >/tmp/ffmpeg-background.log 2>&1 & echo $! >/tmp/ffmpeg-background.pid'"
         )
         result = machine.succeed("timeout 60 env DISPLAY=:99 python3 /tmp/mcp-background-terminal-gif-test.py 2>&1")
         machine.log(result)
         assert "background terminal GIF test complete" in result, result
-        machine.wait_until_succeeds("test -f /tmp/cua-driver-linux-background-terminal.gif", timeout=20)
-        machine.wait_until_succeeds("! pgrep -af 'cua-driver-linux-background-terminal.gif' >/dev/null", timeout=20)
+        machine.wait_until_succeeds("! kill -0 $(cat /tmp/ffmpeg-background.pid) 2>/dev/null", timeout=60)
+        machine.succeed("test -s /tmp/cua-driver-linux-background-terminal.gif")
         machine.wait_until_succeeds("grep -Fx 'hello' /tmp/background-hello.txt", timeout=20)
 
     with subtest("Verify focus stayed on control terminal"):

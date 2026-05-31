@@ -18,6 +18,13 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## 0.4.2 (2026-05-31)
+
+- macOS: guard the SkyLight auth-message selector on macOS 14 Sonoma so the
+  driver no longer crashes on launch (#1782, #1503).
+- macOS: enable Chromium/Electron accessibility trees via `AXManualAccessibility`,
+  so `get_window_state` can see their window content (#1756).
+
 ## 0.4.1 (2026-05-31)
 
 - macOS: per-session agent cursors, so concurrent sessions each get their own
@@ -35,8 +42,9 @@ release body is auto-generated per release from the commits touching
 
 ## 0.3.6 (2026-05-30)
 
-- macOS: fix permissions status so it reports the caller's actual TCC grants
-  rather than the daemon's (#1774).
+- macOS: fix permissions status so it reports the driver's real TCC grants (via
+  the daemon) instead of the calling terminal's — it no longer claims granted
+  when only the caller holds the grant (#1774).
 
 ## 0.3.5 (2026-05-30)
 

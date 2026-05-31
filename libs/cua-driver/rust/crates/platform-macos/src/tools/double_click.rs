@@ -69,8 +69,11 @@ impl Tool for DoubleClickTool {
                 )),
             };
 
+            // Thread the resolved session cursor key into the blocking AX path
+            // so its ClickPulse lands on THIS session's cursor, not "default".
+            let ck = cursor_key.clone();
             let result = tokio::task::spawn_blocking(move || {
-                ax_double_click(pid, element_ptr, idx)
+                ax_double_click(pid, element_ptr, idx, &ck)
             }).await;
 
             return match result {
@@ -159,7 +162,7 @@ impl Tool for DoubleClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_double_click(pid: i32, element_ptr: usize, idx: usize) -> anyhow::Result<String> {
+fn ax_double_click(pid: i32, element_ptr: usize, idx: usize, cursor_key: &str) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
@@ -176,8 +179,11 @@ fn ax_double_click(pid: i32, element_ptr: usize, idx: usize) -> anyhow::Result<S
     let (cx, cy) = unsafe { element_screen_center(element) }
         .ok_or_else(|| anyhow::anyhow!("Cannot resolve screen center for element [{idx}]"))?;
 
-    // Blocking AX path without tool `args` in scope → drive the "default" cursor.
-    crate::cursor::overlay::send_command_default(cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy });
+    // Drive THIS session's cursor (threaded in via `cursor_key`), not "default".
+    crate::cursor::overlay::send_command(
+        cursor_key.to_owned(),
+        cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
+    );
     crate::input::mouse::click_at_xy(pid, cx, cy, 2, &[])?;
     Ok(format!("✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."))
 }

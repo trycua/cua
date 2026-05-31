@@ -158,13 +158,18 @@ impl Tool for ClickTool {
 
             // Run AX work on a blocking thread (can't block async executor).
             let action_clone = action.clone();
+            // Thread the resolved session cursor key into the blocking AX path
+            // so its ShowFocusRect + ClickPulse land on THIS session's cursor,
+            // not the shared "default" one (which would light the wrong cursor
+            // and stomp default for a non-default session).
+            let ck = cursor_key.clone();
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
                 prior_front,
                 "click.AXPress",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone)
+                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
                     })
                     .await
                 },
@@ -371,6 +376,7 @@ fn perform_ax_click(
     pid: i32,
     window_id: u32,
     action_str: &str,
+    cursor_key: &str,
 ) -> anyhow::Result<(String, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
@@ -437,17 +443,19 @@ fn perform_ax_click(
     // Show focus-rect highlight around the element (matches Swift showFocusRect).
     // Also move the cursor to the element center so the glide animation plays.
     if let Some(rect) = unsafe { element_screen_rect(element) } {
-        // This helper runs on a blocking thread without the tool `args` in
-        // scope; drive the "default" cursor. The keyed glide already played on
-        // the session's cursor in the invoke body above.
-        crate::cursor::overlay::send_command_default(
-            cursor_overlay::OverlayCommand::ShowFocusRect(Some(rect))
+        // Drive THIS session's cursor (threaded in via `cursor_key`), matching
+        // the keyed glide already played in the invoke body above. The keyed
+        // glide already played on the session's cursor in the invoke body.
+        crate::cursor::overlay::send_command(
+            cursor_key.to_owned(),
+            cursor_overlay::OverlayCommand::ShowFocusRect(Some(rect)),
         );
         // Animate cursor to element center.
         let cx = rect[0] + rect[2] / 2.0;
         let cy = rect[1] + rect[3] / 2.0;
-        crate::cursor::overlay::send_command_default(
-            cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy }
+        crate::cursor::overlay::send_command(
+            cursor_key.to_owned(),
+            cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
         );
     }
     let _ = pid; let _ = window_id; // used by caller context

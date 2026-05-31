@@ -75,6 +75,13 @@ impl CursorRegistry {
         }).clone()
     }
 
+    /// Non-creating read of a single cursor's state. Returns None when the id
+    /// has no entry (used by get_agent_cursor_state to scope its result to the
+    /// caller's session without materialising a phantom cursor).
+    pub fn get(&self, cursor_id: &str) -> Option<CursorState> {
+        self.inner.lock().unwrap().get(cursor_id).cloned()
+    }
+
     pub fn update_config(&self, config: CursorConfig) {
         let mut inner = self.inner.lock().unwrap();
         let entry = inner.entry(config.cursor_id.clone()).or_insert_with(|| CursorState {

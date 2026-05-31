@@ -111,9 +111,11 @@ Pure read-only.
 
 ### get_agent_cursor_state
 
-Return the current state of all agent cursor instances: position, config (color, icon, label, size, opacity), enabled flag.
+Return the current state of **this session's** agent cursor: position, config (color, icon, label, size, opacity), enabled flag. The result is scoped to the cursor the call resolves to (precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**), so concurrent sessions no longer see each other's cursors and the top-level `enabled` flag is deterministic. Pass `cursor_id` to inspect a specific instance.
 
-**Arguments:** none.
+**Arguments:**
+
+- `cursor_id` (string, optional): Cursor instance to inspect. Omit it and the call targets the calling session's own cursor (macOS); the anonymous / one-shot path targets `"default"`.
 
 ## Action tools
 
@@ -452,7 +454,7 @@ Start trajectory recording. Every subsequent action-tool invocation (click, righ
 
 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
 
-**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. On the daemon-proxy path (the default macOS `cua-driver mcp` flow), recording is stopped automatically when the MCP client disconnects (the proxy sends a `session_end` signal carrying its session identity, and the daemon stops only the recording that session owns), so a forgotten session no longer keeps writing to disk; a daemon-side idle timeout (~5 min of no tool activity) is a backstop in case the client is killed before it can clean up.
+**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. On the daemon-proxy path (the default macOS `cua-driver mcp` flow), recording is stopped automatically when the session ends, and the daemon stops only the recording that session owns — so a forgotten session no longer keeps writing to disk. Session-end is detected reliably even on **ungraceful proxy death** (`kill -9`, crash): each proxy holds one long-lived control connection to the daemon, and the kernel closing that socket on proxy exit (graceful **or** killed) fires `session_end`. A daemon-side idle timeout (~5 min of no tool activity) remains as a secondary backstop for a non-proxy client that started a recording and died.
 
 **macOS uses native ScreenCaptureKit** (in-process SCStream + SCRecordingOutput) so video inherits Cua Driver's own Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
 
@@ -515,7 +517,7 @@ Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimens
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
 
-**Per-session agent cursors (macOS).** The agent cursor is owned per MCP session. On the daemon-proxy path every `cua-driver mcp` client mints a session identity, and that identity is the cursor key when the caller passes no explicit `cursor_id` — so two concurrent sessions each drive their own overlay cursor (distinct auto-assigned colour) drawn simultaneously, instead of clobbering one shared cursor last-writer-wins. The key is resolved with the precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**: an explicit `cursor_id` stays an orthogonal, user-facing handle, so a wrapper can deliberately share or override a cursor across sessions by passing the same `cursor_id`. When a session disconnects (`session_end`), that session's cursor is removed from the overlay automatically. The anonymous / one-shot `cua-driver call` path (no session identity, no `cursor_id`) maps to the seeded `"default"` cursor, which is never removed — backward compatible. (Windows/Linux keep the single shared cursor today.)
+**Per-session agent cursors (macOS).** The agent cursor is owned per MCP session. On the daemon-proxy path every `cua-driver mcp` client mints a session identity, and that identity is the cursor key when the caller passes no explicit `cursor_id` — so two concurrent sessions each drive their own overlay cursor (distinct auto-assigned colour) drawn simultaneously, instead of clobbering one shared cursor last-writer-wins. The key is resolved with the precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**: an explicit `cursor_id` stays an orthogonal, user-facing handle, so a wrapper can deliberately share or override a cursor across sessions by passing the same `cursor_id`. When a session ends (`session_end`), that session's cursor is removed from the overlay automatically — including on **ungraceful proxy death** (`kill -9`, crash), because the daemon detects the proxy's control-connection EOF and fires `session_end` without any cooperation from the dying proxy. A late, in-flight cursor command that arrives after removal cannot resurrect the cursor (a render-side tombstone keyed on the session id). The anonymous / one-shot `cua-driver call` path (no session identity, no `cursor_id`) maps to the seeded `"default"` cursor, which is never removed — backward compatible. (Windows/Linux keep the single shared cursor today.)
 
 ### set_agent_cursor_enabled
 

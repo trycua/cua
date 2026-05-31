@@ -62,6 +62,33 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     let session_id = mint_session_id();
     debug!(session_id = %session_id, "proxy session minted");
 
+    // Open ONE long-lived "control" connection to the daemon and hold it open
+    // for this proxy's entire lifetime (separate from the per-call connections
+    // that `send_request` opens and closes per tool call). It sends a single
+    // `session_begin` line and then parks reading — it never writes again and
+    // never closes until this process dies.
+    //
+    // This is the reaper: when the proxy exits (graceful stdin EOF) OR is
+    // SIGKILLed/crashes, the kernel closes this socket; the daemon's
+    // per-connection reader hits EOF and fires `session_end` for `session_id`,
+    // tearing down every piece of state this session owns (overlay cursor,
+    // config overrides, recording). Liveness is connection-based, so an
+    // alive-but-idle session — one issuing zero tool calls — is never reaped:
+    // its control connection stays parked open.
+    //
+    // Detached + fire-and-forget. If the connect races daemon startup and
+    // fails, we log and continue — the per-call `send_request` has its own
+    // retry/timeout, and a restarted daemon loses session state anyway, so a
+    // missing control connection only degrades to no-reaper (the recording
+    // idle-TTL still backstops a leaked recording). It must NOT bail the proxy.
+    {
+        let socket = socket_path.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            run_control_connection(socket, sid).await;
+        });
+    }
+
     // Cache the tool list once at startup. The daemon's registry is
     // static for the lifetime of the daemon, so polling on every
     // `tools/list` would waste a round-trip per call. Swift does the
@@ -115,48 +142,121 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     }
 
     // Reached on a clean stdin EOF (the `n == 0` break above) — the normal
-    // "MCP client disconnected" seam, which is what real clients do when they
-    // close stdio. (An I/O error inside the loop instead propagates via `?`
-    // and skips this block; that rare path is covered by the daemon-side
-    // recording idle-TTL backstop in `serve.rs`, so the SCStream still can't
-    // run forever.) Send a single best-effort `session_end` so the daemon drops
-    // every piece of state THIS session owns — its recording (so the SCStream
-    // doesn't keep capturing ~6 GB/h after we exit) and its config overrides.
-    //
-    // The daemon's `stop_owner(session_id)` no-ops if a later client clobbered
-    // our recording (a newer `start_recording` re-stamped the owner), so our
-    // disconnect can't stop a recording we no longer own. Best-effort: the
-    // daemon may already be gone, and an OLD daemon returns "Unknown method"
-    // (the `other =>` arm) — both are swallowed so teardown degrades to today's
-    // no-cleanup without failing the exit.
-    //
-    // DEFERRED (follow-up): a generic per-session idle reaper for the proxy
-    // SIGKILL/crash path that skips this EOF block. The daemon-global recording
-    // idle-TTL backstop is an acceptable interim cover for the recording leak;
-    // there is no merged config TTL yet, so a SIGKILLed session's config
-    // overrides linger until the daemon restarts — a small, bounded in-memory
-    // leak tracked for the reaper PR.
-    let end_req = DaemonRequest {
-        method: "session_end".into(),
+    // "MCP client disconnected" seam. Session teardown is NO LONGER done here:
+    // it's fully subsumed by the persistent control connection spawned at
+    // startup. On any proxy exit — graceful stdin EOF (this path), an I/O
+    // error propagated via `?`, OR a SIGKILL/crash — the kernel closes the
+    // control socket, the daemon's reader hits EOF, and it fires
+    // `session_end(session_id)` once (idempotent). That single path reliably
+    // covers the ungraceful-death case the old best-effort exit hook missed.
+    Ok(())
+}
+
+/// Own the proxy's single long-lived control connection. Connects directly to
+/// the daemon socket (its OWN async open — `send_request` is sync, blocking,
+/// and one-shot, so it cannot be reused here), sends one `session_begin` line
+/// carrying `session_id`, then parks in a read loop until the connection
+/// closes. It never writes again. The daemon records `session_id` from
+/// `session_begin` and fires `session_end` when this connection EOFs — which
+/// the kernel triggers on proxy exit AND on kill -9.
+///
+/// On any read result/error (daemon-side close, broken pipe), the loop exits
+/// and the task ends; the proxy keeps running on its per-call connections. A
+/// connect failure (racing daemon startup) is logged and swallowed — it must
+/// not bail the proxy.
+async fn run_control_connection(socket_path: String, session_id: String) {
+    let begin = DaemonRequest {
+        method: "session_begin".into(),
         name: None,
         args: None,
         session_id: Some(session_id.clone()),
     };
-    // `send_request` is sync + blocking; we're past the read loop and about to
-    // exit, so a direct blocking call on this thread is fine (no reactor
-    // starvation concern). It inherits send_request's connect/read timeouts,
-    // bounding a wedged-daemon delay to ~10s — acceptable for a teardown.
-    match crate::serve::send_request(&socket_path, &end_req) {
-        Ok(r) if !r.ok => {
-            // Old daemon (pre-session-identity) → "Unknown method"; degrade
-            // gracefully to today's no-cleanup. Newer daemon always ACKs ok.
-            debug!("proxy-exit session_end not honored (old daemon?): {:?}", r.error)
+    let line = match serde_json::to_string(&begin) {
+        Ok(s) => s + "\n",
+        Err(e) => {
+            warn!("control connection: serialize session_begin failed: {e}");
+            return;
         }
-        Err(e) => warn!("proxy-exit session_end transport error: {e}"),
-        _ => debug!("proxy-exit session_end sent"),
+    };
+
+    #[cfg(unix)]
+    {
+        use tokio::net::UnixStream;
+        let mut stream = match UnixStream::connect(&socket_path).await {
+            Ok(s) => s,
+            Err(e) => {
+                debug!(session_id = %session_id, "control connect failed (daemon starting?): {e}");
+                return;
+            }
+        };
+        if let Err(e) = stream.write_all(line.as_bytes()).await {
+            debug!("control connection: write session_begin failed: {e}");
+            return;
+        }
+        let _ = stream.flush().await;
+        debug!(session_id = %session_id, "control connection established (session_begin sent)");
+
+        // Park: read until the daemon closes (it ACKs session_begin then keeps
+        // the conn open; we drain anything and only return on EOF/error). The
+        // proxy never writes here again — the connection lives until process
+        // death, when the kernel closes it and the daemon reaps the session.
+        let mut reader = BufReader::new(stream);
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf).await {
+                Ok(0) | Err(_) => break, // daemon closed or error — task done.
+                Ok(_) => continue,       // ACK / stray line — ignore, keep parked.
+            }
+        }
+        debug!(session_id = %session_id, "control connection closed");
     }
 
-    Ok(())
+    #[cfg(all(not(unix), target_os = "windows"))]
+    {
+        use tokio::net::windows::named_pipe::ClientOptions;
+        // Retry the pipe open briefly — the daemon may still be spinning up its
+        // next instance (mirrors send_request's open-retry).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let client = loop {
+            match ClientOptions::new().open(&socket_path) {
+                Ok(c) => break Some(c),
+                Err(_) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(e) => {
+                    debug!(session_id = %session_id, "control pipe open failed (daemon starting?): {e}");
+                    break None;
+                }
+            }
+        };
+        let mut client = match client {
+            Some(c) => c,
+            None => return,
+        };
+        if let Err(e) = client.write_all(line.as_bytes()).await {
+            debug!("control connection: write session_begin failed: {e}");
+            return;
+        }
+        let _ = client.flush().await;
+        debug!(session_id = %session_id, "control connection established (session_begin sent)");
+
+        let mut reader = BufReader::new(client);
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => continue,
+            }
+        }
+        debug!(session_id = %session_id, "control connection closed");
+    }
+
+    #[cfg(all(not(unix), not(target_os = "windows")))]
+    {
+        let _ = (line, session_id, socket_path);
+    }
 }
 
 /// Mint a session id unique among the live proxies sharing one daemon, for the

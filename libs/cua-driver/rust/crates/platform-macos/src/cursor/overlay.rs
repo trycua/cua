@@ -86,6 +86,14 @@ struct RenderMap {
     /// Frozen launch-time config used as the template for lazily-created
     /// cursors (its palette is overridden per-key via `Palette::for_instance`).
     template: CursorConfig,
+    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
+    /// click/move from another task that lands AFTER the owning session's
+    /// `Remove` can never resurrect the just-removed cursor (the ghost-cursor
+    /// resurrection race). Keyed on session_id, which is unique per session, so
+    /// a permanent tombstone is correct (no cursor_id reuse across a
+    /// session_end boundary). "default" is never tombstoned.
+    ended: std::collections::HashSet<CursorKey>,
 }
 
 /// Build the `RenderState` for a lazily-created cursor key: derive from the
@@ -115,10 +123,20 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                         m.remove(&key);
                     }
                 }
+                // Tombstone the key so a late in-flight Cmd from another task
+                // (an animate/click racing the owning session's death) cannot
+                // re-create the just-removed cursor. Never tombstone "default".
+                map.ended.insert(key);
             }
             None
         }
         OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
+            // Drop a command for an already-ended session WITHOUT get-or-create
+            // — this is the resurrection guard. Without it, a ClickPulse/MoveTo
+            // landing after Remove would re-insert (and re-leak) the cursor.
+            if map.ended.contains(&key) {
+                return None;
+            }
             let template = map.template.clone();
             let k = key.clone();
             let rs = map
@@ -144,6 +162,7 @@ pub fn init(cfg: CursorConfig) {
         win_w: 0.0,
         win_h: 0.0,
         template: cfg,
+        ended: std::collections::HashSet::new(),
     });
 }
 
@@ -171,13 +190,20 @@ pub fn remove_cursor(key: CursorKey) {
     }
 }
 
-/// Return a snapshot of the current motion config (for use by set_agent_cursor_motion
-/// to apply partial overrides without losing other knobs). Reads the
-/// `"default"` cursor's motion (motion is a shared timing config in practice).
-pub fn current_motion() -> MotionConfig {
-    RENDER.lock().unwrap()
-        .as_ref()
-        .and_then(|m| m.cursors.get("default").map(|rs| rs.core.motion.clone()))
+/// Return a snapshot of a cursor's current motion config (for use by
+/// set_agent_cursor_motion to apply partial overrides without losing other
+/// knobs). Reads the motion of the cursor `key`, falling back to the
+/// `"default"` cursor's motion when that key has no own entry yet (e.g. a
+/// session whose first motion call precedes any move/enable).
+pub fn current_motion(key: &str) -> MotionConfig {
+    let guard = RENDER.lock().unwrap();
+    let Some(map) = guard.as_ref() else {
+        return MotionConfig::default();
+    };
+    map.cursors
+        .get(key)
+        .or_else(|| map.cursors.get("default"))
+        .map(|rs| rs.core.motion.clone())
         .unwrap_or_default()
 }
 
@@ -745,6 +771,7 @@ mod tests {
             win_w: 100.0,
             win_h: 100.0,
             template: CursorConfig::default(),
+            ended: std::collections::HashSet::new(),
         }
     }
 
@@ -819,6 +846,42 @@ mod tests {
         apply_msg(&mut map, move_msg("first", 3.0, 3.0));
         let keys: Vec<&String> = map.cursors.keys().collect();
         assert_eq!(keys, vec!["default", "first", "second"]);
+    }
+
+    #[test]
+    fn tombstone_blocks_resurrection_after_remove() {
+        // The resurrection race: a Cmd for a session lands AFTER its Remove
+        // (an in-flight click from another task as the session dies). The
+        // tombstone must drop it so the just-removed cursor is NOT re-created.
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        assert_eq!(map.cursors.len(), 2); // default + sessA
+
+        // Session ends → cursor removed, key tombstoned.
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(!map.cursors.contains_key("sessA"));
+        assert_eq!(map.cursors.len(), 1);
+
+        // A late in-flight Cmd for the ended session must be dropped WITHOUT
+        // re-inserting (no get-or-create resurrection).
+        let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
+        assert!(resolved.is_none(), "ended-session Cmd must be dropped, not resolved");
+        assert!(!map.cursors.contains_key("sessA"), "tombstone must block resurrection");
+        assert_eq!(map.cursors.len(), 1, "render map length must stay at default only");
+    }
+
+    #[test]
+    fn default_is_never_tombstoned() {
+        // Remove("default") is guarded, so default is never tombstoned and a
+        // subsequent Cmd on default still renders.
+        let mut map = empty_map();
+        apply_msg(&mut map, OverlayMsg::Remove("default".to_owned()));
+        assert!(map.cursors.contains_key("default"));
+        assert!(!map.ended.contains("default"));
+
+        let resolved = apply_msg(&mut map, move_msg("default", 5.0, 5.0));
+        assert_eq!(resolved.as_deref(), Some("default"));
+        assert!(map.cursors.contains_key("default"));
     }
 
     #[test]

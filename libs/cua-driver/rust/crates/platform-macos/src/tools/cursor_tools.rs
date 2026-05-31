@@ -218,8 +218,9 @@ impl Tool for SetAgentCursorMotionTool {
             || args.get("idle_hide_ms").is_some();
 
         if motion_changed {
-            // Read current motion from overlay, apply overrides, push back.
-            let current_motion = crate::cursor::overlay::current_motion();
+            // Read this cursor's current motion from the overlay, apply
+            // overrides, push back.
+            let current_motion = crate::cursor::overlay::current_motion(&cursor_id);
             let new_motion = current_motion.with_overrides(
                 num(args.get("start_handle")),
                 num(args.get("end_handle")),
@@ -451,9 +452,16 @@ static STATE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn state_def() -> &'static ToolDef {
     STATE_DEF.get_or_init(|| ToolDef {
         name: "get_agent_cursor_state".into(),
-        description: "Return the current state of all agent cursor instances: position, \
-            config (color, icon, label, size, opacity), enabled flag.".into(),
-        input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+        description: "Return the current state of THIS session's agent cursor: position, \
+            config (color, icon, label, size, opacity), enabled flag. Pass cursor_id to \
+            inspect a specific instance.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "cursor_id": { "type": "string", "description": "Cursor instance. Default: this session's cursor." }
+            },
+            "additionalProperties": false
+        }),
         read_only: true,
         destructive: false,
         idempotent: true,
@@ -465,12 +473,23 @@ fn state_def() -> &'static ToolDef {
 impl Tool for GetAgentCursorStateTool {
     fn def(&self) -> &ToolDef { state_def() }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let states = self.state.cursor_registry.all_states();
-        let json = serde_json::to_value(&states).unwrap_or_default();
-        // Top-level "enabled" mirrors Swift's field for parity — use the default cursor.
-        let enabled = states.first().map(|s| s.config.enabled).unwrap_or(true);
-        ToolResult::text(format!("{} cursor instance(s).", states.len()))
+    async fn invoke(&self, args: Value) -> ToolResult {
+        // Scope to the CALLER's cursor (explicit cursor_id > injected
+        // _session_id > "default"). Returning every session's cursors here was a
+        // cross-session leak, and deriving the top-level `enabled` via
+        // `.first()` over a HashMap-backed Vec was nondeterministic with N
+        // cursors. A non-creating `get` keeps a never-touched session from
+        // materialising a phantom entry.
+        let key = resolve_cursor_key(&args);
+        let state = self.state.cursor_registry.get(&key);
+        // `enabled` defaults to true when the session has no cursor yet — the
+        // anonymous / one-shot path resolves to "default", which is always
+        // present, so this default only applies to a brand-new session that has
+        // not enabled/moved its cursor, where "visible by default" is correct.
+        let enabled = state.as_ref().map(|s| s.config.enabled).unwrap_or(true);
+        let cursors: Vec<&crate::cursor::CursorState> = state.iter().collect();
+        let json = serde_json::to_value(&cursors).unwrap_or_default();
+        ToolResult::text(format!("{} cursor instance(s) for '{}'.", cursors.len(), key))
             .with_structured(serde_json::json!({ "cursors": json, "enabled": enabled }))
     }
 }
@@ -505,6 +524,26 @@ mod tests {
             resolve_cursor_key(&json!({ "cursor_id": "user-handle", "_session_id": "sess-7" })),
             "user-handle"
         );
+    }
+
+    #[test]
+    fn get_agent_cursor_state_is_session_scoped() {
+        // A fabricated registry with two sessions' cursors; the scoped read for
+        // one session must return ONLY that session's cursor (no cross-session
+        // leak) and a deterministic `enabled` for that key.
+        use crate::cursor::CursorRegistry;
+        let reg = CursorRegistry::new();
+        reg.set_enabled("sessA", true);
+        reg.set_enabled("sessB", false);
+
+        let a = reg.get("sessA").expect("sessA present");
+        assert!(a.config.enabled);
+        let b = reg.get("sessB").expect("sessB present");
+        assert!(!b.config.enabled);
+        // Scoping to sessB must not see sessA's enabled flag.
+        assert_ne!(a.config.enabled, b.config.enabled);
+        // A never-touched session has no entry — no phantom materialised.
+        assert!(reg.get("sessC-never-touched").is_none());
     }
 
     #[test]

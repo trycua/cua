@@ -189,6 +189,23 @@ impl RecordingSession {
     /// gates teardown.
     pub fn start(&self, output_dir: &str, record_video: bool, owner: Option<&str>) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
+        // Write-boundary resurrection guard — checked INSIDE the lock so the
+        // is_session_ended test is atomic with the enabled/owner write below.
+        // An in-flight start_recording that lands after its owning session ended
+        // (passed the dispatch gate, then the proxy died) must not create a
+        // recording owned by a dead session — a leaked ffmpeg/SCStream. The
+        // teardown sites call `fire_session_end` (which marks ENDED_SESSIONS)
+        // BEFORE `stop_owner`, so either the mark is already set and we bail
+        // here, or we win the lock first and the reaper's later stop_owner(owner)
+        // reaps what we started. Anonymous starts (owner = None: CLI one-shot /
+        // legacy shim) are never gated.
+        if let Some(o) = owner {
+            if crate::session::is_session_ended(o) {
+                anyhow::bail!(
+                    "session {o} has ended; refusing to start a recording owned by a dead session"
+                );
+            }
+        }
         // If a previous session is still open, gracefully tear it down
         // first so the caller doesn't accidentally leak an ffmpeg process.
         if let Some(rec) = inner.video.take() {

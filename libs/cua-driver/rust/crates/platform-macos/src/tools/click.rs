@@ -103,6 +103,9 @@ impl Tool for ClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        // Resolve this action's cursor key so its click-pulse / glide land on
+        // the calling session's cursor, not the shared "default" one.
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         let element_index = args.opt_u64("element_index").map(|v| v as usize);
         let window_id     = args.opt_u64("window_id").map(|v| v as u32);
@@ -134,13 +137,14 @@ impl Tool for ClickTool {
             if let Some((cx, cy)) = center {
                 // Pin overlay above target window first.
                 crate::cursor::overlay::send_command(
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                 );
-                crate::cursor::overlay::animate_cursor_to(cx, cy).await;
+                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), cx, cy).await;
                 // Keep the registry in sync with the overlay so
                 // get_agent_cursor_state reports a truthful position even when
                 // the click was dispatched via the AX path (no pixel coords).
-                self.state.cursor_registry.update_position("default", cx, cy);
+                self.state.cursor_registry.update_position(&cursor_key, cx, cy);
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -154,13 +158,18 @@ impl Tool for ClickTool {
 
             // Run AX work on a blocking thread (can't block async executor).
             let action_clone = action.clone();
+            // Thread the resolved session cursor key into the blocking AX path
+            // so its ShowFocusRect + ClickPulse land on THIS session's cursor,
+            // not the shared "default" one (which would light the wrong cursor
+            // and stomp default for a non-default session).
+            let ck = cursor_key.clone();
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
                 prior_front,
                 "click.AXPress",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone)
+                        perform_ax_click(element_ptr, idx, pid, wid, &action_clone, &ck)
                     })
                     .await
                 },
@@ -292,17 +301,19 @@ impl Tool for ClickTool {
             // the cursor is already sandwiched correctly while it glides in.
             if let Some(wid) = window_id {
                 crate::cursor::overlay::send_command(
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64)
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                 );
             }
             // Animate the visual cursor to the click point and wait for it to
             // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-            crate::cursor::overlay::animate_cursor_to(screen_x, screen_y).await;
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
             // Keep the registry in sync with the overlay (see AX path above).
-            self.state.cursor_registry.update_position("default", screen_x, screen_y);
+            self.state.cursor_registry.update_position(&cursor_key, screen_x, screen_y);
             // Show click-pulse on the agent cursor overlay.
             crate::cursor::overlay::send_command(
-                cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y }
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
             );
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -365,6 +376,7 @@ fn perform_ax_click(
     pid: i32,
     window_id: u32,
     action_str: &str,
+    cursor_key: &str,
 ) -> anyhow::Result<(String, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
@@ -431,14 +443,19 @@ fn perform_ax_click(
     // Show focus-rect highlight around the element (matches Swift showFocusRect).
     // Also move the cursor to the element center so the glide animation plays.
     if let Some(rect) = unsafe { element_screen_rect(element) } {
+        // Drive THIS session's cursor (threaded in via `cursor_key`), matching
+        // the keyed glide already played in the invoke body above. The keyed
+        // glide already played on the session's cursor in the invoke body.
         crate::cursor::overlay::send_command(
-            cursor_overlay::OverlayCommand::ShowFocusRect(Some(rect))
+            cursor_key.to_owned(),
+            cursor_overlay::OverlayCommand::ShowFocusRect(Some(rect)),
         );
         // Animate cursor to element center.
         let cx = rect[0] + rect[2] / 2.0;
         let cy = rect[1] + rect[3] / 2.0;
         crate::cursor::overlay::send_command(
-            cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy }
+            cursor_key.to_owned(),
+            cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
         );
     }
     let _ = pid; let _ = window_id; // used by caller context

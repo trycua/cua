@@ -18,14 +18,28 @@
 //! `recording.rs` — a registry-free, platform-pluggable hook set with no
 //! reverse coupling from core into the platform crates.
 
+use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
 type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
 
 static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
 
+/// Session ids that have already had their `session_end` fired. Dedupes the
+/// control-connection EOF teardown (the reaper) against any stray legacy
+/// `session_end` method that a mixed-version (new proxy / old proxy) rollout
+/// might still send — `fire_session_end` is the single fan-out point and must
+/// be idempotent because the overlay Remove + recording stop must run exactly
+/// once. Growth is bounded (one short string per ended session over the
+/// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
+static ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
 fn hooks() -> &'static Mutex<Vec<SessionEndHook>> {
     SESSION_END_HOOKS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn ended_sessions() -> &'static Mutex<HashSet<String>> {
+    ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// Register a callback invoked with the disconnecting `session_id` whenever a
@@ -39,9 +53,63 @@ pub fn register_session_end_hook(hook: impl Fn(&str) + Send + Sync + 'static) {
 }
 
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
-/// `session_end` arm. No-op when no hooks are registered.
+/// on control-connection EOF (the reaper) and by the legacy `session_end` method
+/// arm. Idempotent: the FIRST fire for a given `session_id` runs every hook; any
+/// later fire for the same id is a no-op. This dedupes the EOF path against a
+/// stray legacy `session_end` (mixed-version rollout) so cursor-remove +
+/// recording-stop run exactly once. No-op when no hooks are registered.
 pub fn fire_session_end(session_id: &str) {
+    // Mark-then-fan-out under a short critical section, releasing the lock
+    // before running hooks (hooks may be slow / re-entrant and must not hold
+    // the dedupe lock).
+    {
+        let mut ended = ended_sessions().lock().unwrap();
+        if !ended.insert(session_id.to_owned()) {
+            return; // already ended — idempotent no-op.
+        }
+    }
     for hook in hooks().lock().unwrap().iter() {
         hook(session_id);
+    }
+}
+
+/// Whether `fire_session_end` has already run for this `session_id`. The
+/// daemon-side authority for "this session is permanently gone"; the macOS
+/// overlay keeps its own render-side tombstone keyed on the same id.
+pub fn is_session_ended(session_id: &str) -> bool {
+    ended_sessions().lock().unwrap().contains(session_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn fire_session_end_is_idempotent_per_id() {
+        // Distinct, test-local ids so we don't collide with other tests that
+        // share the process-global ENDED_SESSIONS set.
+        let sid = "test-dedupe-session-AABBCC";
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+        let want = sid.to_owned();
+        register_session_end_hook(move |got| {
+            if got == want {
+                calls2.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        assert!(!is_session_ended(sid));
+        fire_session_end(sid);
+        assert!(is_session_ended(sid));
+        // Second + third fire for the same id must be no-ops.
+        fire_session_end(sid);
+        fire_session_end(sid);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "hook must run exactly once for a given session id"
+        );
     }
 }

@@ -23,7 +23,7 @@ pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
 pub use shape::CursorShape;
-pub use render_state::{RenderStateCore, FocusRect, render_frame, draw_default_arrow};
+pub use render_state::{RenderStateCore, FocusRect, render_frame, paint_cursor, draw_default_arrow};
 pub use z_order::ZOrderEnforcer;
 
 /// Configuration assembled from CLI arguments and passed to every
@@ -236,6 +236,36 @@ impl CursorRegistry {
 
 impl Default for CursorRegistry {
     fn default() -> Self { Self::new() }
+}
+
+/// Identifier for one owned cursor in the keyed render collection.
+///
+/// Resolved by the macOS tool layer (see `resolve_cursor_key`) with the
+/// precedence: explicit `cursor_id` arg > injected `_session_id` > `"default"`.
+/// The render side treats it as an opaque insertion-ordered map key; the
+/// `"default"` key is special-cased (never removed) so the anonymous /
+/// one-shot `cua-driver call` path is backward compatible.
+pub type CursorKey = String;
+
+/// A render command tagged with the cursor it targets. Wrapping the key
+/// here (rather than inside [`OverlayCommand`]) keeps `OverlayCommand` and
+/// the shared `apply_command_base` / `render_frame` API untouched, so the
+/// Windows and Linux overlays — which never see a key — keep compiling
+/// and behaving exactly as before.
+#[derive(Debug, Clone)]
+pub struct KeyedOverlayCommand {
+    pub key: CursorKey,
+    pub cmd: OverlayCommand,
+}
+
+/// Message carried over the macOS overlay channel. Either a keyed render
+/// command or a lifecycle removal. A separate lifecycle enum (rather than an
+/// `OverlayCommand::Remove` variant) keeps `OverlayCommand` render-only and
+/// avoids forcing a no-op arm onto the Windows/Linux match.
+#[derive(Debug, Clone)]
+pub enum OverlayMsg {
+    Cmd(KeyedOverlayCommand),
+    Remove(CursorKey),
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.

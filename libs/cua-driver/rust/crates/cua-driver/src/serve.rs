@@ -47,10 +47,11 @@ fn recording_idle_ttl_secs() -> u64 {
 
 /// Spawn a detached daemon task that auto-stops a recording after the idle TTL.
 ///
-/// Defense-in-depth for #1764: the primary teardown is the MCP proxy's
-/// stop-on-exit hook (`proxy.rs`). This TTL covers the case the proxy can't run
-/// its hook — proxy SIGKILL/crash, or a non-proxy client that dies holding a
-/// connection. It MUST NOT stop a still-active session: it only reaps when BOTH
+/// Defense-in-depth for #1764: the primary teardown is now the per-session
+/// reaper (the proxy's persistent control connection EOF fires `session_end`,
+/// covering proxy SIGKILL/crash). This TTL covers the residual case a non-proxy
+/// raw client starts a recording and dies without ever sending `session_begin`.
+/// It MUST NOT stop a still-active session: it only reaps when BOTH
 /// the recording is enabled AND there has been no `call` activity for the full
 /// TTL. As long as a session keeps issuing tool calls, `last_activity` is bumped
 /// every turn and the idle window never reaches the TTL. `stop()` is idempotent,
@@ -83,7 +84,14 @@ fn spawn_recording_idle_backstop(
                     // requester id would be redundant and could only make it
                     // wrongly no-op. Session-scoped teardown is the proxy-exit
                     // `session_end` path (#1764 / session-identity work).
-                    let _ = registry.recording.stop_owner(None);
+                    // stop_owner can SYNCHRONOUSLY finalize the recording's mp4
+                    // (SCStream::stop_capture blocks on disk I/O), so run it on a
+                    // blocking thread to keep the reactor free (see the EOF reaper).
+                    let reg2 = registry.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        reg2.recording.stop_owner(None)
+                    })
+                    .await;
                 }
             }
         }
@@ -355,15 +363,16 @@ pub async fn run_serve(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
 
-    // Idle-TTL recording backstop (#1764). The recorder is a daemon-global
-    // singleton; the primary teardown path is the MCP proxy's exit hook
-    // (proxy.rs), which sends `stop_recording` when the client disconnects.
-    // This TTL is defense-in-depth for the case the proxy can't run its hook
-    // (SIGKILL/crash, or a non-proxy client that holds a connection and dies).
-    // We track the last `call` activity timestamp; a background task auto-stops
-    // the recording after `RECORDING_IDLE_TTL_SECS` of zero tool activity. It is
-    // keyed on call activity (NOT connection liveness), so an actively-used
-    // session — one issuing tool calls every turn — is never reaped.
+    // Idle-TTL recording backstop (#1764), now demoted to SECONDARY cover. The
+    // PRIMARY teardown is the per-session reaper: the proxy holds a persistent
+    // control connection (session_begin) whose EOF — on graceful exit AND on
+    // kill -9 — fires session_end, stopping that session's recording reliably.
+    // This TTL still uniquely covers (a) a non-proxy raw client that starts a
+    // recording and dies without ever sending session_begin and (b) a
+    // daemon-internal wedge. We track the last `call` activity timestamp; a
+    // background task auto-stops the recording after `RECORDING_IDLE_TTL_SECS`
+    // of zero tool activity. Keyed on call activity (NOT connection liveness),
+    // so an actively-used session is never reaped.
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
 
@@ -378,6 +387,14 @@ pub async fn run_serve(
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.into_split();
                     let mut lines = BufReader::new(reader).lines();
+
+                    // Set ONLY by a `session_begin` on this connection — i.e.
+                    // the proxy's persistent control connection. Per-call
+                    // connections (call/list/describe) leave this None, so
+                    // their immediate EOF triggers NO teardown. When a control
+                    // connection EOFs (graceful proxy exit OR kill -9, both
+                    // kernel-guaranteed), the post-loop block reaps the session.
+                    let mut control_session_id: Option<String> = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
@@ -488,6 +505,38 @@ pub async fn run_serve(
                                         }
                                     }
                                 }
+                                // Resurrection guard: a call carrying a session
+                                // id whose session has already ended (control
+                                // connection EOF → fire_session_end) must NOT
+                                // run. The render-side overlay tombstone blocks
+                                // the visible ghost cursor, but the metadata
+                                // CursorRegistry and config-override map are
+                                // get-or-create — an in-flight per-call request
+                                // that lands AFTER session_end (a slow AX click,
+                                // a racing set_config) would re-create
+                                // session-owned state that is never reaped
+                                // again. Skip the invoke and return a benign ok
+                                // so no registry/override/recording state is
+                                // created or mutated. ONLY gate when a session
+                                // id is present AND ended — a live session and
+                                // anonymous/one-shot calls (no session id) pass
+                                // through unchanged.
+                                if let Some(sid) = &req.session_id {
+                                    if cua_driver_core::session::is_session_ended(sid) {
+                                        let resp = DaemonResponse::ok(serde_json::json!({
+                                            "content": [{
+                                                "type": "text",
+                                                "text": "session ended; tool call ignored"
+                                            }],
+                                            "isError": false,
+                                            "sessionEnded": true
+                                        }));
+                                        let _ = writer.write_all(
+                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                        ).await;
+                                        continue;
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(
                                         format!("Unknown tool: {tool_name}"), 64
@@ -529,18 +578,51 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "session_end" => {
-                                // Session lifecycle teardown: the proxy sends
-                                // this best-effort on stdin EOF (client
-                                // disconnect), carrying its own session_id. Drop
-                                // that session's owned state — stop its recording
-                                // (no-op if a later session clobbered it) and
-                                // clear its config overrides via the registered
-                                // platform cleanup hooks. Always ACK ok so the
-                                // proxy's best-effort teardown sees success.
+                            "session_begin" => {
+                                // The proxy's persistent control connection.
+                                // Record the session_id so this connection's EOF
+                                // (graceful proxy exit OR kill -9) reaps the
+                                // session in the post-loop block below. This is
+                                // the ONLY place a connection is marked control;
+                                // per-call connections never send this. ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    control_session_id = Some(sid.to_owned());
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"session_begin": true})
+                                );
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "session_end" => {
+                                // Legacy back-compat: a new-daemon/old-proxy
+                                // pairing still sends this explicitly on graceful
+                                // stdin EOF. It arrives on a per-call connection
+                                // (control_session_id stays None) so it does NOT
+                                // double-fire against the EOF reaper, and
+                                // fire_session_end is idempotent regardless. New
+                                // proxies never send it — the control-connection
+                                // EOF is the single teardown path. Always ACK ok.
+                                if let Some(sid) = req.session_id.as_deref() {
+                                    // stop_owner can SYNCHRONOUSLY finalize the
+                                    // recording's mp4 — run it off the reactor on
+                                    // a blocking thread (see the EOF reaper).
+                                    // fire_session_end stays inline (non-blocking).
+                                    // Mark the session ended FIRST so an in-flight
+                                    // start_recording sees ended=true and bails — the
+                                    // mark-before-reap invariant the cursor/config hooks
+                                    // already satisfy (their reap runs inside
+                                    // fire_session_end, after the mark). stop_owner does
+                                    // not consult is_session_ended, so reaping after the
+                                    // mark is safe.
                                     cua_driver_core::session::fire_session_end(sid);
+                                    let reg2 = reg.clone();
+                                    let sid_for_stop = sid.to_owned();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        reg2.recording.stop_owner(Some(&sid_for_stop))
+                                    })
+                                    .await;
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_end": true})
@@ -558,6 +640,35 @@ pub async fn run_serve(
                                 ).await;
                             }
                         }
+                    }
+
+                    // Reader EOF (`while let` exited): the kernel closes the
+                    // socket on graceful proxy exit AND on kill -9. If this was
+                    // the proxy's persistent control connection, reap the
+                    // session now — the reliable ungraceful-death teardown that
+                    // the old graceful-only proxy-exit hook could not provide.
+                    // Per-call connections leave control_session_id None, so
+                    // their (immediate) EOF is a no-op here. fire_session_end is
+                    // idempotent, so racing a legacy explicit session_end is
+                    // benign.
+                    if let Some(sid) = control_session_id {
+                        // stop_owner can SYNCHRONOUSLY finalize the recording's
+                        // mp4 — on macOS it hits SCStream::stop_capture(), which
+                        // blocks on disk I/O (video_sckit.rs). Run it on a
+                        // blocking thread so it does not stall a runtime worker.
+                        // fire_session_end stays inline: its hooks (overlay
+                        // Remove, config-override clear) are non-blocking.
+                        // Mark the session ended FIRST so an in-flight start_recording
+                        // sees ended=true and bails (mark-before-reap; the cursor/config
+                        // hooks already reap inside fire_session_end after the mark).
+                        // stop_owner ignores is_session_ended, so reaping after is safe.
+                        cua_driver_core::session::fire_session_end(&sid);
+                        let reg2 = reg.clone();
+                        let sid_for_stop = sid.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            reg2.recording.stop_owner(Some(&sid_for_stop))
+                        })
+                        .await;
                     }
                 });
             }
@@ -829,6 +940,13 @@ pub async fn run_serve(
                     let (reader, mut writer) = tokio::io::split(server);
                     let mut lines = BufReader::new(reader).lines();
 
+                    // See the unix branch: set only by `session_begin` on the
+                    // proxy's persistent control connection; drives the post-loop
+                    // EOF reaper. Named-pipe peer death surfaces as
+                    // ERROR_BROKEN_PIPE on the next read, ending the while-let
+                    // loop equally reliably.
+                    let mut control_session_id: Option<String> = None;
+
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
                             Ok(r) => r,
@@ -912,6 +1030,30 @@ pub async fn run_serve(
                                         }
                                     }
                                 }
+                                // Resurrection guard (see the unix branch above
+                                // for the full rationale): a call carrying an
+                                // already-ended session id must NOT run — it
+                                // would re-create session-owned metadata
+                                // (CursorRegistry / config override) that the
+                                // reaper has already passed. Skip + benign ok.
+                                // Only when a session id is present AND ended;
+                                // live and anonymous calls pass through.
+                                if let Some(sid) = &req.session_id {
+                                    if cua_driver_core::session::is_session_ended(sid) {
+                                        let resp = DaemonResponse::ok(serde_json::json!({
+                                            "content": [{
+                                                "type": "text",
+                                                "text": "session ended; tool call ignored"
+                                            }],
+                                            "isError": false,
+                                            "sessionEnded": true
+                                        }));
+                                        let _ = writer.write_all(
+                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                        ).await;
+                                        continue;
+                                    }
+                                }
                                 if reg.get_def(&tool_name).is_none() {
                                     let resp = DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
                                     let _ = writer.write_all(
@@ -945,13 +1087,44 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "session_end" => {
-                                // Session lifecycle teardown (see the unix branch
-                                // above). Drop the disconnecting session's owned
-                                // recording + config overrides, then ACK ok.
+                            "session_begin" => {
+                                // The proxy's persistent control connection (see
+                                // the unix branch). Record the session_id so this
+                                // pipe instance's EOF / broken-pipe reaps the
+                                // session in the post-loop block below. ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    let _ = reg.recording.stop_owner(Some(sid));
+                                    control_session_id = Some(sid.to_owned());
+                                }
+                                let resp = DaemonResponse::ok(
+                                    serde_json::json!({"session_begin": true})
+                                );
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "session_end" => {
+                                // Legacy back-compat (see the unix branch). Per-call
+                                // connection; control_session_id stays None so no
+                                // EOF double-fire. fire_session_end is idempotent.
+                                if let Some(sid) = req.session_id.as_deref() {
+                                    // stop_owner can SYNCHRONOUSLY finalize the
+                                    // recording's mp4 — run it off the reactor on
+                                    // a blocking thread (see the EOF reaper).
+                                    // fire_session_end stays inline (non-blocking).
+                                    // Mark the session ended FIRST so an in-flight
+                                    // start_recording sees ended=true and bails — the
+                                    // mark-before-reap invariant the cursor/config hooks
+                                    // already satisfy (their reap runs inside
+                                    // fire_session_end, after the mark). stop_owner does
+                                    // not consult is_session_ended, so reaping after the
+                                    // mark is safe.
                                     cua_driver_core::session::fire_session_end(sid);
+                                    let reg2 = reg.clone();
+                                    let sid_for_stop = sid.to_owned();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        reg2.recording.stop_owner(Some(&sid_for_stop))
+                                    })
+                                    .await;
                                 }
                                 let resp = DaemonResponse::ok(
                                     serde_json::json!({"session_end": true})
@@ -967,6 +1140,28 @@ pub async fn run_serve(
                                 ).await;
                             }
                         }
+                    }
+
+                    // Reader EOF / ERROR_BROKEN_PIPE: named-pipe peer death on
+                    // graceful proxy exit AND kill -9. Reap the session if this
+                    // was the proxy's control connection (see the unix branch for
+                    // the full rationale). Per-call connections leave
+                    // control_session_id None.
+                    if let Some(sid) = control_session_id {
+                        // Run stop_owner off the reactor (see the unix branch):
+                        // recording finalize can be a synchronous blocking call.
+                        // fire_session_end stays inline (non-blocking hooks).
+                        // Mark the session ended FIRST so an in-flight start_recording
+                        // sees ended=true and bails (mark-before-reap; the cursor/config
+                        // hooks already reap inside fire_session_end after the mark).
+                        // stop_owner ignores is_session_ended, so reaping after is safe.
+                        cua_driver_core::session::fire_session_end(&sid);
+                        let reg2 = reg.clone();
+                        let sid_for_stop = sid.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            reg2.recording.stop_owner(Some(&sid_for_stop))
+                        })
+                        .await;
                     }
                 });
             }
@@ -1107,5 +1302,178 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     } else {
         eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(all(test, unix))]
+mod gate_tests {
+    //! Ended-session resurrection guard wired into the `call` dispatch.
+    //!
+    //! Closes PR #1779's gap: `is_session_ended()` was dead code, so an
+    //! in-flight per-call request landing AFTER `session_end` fired would
+    //! re-create session-owned metadata (cursor registry / config override)
+    //! the reaper already passed. The gate skips a `call` carrying an ended
+    //! session id (benign ok); live and anonymous calls pass through.
+
+    use super::{run_serve, send_request, DaemonRequest};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use cua_driver_core::protocol::ToolResult;
+    use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
+    use serde_json::Value;
+
+    static PROBE_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    struct ProbeTool {
+        def: ToolDef,
+    }
+
+    impl ProbeTool {
+        fn new() -> Self {
+            Self {
+                def: ToolDef {
+                    name: "probe".into(),
+                    description: "test probe; bumps a shared invocation counter".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: false,
+                    destructive: false,
+                    idempotent: true,
+                    open_world: false,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Tool for ProbeTool {
+        fn def(&self) -> &ToolDef {
+            &self.def
+        }
+        async fn invoke(&self, _args: Value) -> ToolResult {
+            PROBE_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
+            ToolResult::text("probe ran")
+        }
+    }
+
+    fn call_req(sid: Option<&str>) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some("probe".into()),
+            args: Some(serde_json::json!({})),
+            session_id: sid.map(|s| s.to_owned()),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ended_session_call_is_gated_live_and_anon_pass() {
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(ProbeTool::new()));
+        let registry = Arc::new(reg);
+
+        // Unique temp socket — never the default socket / CuaDriver.app daemon.
+        let socket = format!(
+            "/tmp/cua-driver-gate-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let reg_for_server = registry.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(reg_for_server, &socket_for_server, None).await;
+        });
+
+        // Wait for the daemon to bind.
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let sid = "gate-test-session-A1B2C3";
+
+        // 1. LIVE session call → tool runs.
+        let socket1 = socket.clone();
+        let s1 = sid.to_owned();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket1, &call_req(Some(&s1))))
+            .await
+            .unwrap()
+            .expect("live call response");
+        assert!(resp.ok, "live-session call should succeed");
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "live-session call must invoke the tool"
+        );
+
+        // 2. End the session (mirrors the control-conn EOF reaper path).
+        let socket2 = socket.clone();
+        let end = DaemonRequest {
+            method: "session_end".into(),
+            name: None,
+            args: None,
+            session_id: Some(sid.to_owned()),
+        };
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket2, &end))
+            .await
+            .unwrap()
+            .expect("session_end response");
+        assert!(resp.ok, "session_end should ack ok");
+
+        // 3. ENDED session call carrying the same sid → GATED. Tool must NOT run.
+        let socket3 = socket.clone();
+        let s3 = sid.to_owned();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket3, &call_req(Some(&s3))))
+            .await
+            .unwrap()
+            .expect("ended call response");
+        assert!(resp.ok, "gated call returns a benign ok");
+        assert_eq!(
+            resp.result
+                .as_ref()
+                .and_then(|r| r.get("sessionEnded"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "gated response must carry sessionEnded:true"
+        );
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            1,
+            "ended-session call must be a no-op (counter unchanged) — resurrection closed"
+        );
+
+        // 4. Anonymous call (no session id) still passes — no false positive.
+        let socket4 = socket.clone();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket4, &call_req(None)))
+            .await
+            .unwrap()
+            .expect("anon call response");
+        assert!(resp.ok, "anonymous call should succeed");
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            2,
+            "anonymous (no session id) call must still invoke the tool"
+        );
+
+        // Tear down the daemon.
+        let socket5 = socket.clone();
+        let shutdown = DaemonRequest {
+            method: "shutdown".into(),
+            name: None,
+            args: None,
+            session_id: None,
+        };
+        let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
     }
 }

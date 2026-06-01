@@ -50,13 +50,14 @@ impl Tool for MoveCursorTool {
         let cursor_id = super::cursor_tools::resolve_cursor_key(&args);
 
         self.state.cursor_registry.update_position(&cursor_id, x, y);
-        // Drive the visual overlay for THIS session's cursor (no-op when the
-        // overlay is disabled). End pointing upper-left (45°) — matches Swift's
-        // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention.
-        crate::cursor::overlay::send_command(
-            cursor_id.clone(),
-            cursor_overlay::OverlayCommand::MoveTo { x, y, end_heading_radians: std::f64::consts::FRAC_PI_4 }
-        );
+        // Drive the DRAWN cursor via the same path as click's animation. A raw
+        // `MoveTo` doesn't reliably bring a brand-new session cursor on-screen —
+        // it sits at the off-screen sentinel until a click seeds it, so the
+        // visible cursor wouldn't move (the reported position would, but the
+        // overlay wouldn't). `animate_cursor_to` seeds the sentinel on-screen
+        // then glides in, identical to `click`. No-op for an empty (anonymous)
+        // key or when the overlay is disabled for this cursor.
+        crate::cursor::overlay::animate_cursor_to(cursor_id.clone(), x, y).await;
         ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
     }
 }

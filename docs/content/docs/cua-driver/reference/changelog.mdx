@@ -18,6 +18,19 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## Unreleased
+
+- macOS (local dev install only): `install-local.sh` now clears a stale TCC
+  grant left over from a previous signing identity. If you first granted
+  Accessibility / Screen Recording while the bundle was ad-hoc signed, that
+  grant was pinned to the per-build `cdhash` and silently stopped matching on
+  the next rebuild — the daemon read `NOT granted` while System Settings still
+  showed CuaDriver toggled ON, a dead end re-toggling couldn't fix. The
+  installer records the signing identity and, when it changes, runs
+  `tccutil reset` so the next grant re-pins cleanly to the stable self-signed
+  certificate (after which grants survive all future rebuilds). Release builds
+  are unaffected — they're CI-signed with a stable identity (#1792 follow-up).
+
 ## 0.4.3 (2026-05-31)
 
 - macOS: the agent-cursor overlay now actually renders in the `serve` daemon.

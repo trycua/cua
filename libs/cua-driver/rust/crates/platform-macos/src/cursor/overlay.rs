@@ -169,6 +169,11 @@ pub fn init(cfg: CursorConfig) {
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
+    // Empty key = anonymous (no session declared) → no cursor. Drop the command
+    // so a cursor-less run never paints. See cursor_tools::NO_CURSOR.
+    if key.is_empty() {
+        return;
+    }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
     }
@@ -185,6 +190,9 @@ pub fn send_command_default(cmd: OverlayCommand) {
 /// render side, so this is a no-op for it; removing an absent key (anonymous
 /// session that never created a cursor) is a harmless no-op.
 pub fn remove_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Remove(key));
     }
@@ -280,6 +288,10 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
+    // Empty key = anonymous (no session) → no cursor to animate.
+    if key.is_empty() {
+        return;
+    }
     // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
     // being short-circuited. After this the cursor's pos.0 > -50.0, so the
     // should-animate check passes on the first action just like later ones.

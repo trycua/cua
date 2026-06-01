@@ -49,6 +49,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "from_x", "from_y", "to_x", "to_y"],
             "properties": {
+                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",

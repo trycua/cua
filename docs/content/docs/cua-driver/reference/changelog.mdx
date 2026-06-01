@@ -20,6 +20,30 @@ release body is auto-generated per release from the commits touching
 
 ## Unreleased
 
+- **Streamable-HTTP MCP transport (parallel multi-agent).** Over stdio, one
+  `cua-driver mcp` process is a single pipe, so a client's tool calls — including
+  multiple subagents — serialize. The daemon itself is concurrent. Set
+  `CUA_DRIVER_RS_MCP_HTTP_PORT=<port>` and the daemon also serves MCP over HTTP
+  (`POST http://127.0.0.1:<port>/mcp`, loopback only), so each agent opens its
+  **own** connection and they run truly in parallel — measured 3.6× on 10
+  concurrent calls. Per-connection ordering keeps a single agent's sequence
+  correct; the per-`(pid, window_id)` cache + per-session cursor make concurrent
+  cross-connection actions safe. `move_cursor` is now `readOnlyHint:true` so MCP
+  clients also parallelize cursor moves on stdio (mutating tools stay serialized
+  on purpose) (#1799).
+- **Breaking — session identity is now caller-declared.** A "session" (which
+  owns the agent cursor + per-session state) used to be minted per MCP
+  connection, so it couldn't be set from the CLI and couldn't span a run that
+  touches multiple apps. It's now an explicit identity you declare: pass a
+  `session` id (or call the new `start_session`/`end_session` tools), and the
+  same id drives the same cursor over MCP, the CLI, or the raw socket, following
+  the run across any apps/windows. **The cursor is now opt-in:** a run shows a
+  cursor only when it declares a `session` — anonymous calls execute without one.
+  Sessions are reclaimed by `end_session` or an idle-TTL (default 300s, override
+  `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`) instead of connection-EOF. Per-session
+  config + recording keep their existing connection-scoped cleanup as a fallback
+  when no `session` is declared. Update agents to `start_session` at the start of
+  a run (the bundled skill + MCP instructions now say so).
 - macOS: fix a daemon crash (`EXC_BREAKPOINT` in `AXUIElementCopyActionNames`)
   when two sessions drive the same window concurrently. Element actions
   (`click`, `type_text`, `set_value`, …) read the target `AXUIElementRef` out

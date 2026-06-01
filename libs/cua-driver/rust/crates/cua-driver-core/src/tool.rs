@@ -87,6 +87,15 @@ impl ToolRegistry {
         self.register(Box::new(ReplayTrajectoryTool));
     }
 
+    /// Register the platform-independent session-lifecycle tools
+    /// (`start_session` / `end_session`). Call alongside
+    /// `register_recording_tools` from each platform's `register_all`.
+    pub fn register_session_tools(&mut self) {
+        use crate::session_tools::{EndSessionTool, StartSessionTool};
+        self.register(Box::new(StartSessionTool));
+        self.register(Box::new(EndSessionTool));
+    }
+
     /// Wire up the replay tool's weak self-reference.
     /// Call this once, immediately after `Arc::new(registry)`.
     pub fn init_self_weak(self: &Arc<Self>) {

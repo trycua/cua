@@ -236,26 +236,46 @@ last resort.
 ## The canonical loop
 
 ```
+start_session(session)            # once per run: declares this run's identity
 launch_app(target)
   → pick window_id from the returned `windows` array
     (or call list_windows(pid) separately)
   → get_window_state(pid, window_id)
-    → [act]  # every action also takes (pid, window_id)
+    → [act]  # every action also takes (pid, window_id) + your `session`
   → get_window_state(pid, window_id) → verify
+end_session(session)              # when the run finishes
 ```
 
 `launch_app` now returns a `windows` array alongside the pid, so the
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
-**Concurrent sessions:** `launch_app` is idempotent — two sessions that
-launch the same app get the **same** instance (and on single-instance
-apps like Calculator, the same window), so they clobber each other. If
-another agent or session may drive the same app at the same time, pass
-`creates_new_application_instance: true` to get your own isolated
-instance + window. The cache and the per-session cursor are keyed on
-`(pid, window_id)`, so distinct instances keep the two sessions fully
-separated.
+**Declare a session.** A session is *your run's* identity — a stable id
+you choose (`"research-1"`), declared with `start_session` and passed as
+`session` on every action. It owns your agent cursor (a distinct colour
+per id), follows the run across any apps/windows, and is the same whether
+you drive over MCP, the CLI, or the socket. The cursor is **opt-in**: it
+appears only once you declare a session (anonymous actions run cursor-less).
+End with `end_session` (or the idle-TTL reclaims it).
+
+**Concurrent runs/subagents:** `launch_app` is idempotent — two runs that
+launch the same app get the **same** instance (and on single-instance apps
+like Calculator, the same window), so they clobber each other. Give each run
+its **own `session`** (→ its own cursor) AND pass
+`creates_new_application_instance: true` to `launch_app` (→ its own window).
+The element cache is keyed on `(pid, window_id)` and the cursor on `session`,
+so distinct instances + distinct sessions keep the runs fully separated.
+
+**Parallelism vs. ordering.** Distinct sessions give distinct *cursors*, not
+distinct *connections*. Subagents that share one `cua-driver mcp` (stdio)
+connection have their tool calls **serialized** by the transport — they take
+turns, not run in parallel. That's not a correctness problem (session + window
+isolation means they can't collide), just a throughput one. For genuinely
+parallel agents, give each its **own connection**: separate `cua-driver mcp`
+processes, or point each agent's MCP client at the daemon's HTTP endpoint
+(`CUA_DRIVER_RS_MCP_HTTP_PORT` → `POST http://127.0.0.1:<port>/mcp`). The daemon
+serves connections concurrently; per-connection ordering keeps each agent's own
+sequence (e.g. `3 → + → 1 → =`) correct.
 
 `list_apps` is for app-level discovery (answering "what's installed /
 running / frontmost?") — not part of the core action loop. Skip it

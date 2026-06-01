@@ -3790,6 +3790,32 @@ impl Tool for MoveCursorTool {
         let cursor_key = resolve_cursor_key(&args);
         if !cursor_key.is_empty() {
             self.state.cursor_registry.update_position(&cursor_key, x, y);
+            // Pin the overlay above the window under the destination point so a
+            // brand-new session cursor is z-visible. Sibling tools (click,
+            // type_text, drag…) pin against their explicit target HWND; move_cursor
+            // only carries (x, y), so we derive the target via WindowFromPoint at
+            // the destination. Without this, the first move_cursor on a fresh
+            // session lands the overlay at an unpinned z-position — usually
+            // behind the target HWND — so the cursor stays invisible until a
+            // sibling tool happens to run and pin it. (macOS's move_cursor
+            // sidesteps this by routing through `animate_cursor_to`, which seeds
+            // the off-screen sentinel and lets the macOS render loop's
+            // ZOrderEnforcer handle pinning; the Windows port has explicit
+            // per-tool pins instead — see project_agent_cursor_zorder.md.)
+            //
+            // The overlay HWND itself is WS_EX_TRANSPARENT (click-through), so
+            // WindowFromPoint walks past it and returns the app behind. Empty
+            // desktop returns the desktop HWND, which pin_overlay_above resolves
+            // to GA_ROOT and PinAbove no-ops harmlessly.
+            unsafe {
+                use windows::Win32::Foundation::POINT;
+                use windows::Win32::UI::WindowsAndMessaging::WindowFromPoint;
+                let pt = POINT { x: x.round() as i32, y: y.round() as i32 };
+                let hwnd = WindowFromPoint(pt);
+                if !hwnd.0.is_null() {
+                    pin_overlay_above(&cursor_key, hwnd.0 as u64);
+                }
+            }
         }
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so

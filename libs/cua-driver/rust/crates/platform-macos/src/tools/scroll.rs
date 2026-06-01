@@ -75,11 +75,15 @@ impl Tool for ScrollTool {
         // Resolve the pre-focus element pointer (if requested) outside
         // the suppression closure — only the focus_element() write itself
         // needs to run under suppression, the cache lookup does not.
-        let pre_focus_ptr: Option<usize> = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            self.state.element_cache.get_element_ptr(pid, wid, idx)
+        // Retain out of the cache so a concurrent get_window_state can't free
+        // the element before the suppressed focus below dereferences it
+        // (use-after-free → daemon crash). Guard lives to method end.
+        let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
+            self.state.element_cache.get_element_retained(pid, wid, idx)
         } else {
             None
         };
+        let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
         let key = match (by.as_str(), direction.as_str()) {
             ("page", "down")  | (_, "down") if by == "page"  => "pagedown",

@@ -62,12 +62,15 @@ impl Tool for DoubleClickTool {
 
         // ── AX element path ──────────────────────────────────────────────────
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            let element_ptr = match self.state.element_cache.get_element_ptr(pid, wid, idx) {
-                Some(p) => p,
+            // Retain out of the cache so a concurrent get_window_state can't
+            // free the element mid-action (use-after-free → daemon crash).
+            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                Some(e) => e,
                 None    => return ToolResult::error(format!(
                     "Element index {idx} not found. Call get_window_state first."
                 )),
             };
+            let element_ptr = element_guard.as_ptr();
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".

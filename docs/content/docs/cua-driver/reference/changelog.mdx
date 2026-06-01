@@ -18,6 +18,17 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## Unreleased
+
+- macOS: fix a daemon crash (`EXC_BREAKPOINT` in `AXUIElementCopyActionNames`)
+  when two sessions drive the same window concurrently. Element actions
+  (`click`, `type_text`, `set_value`, …) read the target `AXUIElementRef` out
+  of the per-`(pid, window_id)` cache, but a concurrent `get_window_state`
+  could replace that cache entry and `CFRelease` the element to zero while the
+  action was still using it — a use-after-free. The cache now hands out a
+  retained guard (`CFRetain` under the cache lock, `CFRelease` on drop), so an
+  in-flight action keeps the element alive across a concurrent refresh.
+
 ## 0.4.3 (2026-05-31)
 
 - macOS: the agent-cursor overlay now actually renders in the `serve` daemon.

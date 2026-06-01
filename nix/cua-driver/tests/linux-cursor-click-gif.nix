@@ -171,6 +171,7 @@ pkgs.testers.nixosTest {
         machine.log(result)
         assert "click GIF test complete" in result, result
         machine.wait_until_succeeds("! kill -0 $(cat /tmp/ffmpeg-click.pid) 2>/dev/null", timeout=60)
+        machine.log(machine.succeed("sh -lc 'cat /tmp/ffmpeg-click.log || true'"))
         machine.succeed("test -s /tmp/cua-driver-linux-cursor-click.gif")
         machine.wait_until_succeeds("test -f /tmp/click-focus.txt", timeout=20)
 

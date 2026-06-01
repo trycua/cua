@@ -183,6 +183,7 @@ pkgs.testers.nixosTest {
         machine.log(result)
         assert "background terminal GIF test complete" in result, result
         machine.wait_until_succeeds("! kill -0 $(cat /tmp/ffmpeg-background.pid) 2>/dev/null", timeout=60)
+        machine.log(machine.succeed("sh -lc 'cat /tmp/ffmpeg-background.log || true'"))
         machine.succeed("test -s /tmp/cua-driver-linux-background-terminal.gif")
         machine.wait_until_succeeds("grep -Fx 'hello' /tmp/background-hello.txt", timeout=20)
 

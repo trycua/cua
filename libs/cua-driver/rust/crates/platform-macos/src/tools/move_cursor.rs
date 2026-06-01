@@ -32,7 +32,11 @@ fn def() -> &'static ToolDef {
             },
             "additionalProperties": false
         }),
-        read_only: false,
+        // read-only: move_cursor only nudges the agent-cursor overlay, never the
+        // target app — so it's safe to run concurrently. The `readOnlyHint` this
+        // emits lets MCP clients (e.g. Claude Code's isConcurrencySafe) parallelize
+        // cursor moves. (Mutating tools like click stay read_only:false on purpose.)
+        read_only: true,
         destructive: false,
         idempotent: true,
         open_world: false,

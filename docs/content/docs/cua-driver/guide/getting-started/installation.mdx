@@ -27,7 +27,17 @@ irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/in
 
 On macOS, the installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `~/.local/bin/cua-driver`. The bundle is signed under `com.trycua.driver`, so TCC grants survive every release.
 
-On Linux, the pre-release backend installer downloads the release into `~/.cua-driver-rs/packages/releases/`, retargets `~/.cua-driver-rs/packages/current`, and symlinks `~/.local/bin/cua-driver`.
+On Linux, the pre-release backend installer downloads the release into `~/.cua-driver/packages/releases/`, retargets `~/.cua-driver/packages/current`, and symlinks `~/.local/bin/cua-driver`.
+
+<Callout type="info">
+  **Install home is `~/.cua-driver` on every platform.** Earlier `cua-driver-rs` releases (before
+  v0.2.16) put the Linux/macOS package home at `~/.cua-driver-rs`; the release installer now writes
+  to `~/.cua-driver` like the local installer and the runtime already do. Re-running the installer
+  over an older release **auto-sweeps** a stale `~/.cua-driver-rs`, and also cleans up any prior
+  `install-local` dev build (`*-local-*` release dirs + the local signing-identity marker) under the
+  shared home so the downloaded release is the single authoritative install. The `CUA_DRIVER_RS_HOME`
+  override is still honored for back-compat.
+</Callout>
 
 <Callout type="warn">
   **Linux is pre-release.** Linux artifacts and install paths are published for early testing, but
@@ -79,7 +89,7 @@ Linux and Windows installs land in a three-tier layout that makes upgrades and r
 **Linux**
 
 ```
-$CUA_DRIVER_RS_HOME/                          (default: ~/.cua-driver-rs)
+$CUA_DRIVER_RS_HOME/                          (default: ~/.cua-driver)
   packages/
     releases/
       0.2.0-x86_64-unknown-linux-gnu/cua-driver   (real binary, immutable)
@@ -114,10 +124,10 @@ Both platforms ship every release into its own per-version directory under `pack
 **Linux — roll back to a specific version**
 
 ```bash
-# The symlink target is RELATIVE to ~/.cua-driver-rs/packages/, so just
+# The symlink target is RELATIVE to ~/.cua-driver/packages/, so just
 # "releases/<v>-<target>" (no leading "../") — matches what install.sh writes.
-ln -sfn releases/0.2.0-x86_64-unknown-linux-gnu ~/.cua-driver-rs/packages/.current.tmp
-mv -Tf ~/.cua-driver-rs/packages/.current.tmp ~/.cua-driver-rs/packages/current
+ln -sfn releases/0.2.0-x86_64-unknown-linux-gnu ~/.cua-driver/packages/.current.tmp
+mv -Tf ~/.cua-driver/packages/.current.tmp ~/.cua-driver/packages/current
 cua-driver --version    # → 0.2.0
 ```
 
@@ -141,7 +151,7 @@ Clear `$env:CUA_DRIVER_RS_VERSION` and re-run to roll forward to the newest rele
 | ---------------------------------------------------- | ------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CUA_DRIVER_RS_VERSION`                              | unset → use baked version | unset → use baked version                    | Pin a specific release (e.g. `0.2.0`).                                                                                                                                                                                                                              |
 | `CUA_DRIVER_RS_INSTALL_DIR`                          | `~/.local/bin`            | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` | The visible PATH-entry directory. On Windows this is itself a junction.                                                                                                                                                                                             |
-| `CUA_DRIVER_RS_HOME`                                 | `~/.cua-driver-rs`        | `%USERPROFILE%\.cua-driver`                  | Package home — holds `packages/releases/<v>/` and `packages/current`.                                                                                                                                                                                               |
+| `CUA_DRIVER_RS_HOME`                                 | `~/.cua-driver`           | `%USERPROFILE%\.cua-driver`                  | Package home — holds `packages/releases/<v>/` and `packages/current`. (Renamed from `~/.cua-driver-rs` in v0.2.16; a stale legacy dir is auto-swept on the next install.)                                                                                            |
 | `CUA_DRIVER_RS_NO_MODIFY_PATH` _(Linux/macOS only)_  | `0`                       | use `-NoPathUpdate` switch on `install.ps1`  | Skip the PATH append. On Windows the installer appends `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` to the User-scope `Path` by default; use the fetch+invoke form with `-NoPathUpdate` to opt out (see the Windows install section above for the exact one-liner). |
 | `CUA_DRIVER_RS_KEEP_VERSIONS` _(Linux/Windows only)_ | `5`                       | `5`                                          | Keep the N most recent per-version release dirs after install (`0` disables GC). See the **Old-version cleanup** callout below for per-target and active-install invariants.                                                                                        |
 
@@ -183,13 +193,13 @@ The macOS install path is unaffected — `/Applications/CuaDriver.app` is an in-
 
 ```
 ==> another cua-driver-rs install is already in progress (lock at
-    ~/.cua-driver-rs/packages/.install.lock.d); waiting...
+    ~/.cua-driver/packages/.install.lock.d); waiting...
 ```
 
 If you see this, the safe action is to let it block — it polls every 1 second and proceeds the moment the holding install finishes. The lock entry stamps the holder's pid, start time, and invocation args so you can confirm what's running:
 
 ```bash
-cat ~/.cua-driver-rs/packages/.install.lock.d/info
+cat ~/.cua-driver/packages/.install.lock.d/info
 # pid=43210
 # started=2026-05-17T09:14:22Z
 # argv=install.sh
@@ -231,7 +241,7 @@ For a structured environment + install report on any platform, run:
 cua-driver doctor
 # [ok  ] binary: cua-driver 0.2.1 (aarch64-macos)
 # [ok  ] install dir: /Users/you/.local/bin/cua-driver
-# [ok  ] home dir: /Users/you/.cua-driver-rs (3 release dirs cached)
+# [ok  ] home dir: /Users/you/.cua-driver (3 release dirs cached)
 # [ok  ] telemetry: enabled (install-id present)
 # ...
 ```
@@ -415,7 +425,7 @@ other value (including unset) leaves the gate active.
    Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.1.4
 ```
 
-The answer is cached at `~/.cua-driver-rs/version_check.json` for ~20
+The answer is cached at `~/.cua-driver/version_check.json` for ~20
 hours, so subsequent launches reuse the cached result without a network
 call. Network failures are silent — the next launch retries.
 
@@ -624,8 +634,8 @@ One canonical uninstall URL per platform mirrors the install side:
 
 | Platform | Symlink / bin                                                                                                              | App bundle / package home                                                                                                | Autostart entry                                                                          | Skill links                                                                                                                         | Claude MCP registrations                                                        |
 | -------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| macOS    | `~/.local/bin/cua-driver` _(when it resolves into `CuaDriver.app` and `~/.cua-driver-rs/` exists)_                         | `/Applications/CuaDriver.app` (current), `/Applications/CuaDriverRs.app` (legacy), `~/.cua-driver-rs/`                   | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist`                                  | `cua-driver` and legacy `cua-driver-rs` links under agent skill dirs                                                                | Scrubbed from `~/.claude.json`                                                  |
-| Linux    | `~/.local/bin/cua-driver` _(when it resolves into `~/.cua-driver-rs/`)_                                                    | `~/.cua-driver-rs/`                                                                                                      | `~/.config/systemd/user/cua-driver-rs.service` (stop + disable + remove)                 | Same as macOS                                                                                                                       | Scrubbed from `~/.claude.json`                                                  |
+| macOS    | `~/.local/bin/cua-driver` _(when it resolves into `CuaDriver.app` and a Rust marker exists)_                              | `/Applications/CuaDriver.app` (current), `/Applications/CuaDriverRs.app` (legacy), `~/.cua-driver/` (legacy `~/.cua-driver-rs/` also swept) | `~/Library/LaunchAgents/com.trycua.cua-driver-rs.plist`                                  | `cua-driver` and legacy `cua-driver-rs` links under agent skill dirs                                                                | Scrubbed from `~/.claude.json`                                                  |
+| Linux    | `~/.local/bin/cua-driver` _(when it resolves into `~/.cua-driver/`)_                                                       | `~/.cua-driver/` (legacy `~/.cua-driver-rs/` also swept)                                                                 | `~/.config/systemd/user/cua-driver-rs.service` (stop + disable + remove)                 | Same as macOS                                                                                                                       | Scrubbed from `~/.claude.json`                                                  |
 | Windows  | `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` _(directory junction; legacy `Programs\trycua\cua-driver-rs\bin` also swept)_ | `%USERPROFILE%\.cua-driver\` (entire tree, including `packages\current` junction; legacy `~\.cua-driver-rs\` also swept) | Scheduled Task `cua-driver-serve` (`schtasks /Delete`; script self-elevates when needed) | Junctions under `%USERPROFILE%\.claude\skills`, `.agents\skills`, `.openclaw\skills`, `%APPDATA%\opencode\skills`, `.gemini\skills` | Not auto-edited — closing message prints the manual `claude mcp remove` command |
 
 <Callout type="info">

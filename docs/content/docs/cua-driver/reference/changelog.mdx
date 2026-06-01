@@ -18,6 +18,24 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## Unreleased
+
+- **Install home unified on `~/.cua-driver` + collision fix.** The release
+  installer (`install.sh` → `_install-rust.sh`) was still defaulting its package
+  home to the legacy `~/.cua-driver-rs`, while the local installer
+  (`install-local.sh`) and the runtime already used `~/.cua-driver` (renamed in
+  v0.2.16). That mismatch meant a machine could end up with two homes and two
+  conflicting installs. The release installer now defaults to `~/.cua-driver`
+  (still honoring the `CUA_DRIVER_RS_HOME` override), and on every install it (a)
+  cleans up a prior `install-local` dev build under the shared home — stops the
+  daemon, removes the `*-local-*` release dirs and the local signing-identity
+  marker — and (b) sweeps a stale `~/.cua-driver-rs` left by an older release.
+  Both steps are best-effort, idempotent, and conservative (marker-gated; they
+  never touch a real release dir, the `current` symlink, or unrelated user
+  state). TCC grants are preserved — the `/Applications/CuaDriver.app` bundle is
+  replaced in place, not `tccutil reset`. The Windows installer (`install.ps1`)
+  already used `~/.cua-driver` and migrated the legacy home, so it is unchanged.
+
 ## 0.5.0 (2026-06-01)
 
 - **Windows: per-session agent cursors** — the per-session cursor model (macOS

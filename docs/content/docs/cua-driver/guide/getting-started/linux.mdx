@@ -148,7 +148,7 @@ This is a useful recipe for local CI experiments with the Linux pre-release back
 
 ## Distro-specific notes
 
-The canonical install script (`/bin/bash -c "$(curl -fsSL …/install.sh)"`) downloads a Linux x86_64 binary tarball from GitHub Releases, drops it into `~/.cua-driver-rs/packages/releases/<v>-x86_64-unknown-linux-gnu/`, and symlinks `~/.local/bin/cua-driver`. Because Linux support is pre-release, expect distro-specific gaps and prerequisites.
+The canonical install script (`/bin/bash -c "$(curl -fsSL …/install.sh)"`) downloads a Linux x86_64 binary tarball from GitHub Releases, drops it into `~/.cua-driver/packages/releases/<v>-x86_64-unknown-linux-gnu/`, and symlinks `~/.local/bin/cua-driver`. Because Linux support is pre-release, expect distro-specific gaps and prerequisites.
 
 The bit that varies is **what accessibility / display tooling is pre-installed**:
 

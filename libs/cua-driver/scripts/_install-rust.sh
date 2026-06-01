@@ -28,9 +28,14 @@
 #                                        binary location
 #   CUA_DRIVER_RS_BIN_DIR=PATH           legacy alias for INSTALL_DIR
 #   CUA_DRIVER_RS_HOME=PATH              package home for versioned installs
-#                                        (default ~/.cua-driver-rs). Holds
+#                                        (default ~/.cua-driver). Holds
 #                                        packages/releases/<v>-<target>/ and
 #                                        packages/current/ on Linux/Windows.
+#                                        Renamed from ~/.cua-driver-rs in
+#                                        v0.2.16 / PR #1644 — this release
+#                                        installer was missed in that rename
+#                                        and is reconciled here; a stale
+#                                        ~/.cua-driver-rs is swept post-install.
 #   CUA_DRIVER_RS_NO_MODIFY_PATH=1       same as --no-modify-path
 #   CUA_DRIVER_RS_KEEP_VERSIONS=N        keep the N most recent per-version
 #                                        release dirs after install; older
@@ -110,7 +115,17 @@ TAG_PREFIX="cua-driver-rs-v"
 # CUA_DRIVER_RS_INSTALL_DIR is the documented name; CUA_DRIVER_RS_BIN_DIR is
 # the legacy alias kept for users with the old env in their shell rc.
 BIN_DIR="${CUA_DRIVER_RS_INSTALL_DIR:-${CUA_DRIVER_RS_BIN_DIR:-$HOME/.local/bin}}"
-HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver-rs}"
+# Canonical home is ~/.cua-driver (renamed from ~/.cua-driver-rs in v0.2.16 /
+# PR #1644). The local installer (_install-local-rust.sh) and the runtime
+# already default here; this release installer was missed in that rename and
+# kept writing to the legacy ~/.cua-driver-rs, which is the root cause of the
+# install collision (release wrote one home, install-local + runtime used the
+# other). Reconcile the default here, keep accepting the CUA_DRIVER_RS_HOME
+# override for back-compat, and sweep the stale legacy dir post-install below.
+HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}"
+# Pre-v0.2.16 home this installer used to write to. Swept after the new
+# install is staged so a single rooted home (~/.cua-driver) is left behind.
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
 # Post-install GC: how many per-version release dirs to retain. Validated
 # below as a non-negative integer; 0 means "never GC". The dir that
@@ -352,6 +367,84 @@ prune_old_releases() {
     printf '%s\0' "${to_prune[@]}" | xargs -0 rm -rf
 }
 
+# --- Clean up a pre-existing LOCAL (install-local) install --------------
+#
+# `install-local.sh` (`_install-local-rust.sh`) installs a dev build into the
+# SAME canonical home this release installer now writes to (~/.cua-driver, see
+# the HOME_DIR reconciliation above), under a `*-local-*` versioned release dir
+# (VERSION_TAG="0.0.0-local-<config>"). On macOS it also cert-signs the shared
+# /Applications/CuaDriver.app with a self-signed identity recorded at
+# `~/.cua-driver/.tcc-signing-identity`.
+#
+# A user who ran install-local and then runs this release installer would
+# otherwise end up with the local artifacts lingering alongside the fresh
+# release: the `*-local-*` release dir(s) sit in `packages/releases/` (the
+# release `current` swap re-points away from them, but they're never removed
+# explicitly here), and the stale `.tcc-signing-identity` marker survives even
+# though the release bundle is CI-signed, not locally cert-signed. Follow the
+# same logic install-local / uninstall.sh use: stop the daemon, then remove
+# ONLY the unambiguously-local artifacts so the release install is the single
+# authoritative one.
+#
+# Conservative by construction: we only ever remove `*-local-*` release dirs
+# and the local signing-identity marker — never a real release dir, never the
+# `current` symlink (the release branch owns that), never unrelated user state
+# under the home. Every step is best-effort + idempotent; a machine with no
+# prior local install is a clean no-op.
+#
+# TCC is preserved deliberately: we do NOT `tccutil reset` here. The bundle at
+# /Applications/CuaDriver.app is shared (bundle id com.trycua.driver) and the
+# subsequent release `ditto` re-points the binary in place; grants keyed on the
+# bundle id survive (macOS may re-prompt once on the cdhash change, same as any
+# upgrade). Churning the signing identity would gratuitously invalidate
+# cert-pinned grants, so we leave it alone.
+cleanup_prior_local_install() {
+    local releases_dir="$HOME_DIR/packages/releases"
+    local tcc_marker="$HOME_DIR/.tcc-signing-identity"
+
+    # Collect the local-build release dirs (the unambiguous install-local
+    # signature — a release install never creates a `*-local-*` dir).
+    local local_dirs=()
+    local d
+    if [[ -d "$releases_dir" ]]; then
+        for d in "$releases_dir"/*-local-*/; do
+            [[ -d "$d" ]] && local_dirs+=("${d%/}")
+        done
+    fi
+
+    # Nothing local on disk → clean no-op (no marker, no local dirs).
+    if [[ ${#local_dirs[@]} -eq 0 && ! -f "$tcc_marker" ]]; then
+        return 0
+    fi
+
+    log "detected a prior install-local build under $HOME_DIR — cleaning it up so this release install is authoritative"
+
+    # Stop the local daemon BEFORE we yank its binary out from under it,
+    # mirroring the post-swap stop both installers already do. Best-effort.
+    stop_cua_driver_daemons
+
+    # Remove the `*-local-*` release dirs. The release install stages into its
+    # own `<version>-<target>` dir and swaps `current` to it, so deleting the
+    # local dirs can't strand the active install. If `current` somehow still
+    # points into a local dir (e.g. a partial prior run), the release branch
+    # below re-creates `current` immediately after, so a transient dangling
+    # link is harmless.
+    if [[ ${#local_dirs[@]} -gt 0 ]]; then
+        for d in "${local_dirs[@]}"; do
+            rm -rf "$d" 2>/dev/null || true
+            log "  removed local build dir ${d##*/}"
+        done
+    fi
+
+    # Remove the local signing-identity marker — it describes the locally
+    # cert-signed bundle, which the release `ditto` is about to replace with
+    # the CI-signed one. Leaving it would misreport the bundle's identity.
+    if [[ -f "$tcc_marker" ]]; then
+        rm -f "$tcc_marker" 2>/dev/null || true
+        log "  removed local signing-identity marker $tcc_marker"
+    fi
+}
+
 # --- Resolve OS/arch ----------------------------------------------------
 
 OS=$(uname -s)
@@ -506,6 +599,11 @@ fi
 
 # --- Install ------------------------------------------------------------
 
+# Before staging the new release, sweep any prior install-local build that
+# shares this home so the release install ends up authoritative (see the
+# function definition above for the conservative marker-gated logic).
+cleanup_prior_local_install
+
 mkdir -p "$BIN_DIR"
 
 # macOS: install the .app to /Applications first, then symlink the
@@ -641,6 +739,23 @@ else
     prune_old_releases "$RELEASES_DIR" "$CURRENT_LINK" "$TARGET" "$KEEP_VERSIONS"
 fi
 
+# --- Sweep the legacy ~/.cua-driver-rs home -----------------------------
+#
+# This release installer used to default HOME_DIR to ~/.cua-driver-rs (the
+# pre-v0.2.16 name). Now that it writes to ~/.cua-driver like install-local
+# and the runtime, a prior RELEASE install can have left a stale
+# ~/.cua-driver-rs behind — the source of the two-homes collision this PR
+# fixes. Sweep it now that the new install is fully staged under the canonical
+# home, mirroring the same belt-and-braces sweep _install-local-rust.sh does.
+# Runs AFTER staging so we never delete state before the replacement exists;
+# skipped when the user pinned CUA_DRIVER_RS_HOME to the legacy path on
+# purpose. Best-effort + idempotent.
+if [[ -d "$LEGACY_HOME_DIR" && "$HOME_DIR" != "$LEGACY_HOME_DIR" ]]; then
+    rm -rf "$LEGACY_HOME_DIR" 2>/dev/null \
+        && log "swept legacy package home $LEGACY_HOME_DIR (reconciled onto $HOME_DIR)" \
+        || log "note: could not fully remove legacy package home $LEGACY_HOME_DIR (best-effort)"
+fi
+
 # --- Stop any pre-swap cua-driver daemons -------------------------------
 #
 # Mirror of install.ps1's `Stop-CuaDriverDaemons` call sequence. The
@@ -663,7 +778,7 @@ show_cua_driver_daemon_survivors
 # --- Fire the one-shot install telemetry ping ---------------------------
 #
 # Anonymous adoption signal — sends `cua_driver_install` to PostHog
-# exactly once per install (guarded by ~/.cua-driver-rs/.installation_recorded
+# exactly once per install (guarded by ~/.cua-driver/.installation_recorded
 # on the binary side). The Rust port keeps its install signal independent
 # of the Swift `cua-driver` install (separate marker dir + separate env var)
 # so users can opt out of one without affecting the other.

@@ -164,7 +164,7 @@ pkgs.testers.nixosTest {
         machine.copy_from_host("${mcpClickTest}", "/tmp/mcp-click-gif-test.py")
         machine.execute(
             "sh -lc 'DISPLAY=:99 ffmpeg -y -video_size 1280x1024 -framerate 10 -f x11grab -i :99 "
-            "-t 5 -vf \"fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse\" "
+            "-t 5 -vf \"fps=10,scale=960:-1:flags=lanczos\" "
             "/tmp/cua-driver-linux-cursor-click.gif >/tmp/ffmpeg-click.log 2>&1 & echo $! >/tmp/ffmpeg-click.pid'"
         )
         result = machine.succeed("timeout 60 env DISPLAY=:99 python3 /tmp/mcp-click-gif-test.py 2>&1")

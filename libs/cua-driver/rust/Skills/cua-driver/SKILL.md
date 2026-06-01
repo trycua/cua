@@ -248,6 +248,15 @@ launch_app(target)
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
+**Concurrent sessions:** `launch_app` is idempotent — two sessions that
+launch the same app get the **same** instance (and on single-instance
+apps like Calculator, the same window), so they clobber each other. If
+another agent or session may drive the same app at the same time, pass
+`creates_new_application_instance: true` to get your own isolated
+instance + window. The cache and the per-session cursor are keyed on
+`(pid, window_id)`, so distinct instances keep the two sessions fully
+separated.
+
 `list_apps` is for app-level discovery (answering "what's installed /
 running / frontmost?") — not part of the core action loop. Skip it
 in the loop. For **window-level** questions — "does this app have a

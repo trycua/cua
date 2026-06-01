@@ -3,9 +3,6 @@
 use async_trait::async_trait;
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
-use std::fs::{self, OpenOptions};
-use std::os::fd::AsRawFd;
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::atspi::ElementCache;
@@ -546,121 +543,6 @@ async fn overlay_glide_to(sx: f64, sy: f64) {
     crate::overlay::animate_cursor_to(sx, sy).await;
 }
 
-fn process_name(pid: u32) -> Option<String> {
-    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    let first = String::from_utf8_lossy(&cmdline)
-        .split('\0')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_owned();
-    if !first.is_empty() {
-        return std::path::Path::new(&first)
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .or(Some(first));
-    }
-
-    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    status.lines()
-        .find(|l| l.starts_with("Name:"))
-        .map(|l| l[5..].trim().to_owned())
-}
-
-fn is_terminal_process(pid: u32) -> bool {
-    matches!(
-        process_name(pid).as_deref(),
-        Some(
-            "xfce4-terminal"
-                | "gnome-terminal-server"
-                | "xterm"
-                | "konsole"
-                | "kitty"
-                | "alacritty"
-                | "wezterm-gui"
-                | "tilix"
-        )
-    )
-}
-
-fn terminal_descendant_ttys(pid: u32) -> Vec<PathBuf> {
-    let mut parent_to_children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
-    let proc_dir = std::path::Path::new("/proc");
-    let entries = match fs::read_dir(proc_dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
-    };
-
-    for entry in entries.flatten() {
-        let pid_str = entry.file_name();
-        let pid_str = pid_str.to_string_lossy();
-        let child_pid: u32 = match pid_str.parse() {
-            Ok(pid) => pid,
-            Err(_) => continue,
-        };
-        let status = match fs::read_to_string(proc_dir.join(&*pid_str).join("status")) {
-            Ok(status) => status,
-            Err(_) => continue,
-        };
-        let parent_pid = status.lines()
-            .find(|l| l.starts_with("PPid:"))
-            .and_then(|l| l[5..].trim().parse::<u32>().ok());
-        if let Some(parent_pid) = parent_pid {
-            parent_to_children.entry(parent_pid).or_default().push(child_pid);
-        }
-    }
-
-    let mut descendants = Vec::new();
-    let mut queue = std::collections::VecDeque::from([pid]);
-    while let Some(current) = queue.pop_front() {
-        if let Some(children) = parent_to_children.get(&current) {
-            for &child in children {
-                descendants.push(child);
-                queue.push_back(child);
-            }
-        }
-    }
-    descendants.sort_unstable();
-
-    let mut ttys = Vec::new();
-    for child in descendants {
-        let tty = match fs::read_link(format!("/proc/{child}/fd/0")) {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-        if tty.starts_with("/dev/pts/") {
-            ttys.push(tty);
-        }
-    }
-    ttys
-}
-
-fn terminal_tty_for_window(pid: u32, xid: u64) -> Option<PathBuf> {
-    if !is_terminal_process(pid) {
-        return None;
-    }
-    let mut windows = crate::x11::list_windows(Some(pid));
-    windows.sort_by_key(|w| w.xid);
-    let window_index = windows.iter().position(|w| w.xid == xid)?;
-    let ttys = terminal_descendant_ttys(pid);
-    ttys.get(window_index).cloned()
-}
-
-fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool> {
-    let Some(tty) = terminal_tty_for_window(pid, xid) else {
-        return Ok(false);
-    };
-    let file = OpenOptions::new().read(true).write(true).open(&tty)?;
-    for byte in text.as_bytes() {
-        let ch = [*byte];
-        unsafe {
-            if libc::ioctl(file.as_raw_fd(), libc::TIOCSTI, ch.as_ptr()) == -1 {
-                return Err(std::io::Error::last_os_error().into());
-            }
-        }
-    }
-    Ok(true)
-}
 
 // ── click ─────────────────────────────────────────────────────────────────────
 
@@ -848,9 +730,6 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
-            if inject_terminal_input(pid, xid, &text)? {
-                return Ok(());
-            }
             crate::input::send_type_text(xid, &text)
         }).await;
         match result {
@@ -902,11 +781,6 @@ impl Tool for PressKeyTool {
         };
         let key_for_task = key.clone();
         let result = tokio::task::spawn_blocking(move || {
-            if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
-                if inject_terminal_input(pid, xid, "\n")? {
-                    return Ok(());
-                }
-            }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::send_key(xid, &key_for_task, &m)
         }).await;

@@ -1541,3 +1541,45 @@ mod gate_tests {
         let _ = std::fs::remove_file(&socket);
     }
 }
+
+#[cfg(test)]
+mod session_boundary_tests {
+    use super::apply_session_identity;
+    use serde_json::json;
+
+    #[test]
+    fn explicit_session_becomes_session_id_and_is_returned() {
+        let mut args = json!({ "x": 1, "session": "research-1" });
+        let eff = apply_session_identity(&mut args, &None);
+        assert_eq!(eff.as_deref(), Some("research-1"));
+        assert_eq!(args["_session_id"], "research-1");
+    }
+
+    #[test]
+    fn no_session_falls_back_to_minted_for_session_id_only() {
+        // The minted per-connection id drives `_session_id` (recording / config
+        // lifecycle) but there is NO explicit `session`, so the cursor resolver
+        // — which reads `session`/`cursor_id`, not `_session_id` — sees nothing.
+        let mut args = json!({ "x": 1 });
+        let eff = apply_session_identity(&mut args, &Some("mcp-123".to_owned()));
+        assert_eq!(args["_session_id"], "mcp-123");
+        assert_eq!(eff.as_deref(), Some("mcp-123"));
+        assert!(args.get("session").is_none());
+    }
+
+    #[test]
+    fn anonymous_when_no_session_and_no_minted() {
+        let mut args = json!({ "x": 1 });
+        let eff = apply_session_identity(&mut args, &None);
+        assert!(eff.is_none());
+        assert!(args.get("_session_id").is_none());
+    }
+
+    #[test]
+    fn caller_set_session_id_is_not_overwritten_by_minted() {
+        let mut args = json!({ "_session_id": "caller-set" });
+        let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
+        assert_eq!(args["_session_id"], "caller-set");
+        assert_eq!(eff.as_deref(), Some("caller-set"));
+    }
+}

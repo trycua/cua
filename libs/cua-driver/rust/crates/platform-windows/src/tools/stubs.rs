@@ -164,7 +164,7 @@ mod move_cursor_m {
             let x = args.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let y = args.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 });
+            crate::overlay::send_command(cursor_id.to_owned(), cursor_overlay::OverlayCommand::MoveTo { x, y, end_heading_radians: 0.0 });
             ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
         }
     }
@@ -191,7 +191,7 @@ mod set_enabled_m {
         async fn invoke(&self, args: Value) -> ToolResult {
             let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
             let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default");
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
+            crate::overlay::send_command(cursor_id.to_owned(), cursor_overlay::OverlayCommand::SetEnabled(enabled));
             ToolResult::text(format!("Agent cursor '{}' {}.", cursor_id, if enabled { "enabled" } else { "disabled" }))
         }
     }

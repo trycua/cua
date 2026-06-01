@@ -492,16 +492,33 @@ fn test_multi_cursor_instance_state() {
     let r5 = read_response(&mut stdout);
     assert!(!r5["result"]["isError"].as_bool().unwrap_or(false));
 
-    // get_agent_cursor_state — should have multiple instances.
+    // get_agent_cursor_state is now session-scoped: each call returns ONLY the
+    // cursor it resolves to (explicit cursor_id > injected _session_id >
+    // "default"). Query each instance by its cursor_id and assert independent
+    // state (agent2 was hidden; agent1 was left enabled).
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":6,"method":"tools/call",
-        "params":{"name":"get_agent_cursor_state","arguments":{}}
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"agent1"}}
     }));
-    let resp = read_response(&mut stdout);
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
-    let cursors = &resp["result"]["structuredContent"]["cursors"];
-    assert!(cursors.as_array().map(|a| a.len() >= 2).unwrap_or(false),
-        "Expected at least 2 cursor instances, got: {cursors:?}");
+    let resp1 = read_response(&mut stdout);
+    assert!(!resp1["result"]["isError"].as_bool().unwrap_or(false));
+    let cursors1 = resp1["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
+    assert_eq!(cursors1.len(), 1, "agent1 query must return exactly its own cursor, got: {cursors1:?}");
+    assert_eq!(cursors1[0]["config"]["cursor_id"].as_str(), Some("agent1"));
+    assert_eq!(resp1["result"]["structuredContent"]["enabled"].as_bool(), Some(true),
+        "agent1 was never disabled");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":7,"method":"tools/call",
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"agent2"}}
+    }));
+    let resp2 = read_response(&mut stdout);
+    assert!(!resp2["result"]["isError"].as_bool().unwrap_or(false));
+    let cursors2 = resp2["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
+    assert_eq!(cursors2.len(), 1, "agent2 query must return exactly its own cursor, got: {cursors2:?}");
+    assert_eq!(cursors2[0]["config"]["cursor_id"].as_str(), Some("agent2"));
+    assert_eq!(resp2["result"]["structuredContent"]["enabled"].as_bool(), Some(false),
+        "agent2 was hidden");
 
     std::thread::sleep(Duration::from_millis(50));
     assert!(child.try_wait().expect("try_wait").is_none(), "cua-driver crashed during multi-cursor test");
@@ -1751,14 +1768,15 @@ fn test_concurrent_multi_driver_isolation() {
     assert!(resp_b["error"].is_null(), "Driver B set_agent_cursor_enabled failed: {resp_b:?}");
 
     // Each driver queries its own cursor state — should reflect what it set.
-    // get_agent_cursor_state takes no arguments; returns { "cursors": [...] }.
+    // get_agent_cursor_state is session-scoped, so pass the cursor_id each
+    // driver owns; the response carries { "cursors": [<that one>], "enabled" }.
     send_request(stdin_a, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"get_agent_cursor_state","arguments":{}}
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"alpha"}}
     }));
     send_request(stdin_b, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"get_agent_cursor_state","arguments":{}}
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"beta"}}
     }));
     let state_a = read_response(&mut stdout_a);
     let state_b = read_response(&mut stdout_b);
@@ -2513,15 +2531,27 @@ fn test_multi_cursor_instance_state_windows() {
     }));
     assert!(!read_response(&mut stdout)["result"]["isError"].as_bool().unwrap_or(false));
 
+    // Session-scoped: query each instance by cursor_id (see the macOS variant).
     send_request(stdin, &serde_json::json!({
         "jsonrpc":"2.0","id":6,"method":"tools/call",
-        "params":{"name":"get_agent_cursor_state","arguments":{}}
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"agent1"}}
     }));
-    let resp = read_response(&mut stdout);
-    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
-    let cursors = &resp["result"]["structuredContent"]["cursors"];
-    assert!(cursors.as_array().map(|a| a.len() >= 2).unwrap_or(false),
-        "Expected at least 2 cursor instances: {cursors:?}");
+    let resp1 = read_response(&mut stdout);
+    assert!(!resp1["result"]["isError"].as_bool().unwrap_or(false));
+    let cursors1 = resp1["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
+    assert_eq!(cursors1.len(), 1, "agent1 query must return exactly its own cursor: {cursors1:?}");
+    assert_eq!(cursors1[0]["config"]["cursor_id"].as_str(), Some("agent1"));
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":7,"method":"tools/call",
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"agent2"}}
+    }));
+    let resp2 = read_response(&mut stdout);
+    assert!(!resp2["result"]["isError"].as_bool().unwrap_or(false));
+    let cursors2 = resp2["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
+    assert_eq!(cursors2.len(), 1, "agent2 query must return exactly its own cursor: {cursors2:?}");
+    assert_eq!(cursors2[0]["config"]["cursor_id"].as_str(), Some("agent2"));
+    assert_eq!(resp2["result"]["structuredContent"]["enabled"].as_bool(), Some(false), "agent2 hidden");
 
     std::thread::sleep(Duration::from_millis(50));
     assert!(child.try_wait().expect("try_wait").is_none(), "cua-driver crashed during multi-cursor test");
@@ -3232,13 +3262,14 @@ fn test_concurrent_multi_driver_isolation_windows() {
     assert!(resp_a["error"].is_null(), "Driver A failed: {resp_a:?}");
     assert!(resp_b["error"].is_null(), "Driver B failed: {resp_b:?}");
 
+    // Session-scoped: query each driver's own cursor by id (see macOS variant).
     send_request(stdin_a, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"get_agent_cursor_state","arguments":{}}
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"alpha"}}
     }));
     send_request(stdin_b, &serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"get_agent_cursor_state","arguments":{}}
+        "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"beta"}}
     }));
     let state_a = read_response(&mut stdout_a);
     let state_b = read_response(&mut stdout_b);

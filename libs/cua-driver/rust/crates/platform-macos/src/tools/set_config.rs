@@ -3,7 +3,7 @@ use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
 use serde_json::Value;
 use std::sync::Arc;
 
-use super::{write_driver_config_key, ToolState};
+use super::{write_driver_config_key, ConfigOverrides, ToolState};
 
 pub struct SetConfigTool {
     state: Arc<ToolState>,
@@ -61,23 +61,50 @@ impl Tool for SetConfigTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let mut cfg = self.state.config.write().unwrap();
-        if let Some(mode) = args.opt_str("capture_mode") {
-            cfg.capture_mode = mode.clone();
-            if let Err(e) = write_driver_config_key("capture_mode", &Value::String(mode)) {
-                tracing::warn!("set_config: failed to persist capture_mode: {e}");
+        // The daemon injects `_session_id` for non-anonymous MCP sessions.
+        // Absent => anonymous/global session (CLI one-shot, legacy proxy) =>
+        // today's behavior: write the shared global DriverConfig + persist to
+        // disk. Present => session-scoped in-memory override only, never
+        // touching the global config or the on-disk default, so two concurrent
+        // sessions don't clobber each other or the persisted default.
+        let session_id = args.opt_str("_session_id");
+
+        // Validate max_image_dimension up front so both branches share the
+        // u32 check and we never half-apply.
+        let max_dim: Option<u32> = match args.opt_u64("max_image_dimension") {
+            Some(dim) => match u32::try_from(dim) {
+                Ok(d) => Some(d),
+                Err(_) => return ToolResult::error(format!("max_image_dimension {dim} exceeds u32::MAX")),
+            },
+            None => None,
+        };
+        let capture_mode = args.opt_str("capture_mode");
+
+        let (effective_mode, effective_dim) = if let Some(sid) = session_id.as_deref() {
+            // Session-scoped override: in-memory only, no global write, no disk.
+            self.state.session_config.set(sid, ConfigOverrides {
+                capture_mode: capture_mode.clone(),
+                max_image_dimension: max_dim,
+            });
+            self.state.session_config.effective(Some(sid), &self.state.config.read().unwrap())
+        } else {
+            // Anonymous/global session: write the shared global + persist,
+            // exactly as before this change.
+            let mut cfg = self.state.config.write().unwrap();
+            if let Some(mode) = capture_mode.clone() {
+                cfg.capture_mode = mode.clone();
+                if let Err(e) = write_driver_config_key("capture_mode", &Value::String(mode)) {
+                    tracing::warn!("set_config: failed to persist capture_mode: {e}");
+                }
             }
-        }
-        if let Some(dim) = args.opt_u64("max_image_dimension") {
-            if let Ok(dim32) = u32::try_from(dim) {
+            if let Some(dim32) = max_dim {
                 cfg.max_image_dimension = dim32;
-                if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(dim.into())) {
+                if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(u64::from(dim32).into())) {
                     tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
                 }
-            } else {
-                return ToolResult::error(format!("max_image_dimension {dim} exceeds u32::MAX"));
             }
-        }
+            (cfg.capture_mode.clone(), cfg.max_image_dimension)
+        };
         // PiP keys persist to the same config.json but take effect only on
         // next daemon restart — the backend is initialised once at startup.
         let mut pip_note = String::new();
@@ -101,9 +128,14 @@ impl Tool for SetConfigTool {
                 pip_note = format!(" — restart cua-driver for experimental_pip_geometry={geom} to take effect");
             }
         }
+        let scope_note = if session_id.is_some() {
+            " (session-scoped; persisted default unchanged)"
+        } else {
+            ""
+        };
         ToolResult::text(format!(
-            "Config updated: capture_mode={}, max_image_dimension={}{}",
-            cfg.capture_mode, cfg.max_image_dimension, pip_note
+            "Config updated: capture_mode={}, max_image_dimension={}{}{}",
+            effective_mode, effective_dim, scope_note, pip_note
         ))
     }
 }

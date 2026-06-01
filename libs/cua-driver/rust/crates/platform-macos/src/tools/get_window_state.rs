@@ -71,7 +71,13 @@ impl Tool for GetWindowStateTool {
                 s
             }
         });
-        let default_mode = self.state.config.read().unwrap().capture_mode.clone();
+        // Effective config resolves call-arg > session-override > global. The
+        // daemon injects `_session_id` for named MCP sessions; absent => global.
+        let session_id = args.opt_str("_session_id");
+        let (default_mode, effective_max_dim) = {
+            let cfg = self.state.config.read().unwrap();
+            self.state.session_config.effective(session_id.as_deref(), &cfg)
+        };
         let capture_mode = args.opt_str("capture_mode").unwrap_or(default_mode);
 
         // Walk AX tree (unless vision-only mode). Accept "tree" as deprecated alias for "ax".
@@ -107,8 +113,9 @@ impl Tool for GetWindowStateTool {
             self.state.element_cache.update(pid, window_id, &r.nodes);
         }
 
-        // Screenshot (unless ax-only mode).
-        let max_dim = self.state.config.read().unwrap().max_image_dimension;
+        // Screenshot (unless ax-only mode). Uses the session-effective max
+        // dimension resolved above.
+        let max_dim = effective_max_dim;
         // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
         let screenshot = if capture_mode != "ax" {
             let out_file = screenshot_out_file.clone();

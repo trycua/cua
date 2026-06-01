@@ -111,9 +111,11 @@ Pure read-only.
 
 ### get_agent_cursor_state
 
-Return the current state of all agent cursor instances: position, config (color, icon, label, size, opacity), enabled flag.
+Return the current state of **this session's** agent cursor: position, config (color, icon, label, size, opacity), enabled flag. The result is scoped to the cursor the call resolves to (precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**), so concurrent sessions no longer see each other's cursors and the top-level `enabled` flag is deterministic. Pass `cursor_id` to inspect a specific instance.
 
-**Arguments:** none.
+**Arguments:**
+
+- `cursor_id` (string, optional): Cursor instance to inspect. Omit it and the call targets the calling session's own cursor (macOS); the anonymous / one-shot path targets `"default"`.
 
 ## Action tools
 
@@ -383,7 +385,7 @@ Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor —
 
 **Arguments:**
 
-- `cursor_id` (string, optional): Cursor instance to move. Default: 'default'.
+- `cursor_id` (string, optional): Explicit cursor-instance override. Omit it and the move targets the calling session's own cursor (macOS); the anonymous path targets 'default'. See the per-session agent cursors note under [set_agent_cursor_enabled](#set_agent_cursor_enabled).
 - `x` (number, required)
 - `y` (number, required)
 
@@ -452,7 +454,7 @@ Start trajectory recording. Every subsequent action-tool invocation (click, righ
 
 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
 
-**Video is on by default** — the main display is captured to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. Pass `record_video: false` to opt out.
+**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. On the daemon-proxy path (the default macOS `cua-driver mcp` flow), recording is stopped automatically when the session ends, and the daemon stops only the recording that session owns — so a forgotten session no longer keeps writing to disk. Session-end is detected reliably even on **ungraceful proxy death** (`kill -9`, crash): each proxy holds one long-lived control connection to the daemon, and the kernel closing that socket on proxy exit (graceful **or** killed) fires `session_end`. A daemon-side idle timeout (~5 min of no tool activity) remains as a secondary backstop for a non-proxy client that started a recording and died.
 
 **macOS uses native ScreenCaptureKit** (in-process SCStream + SCRecordingOutput) so video inherits Cua Driver's own Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
 
@@ -460,10 +462,12 @@ Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restar
 
 State persists for the life of the daemon / MCP session; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
 
+The result's `structuredContent` includes an `owner` field — the session that owns the live recording (the proxy-minted session identity), or `null` when started anonymously. Ownership is what lets the daemon-proxy disconnect auto-stop (a `session_end` signal) stop only the recording this session started, even when a later client clobbered the singleton recorder with its own `start_recording`. (This `owner` field supersedes the earlier `generation` token.)
+
 **Arguments:**
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
-- `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: true. Set to false to record only the per-turn screenshots + JSON. On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}
@@ -473,7 +477,11 @@ State persists for the life of the daemon / MCP session; a restart resets to dis
 
 Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
-**Arguments:** none.
+A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one MCP client disconnecting can't stop a recording a later client started) is handled by the daemon's `session_end` lifecycle signal, not by this tool — so `stop_recording` takes no arguments.
+
+**Arguments:**
+
+_None._
 
 ### replay_trajectory
 
@@ -500,6 +508,8 @@ Caveats:
 
 Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).
 
+**Per-session isolation (daemon-proxy path).** The daemon is one shared process: every `cua-driver mcp` client shares its state. To stop concurrent MCP sessions from clobbering each other (and the on-disk default), `set_config` from a proxy-backed MCP session writes an **in-memory, session-scoped override** — it does NOT touch the global `DriverConfig` or persist to `~/.cua-driver/config.json`. `get_config` and the capture tools then resolve effective values as call-arg &gt; session override &gt; global default, and the override is dropped automatically when the client disconnects. Only the anonymous path — the `cua-driver config set` CLI and one-shot `cua-driver call` — writes the persisted global default that survives a daemon restart. (`capture_mode` / `max_image_dimension` session-scoping is macOS-only today; Windows/Linux still write the shared config — tracked as a follow-up.)
+
 **Arguments:**
 
 - `capture_mode` (string, optional): Default capture mode for get_window_state.
@@ -507,9 +517,13 @@ Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimens
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
 
+**Per-session agent cursors (macOS).** The agent cursor is owned per MCP session. On the daemon-proxy path every `cua-driver mcp` client mints a session identity, and that identity is the cursor key when the caller passes no explicit `cursor_id` — so two concurrent sessions each drive their own overlay cursor (distinct auto-assigned colour) drawn simultaneously, instead of clobbering one shared cursor last-writer-wins. The key is resolved with the precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**: an explicit `cursor_id` stays an orthogonal, user-facing handle, so a wrapper can deliberately share or override a cursor across sessions by passing the same `cursor_id`. When a session ends (`session_end`), that session's cursor is removed from the overlay automatically — including on **ungraceful proxy death** (`kill -9`, crash), because the daemon detects the proxy's control-connection EOF and fires `session_end` without any cooperation from the dying proxy. A late, in-flight cursor command that arrives after removal cannot resurrect the cursor (a render-side tombstone keyed on the session id). The anonymous / one-shot `cua-driver call` path (no session identity, no `cursor_id`) maps to the seeded `"default"` cursor, which is never removed — backward compatible. (Windows/Linux keep the single shared cursor today.)
+
 ### set_agent_cursor_enabled
 
-Show or hide the agent cursor overlay for a cursor instance.
+Show or hide the agent cursor overlay for a cursor instance. The overlay is **ON by default** and each MCP session automatically owns its own cursor — you do not need to call this to make the cursor appear; use it only to hide (`enabled:false`) or re-show (`enabled:true`) it. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).
+
+> **Visibility caveat (AX runs).** On a pure accessibility-action run (clicking by `element_index`), the session cursor seeds on-screen and pulses on its very first action rather than playing a long glide, so it is easy to miss in a screen recording. For a clearly *gliding* cursor in a demo, issue a pixel `click({pid,x,y})` or a `move_agent_cursor` first to put the cursor on-screen; subsequent AX clicks then glide normally.
 
 **Arguments:**
 

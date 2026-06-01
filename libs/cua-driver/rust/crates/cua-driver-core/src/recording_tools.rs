@@ -68,9 +68,10 @@ impl Tool for StartRecordingTool {
                   red dot drawn at the click point.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
-                **Video is on by default** — the main display is captured to \
-                `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of \
-                the session. Pass `record_video: false` to opt out.\n\n\
+                **Video is off by default.** Pass `record_video: true` to also \
+                capture the main display to `<output_dir>/recording.mp4` (H.264 / \
+                30 fps) for the lifetime of the session. The recording is torn \
+                down automatically when the MCP client disconnects.\n\n\
                 **macOS uses native ScreenCaptureKit** (in-process SCStream + \
                 SCRecordingOutput) so video inherits Cua Driver's own Screen \
                 Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
@@ -96,8 +97,9 @@ impl Tool for StartRecordingTool {
                     "record_video": {
                         "type": "boolean",
                         "description": "Capture the main display to <output_dir>/recording.mp4. \
-                            Default: true. Set to false to record only the per-turn \
-                            screenshots + JSON. On macOS this uses native \
+                            Default: false. Set to true to also capture the main \
+                            display to recording.mp4 (otherwise only the per-turn \
+                            screenshots + JSON are recorded). On macOS this uses native \
                             ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
                             Windows + Linux it requires ffmpeg on PATH."
                     }
@@ -117,9 +119,13 @@ impl Tool for StartRecordingTool {
         if output_dir.as_deref().map(str::is_empty).unwrap_or(true) {
             return ToolResult::error("`output_dir` is required.");
         }
-        let record_video = args.bool_or("record_video", true);
+        let record_video = args.bool_or("record_video", false);
+        // Daemon-injected ownership key (absent for one-shot CLI / anonymous
+        // sessions). Stamps the recording so a session-scoped teardown
+        // (session_end) only stops the recording its own session started.
+        let owner = args.opt_str("_session_id");
 
-        match self.session.start(output_dir.as_deref().unwrap(), record_video) {
+        match self.session.start(output_dir.as_deref().unwrap(), record_video, owner.as_deref()) {
             Ok(()) => {
                 let state = self.session.current_state();
                 // When the caller asked for video and it failed (e.g. macOS
@@ -164,7 +170,12 @@ impl Tool for StopRecordingTool {
                 and, when video was enabled, gracefully terminates the ffmpeg subprocess \
                 so the mp4's moov atom is finalized (the file is playable). Calling \
                 stop on an already-stopped session is a no-op. The response carries \
-                `last_video_path` pointing at the finalized mp4 (when video was on).".into(),
+                `last_video_path` pointing at the finalized mp4 (when video was on).\n\n\
+                A manual `stop_recording` is **unconditional** — it stops whatever \
+                recording is active regardless of which session started it. \
+                Ownership-scoped teardown (so one MCP client disconnecting can't stop a \
+                recording a later client started) is handled by the daemon's \
+                `session_end` lifecycle signal, not by this tool.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -178,7 +189,10 @@ impl Tool for StopRecordingTool {
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        match self.session.stop() {
+        // Manual stop is unconditional — `None` requester tears down whatever
+        // recording is active. Session-scoped teardown is driven by the
+        // daemon's `session_end` arm (serve.rs), which calls `stop_owner(sid)`.
+        match self.session.stop_owner(None) {
             Ok(()) => {
                 let state = self.session.current_state();
                 let video_note = state.last_video_path.as_deref()
@@ -440,6 +454,11 @@ fn recording_state_json(state: &RecordingState) -> Value {
         "last_error": state.last_error,
         "video_active": state.video_active,
         "last_video_path": state.last_video_path,
+        // Session that owns the live recording (the daemon-injected
+        // `_session_id`), or null when started anonymously. Informational; the
+        // proxy-exit teardown drives ownership via the daemon `session_end`
+        // signal rather than reading this back.
+        "owner": state.owner,
     })
 }
 

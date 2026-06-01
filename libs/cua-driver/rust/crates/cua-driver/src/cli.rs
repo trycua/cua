@@ -59,6 +59,13 @@ pub enum Command {
         /// (checked inside the gate itself), so the flag is only one of
         /// two opt-out signals.
         no_permissions_gate: bool,
+        /// True when `--claude-code-computer-use-compat` is on argv. The MCP
+        /// proxy forwards this flag to the daemon it auto-launches (see
+        /// `launch_daemon_and_wait`) so the proxy path registers the compat
+        /// `screenshot` surface, not just the in-process path. Without it the
+        /// flag was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
+        /// which always routes through the proxy on an installed bundle.
+        claude_code_compat: bool,
     },
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
@@ -182,6 +189,28 @@ pub fn parse_command() -> Command {
         println!("  --no-daemon-relaunch    Stay in-process; skip auto-launching the CuaDriver daemon.");
         println!("                          Also: CUA_DRIVER_RS_MCP_NO_RELAUNCH=1");
         println!("  --socket <path>         Override the daemon UDS path used by the proxy fallback.");
+        println!("  --claude-code-computer-use-compat");
+        println!("                          Select the Claude Code computer-use compat surface.");
+        println!("                          Now forwarded to the proxy-launched daemon (was a no-op");
+        println!("                          on the proxy path — the path you actually run — because");
+        println!("                          the daemon hardcoded compat=false). Note: the compat");
+        println!("                          screenshot tool itself was removed in #1692, so the flag");
+        println!("                          has no tool-surface effect today; the wiring is in place");
+        println!("                          for any future compat-gated tool.");
+        println!();
+        println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
+        println!("  The overlay is ON by default: every MCP session automatically gets its own");
+        println!("  cursor (keyed by session id) that shows where the agent acts without moving the");
+        println!("  real pointer. It is removed when the session ends. A pure accessibility (AX)");
+        println!("  action snaps the cursor with a brief pulse on its first action instead of a long");
+        println!("  glide, so it can be easy to miss — do a pixel click or move_agent_cursor first");
+        println!("  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:");
+        println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
+        println!("  --cursor-id <id>        Name the default cursor instance (default: 'default').");
+        println!("  --cursor-icon <path>    Use a custom PNG cursor icon.");
+        println!("  --cursor-palette <name> Pick a built-in colour palette for the cursor.");
+        println!("  (These are no-ops for one-shot CLI calls like `cua-driver call` — the overlay");
+        println!("   needs the long-lived AppKit runloop that only `serve` / `mcp` keep alive.)");
         println!();
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
@@ -260,6 +289,7 @@ pub fn parse_command() -> Command {
             socket,
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
+            claude_code_compat,
         },
         Some("stop") => Command::Stop { socket },
         Some("status") => Command::Status { socket },
@@ -562,7 +592,11 @@ pub fn should_use_daemon_proxy(no_daemon_relaunch: bool) -> bool {
 /// `waitForDaemon`. Split into one Rust function because we don't
 /// need the post-launch probe separation Swift has.
 #[cfg(target_os = "macos")]
-pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::Result<()> {
+pub fn launch_daemon_and_wait(
+    socket_path: &str,
+    timeout_secs: u64,
+    claude_code_compat: bool,
+) -> anyhow::Result<()> {
     use std::process::{Command as Cmd, Stdio};
     use std::time::{Duration, Instant};
 
@@ -578,6 +612,20 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
     if pass_socket {
         open_args.push("--socket");
         open_args.push(socket_path);
+    }
+    // Thread the Claude-Code compat flag through to the daemon. Without this
+    // the proxy-spawned daemon always called build_macos_registry() (compat
+    // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
+    // SILENTLY DROPPED the flag on the proxy path — the path users actually
+    // run on an installed bundle. Today this is latent: the compat screenshot
+    // tool was removed in #1692, so `register_all(compat)` ignores the flag and
+    // the served surface is identical either way. But the flag was being lost
+    // before reaching the daemon at all, so the moment any compat-gated tool is
+    // re-introduced the proxy path would not honour it. This makes the flag
+    // travel end-to-end. Only honoured on a freshly-launched daemon — a
+    // pre-existing daemon keeps whatever surface it launched with.
+    if claude_code_compat {
+        open_args.push("--claude-code-computer-use-compat");
     }
 
     let status = Cmd::new("/usr/bin/open")
@@ -630,7 +678,10 @@ pub fn launch_daemon_and_wait(socket_path: &str, timeout_secs: u64) -> anyhow::R
 /// `open` if needed), then `crate::proxy::run_proxy` against its
 /// socket. Builds its own tokio runtime — same shape as the other
 /// `run_*` helpers in this file that own their event loop.
-pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
+pub fn run_mcp_via_daemon_proxy(
+    socket: Option<String>,
+    claude_code_compat: bool,
+) -> anyhow::Result<()> {
     // Windows: prefer the uiAccess'd worker pipe over the regular daemon pipe
     // when both are running, so MCP tool calls land in a process that can
     // bypass UIPI for UWP apps. The protocol on both pipes is identical so
@@ -678,8 +729,10 @@ pub fn run_mcp_via_daemon_proxy(socket: Option<String>) -> anyhow::Result<()> {
                  auto-launching the daemon via `open -n -g -a CuaDriver --args serve{socket_suffix}` \
                  and proxying MCP requests through it. Pass --no-daemon-relaunch to stay in-process."
             );
-            launch_daemon_and_wait(&socket_path, 10)?;
+            launch_daemon_and_wait(&socket_path, 10, claude_code_compat)?;
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = claude_code_compat;
         // On Linux / Windows there's no equivalent `open -a CuaDriver`
         // mechanism to spawn a daemon attributed to the user's
         // interactive session. The caller is expected to have one
@@ -963,6 +1016,8 @@ pub fn run_call(
             method: "call".into(),
             name: Some(tool.to_owned()),
             args: Some(args_for_daemon),
+            // CLI one-shot is its own ephemeral, anonymous/global session.
+            session_id: None,
         };
         match crate::serve::send_request(&socket_path, &req) {
             Ok(resp) => {
@@ -1202,6 +1257,9 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 args: Some(serde_json::json!({
                     "output_dir": output_dir
                 })),
+                // CLI `recording start` is anonymous — the recording is owned by
+                // nobody, so only an unconditional stop (CLI / manual) reaps it.
+                session_id: None,
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1211,6 +1269,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                         method: "call".into(),
                         name: Some("get_recording_state".into()),
                         args: Some(serde_json::json!({})),
+                        session_id: None,
                     };
                     if let Ok(sr) = crate::serve::send_request(&socket_path, &state_req) {
                         if let Some(result) = sr.result {
@@ -1235,6 +1294,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 method: "call".into(),
                 name: Some("stop_recording".into()),
                 args: Some(serde_json::json!({})),
+                session_id: None,
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => println!("Recording stopped."),
@@ -1251,6 +1311,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 method: "call".into(),
                 name: Some("get_recording_state".into()),
                 args: Some(serde_json::json!({})),
+                session_id: None,
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
@@ -1491,6 +1552,7 @@ fn run_permissions_status(json: bool) {
             method: "call".into(),
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
+            session_id: None,
         };
         crate::serve::send_request(&socket, &req)
             .ok()
@@ -1594,7 +1656,8 @@ fn run_permissions_grant() {
                 "A dialog titled \u{201c}Cua Driver\u{201d} will appear — approve Accessibility \
                  and Screen Recording in System Settings, then this command continues."
             );
-            if let Err(e) = launch_daemon_and_wait(&socket, 180) {
+            // Permissions-grant launch never needs the compat screenshot surface.
+            if let Err(e) = launch_daemon_and_wait(&socket, 180, false) {
                 eprintln!("\nDidn't detect the CuaDriver daemon: {e}");
                 eprintln!(
                     "If you haven't yet, grant Accessibility + Screen Recording to CuaDriver \
@@ -1617,6 +1680,7 @@ fn run_permissions_grant() {
             method: "call".into(),
             name: Some("check_permissions".into()),
             args: Some(serde_json::json!({ "prompt": false })),
+            session_id: None,
         };
         let poll_deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(180);
@@ -2311,6 +2375,8 @@ pub fn run_config_cmd(
                     method: "call".into(),
                     name: Some("get_config".into()),
                     args: Some(serde_json::json!({})),
+                    // CLI `config get` reads the persisted global (anonymous).
+                    session_id: None,
                 };
                 if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
                     if resp.ok {
@@ -2389,6 +2455,9 @@ pub fn run_config_cmd(
                     method: "call".into(),
                     name: Some("set_config".into()),
                     args: Some(args.clone()),
+                    // CLI `config set` is anonymous → writes the persisted
+                    // global default (the only writer of the on-disk config).
+                    session_id: None,
                 };
                 if let Ok(resp) = crate::serve::send_request(&socket_path, &req) {
                     if resp.ok {
@@ -2398,6 +2467,7 @@ pub fn run_config_cmd(
                             method: "call".into(),
                             name: Some("get_config".into()),
                             args: Some(serde_json::json!({})),
+                            session_id: None,
                         };
                         if let Ok(r2) = crate::serve::send_request(&socket_path, &req2) {
                             if let Some(result) = r2.result {

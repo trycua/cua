@@ -125,6 +125,33 @@ let
     if __name__ == "__main__":
         main()
   '';
+
+  recordGifScript = pkgs.writeShellScript "record-x11-gif.sh" ''
+    set -eu
+    display="$1"
+    frames_dir="$2"
+    output_gif="$3"
+    stop_file="$4"
+    log_file="$5"
+    delay_cs="$6"
+    interval="$7"
+
+    rm -f "$stop_file" "$output_gif" "$log_file"
+    rm -rf "$frames_dir"
+    mkdir -p "$frames_dir"
+
+    i=0
+    while [ ! -f "$stop_file" ]; do
+      frame=$(printf "%s/frame-%04d.png" "$frames_dir" "$i")
+      import -display "$display" -window root "$frame" >>"$log_file" 2>&1 || true
+      i=$((i + 1))
+      sleep "$interval"
+    done
+
+    if ls "$frames_dir"/frame-*.png >/dev/null 2>&1; then
+      convert -delay "$delay_cs" -loop 0 "$frames_dir"/frame-*.png "$output_gif" >>"$log_file" 2>&1
+    fi
+  '';
 in
 
 pkgs.testers.nixosTest {
@@ -149,7 +176,7 @@ pkgs.testers.nixosTest {
         openbox
         picom
         xdotool
-        ffmpeg
+        imagemagick
         python3
         jq
         procps
@@ -175,13 +202,13 @@ pkgs.testers.nixosTest {
     with subtest("Record GIF and execute command in inactive terminal"):
         machine.copy_from_host("${mcpBackgroundTerminalTest}", "/tmp/mcp-background-terminal-gif-test.py")
         machine.execute(
-            "sh -lc 'DISPLAY=:99 ffmpeg -y -video_size 1280x1024 -framerate 10 -f x11grab -i :99 "
-            "-t 6 -vf \"fps=10,scale=960:-1:flags=lanczos\" "
-            "/tmp/cua-driver-linux-background-terminal.gif >/tmp/ffmpeg-background.log 2>&1 & echo $! >/tmp/ffmpeg-background.pid'"
+            "sh -lc '${recordGifScript} :99 /tmp/background-frames /tmp/cua-driver-linux-background-terminal.gif "
+            "/tmp/stop-background-recorder /tmp/ffmpeg-background.log 10 0.15 >/dev/null 2>&1 & echo $! >/tmp/ffmpeg-background.pid'"
         )
         result = machine.succeed("timeout 60 env DISPLAY=:99 python3 /tmp/mcp-background-terminal-gif-test.py 2>&1")
         machine.log(result)
         assert "background terminal GIF test complete" in result, result
+        machine.succeed("touch /tmp/stop-background-recorder")
         machine.wait_until_succeeds("! kill -0 $(cat /tmp/ffmpeg-background.pid) 2>/dev/null", timeout=60)
         machine.log(machine.succeed("sh -lc 'cat /tmp/ffmpeg-background.log || true'"))
         machine.succeed("test -s /tmp/cua-driver-linux-background-terminal.gif")

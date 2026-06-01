@@ -266,6 +266,17 @@ its **own `session`** (→ its own cursor) AND pass
 The element cache is keyed on `(pid, window_id)` and the cursor on `session`,
 so distinct instances + distinct sessions keep the runs fully separated.
 
+**Parallelism vs. ordering.** Distinct sessions give distinct *cursors*, not
+distinct *connections*. Subagents that share one `cua-driver mcp` (stdio)
+connection have their tool calls **serialized** by the transport — they take
+turns, not run in parallel. That's not a correctness problem (session + window
+isolation means they can't collide), just a throughput one. For genuinely
+parallel agents, give each its **own connection**: separate `cua-driver mcp`
+processes, or point each agent's MCP client at the daemon's HTTP endpoint
+(`CUA_DRIVER_RS_MCP_HTTP_PORT` → `POST http://127.0.0.1:<port>/mcp`). The daemon
+serves connections concurrently; per-connection ordering keeps each agent's own
+sequence (e.g. `3 → + → 1 → =`) correct.
+
 `list_apps` is for app-level discovery (answering "what's installed /
 running / frontmost?") — not part of the core action loop. Skip it
 in the loop. For **window-level** questions — "does this app have a

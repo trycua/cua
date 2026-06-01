@@ -54,11 +54,12 @@ static ENABLED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn enabled_def() -> &'static ToolDef {
     ENABLED_DEF.get_or_init(|| ToolDef {
         name: "set_agent_cursor_enabled".into(),
-        description: "Show or hide the agent cursor overlay for a cursor instance. The overlay \
-                      is ON by default and each MCP session automatically owns its own cursor \
-                      (keyed by session id) — you do NOT need to call this to make the cursor \
-                      appear. Use enabled=false to hide it, or enabled=true to re-show a hidden \
-                      one. Pass cursor_id only to target a deliberately-shared cursor.".into(),
+        description: "Show or hide the agent cursor for a session. A cursor exists only for a \
+                      DECLARED session: pass `session` (the same id you start_session / drive \
+                      actions with) and the cursor appears on that session's first action — its \
+                      color is derived from the id. Without a `session`, actions run cursor-less. \
+                      Use enabled=false to hide a session's cursor, enabled=true to re-show it. \
+                      (`cursor_id` is a legacy alias for `session`.)".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["enabled"],

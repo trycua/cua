@@ -139,6 +139,43 @@ fn spawn_recording_idle_backstop(
     });
 }
 
+/// Default idle-TTL for a caller-declared session (seconds). A session that
+/// isn't touched (no tool call carrying its `session`) for this long is reclaimed
+/// by [`spawn_session_idle_sweep`] — its cursor removed, recording stopped,
+/// config cleared. Overridable via `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`.
+const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
+
+fn session_idle_ttl_secs() -> u64 {
+    std::env::var("CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(SESSION_IDLE_TTL_SECS_DEFAULT)
+}
+
+/// Spawn the detached idle-TTL sweep for caller-declared sessions.
+///
+/// A session is no longer tied to a connection's lifetime (it's a caller-declared
+/// identity that can span connections, transports, and apps), so a run that ends
+/// — or crashes — without calling `end_session` is reclaimed here. Each tick ends
+/// every session whose last activity is older than the TTL; `session::evict_idle`
+/// fans `fire_session_end` out to the cursor/recording/config cleanup hooks. A
+/// session that keeps issuing tool calls bumps its activity every turn and never
+/// reaches the idle window. Idempotent and cheap.
+fn spawn_session_idle_sweep() {
+    let ttl = std::time::Duration::from_secs(session_idle_ttl_secs());
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            let ended = cua_driver_core::session::evict_idle(ttl);
+            if !ended.is_empty() {
+                tracing::info!(count = ended.len(), "idle-TTL reclaimed sessions: {ended:?}");
+            }
+        }
+    });
+}
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /// Returns the platform default socket/pipe path.
@@ -416,6 +453,7 @@ pub async fn run_serve(
     // so an actively-used session is never reaped.
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+    spawn_session_idle_sweep();
 
     loop {
         tokio::select! {
@@ -925,6 +963,7 @@ pub async fn run_serve(
     // full rationale; the leak (record_video via ffmpeg) is platform-independent.
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+    spawn_session_idle_sweep();
 
     loop {
         // Create a new pipe server instance to accept the next client.

@@ -228,5 +228,6 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(ZoomTool));
     r.register(Box::new(TypeTextCharsTool));
     r.register_recording_tools();
+    r.register_session_tools();
     r
 }

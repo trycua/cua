@@ -16,3 +16,7 @@ usvg = { version = "0.44", default-features = false, features = ["text"] }
 
 # ICO / PNG parsing for --cursor-icon <path.ico|png>
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
+
+# Pure-Rust glyph rasterization for the per-cursor name label pill.
+# One embedded ASCII/Latin-1 subset of DejaVu Sans (assets/) is parsed once.
+ab_glyph = "0.2"

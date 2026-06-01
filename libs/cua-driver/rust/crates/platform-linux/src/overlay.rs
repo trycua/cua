@@ -227,10 +227,10 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
 
         // Render and paint.
         let pixmap = {
-            let guard = RENDER.lock().unwrap();
-            guard.as_ref().map(|rs| {
+            let mut guard = RENDER.lock().unwrap();
+            guard.as_mut().map(|rs| {
                 cursor_overlay::render_frame(
-                    &rs.core,
+                    &mut rs.core,
                     rs.scr_w.max(1),
                     rs.scr_h.max(1),
                     0.0, 0.0, // Linux uses screen-local coords (no origin offset)

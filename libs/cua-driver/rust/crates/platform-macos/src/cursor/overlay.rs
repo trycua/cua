@@ -102,6 +102,10 @@ struct RenderMap {
 fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
     let mut rs = RenderState::new(template.clone());
     rs.core.palette = Palette::for_instance(key);
+    // Always-readable label: the friendly session name if set, else a short
+    // auto tag derived from the session id (e.g. "mcp-51088"). A later
+    // `name_session` pushes SetLabel so a rename shows without re-creation.
+    rs.core.label = Some(cua_driver_core::session::session_label(key));
     rs
 }
 
@@ -599,21 +603,22 @@ fn render_loop(
         // expensive CGImage copy + setContents happen once regardless of N;
         // idle/hidden cursors early-return inside paint_cursor.
         let pixmap = {
-            let guard = RENDER.lock().unwrap();
-            if let Some(map) = guard.as_ref() {
+            let mut guard = RENDER.lock().unwrap();
+            if let Some(map) = guard.as_mut() {
                 let w = win_w.max(1.0) as u32;
                 let h = win_h.max(1.0) as u32;
                 let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
                     .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                for (_k, rs) in &map.cursors {
+                for (_k, rs) in &mut map.cursors {
                     let focus = rs.focus_rect.map(|rect| FocusRect {
                         rect,
                         t: rs.focus_rect_t,
                     });
                     cursor_overlay::paint_cursor(
                         &mut pm,
-                        &rs.core,
+                        &mut rs.core,
                         0.0, 0.0, // macOS uses screen-local coords (no origin offset)
+                        win_w, win_h,
                         focus,
                     );
                 }

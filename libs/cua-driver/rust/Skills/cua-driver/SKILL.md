@@ -138,7 +138,11 @@ MCP connection and the daemon scopes the cursor, config overrides, and
 recording to it). You normally pass nothing — the session key is wired
 through for you. Pass an explicit `cursor_id` only to *deliberately
 share* one cursor across sessions. When a session ends (the MCP client
-disconnects) its cursor is removed automatically.
+disconnects) its cursor is removed automatically. Call `name_session
+'{"name":"…"}'` once, early — it sets an immutable, per-session label
+(≤24 chars) shown beside your cursor; re-calls return the existing name
+unchanged. If you set no name, a short auto tag (e.g. `mcp-51088`) is
+shown so the cursor is always identifiable.
 
 **Visibility caveat (AX runs).** On a pure accessibility-action run
 (clicking by `element_index`), the first action **seeds the cursor

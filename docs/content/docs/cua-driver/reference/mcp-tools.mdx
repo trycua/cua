@@ -519,6 +519,20 @@ Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimens
 
 **Per-session agent cursors (macOS).** The agent cursor is owned per MCP session. On the daemon-proxy path every `cua-driver mcp` client mints a session identity, and that identity is the cursor key when the caller passes no explicit `cursor_id` — so two concurrent sessions each drive their own overlay cursor (distinct auto-assigned colour) drawn simultaneously, instead of clobbering one shared cursor last-writer-wins. The key is resolved with the precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**: an explicit `cursor_id` stays an orthogonal, user-facing handle, so a wrapper can deliberately share or override a cursor across sessions by passing the same `cursor_id`. When a session ends (`session_end`), that session's cursor is removed from the overlay automatically — including on **ungraceful proxy death** (`kill -9`, crash), because the daemon detects the proxy's control-connection EOF and fires `session_end` without any cooperation from the dying proxy. A late, in-flight cursor command that arrives after removal cannot resurrect the cursor (a render-side tombstone keyed on the session id). The anonymous / one-shot `cua-driver call` path (no session identity, no `cursor_id`) maps to the seeded `"default"` cursor, which is never removed — backward compatible. (Windows/Linux keep the single shared cursor today.)
 
+### name_session
+
+Set an immutable, first-call-wins, per-session label (≤24 chars) shown beside the session's agent cursor so concurrent agents are distinguishable. The first call wins; later calls return the existing name unchanged (write-once for the session lifetime). The name is sanitized (single line, control chars stripped, capped at 24 chars). With no `cursor_id`, this names the calling session's own cursor (see the per-session note above).
+
+> The CLI verb `cua-driver name-session <name>` routes through the daemon as an **anonymous** call (no injected session identity), so it names the **default/anonymous** cursor — and because the store is write-once, a second `cua-driver name-session …` is a silent no-op. Any session you never name falls back to a short auto tag derived from the session id (e.g. `mcp-51088`), so the cursor is always identifiable.
+
+**Arguments:**
+
+- `name` (string, required): Short, immutable label (≤24 chars) for the session.
+
+```json
+{"name":"refactor-auth"}
+```
+
 ### set_agent_cursor_enabled
 
 Show or hide the agent cursor overlay for a cursor instance. The overlay is **ON by default** and each MCP session automatically owns its own cursor — you do not need to call this to make the cursor appear; use it only to hide (`enabled:false`) or re-show (`enabled:true`) it. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).

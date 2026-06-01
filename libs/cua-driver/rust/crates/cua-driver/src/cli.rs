@@ -70,6 +70,12 @@ pub enum Command {
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
+    /// `cua-driver name-session <name>` — set the write-once friendly name for
+    /// the daemon's ANONYMOUS/default cursor (a one-shot CLI call injects no
+    /// `_session_id`, so it resolves to `"default"`). Routed through the daemon
+    /// like `recording`. Because the name store is write-once, a second call is
+    /// a silent no-op.
+    NameSession { name: String, socket: Option<String> },
     DumpDocs { pretty: bool, doc_type: String },
     Update { apply: bool, json: bool },
     /// `cua-driver check-update [--json] [--no-cache]` — pure check verb.
@@ -148,7 +154,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, name-session, update, check-update, doctor, diagnose, permissions, autostart, skills");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -297,6 +303,14 @@ pub fn parse_command() -> Command {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let rest: Vec<String> = pos.map(str::to_owned).collect();
             Command::Recording { subcommand, args: rest, socket }
+        }
+        Some("name-session") => {
+            let name = pos.next().unwrap_or("").to_string();
+            if name.is_empty() {
+                eprintln!("Usage: cua-driver name-session <name>");
+                process::exit(64);
+            }
+            Command::NameSession { name, socket }
         }
         Some("dump-docs") => {
             let pretty = args.iter().any(|a| a == "--pretty" || a == "-p");
@@ -1342,6 +1356,54 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
             eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <dir> --output <out.mp4>");
             process::exit(64);
         }
+    }
+}
+
+/// `cua-driver name-session <name>` — set the write-once friendly name for the
+/// daemon's anonymous/default cursor. Routed through the daemon like
+/// `recording`. A one-shot CLI call injects no `_session_id`, so the tool
+/// resolves to `"default"`. Because the name store is write-once, a second
+/// `name-session` is a silent no-op (the daemon returns the existing name).
+pub fn run_name_session_cmd(name: &str, socket: Option<&str>) {
+    let socket_path = socket
+        .map(str::to_owned)
+        .unwrap_or_else(crate::serve::default_socket_path);
+
+    if !crate::serve::is_daemon_listening(&socket_path) {
+        eprintln!(
+            "Cua Driver daemon is not running.\n\
+             Start it first with: cua-driver serve"
+        );
+        process::exit(1);
+    }
+
+    let req = crate::serve::DaemonRequest {
+        method: "call".into(),
+        name: Some("name_session".into()),
+        args: Some(serde_json::json!({ "name": name })),
+        // No `_session_id` → the tool resolves to the anonymous "default" cursor.
+        session_id: None,
+    };
+    match crate::serve::send_request(&socket_path, &req) {
+        Ok(resp) if resp.ok => {
+            let effective = resp
+                .result
+                .as_ref()
+                .and_then(|r| {
+                    r.get("structuredContent")
+                        .or_else(|| r.get("structured_content"))
+                })
+                .and_then(|sc| sc.get("session_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(name)
+                .to_owned();
+            println!("Session named '{effective}'.");
+        }
+        Ok(resp) => {
+            if let Some(e) = resp.error { eprintln!("{e}"); }
+            process::exit(1);
+        }
+        Err(e) => { eprintln!("name-session: {e}"); process::exit(1); }
     }
 }
 
@@ -2642,6 +2704,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         }
         Command::McpConfig { .. } => "cua_driver_mcp_config".to_owned(),
         Command::Recording { .. } => event::RECORDING.to_owned(),
+        Command::NameSession { .. } => "cua_driver_name_session".to_owned(),
         Command::Config { .. } => event::CONFIG.to_owned(),
         Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
         Command::Update { .. } => "cua_driver_update".to_owned(),

@@ -2042,5 +2042,6 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         Arc::new(super::page::LinuxPageBackend::new()),
     )));
     r.register_recording_tools();
+    r.register_session_tools();
     r
 }

@@ -23,7 +23,7 @@ pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
 pub use shape::CursorShape;
-pub use render_state::{RenderStateCore, FocusRect, render_frame, paint_cursor, draw_default_arrow};
+pub use render_state::{RenderStateCore, FocusRect, LabelBitmap, render_frame, paint_cursor, draw_default_arrow};
 pub use z_order::ZOrderEnforcer;
 
 /// Configuration assembled from CLI arguments and passed to every
@@ -297,4 +297,8 @@ pub enum OverlayCommand {
     /// `[x, y, width, height]` in screen coordinates (top-left origin).
     /// `None` clears the highlight.
     ShowFocusRect(Option<[f64; 4]>),
+    /// Set (or clear) the friendly text label rendered as a small pill beside
+    /// the cursor. The text is expected pre-sanitized by the caller. `None`
+    /// clears the label.
+    SetLabel(Option<String>),
 }

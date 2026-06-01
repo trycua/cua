@@ -57,7 +57,11 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<ToolRegistry>) -> Response {
+/// Dispatch one MCP JSON-RPC request against the registry (initialize /
+/// tools/list / tools/call). Shared by the stdio loop above and the
+/// daemon's HTTP transport (`cua-driver`'s `mcp_http`) so both speak the
+/// exact same MCP semantics.
+pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<ToolRegistry>) -> Response {
     match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
 

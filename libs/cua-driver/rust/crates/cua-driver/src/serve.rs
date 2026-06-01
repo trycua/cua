@@ -477,6 +477,9 @@ pub async fn run_serve(
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
     spawn_session_idle_sweep();
+    if let Some(port) = crate::mcp_http::configured_port() {
+        crate::mcp_http::spawn(registry.clone(), port);
+    }
     register_recording_session_end_hook(registry.recording.clone());
 
     loop {
@@ -988,6 +991,9 @@ pub async fn run_serve(
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
     spawn_session_idle_sweep();
+    if let Some(port) = crate::mcp_http::configured_port() {
+        crate::mcp_http::spawn(registry.clone(), port);
+    }
     register_recording_session_end_hook(registry.recording.clone());
 
     loop {

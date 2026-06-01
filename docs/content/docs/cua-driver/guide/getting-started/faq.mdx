@@ -180,6 +180,20 @@ This is the same TCC-attribution issue as the previous question, applied to the 
 
 macOS is attributing the process to a different bundle id than the one you granted. Run `cua-driver diagnose` and share the output when filing an issue. It reports cdhash, team id, and which bundle TCC matched against.
 
+### After a rebuild, the driver reports `NOT granted` but System Settings still shows CuaDriver toggled ON.
+
+This is a stale TCC grant. TCC pins each Accessibility / Screen-Recording grant to the app's **designated requirement at grant time**. If you first granted while `CuaDriver.app` was *ad-hoc* signed, the requirement is a bare `cdhash H"…"`, which changes on every rebuild — so the grant row stays `allowed` but its requirement no longer matches the new binary, and re-toggling the switch doesn't help (the row already records a decision, so the prompt never re-fires).
+
+Release builds are CI-signed with a stable identity, so this only affects the local dev loop (`install-local.sh`). That installer now signs with a **stable self-signed certificate** and, when it detects the signing identity changed since the last install, runs `tccutil reset` for you so the next grant re-pins cleanly. After you re-grant once on the certificate-signed build, the grant survives every future rebuild.
+
+To clear it by hand:
+
+```bash
+tccutil reset Accessibility com.trycua.driver
+tccutil reset ScreenCapture  com.trycua.driver
+cua-driver permissions grant   # re-grant once; now pinned to the stable cert
+```
+
 ## Config and telemetry
 
 ### Where does config live?

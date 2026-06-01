@@ -361,6 +361,45 @@ if [ "$OS" = "Darwin" ]; then
         fi
     fi
     echo "${GREEN}installed $APP_DEST${NORMAL}"
+
+    # --- Clear a TCC grant pinned to a PREVIOUS signing identity -----------
+    #
+    # TCC pins each Accessibility / Screen-Recording grant to the app's
+    # designated requirement AT GRANT TIME. A user who granted while the app
+    # was ad-hoc signed has a grant whose csreq is a bare `cdhash H"..."`
+    # (changes every rebuild); a user who granted under a different cert has
+    # one pinned to that leaf. After we re-sign with the stable cert above,
+    # that old row survives with auth_value=allowed but a csreq that no longer
+    # matches THIS build — so the daemon reads "not granted" while System
+    # Settings still shows the toggle ON. That's a dead end: re-toggling
+    # doesn't help because the row already records a decision, so the grant
+    # prompt never re-fires. Detect a signing-identity change vs the last
+    # install and `tccutil reset` once, so the next `permissions grant`
+    # prompts cleanly and re-pins to the current (stable cert) identity —
+    # after which cert-pinned grants survive all future rebuilds.
+    #
+    # `tccutil reset` needs no sudo / Full Disk Access, and is a no-op when
+    # nothing was granted. We only reset when moving TO a cert identity (the
+    # case a clean re-grant durably fixes); an ad-hoc build churns its cdhash
+    # every rebuild regardless, so resetting it would just add friction.
+    if command -v tccutil >/dev/null 2>&1; then
+        IDENTITY_MARKER="$HOME_DIR/.tcc-signing-identity"
+        NEW_IDENTITY="$(codesign -d -r- "$APP_DEST" 2>&1 \
+            | sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]*\)".*/cert:\1/p' | head -1)"
+        [ -n "$NEW_IDENTITY" ] || NEW_IDENTITY="adhoc"
+        OLD_IDENTITY="$(cat "$IDENTITY_MARKER" 2>/dev/null || true)"
+        case "$NEW_IDENTITY" in
+            cert:*)
+                if [ "$NEW_IDENTITY" != "$OLD_IDENTITY" ]; then
+                    tccutil reset Accessibility com.trycua.driver >/dev/null 2>&1 || true
+                    tccutil reset ScreenCapture com.trycua.driver >/dev/null 2>&1 || true
+                    echo "${BOLD}cleared any stale Accessibility / Screen-Recording grant pinned to a previous build.${NORMAL}"
+                    echo "  Grant once more (System Settings → Privacy & Security) and it will${BOLD} stick across every future rebuild${NORMAL} — the grant now pins to a stable signing certificate, not the per-build cdhash."
+                fi
+                ;;
+        esac
+        printf '%s\n' "$NEW_IDENTITY" > "$IDENTITY_MARKER" 2>/dev/null || true
+    fi
 fi
 
 # --- Visible-bin symlink ------------------------------------------------

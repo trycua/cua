@@ -18,8 +18,11 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
-## Unreleased
+## 0.5.0 (2026-06-01)
 
+- **Windows: per-session agent cursors** — the per-session cursor model (macOS
+  #1779) is ported to Windows, so concurrent sessions are tracked per-session on
+  Windows too (#1801).
 - **Streamable-HTTP MCP transport (parallel multi-agent).** Over stdio, one
   `cua-driver mcp` process is a single pipe, so a client's tool calls — including
   multiple subagents — serialize. The daemon itself is concurrent. Set

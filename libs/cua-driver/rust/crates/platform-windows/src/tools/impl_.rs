@@ -5254,6 +5254,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
     r.register_recording_tools();
+    r.register_session_tools();
     r
 }
 

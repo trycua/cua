@@ -364,10 +364,11 @@ unsafe extern "system" fn wnd_proc(
                     let dt = now.duration_since(rs.last_tick).as_secs_f64().clamp(0.0, 0.05);
                     rs.last_tick = now;
                     let arrived = rs.tick(dt);
+                    let (virt_w, virt_h) = (rs.virt_w, rs.virt_h);
                     (Some(cursor_overlay::render_frame(
-                        &rs.core,
-                        rs.virt_w.max(1) as u32,
-                        rs.virt_h.max(1) as u32,
+                        &mut rs.core,
+                        virt_w.max(1) as u32,
+                        virt_h.max(1) as u32,
                         rs.virt_x as f64,
                         rs.virt_y as f64,
                         None, // focus-rect is macOS-only

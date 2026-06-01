@@ -1,0 +1,19 @@
+DejaVuSans-subset.ttf is an ASCII + Latin-1 subset of DejaVu Sans, generated
+with fonttools `pyftsubset`. DejaVu fonts are based on the Bitstream Vera Fonts
+and are distributed under a permissive (free, redistributable) license.
+
+Bitstream Vera Fonts Copyright
+------------------------------
+Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. Bitstream Vera is a
+trademark of Bitstream, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+the fonts accompanying this license ("Fonts") and associated documentation
+files (the "Font Software"), to reproduce and distribute the Font Software,
+including without limitation the rights to use, copy, merge, publish,
+distribute, and/or sell copies of the Font Software, and to permit persons to
+whom the Font Software is furnished to do so, subject to the conditions in the
+full license text at https://dejavu-fonts.github.io/License.html.
+
+DejaVu changes are in the public domain. See:
+https://dejavu-fonts.github.io/License.html

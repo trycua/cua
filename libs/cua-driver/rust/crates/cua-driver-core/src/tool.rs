@@ -87,6 +87,13 @@ impl ToolRegistry {
         self.register(Box::new(ReplayTrajectoryTool));
     }
 
+    /// Register the platform-independent session tools (`name_session`).
+    /// Call this from each platform's `register_all` next to
+    /// `register_recording_tools` so `name_session` exists everywhere.
+    pub fn register_session_tools(&mut self) {
+        self.register(Box::new(crate::name_session_tool::NameSessionTool));
+    }
+
     /// Wire up the replay tool's weak self-reference.
     /// Call this once, immediately after `Arc::new(registry)`.
     pub fn init_self_weak(self: &Arc<Self>) {

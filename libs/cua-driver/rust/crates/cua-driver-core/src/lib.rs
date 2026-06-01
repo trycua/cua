@@ -13,6 +13,7 @@
 pub mod cdp;
 pub mod element_cache;
 pub mod image_utils;
+pub mod name_session_tool;
 pub mod page;
 pub mod pip_hook;
 pub mod protocol;

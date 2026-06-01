@@ -309,6 +309,16 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
         });
     }
 
+    // Push a friendly per-session NAME to the overlay synchronously the first
+    // time it's set (write-once). The session key == the cursor key, so the
+    // rename shows on the next frame instead of only on cursor re-creation.
+    cua_driver_core::session::register_session_name_hook(|session_id, name| {
+        crate::cursor::overlay::send_command(
+            session_id.to_owned(),
+            cursor_overlay::OverlayCommand::SetLabel(Some(name.to_owned())),
+        );
+    });
+
     registry.register(Box::new(list_apps::ListAppsTool));
     registry.register(Box::new(list_windows::ListWindowsTool));
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(state.clone())));
@@ -355,6 +365,8 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     )));
     // Recording / replay tools are platform-independent — live in mcp-server.
     registry.register_recording_tools();
+    // `name_session` (write-once per-session label) — also platform-independent.
+    registry.register_session_tools();
 }
 
 #[cfg(test)]

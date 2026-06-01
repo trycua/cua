@@ -83,6 +83,26 @@ pub struct RenderStateCore {
     pub gradient_colors: Vec<[u8; 4]>,
     /// Runtime-overridden bloom colour.  `None` = palette default.
     pub bloom_override: Option<[u8; 4]>,
+    /// Friendly text label rendered as a small pill beside the cursor.
+    /// Pre-sanitized by the caller; `None` = no label. macOS seeds this from
+    /// the session name / short tag so there is always a readable label.
+    pub label: Option<String>,
+    /// Render-thread-local cache of the rasterized pill+text. NOT part of any
+    /// Clone-sensitive path — `RenderStateCore` is owned under the RENDER lock.
+    /// Invalidated when `label` text or the palette tint changes.
+    pub label_cache: Option<LabelBitmap>,
+}
+
+/// Pre-rasterized label pill (rounded rect + text), tinted with the cursor's
+/// palette colour. Cached per cursor so the per-frame hot path is a single
+/// `draw_pixmap` blit.
+pub struct LabelBitmap {
+    /// The text this bitmap was rasterized for (cache key).
+    pub text: String,
+    /// The tint this bitmap was rasterized for (cache key).
+    pub tint: [u8; 3],
+    /// The standalone pill pixmap (pill background + border + glyphs).
+    pub pixmap: tiny_skia::Pixmap,
 }
 
 impl RenderStateCore {
@@ -101,6 +121,8 @@ impl RenderStateCore {
             shape,
             gradient_colors: vec![],
             bloom_override: None,
+            label: None,
+            label_cache: None,
             pos: (-200.0, -200.0),
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
@@ -426,6 +448,16 @@ impl RenderStateCore {
                 self.bloom_override = bloom_color;
                 true
             }
+            OverlayCommand::SetLabel(text) => {
+                // Invalidate the raster cache when the text actually changes so
+                // a rename re-rasterizes on the next paint; identical text is a
+                // cheap no-op. The text is expected pre-sanitized upstream.
+                if self.label != text {
+                    self.label = text;
+                    self.label_cache = None;
+                }
+                true
+            }
             OverlayCommand::ShowFocusRect(_) => false, // caller-specific
         }
     }
@@ -452,7 +484,7 @@ pub struct FocusRect {
 /// pixmap is laid out in window-local coordinates.  macOS / Linux pass
 /// `(0.0, 0.0)`.
 pub fn render_frame(
-    core: &RenderStateCore,
+    core: &mut RenderStateCore,
     width: u32,
     height: u32,
     origin_x: f64,
@@ -463,7 +495,7 @@ pub fn render_frame(
     let h = height.max(1);
     let mut pm = tiny_skia::Pixmap::new(w, h)
         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-    paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect);
+    paint_cursor(&mut pm, core, origin_x, origin_y, w as f64, h as f64, focus_rect);
     pm
 }
 
@@ -480,9 +512,11 @@ pub fn render_frame(
 /// idle session costs essentially nothing in the per-frame composite loop.
 pub fn paint_cursor(
     pm: &mut tiny_skia::Pixmap,
-    core: &RenderStateCore,
+    core: &mut RenderStateCore,
     origin_x: f64,
     origin_y: f64,
+    frame_w: f64,
+    frame_h: f64,
     focus_rect: Option<FocusRect>,
 ) {
     if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
@@ -644,6 +678,238 @@ pub fn paint_cursor(
             alpha_scale,
         );
     }
+
+    // --- Label pill (drawn last so it sits on top of the arrow) ---
+    paint_label(pm, core, px, py, alpha_scale, frame_w, frame_h);
+}
+
+// ── Label pill rendering ──────────────────────────────────────────────────
+
+/// The embedded ASCII / Latin-1 subset of DejaVu Sans, parsed once.
+fn label_font() -> Option<&'static ab_glyph::FontRef<'static>> {
+    use std::sync::OnceLock;
+    static FONT: OnceLock<Option<ab_glyph::FontRef<'static>>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        ab_glyph::FontRef::try_from_slice(include_bytes!(
+            "../assets/DejaVuSans-subset.ttf"
+        ))
+        .ok()
+    })
+    .as_ref()
+}
+
+/// Relative luminance of an RGB tint (0..=255 → 0.0..=1.0), Rec. 601 weights.
+fn tint_luminance(tint: [u8; 3]) -> f32 {
+    (0.299 * tint[0] as f32 + 0.587 * tint[1] as f32 + 0.114 * tint[2] as f32) / 255.0
+}
+
+/// Rasterize the pill (rounded rect + border + text) into a standalone pixmap,
+/// tinted with `tint`. Runs only on a cache miss (text or tint changed).
+fn rasterize_label(text: &str, tint: [u8; 3]) -> Option<LabelBitmap> {
+    use ab_glyph::{Font, ScaleFont};
+
+    let font = label_font()?;
+    let px_height = 11.0_f32;
+    let scaled = font.as_scaled(ab_glyph::PxScale::from(px_height));
+
+    // Measure: advance-sum for width, ascent/descent for height.
+    let mut text_w = 0.0_f32;
+    let mut prev: Option<ab_glyph::GlyphId> = None;
+    for c in text.chars() {
+        let gid = font.glyph_id(c);
+        if let Some(p) = prev {
+            text_w += scaled.kern(p, gid);
+        }
+        text_w += scaled.h_advance(gid);
+        prev = Some(gid);
+    }
+    let ascent = scaled.ascent();
+    let descent = scaled.descent(); // negative
+    let text_h = ascent - descent;
+
+    const PAD_X: f32 = 6.0;
+    const PAD_Y: f32 = 3.0;
+    const RADIUS: f32 = 5.0;
+    let pill_w = (text_w + 2.0 * PAD_X).ceil().max(1.0);
+    let pill_h = (text_h + 2.0 * PAD_Y).ceil().max(1.0);
+
+    let mut pm = tiny_skia::Pixmap::new(pill_w as u32, pill_h as u32)?;
+
+    // Rounded-rect pill background tinted with the palette colour @ ~70% alpha.
+    let [tr, tg, tb] = tint;
+    if let Some(path) = rounded_rect_path(0.5, 0.5, pill_w - 1.0, pill_h - 1.0, RADIUS) {
+        let mut fill = tiny_skia::Paint::default();
+        fill.shader =
+            tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(tr, tg, tb, 179));
+        fill.anti_alias = true;
+        pm.fill_path(
+            &path,
+            &fill,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
+        // Subtle 1px border for contrast against busy backgrounds.
+        let mut border = tiny_skia::Paint::default();
+        border.shader =
+            tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(255, 255, 255, 60));
+        border.anti_alias = true;
+        pm.stroke_path(
+            &path,
+            &border,
+            &tiny_skia::Stroke { width: 1.0, ..Default::default() },
+            tiny_skia::Transform::identity(),
+            None,
+        );
+    }
+
+    // Text colour: near-white on a dark tint, near-black on a light tint.
+    let (txr, txg, txb) = if tint_luminance(tint) > 0.6 {
+        (20u8, 20u8, 20u8)
+    } else {
+        (245u8, 245u8, 245u8)
+    };
+
+    // Rasterize each glyph's coverage and blend as the text colour.
+    let mut pen_x = PAD_X;
+    let baseline_y = PAD_Y + ascent;
+    let mut prev: Option<ab_glyph::GlyphId> = None;
+    for c in text.chars() {
+        let gid = font.glyph_id(c);
+        if let Some(p) = prev {
+            pen_x += scaled.kern(p, gid);
+        }
+        let glyph = gid.with_scale_and_position(
+            ab_glyph::PxScale::from(px_height),
+            ab_glyph::point(pen_x, baseline_y),
+        );
+        if let Some(outline) = font.outline_glyph(glyph) {
+            let bounds = outline.px_bounds();
+            outline.draw(|gx, gy, coverage| {
+                let dx = bounds.min.x as i32 + gx as i32;
+                let dy = bounds.min.y as i32 + gy as i32;
+                if dx < 0 || dy < 0 || dx >= pill_w as i32 || dy >= pill_h as i32 {
+                    return;
+                }
+                blend_pixel(&mut pm, dx as u32, dy as u32, (txr, txg, txb), coverage);
+            });
+        }
+        pen_x += scaled.h_advance(gid);
+        prev = Some(gid);
+    }
+
+    Some(LabelBitmap { text: text.to_owned(), tint, pixmap: pm })
+}
+
+/// Alpha-over a single source-over pixel `(r,g,b)` at `coverage` onto the pill
+/// pixmap (which uses premultiplied RGBA per tiny-skia's `data_mut`).
+fn blend_pixel(pm: &mut tiny_skia::Pixmap, x: u32, y: u32, rgb: (u8, u8, u8), coverage: f32) {
+    let w = pm.width();
+    let idx = ((y * w + x) * 4) as usize;
+    let data = pm.data_mut();
+    if idx + 3 >= data.len() {
+        return;
+    }
+    let a = coverage.clamp(0.0, 1.0);
+    let (sr, sg, sb) = (rgb.0 as f32, rgb.1 as f32, rgb.2 as f32);
+    // Existing premultiplied destination.
+    let (dr, dg, db, da) = (
+        data[idx] as f32,
+        data[idx + 1] as f32,
+        data[idx + 2] as f32,
+        data[idx + 3] as f32,
+    );
+    let inv = 1.0 - a;
+    // Source is opaque text @ `a`, premultiplied = colour * a.
+    let nr = sr * a + dr * inv;
+    let ng = sg * a + dg * inv;
+    let nb = sb * a + db * inv;
+    let na = a * 255.0 + da * inv;
+    data[idx] = nr.round().clamp(0.0, 255.0) as u8;
+    data[idx + 1] = ng.round().clamp(0.0, 255.0) as u8;
+    data[idx + 2] = nb.round().clamp(0.0, 255.0) as u8;
+    data[idx + 3] = na.round().clamp(0.0, 255.0) as u8;
+}
+
+/// Build a rounded-rect path.
+fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let mut pb = tiny_skia::PathBuilder::new();
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+    pb.quad_to(x + w, y, x + w, y + r);
+    pb.line_to(x + w, y + h - r);
+    pb.quad_to(x + w, y + h, x + w - r, y + h);
+    pb.line_to(x + r, y + h);
+    pb.quad_to(x, y + h, x, y + h - r);
+    pb.line_to(x, y + r);
+    pb.quad_to(x, y, x + r, y);
+    pb.close();
+    pb.finish()
+}
+
+/// Paint the cursor's label pill beside the pointer. Cold path rasterizes the
+/// pill into `core.label_cache`; hot path blits the cache at an up-right offset,
+/// clamp-translated to stay inside the frame, faded with `alpha_scale`.
+fn paint_label(
+    pm: &mut tiny_skia::Pixmap,
+    core: &mut RenderStateCore,
+    px: f64,
+    py: f64,
+    alpha_scale: f32,
+    frame_w: f64,
+    frame_h: f64,
+) {
+    let text = match core.label.as_deref() {
+        Some(t) if !t.is_empty() => t.to_owned(),
+        _ => return,
+    };
+    // Tint agrees with the per-session cursor colour (palette.cursor_mid).
+    let [mr, mg, mb, _] = core.palette.cursor_mid;
+    let tint = [mr, mg, mb];
+
+    // Cold path: (re)rasterize on a cache miss (text or tint changed).
+    let need_raster = match &core.label_cache {
+        Some(c) => c.text != text || c.tint != tint,
+        None => true,
+    };
+    if need_raster {
+        core.label_cache = rasterize_label(&text, tint);
+    }
+    let cache = match &core.label_cache {
+        Some(c) => c,
+        None => return,
+    };
+
+    let pw = cache.pixmap.width() as f64;
+    let ph = cache.pixmap.height() as f64;
+
+    // Offset up-right of the tip by a fixed vector so it never overlaps the
+    // arrow, then clamp-TRANSLATE the rect inward (slide, don't flip) so its
+    // edges stay within the frame — avoids up-right/up-left jitter on a glide.
+    const OFF_X: f64 = 14.0;
+    const OFF_Y: f64 = -22.0;
+    let mut lx = px + OFF_X;
+    let mut ly = py + OFF_Y;
+    if frame_w > 0.0 {
+        lx = lx.min(frame_w - pw - 1.0).max(1.0);
+    }
+    if frame_h > 0.0 {
+        ly = ly.min(frame_h - ph - 1.0).max(1.0);
+    }
+
+    let paint = tiny_skia::PixmapPaint {
+        opacity: alpha_scale,
+        ..Default::default()
+    };
+    pm.draw_pixmap(
+        lx.round() as i32,
+        ly.round() as i32,
+        cache.pixmap.as_ref(),
+        &paint,
+        tiny_skia::Transform::identity(),
+        None,
+    );
 }
 
 /// Rasterise the built-in gradient arrow at `(px, py)` rotated by
@@ -758,4 +1024,52 @@ pub fn draw_default_arrow(
         tiny_skia::Transform::identity(),
         None,
     );
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use crate::{CursorConfig, OverlayCommand};
+
+    #[test]
+    fn embedded_font_parses() {
+        assert!(label_font().is_some(), "embedded TTF must parse");
+    }
+
+    #[test]
+    fn rasterize_label_produces_pixmap() {
+        let bmp = rasterize_label("mcp-51088", [94, 192, 232]).expect("raster");
+        assert!(bmp.pixmap.width() > 0 && bmp.pixmap.height() > 0);
+        assert_eq!(bmp.text, "mcp-51088");
+    }
+
+    #[test]
+    fn set_label_invalidates_cache_on_change() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        // Seed a label + a fake cache to prove invalidation on text change.
+        core.label = Some("First".into());
+        core.label_cache = rasterize_label("First", [10, 20, 30]);
+        assert!(core.label_cache.is_some());
+        // Same text → cache survives (no-op).
+        core.apply_command_base(OverlayCommand::SetLabel(Some("First".into())), false, false);
+        assert!(core.label_cache.is_some(), "identical text must not clear cache");
+        // Different text → cache invalidated.
+        core.apply_command_base(OverlayCommand::SetLabel(Some("Second".into())), false, false);
+        assert!(core.label_cache.is_none(), "changed text must clear cache");
+        assert_eq!(core.label.as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn paint_cursor_with_label_does_not_panic() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (100.0, 100.0); // on-screen so it actually paints
+        core.label = Some("demo".into());
+        let mut pm = tiny_skia::Pixmap::new(400, 300).unwrap();
+        // Cold path (cache miss) + clamp.
+        paint_cursor(&mut pm, &mut core, 0.0, 0.0, 400.0, 300.0, None);
+        assert!(core.label_cache.is_some(), "paint must populate the label cache");
+        // Hot path (cached) near an edge to exercise clamp-translate.
+        core.pos = (398.0, 2.0);
+        paint_cursor(&mut pm, &mut core, 0.0, 0.0, 400.0, 300.0, None);
+    }
 }

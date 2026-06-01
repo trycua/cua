@@ -20,6 +20,14 @@ release body is auto-generated per release from the commits touching
 
 ## Unreleased
 
+- macOS: fix a daemon crash (`EXC_BREAKPOINT` in `AXUIElementCopyActionNames`)
+  when two sessions drive the same window concurrently. Element actions
+  (`click`, `type_text`, `set_value`, …) read the target `AXUIElementRef` out
+  of the per-`(pid, window_id)` cache, but a concurrent `get_window_state`
+  could replace that cache entry and `CFRelease` the element to zero while the
+  action was still using it — a use-after-free. The cache now hands out a
+  retained guard (`CFRetain` under the cache lock, `CFRelease` on drop), so an
+  in-flight action keeps the element alive across a concurrent refresh.
 - macOS (local dev install only): `install-local.sh` now clears a stale TCC
   grant left over from a previous signing identity. If you first granted
   Accessibility / Screen Recording while the bundle was ad-hoc signed, that

@@ -107,10 +107,13 @@ impl Tool for TypeTextTool {
             );
         }
 
-        // Resolve the element pointer (if element_index given).
-        let element_ptr = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            match self.state.element_cache.get_element_ptr(pid, wid, idx) {
-                Some(p) => Some((p, Some(idx))),
+        // Resolve the element pointer (if element_index given). Retain it out
+        // of the cache so a concurrent get_window_state can't free it before
+        // the blocking type below dereferences it (use-after-free → daemon
+        // crash). The guard lives to method end, past type_text_blocking.
+        let element_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
+            match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                Some(e) => Some((e, idx)),
                 None => return ToolResult::error(format!(
                     "Element index {idx} not found. Call get_window_state first."
                 )),
@@ -118,6 +121,7 @@ impl Tool for TypeTextTool {
         } else {
             None
         };
+        let element_ptr = element_guard.as_ref().map(|(g, idx)| (g.as_ptr(), Some(*idx)));
 
         let text_clone  = text.clone();
         let char_count  = text.chars().count();

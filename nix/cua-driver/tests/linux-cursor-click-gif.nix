@@ -202,10 +202,13 @@ pkgs.testers.nixosTest {
         machine.succeed("test -s /tmp/cua-driver-linux-cursor-click.gif")
         machine.wait_until_succeeds("test -f /tmp/click-focus.txt", timeout=20)
 
-    with subtest("Verify click-focused window became active"):
-        target = machine.succeed("head -1 /tmp/target-click-xid.txt").strip()
+    with subtest("Verify click-focused terminal became active"):
+        target_pid = machine.succeed("cat /tmp/target-click-pid.txt").strip()
         active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
-        assert target == active, f"expected active window {target}, got {active}"
+        active_pid = machine.succeed(f"DISPLAY=:99 xdotool getwindowpid {active}").strip()
+        active_name = machine.succeed(f"DISPLAY=:99 xdotool getwindowname {active}").strip()
+        assert target_pid == active_pid, f"expected active window pid {target_pid}, got {active_pid} for window {active}"
+        assert "Target Click" in active_name, f"expected active window name to contain Target Click, got {active_name!r}"
 
     with subtest("Copy GIF out of the VM"):
         machine.copy_from_machine("/tmp/cua-driver-linux-cursor-click.gif", "")

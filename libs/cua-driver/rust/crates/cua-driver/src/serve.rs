@@ -176,6 +176,29 @@ fn spawn_session_idle_sweep() {
     });
 }
 
+/// Register a `session_end` hook that stops a recording the ending session owns.
+///
+/// The per-platform cursor-remove + config-clear hooks already run on
+/// `fire_session_end`; this adds recording teardown to the SAME signal, so
+/// `end_session`, the idle-TTL sweep, and the control-connection EOF reaper all
+/// stop a session's recording uniformly (matching `end_session`'s contract).
+/// `stop_owner(Some(sid))` is a no-op unless `sid` owns the live recording, and
+/// runs on a detached thread so finalizing the mp4 never blocks the synchronous
+/// `fire_session_end` caller (the sweep task or an async tool invoke). The EOF
+/// arm keeps its own inline `spawn_blocking` stop for ordered finalize-then-reply;
+/// a second stop here is an idempotent no-op.
+fn register_recording_session_end_hook(
+    recording: std::sync::Arc<cua_driver_core::recording::RecordingSession>,
+) {
+    cua_driver_core::session::register_session_end_hook(move |sid| {
+        let recording = recording.clone();
+        let sid = sid.to_owned();
+        std::thread::spawn(move || {
+            let _ = recording.stop_owner(Some(&sid));
+        });
+    });
+}
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /// Returns the platform default socket/pipe path.
@@ -454,6 +477,7 @@ pub async fn run_serve(
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
     spawn_session_idle_sweep();
+    register_recording_session_end_hook(registry.recording.clone());
 
     loop {
         tokio::select! {
@@ -964,6 +988,7 @@ pub async fn run_serve(
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
     spawn_session_idle_sweep();
+    register_recording_session_end_hook(registry.recording.clone());
 
     loop {
         // Create a new pipe server instance to accept the next client.

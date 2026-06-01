@@ -11,26 +11,32 @@ use std::sync::Arc;
 
 use super::ToolState;
 
-/// Resolve the cursor key for a tool invocation.
+/// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
+/// by declaring a `session`; without one, every cursor op short-circuits on this
+/// empty key (see `overlay::send_command` / `CursorRegistry`).
+pub(crate) const NO_CURSOR: &str = "";
+
+/// Resolve the cursor key for a tool invocation, or [`NO_CURSOR`] (`""`) for an
+/// anonymous call.
 ///
-/// Precedence (mandatory): an explicit, non-empty `cursor_id` arg wins, then
-/// the daemon-injected `_session_id` (so each MCP session owns a cursor by
-/// default), then the seeded `"default"` cursor (anonymous / one-shot
-/// `cua-driver call`). Putting `cursor_id` first means a wrapper that
-/// deliberately shares one cursor_id across sessions is NOT fragmented.
+/// A cursor is tied to a **caller-declared session**, never to the MCP
+/// connection. Precedence: an explicit `session` arg, then its legacy alias
+/// `cursor_id`. We deliberately do NOT fall back to the connection-injected
+/// `_session_id` (the recording/config lifecycle fallback) or to a seeded
+/// `"default"` cursor — so `""` means "no session declared → no cursor", while
+/// the underlying action (click/type/…) still executes. The same id works
+/// identically over MCP, the CLI (`--session`), or the raw socket, and follows
+/// the run across any number of apps/windows.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     use cua_driver_core::tool_args::ArgsExt;
-    if let Some(explicit) = args.opt_str("cursor_id") {
-        if !explicit.is_empty() {
-            return explicit;
+    for key in ["session", "cursor_id"] {
+        if let Some(v) = args.opt_str(key) {
+            if !v.is_empty() {
+                return v;
+            }
         }
     }
-    if let Some(session) = args.opt_str("_session_id") {
-        if !session.is_empty() {
-            return session;
-        }
-    }
-    "default".to_owned()
+    NO_CURSOR.to_owned()
 }
 
 // ── SetAgentCursorEnabled ─────────────────────────────────────────────────────
@@ -502,31 +508,31 @@ impl Tool for GetAgentCursorStateTool {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_cursor_key;
+    use super::{resolve_cursor_key, NO_CURSOR};
     use serde_json::json;
 
     #[test]
-    fn anonymous_resolves_to_default() {
-        // No cursor_id, no _session_id → seeded "default" cursor (backward
-        // compatible one-shot `cua-driver call`).
-        assert_eq!(resolve_cursor_key(&json!({})), "default");
-        assert_eq!(resolve_cursor_key(&json!({ "x": 1 })), "default");
+    fn anonymous_resolves_to_no_cursor() {
+        // No session/cursor_id declared → NO_CURSOR (""): the action still runs
+        // but no cursor is shown. The connection-injected `_session_id` is NOT a
+        // cursor source anymore (it stays the recording/config lifecycle key).
+        assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
+        assert_eq!(resolve_cursor_key(&json!({ "x": 1 })), NO_CURSOR);
+        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), NO_CURSOR);
     }
 
     #[test]
-    fn session_id_owns_a_cursor_by_default() {
-        assert_eq!(
-            resolve_cursor_key(&json!({ "_session_id": "sess-7" })),
-            "sess-7"
-        );
+    fn explicit_session_owns_a_cursor() {
+        assert_eq!(resolve_cursor_key(&json!({ "session": "research-run" })), "research-run");
     }
 
     #[test]
-    fn explicit_cursor_id_wins_over_session() {
-        // Precedence: explicit cursor_id > injected _session_id > "default".
+    fn cursor_id_is_a_legacy_alias() {
+        // `cursor_id` still works (codex-wrapper use case); `session` wins if both.
+        assert_eq!(resolve_cursor_key(&json!({ "cursor_id": "user-handle" })), "user-handle");
         assert_eq!(
-            resolve_cursor_key(&json!({ "cursor_id": "user-handle", "_session_id": "sess-7" })),
-            "user-handle"
+            resolve_cursor_key(&json!({ "session": "s1", "cursor_id": "c1" })),
+            "s1"
         );
     }
 
@@ -552,15 +558,13 @@ mod tests {
 
     #[test]
     fn enable_and_ax_click_resolve_the_same_session_cursor() {
-        // BUG verify (b): in one MCP session, set_agent_cursor_enabled (no
-        // cursor_id) and a click(element_index) carry the SAME injected
-        // _session_id, so both resolve the same cursor key — i.e. enabling the
-        // cursor lights the very cursor the AX click drives. Mirrors the args
-        // the daemon injects (_session_id) for each forwarded tool call.
-        let session = "mcp-12345-678";
-        let enable_args = json!({ "enabled": true, "_session_id": session });
+        // In one run, set_agent_cursor_enabled and a click(element_index) carry
+        // the SAME explicit `session`, so both resolve the same cursor key —
+        // enabling the cursor lights the very cursor the AX click drives.
+        let session = "research-run";
+        let enable_args = json!({ "enabled": true, "session": session });
         let ax_click_args =
-            json!({ "pid": 844, "window_id": 10725, "element_index": 14, "_session_id": session });
+            json!({ "pid": 844, "window_id": 10725, "element_index": 14, "session": session });
         let enable_key = resolve_cursor_key(&enable_args);
         let click_key = resolve_cursor_key(&ax_click_args);
         assert_eq!(enable_key, session);
@@ -588,23 +592,22 @@ mod tests {
                 .map(|s| s.config.enabled)
                 .unwrap_or(true)
         };
-        assert!(read_for(&json!({ "_session_id": "sessA" })));
-        assert!(!read_for(&json!({ "_session_id": "sessB" })));
+        assert!(read_for(&json!({ "session": "sessA" })));
+        assert!(!read_for(&json!({ "session": "sessB" })));
         // Anonymous caller (no session) falls back to the seeded default (on).
         assert!(read_for(&json!({})));
     }
 
     #[test]
-    fn empty_strings_fall_through() {
-        // An empty cursor_id falls through to _session_id; empty session falls
-        // through to "default".
+    fn empty_strings_fall_through_to_no_cursor() {
+        // An empty `session` falls through to `cursor_id`; both empty → NO_CURSOR.
         assert_eq!(
-            resolve_cursor_key(&json!({ "cursor_id": "", "_session_id": "sess-7" })),
-            "sess-7"
+            resolve_cursor_key(&json!({ "session": "", "cursor_id": "c1" })),
+            "c1"
         );
         assert_eq!(
-            resolve_cursor_key(&json!({ "cursor_id": "", "_session_id": "" })),
-            "default"
+            resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })),
+            NO_CURSOR
         );
     }
 }

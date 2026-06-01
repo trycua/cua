@@ -36,6 +36,47 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
+/// Resolve + apply the session identity for a tool call at the daemon boundary.
+///
+/// A session is a **caller-declared** identity (the public `session` arg), not a
+/// property of the MCP connection. We mirror an explicit `session` into the
+/// reserved `_session_id` key that every session-aware tool already reads
+/// (cursor key, per-session config override, recording owner). When no `session`
+/// was declared we fall back to the per-connection minted id for `_session_id`
+/// ONLY — that preserves connection-EOF cleanup of recording / config as before.
+/// The cursor is deliberately NOT driven by that fallback: `resolve_cursor_key`
+/// reads the explicit `session`/`cursor_id` arg only, so a cursor appears
+/// exactly when a run declares its session (explicit-required).
+///
+/// Also refreshes the idle-TTL clock for an explicit session (the minted
+/// fallback is reaped by EOF, not TTL). Returns the effective `_session_id` for
+/// the resurrection guard.
+fn apply_session_identity(
+    args: &mut serde_json::Value,
+    minted: &Option<String>,
+) -> Option<String> {
+    let explicit = args
+        .as_object()
+        .and_then(|o| o.get("session"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_owned());
+    if let Some(obj) = args.as_object_mut() {
+        if !obj.contains_key("_session_id") {
+            if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
+                obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
+            }
+        }
+    }
+    if let Some(sess) = &explicit {
+        cua_driver_core::session::touch_session(sess);
+    }
+    args.as_object()
+        .and_then(|o| o.get("_session_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned())
+}
+
 /// Resolve the recording idle TTL, honoring the env override.
 fn recording_idle_ttl_secs() -> u64 {
     std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
@@ -484,44 +525,21 @@ pub async fn run_serve(
                                 let mut args = req.args.unwrap_or(serde_json::Value::Object(
                                     serde_json::Map::new()
                                 ));
-                                // Inject the proxy-minted session identity into
-                                // the tool args under the reserved `_session_id`
-                                // key so session-aware tools can read it via
-                                // ArgsExt (the same path cursor_id uses). Only
-                                // when the client sent a session_id AND the args
-                                // is an object that doesn't already carry the
-                                // key (so an explicit client value wins, and a
-                                // non-object arg is left untouched). The daemon
-                                // never validates args against input_schema, so
-                                // this extra key is safe; recording strips all
-                                // `_`-prefixed keys before persisting a turn.
-                                if let Some(sid) = &req.session_id {
-                                    if let Some(obj) = args.as_object_mut() {
-                                        if !obj.contains_key("_session_id") {
-                                            obj.insert(
-                                                "_session_id".to_owned(),
-                                                serde_json::Value::String(sid.clone()),
-                                            );
-                                        }
-                                    }
-                                }
-                                // Resurrection guard: a call carrying a session
-                                // id whose session has already ended (control
-                                // connection EOF → fire_session_end) must NOT
-                                // run. The render-side overlay tombstone blocks
-                                // the visible ghost cursor, but the metadata
-                                // CursorRegistry and config-override map are
-                                // get-or-create — an in-flight per-call request
-                                // that lands AFTER session_end (a slow AX click,
-                                // a racing set_config) would re-create
-                                // session-owned state that is never reaped
-                                // again. Skip the invoke and return a benign ok
-                                // so no registry/override/recording state is
-                                // created or mutated. ONLY gate when a session
-                                // id is present AND ended — a live session and
-                                // anonymous/one-shot calls (no session id) pass
-                                // through unchanged.
-                                if let Some(sid) = &req.session_id {
+                                // Apply the caller-declared session identity
+                                // (explicit `session` → `_session_id`; minted id
+                                // as the recording/config fallback only). See
+                                // `apply_session_identity` for the full rationale
+                                // and the cursor's explicit-required contract.
+                                let effective_session =
+                                    apply_session_identity(&mut args, &req.session_id);
+                                // Resurrection guard: a call whose effective
+                                // session has already ended (end_session / idle
+                                // TTL / control-connection EOF) must NOT run — it
+                                // would re-create session-owned state (cursor,
+                                // config override, recording) the reaper already
+                                // passed. Skip + benign ok. Live and anonymous
+                                // calls pass through unchanged.
+                                if let Some(sid) = &effective_session {
                                     if cua_driver_core::session::is_session_ended(sid) {
                                         let resp = DaemonResponse::ok(serde_json::json!({
                                             "content": [{
@@ -1015,30 +1033,12 @@ pub async fn run_serve(
                                     "type_text".to_owned()
                                 } else { raw_name.clone() };
                                 let mut args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                                // Inject the proxy-minted session identity under
-                                // the reserved `_session_id` key (see the unix
-                                // branch above for the full rationale). Only when
-                                // a session_id was sent and the args object
-                                // doesn't already carry the key.
-                                if let Some(sid) = &req.session_id {
-                                    if let Some(obj) = args.as_object_mut() {
-                                        if !obj.contains_key("_session_id") {
-                                            obj.insert(
-                                                "_session_id".to_owned(),
-                                                serde_json::Value::String(sid.clone()),
-                                            );
-                                        }
-                                    }
-                                }
-                                // Resurrection guard (see the unix branch above
-                                // for the full rationale): a call carrying an
-                                // already-ended session id must NOT run — it
-                                // would re-create session-owned metadata
-                                // (CursorRegistry / config override) that the
-                                // reaper has already passed. Skip + benign ok.
-                                // Only when a session id is present AND ended;
-                                // live and anonymous calls pass through.
-                                if let Some(sid) = &req.session_id {
+                                // Apply the caller-declared session identity
+                                // (see the unix branch + apply_session_identity).
+                                let effective_session =
+                                    apply_session_identity(&mut args, &req.session_id);
+                                // Resurrection guard on the effective session.
+                                if let Some(sid) = &effective_session {
                                     if cua_driver_core::session::is_session_ended(sid) {
                                         let resp = DaemonResponse::ok(serde_json::json!({
                                             "content": [{

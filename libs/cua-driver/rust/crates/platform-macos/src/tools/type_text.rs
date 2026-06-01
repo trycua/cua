@@ -160,6 +160,20 @@ impl Tool for TypeTextTool {
     }
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────────
+
+/// Returns true if `role` is a non-text container where AX focus can go
+/// stale in modal-sheet contexts. Writing `AXSelectedText` to these roles
+/// silently succeeds but inserts nothing useful.
+/// See: trycua/cua#1592 (Bug 3).
+pub(crate) fn is_non_text_focus_role(role: &str) -> bool {
+    const NON_TEXT_ROLES: &[&str] = &[
+        "AXOutline", "AXTable", "AXList",
+        "AXBrowser", "AXScrollArea", "AXSplitGroup",
+    ];
+    NON_TEXT_ROLES.contains(&role)
+}
+
 // ── Blocking implementation ───────────────────────────────────────────────────
 
 /// `element_ptr_and_idx` — `Some((ptr, idx))` if element_index was provided.
@@ -213,6 +227,16 @@ fn type_text_blocking(
         let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
+        if is_non_text_focus_role(&role) {
+            unsafe { CFRelease(element as _); }
+            return Err(anyhow::anyhow!(
+                "Focused element is {role} — not a text input. \
+                 AX focus may be stale (e.g. a modal sheet appeared). \
+                 Use element_index targeting: call get_window_state to find \
+                 the text field's index, then pass element_index to type_text."
+            ));
+        }
+
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
 
         let did_succeed = if err == kAXErrorSuccess {
@@ -254,4 +278,23 @@ fn type_text_blocking(
 
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
         .map(|_| format!(" via CGEvent (no focused element / AXSelectedText unsupported, {delay_ms}ms delay)"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_non_text_focus_role;
+
+    #[test]
+    fn rejects_all_non_text_roles() {
+        for role in ["AXOutline", "AXTable", "AXList", "AXBrowser", "AXScrollArea", "AXSplitGroup"] {
+            assert!(is_non_text_focus_role(role), "{role} should be rejected");
+        }
+    }
+
+    #[test]
+    fn accepts_text_input_roles() {
+        for role in ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"] {
+            assert!(!is_non_text_focus_role(role), "{role} should be accepted");
+        }
+    }
 }

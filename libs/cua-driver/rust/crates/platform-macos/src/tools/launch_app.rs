@@ -23,7 +23,11 @@ fn def() -> &'static ToolDef {
              port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). \
              Use this for Tauri/WebKit-based apps.\n\n\
              Optional `creates_new_application_instance`: when true, forces a new app instance \
-             even if one is already running (passes -n to open).\n\n\
+             even if one is already running (passes -n to open). Reach for this when another \
+             agent or session may drive the SAME app concurrently — it returns a fresh pid + \
+             window so each session acts on its own isolated window instead of clobbering one \
+             shared instance. Without it, single-instance apps (Calculator, many utilities) hand \
+             every caller the same window, so two sessions fight over it.\n\n\
              Optional `additional_arguments`: extra argv strings appended after --args.\n\n\
              Returns the launched app's pid, bundle_id, name, and a `windows` array \
              (same shape as `list_windows`) so callers can skip an extra round-trip before \
@@ -58,7 +62,7 @@ fn def() -> &'static ToolDef {
                 },
                 "creates_new_application_instance": {
                     "type": "boolean",
-                    "description": "When true, force a new app instance even if already running (open -n)."
+                    "description": "When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other."
                 },
                 "additional_arguments": {
                     "type": "array",

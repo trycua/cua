@@ -131,7 +131,7 @@ Optional `electron_debugging_port`: opens a Chrome DevTools Protocol (CDP) serve
 
 Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.
 
-Optional `creates_new_application_instance`: when true, forces a new app instance even if one is already running (passes -n to open).
+Optional `creates_new_application_instance`: when true, forces a new app instance even if one is already running (passes -n to open). Reach for this in **concurrent multi-agent/multi-session** work — it returns a fresh pid + window so each session drives its own isolated window. Without it, single-instance apps (Calculator, many utilities) hand every caller the same window, so two sessions clobber each other.
 
 Optional `additional_arguments`: extra argv strings appended after --args.
 
@@ -141,7 +141,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
-- `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n).
+- `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one (which makes the sessions clobber each other on single-instance apps).
 - `electron_debugging_port` (integer, optional): Open a Chrome DevTools Protocol server on this port (appends --remote-debugging-port=N).
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).

@@ -225,11 +225,17 @@ fn main() {
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             return;
         }
-        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat, http_port } => {
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
+            // `--http-port` is a first-class alias for CUA_DRIVER_RS_MCP_HTTP_PORT
+            // (flag wins); export it before serve so `mcp_http::configured_port()`
+            // sees it. Edition 2021 → set_var is safe.
+            if let Some(port) = http_port {
+                std::env::set_var("CUA_DRIVER_RS_MCP_HTTP_PORT", port.to_string());
+            }
             let gate_opts = platform_macos::permissions::GateOpts::from_env_and_flag(
                 no_permissions_gate,
             );
@@ -570,10 +576,17 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat, http_port } => {
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
+            // `--http-port` is a first-class alias for CUA_DRIVER_RS_MCP_HTTP_PORT
+            // (flag wins). Export it before serve runs so `mcp_http::configured_port()`
+            // picks it up at both run-loop spawn sites without threading a param
+            // through run_serve_cmd / run_serve. Edition 2021 → set_var is safe.
+            if let Some(port) = http_port {
+                std::env::set_var("CUA_DRIVER_RS_MCP_HTTP_PORT", port.to_string());
+            }
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
             // CLI uniformity and ignored. The Claude-Code compat screenshot

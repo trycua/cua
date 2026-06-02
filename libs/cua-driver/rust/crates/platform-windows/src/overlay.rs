@@ -105,19 +105,27 @@ struct RenderMap {
     /// `Remove` can never resurrect the just-removed cursor. "default" is never
     /// tombstoned (it backs the anonymous / one-shot path).
     ended: HashSet<CursorKey>,
-    /// Cursor key whose target the overlay should currently sit above. A single
-    /// layered window can occupy only one z-band, so the most-recently-touched
-    /// cursor wins (mirrors macOS). `None` until the first PinAbove/Cmd.
-    last_active: Option<CursorKey>,
 }
 
 /// Build the `RenderState` for a lazily-created cursor key: derive from the
 /// launch template but give each non-default key its own palette so distinct
-/// sessions get distinct colours automatically.
-fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
+/// sessions get distinct colours automatically. `in_use` is the set of palette
+/// names already held by other live cursors, so the picker can avoid colliding
+/// with them (see [`Palette::for_instance_distinct`]).
+fn render_state_for_key(template: &CursorConfig, key: &str, in_use: &[String]) -> RenderState {
     let mut rs = RenderState::new(template.clone());
-    rs.core.palette = Palette::for_instance(key);
+    rs.core.palette = Palette::for_instance_distinct(key, in_use);
     rs
+}
+
+/// Palette names currently held by every live cursor except `except` — passed to
+/// [`render_state_for_key`] so a newly-created cursor avoids colliding with them.
+fn palettes_in_use(map: &RenderMap, except: &str) -> Vec<String> {
+    map.cursors
+        .iter()
+        .filter(|(k, _)| k.as_str() != except)
+        .map(|(_, rs)| rs.core.palette.name.clone())
+        .collect()
 }
 
 /// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
@@ -132,14 +140,21 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             // The "default" cursor backs the anonymous / one-shot path and must
             // survive every session_end + the daemon lifetime.
             if key != "default" {
+                // Destroy the key's own layered window BEFORE dropping the
+                // RenderState. This runs inside the WM_TIMER tick on the STA
+                // thread (the same thread that created the window), so the
+                // DestroyWindow call has correct HWND affinity. In unit tests
+                // (and on non-Windows) hwnd_isize stays 0 → the helper no-ops.
+                if let Some(rs) = map.cursors.get(&key) {
+                    if rs.hwnd_isize != 0 {
+                        destroy_session_window(rs.hwnd_isize);
+                    }
+                }
                 map.cursors.shift_remove(&key);
                 if let Ok(mut guard) = ARRIVAL_TX.lock() {
                     if let Some(m) = guard.as_mut() {
                         m.remove(&key);
                     }
-                }
-                if map.last_active.as_deref() == Some(key.as_str()) {
-                    map.last_active = None;
                 }
                 // Tombstone the key so a late in-flight Cmd from another task
                 // cannot re-create the just-removed cursor.
@@ -156,10 +171,11 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
             }
             let template = map.template.clone();
             let k = key.clone();
+            let in_use = palettes_in_use(map, &k);
             let rs = map
                 .cursors
                 .entry(key)
-                .or_insert_with(|| render_state_for_key(&template, &k));
+                .or_insert_with(|| render_state_for_key(&template, &k, &in_use));
             rs.apply_command(cmd);
             Some(k)
         }
@@ -182,7 +198,6 @@ pub fn init(cfg: CursorConfig) {
         last_tick: Instant::now(),
         template: cfg,
         ended: HashSet::new(),
-        last_active: None,
     });
 }
 
@@ -289,10 +304,11 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
     }
     let template = map.template.clone();
     let k = key.clone();
+    let in_use = palettes_in_use(map, &k);
     let rs = map
         .cursors
         .entry(key.clone())
-        .or_insert_with(|| render_state_for_key(&template, &k));
+        .or_insert_with(|| render_state_for_key(&template, &k, &in_use));
     if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
         return false;
     }
@@ -400,12 +416,37 @@ pub fn run_on_thread() {
 
 struct RenderState {
     core: RenderStateCore,
+    /// Per-key layered window handle stored as `isize` (HWND is `*mut c_void`,
+    /// not `Send`/`Sync`). `0` = not yet created. Created lazily on the first
+    /// tick that observes this key, destroyed on `Remove`. The map lives behind
+    /// the `RENDER` mutex and window ops only happen on the STA thread, so the
+    /// raw handle never actually crosses threads.
+    hwnd_isize: isize,
+    /// Per-key z-order enforcer, bound to this key's own window + pinned target,
+    /// so each cursor sits at z+1 of ITS OWN `pinned_wid` (no shared band).
+    z: Option<WinZOrderEnforcer>,
+    /// Reusable per-key pixmap, (re)allocated to the virtual-screen size on
+    /// first use and after a `WM_DISPLAYCHANGE`. Painted into by this key's
+    /// cursor only, then blitted via `UpdateLayeredWindow`.
+    pm: Option<tiny_skia::Pixmap>,
+    /// Whether this key's window currently shows a non-empty frame. Used to
+    /// erase the window exactly once when a cursor goes visible→hidden: the
+    /// per-key tick `continue`s for hidden cursors (so a quiescent session
+    /// costs nothing), but the OLD single-window design re-blitted the whole
+    /// composite every tick, which erased a just-disabled cursor. Without a
+    /// one-shot clearing blit here a `set_agent_cursor_enabled(false)` would
+    /// leave the last painted frame frozen on screen (a ghost cursor).
+    painted: bool,
 }
 
 impl RenderState {
     fn new(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
+            hwnd_isize: 0,
+            z: None,
+            pm: None,
+            painted: false,
         }
     }
 
@@ -424,6 +465,114 @@ impl RenderState {
         let _ = self.core.apply_command_base(cmd, false, false);
     }
 }
+
+// ── Per-key window lifecycle (Windows) ────────────────────────────────────
+
+/// Shared window-class name for every per-key overlay window. Registered
+/// idempotently (a duplicate `RegisterClassExW` returns
+/// `ERROR_CLASS_ALREADY_EXISTS`, which we ignore) so we never leak class atoms.
+#[cfg(target_os = "windows")]
+const OVERLAY_CLASS: &str = "Cua.AgentCursorOverlay";
+
+/// Half-extent (px) of the per-cursor layered window. The whole cursor — arrow
+/// (≤14px from `pos`), bloom (±22px), click-pulse ring (≤~26px) — fits well
+/// inside this radius, so each cursor paints into a tiny `2*CURSOR_HALF` square
+/// pixmap that *follows* it (positioned via `UpdateLayeredWindow`'s `pt_dst`)
+/// instead of a full virtual-screen RGBA buffer (~14MB at 2560×1440) per cursor.
+/// 64 leaves ~32px of margin around the drawn extent.
+#[cfg(target_os = "windows")]
+const CURSOR_HALF: i32 = 64;
+
+/// Lazily create the layered window that backs the cursor for `key` if it does
+/// not have one yet. MUST be called only on the STA thread (window handles have
+/// thread affinity). Stores the new `hwnd_isize` + a per-key
+/// [`WinZOrderEnforcer`] into the key's [`RenderState`].
+///
+/// `CreateWindowExW` dispatches `WM_NCCREATE`/`WM_CREATE` synchronously to the
+/// shared `wnd_proc`; those fall through to `DefWindowProcW` and never touch
+/// `RENDER`, so this is safe to call while the caller holds the `RENDER` lock.
+#[cfg(target_os = "windows")]
+fn ensure_session_window(map: &mut RenderMap, key: &CursorKey) {
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    use windows::core::PCWSTR;
+
+    let (virt_x, virt_y, virt_w, virt_h) = (map.virt_x, map.virt_y, map.virt_w, map.virt_h);
+    let Some(rs) = map.cursors.get_mut(key) else {
+        return;
+    };
+    if rs.hwnd_isize != 0 {
+        return;
+    }
+
+    let class_name_w: Vec<u16> = format!("{OVERLAY_CLASS}\0").encode_utf16().collect();
+    let title_w: Vec<u16> = format!("{OVERLAY_CLASS}.{key}\0").encode_utf16().collect();
+
+    let hinstance = unsafe { GetModuleHandleW(PCWSTR::null()).unwrap_or_default() };
+
+    // Idempotent: registering an already-registered class fails with
+    // ERROR_CLASS_ALREADY_EXISTS, which we deliberately ignore.
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(wnd_proc),
+        hInstance: hinstance.into(),
+        lpszClassName: PCWSTR(class_name_w.as_ptr()),
+        ..Default::default()
+    };
+    unsafe {
+        RegisterClassExW(&wc);
+    }
+
+    let ex_style = WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+    let style = WS_POPUP;
+    let hwnd = unsafe {
+        CreateWindowExW(
+            ex_style,
+            PCWSTR(class_name_w.as_ptr()),
+            PCWSTR(title_w.as_ptr()),
+            style,
+            virt_x,
+            virt_y,
+            virt_w,
+            virt_h,
+            None,
+            None,
+            hinstance,
+            None,
+        )
+    };
+    let Ok(hwnd) = hwnd else {
+        tracing::error!("Win32 overlay: CreateWindowExW failed for key {key}");
+        return;
+    };
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+    rs.hwnd_isize = hwnd.0 as isize;
+    rs.z = Some(WinZOrderEnforcer {
+        hwnd_isize: hwnd.0 as isize,
+    });
+}
+
+/// Destroy a per-key overlay window. Called from the `Remove` branch on the STA
+/// thread (the creating thread), so `DestroyWindow` has correct affinity.
+#[cfg(target_os = "windows")]
+fn destroy_session_window(hwnd_isize: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
+    if hwnd_isize == 0 {
+        return;
+    }
+    unsafe {
+        let _ = DestroyWindow(HWND(hwnd_isize as *mut _));
+    }
+}
+
+/// Non-Windows / test stub: hwnd_isize is always 0, so this is never reached
+/// with a live handle.
+#[cfg(not(target_os = "windows"))]
+fn destroy_session_window(_hwnd_isize: isize) {}
 
 // ── Win32 message-loop thread ─────────────────────────────────────────────
 
@@ -515,13 +664,24 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         SetTimer(hwnd, 1, 8, None);
     }
 
-    // Store hwnd and rx globally for the wnd_proc callback.
+    // Store hwnd and rx globally for the wnd_proc callback. This supervisor
+    // window owns the SINGLE WM_TIMER + the message loop, and is also
+    // REPURPOSED as the "default" key's own layered window so default paints
+    // into it like every other per-key window (no extra HWND, no shared band).
     OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
     *CMD_RX_WIN.lock().unwrap() = Some(rx);
     LAST_ZTICK.store(0, std::sync::atomic::Ordering::Relaxed);
-    let _ = Z_ORDER.set(WinZOrderEnforcer {
-        hwnd_isize: hwnd.0 as isize,
-    });
+    {
+        let mut guard = RENDER.lock().unwrap();
+        if let Some(map) = guard.as_mut() {
+            if let Some(rs) = map.cursors.get_mut("default") {
+                rs.hwnd_isize = hwnd.0 as isize;
+                rs.z = Some(WinZOrderEnforcer {
+                    hwnd_isize: hwnd.0 as isize,
+                });
+            }
+        }
+    }
 
     // Standard Win32 message loop.
     let mut msg = MSG::default();
@@ -543,7 +703,6 @@ fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<Overlay
 static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static LAST_ZTICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
 
 // ── Window procedure ──────────────────────────────────────────────────────
 
@@ -564,20 +723,36 @@ unsafe extern "system" fn wnd_proc(
                 .unwrap_or_default()
                 .as_millis() as u64;
 
-            // ── Drain commands, tick all cursors, composite one pixmap ───────
+            // ── Drain commands, tick + paint EACH cursor into ITS OWN window ──
             // Measure real dt from last tick — Windows timer resolution defaults
             // to 15ms so the hardcoded 8ms ran the animation at half speed.
-            let (pixmap, arrived, pinned_wid) = {
+            //
+            // Each key owns its own layered window (created lazily here on the
+            // STA thread) + its own reusable pixmap + its own z-enforcer, so a
+            // cursor sits at z+1 of ITS OWN pinned target — no single-window /
+            // last-active bottleneck. Per-key paint + UpdateLayeredWindow +
+            // z-reassert all happen under one RENDER lock (microseconds for a
+            // handful of sessions); idle/hidden cursors skip the blit entirely.
+            let do_ztick = {
+                let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
+                if now_ms.wrapping_sub(last) >= 80 {
+                    LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            };
+
+            let mut arrived: Vec<CursorKey> = Vec::new();
+            {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
-                    // Drain the channel via get-or-create; track the last-touched
-                    // key so the z-order pin follows the most-recent cursor.
+                    // Drain the channel via get-or-create (no last-active: each
+                    // key pins against its own target independently).
                     if let Ok(rx_guard) = CMD_RX_WIN.try_lock() {
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
-                                if let Some(k) = apply_msg(map, m) {
-                                    map.last_active = Some(k);
-                                }
+                                let _ = apply_msg(map, m);
                             }
                         }
                     }
@@ -589,47 +764,85 @@ unsafe extern "system" fn wnd_proc(
                         .clamp(0.0, 0.05);
                     map.last_tick = now;
 
-                    // Tick every cursor; record the ones that just arrived.
-                    let mut arrived: Vec<CursorKey> = Vec::new();
+                    // Each cursor paints into a small FIXED box that follows it
+                    // (see CURSOR_HALF) rather than a full-screen pixmap.
+                    let box_w = (CURSOR_HALF * 2) as u32;
+
+                    // Lazily create any key's window (covers Cmd- and
+                    // seed-created cursors uniformly) BEFORE borrowing the entry
+                    // mutably below. Collect keys first to avoid borrow overlap.
+                    let keys: Vec<CursorKey> = map.cursors.keys().cloned().collect();
+                    for key in &keys {
+                        let needs = map
+                            .cursors
+                            .get(key)
+                            .map(|rs| rs.hwnd_isize == 0)
+                            .unwrap_or(false);
+                        if needs {
+                            ensure_session_window(map, key);
+                        }
+                    }
+
+                    // Tick + paint + blit + reassert per cursor.
                     for (k, rs) in map.cursors.iter_mut() {
                         if rs.tick(dt) {
                             arrived.push(k.clone());
                         }
-                    }
+                        if rs.hwnd_isize == 0 {
+                            continue; // window creation failed; skip this frame
+                        }
+                        let key_hwnd = HWND(rs.hwnd_isize as *mut _);
 
-                    // Composite every cursor into ONE virtual-screen pixmap.
-                    // tiny-skia fills are alpha-over, so insertion order =
-                    // paint/z-order; idle/hidden cursors early-return inside
-                    // paint_cursor so an idle session costs ~nothing.
-                    let w = map.virt_w.max(1) as u32;
-                    let h = map.virt_h.max(1) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    for (_k, rs) in &map.cursors {
+                        // Hidden cursor: hide its window ONCE (so a disabled cursor
+                        // disappears instead of freezing its last frame), then skip
+                        // every later tick so a quiescent session costs ~nothing.
+                        if !rs.core.visible {
+                            if rs.painted {
+                                let _ = ShowWindow(key_hwnd, SW_HIDE);
+                                rs.painted = false;
+                            }
+                            continue;
+                        }
+
+                        // Box that FOLLOWS the cursor: top-left = pos - CURSOR_HALF.
+                        let bx = rs.core.pos.0.round() as i32 - CURSOR_HALF;
+                        let by = rs.core.pos.1.round() as i32 - CURSOR_HALF;
+                        if rs
+                            .pm
+                            .as_ref()
+                            .map(|p| p.width() != box_w || p.height() != box_w)
+                            .unwrap_or(true)
+                        {
+                            rs.pm = tiny_skia::Pixmap::new(box_w, box_w);
+                        }
+                        let Some(pm) = rs.pm.as_mut() else { continue };
+                        // Clear, then paint ONLY this cursor. Passing the box's
+                        // screen top-left as the paint origin lands the cursor at
+                        // (CURSOR_HALF, CURSOR_HALF) inside the box.
+                        pm.data_mut().fill(0);
                         cursor_overlay::paint_cursor(
-                            &mut pm,
+                            pm,
                             &rs.core,
-                            map.virt_x as f64,
-                            map.virt_y as f64,
+                            bx as f64,
+                            by as f64,
                             None, // focus-rect is macOS-only
                         );
+                        // Re-show if it had been hidden, then blit + reposition the
+                        // window to the box (UpdateLayeredWindow sets both size and
+                        // pt_dst, so the small window tracks the cursor).
+                        if !rs.painted {
+                            let _ = ShowWindow(key_hwnd, SW_SHOWNOACTIVATE);
+                        }
+                        update_layered_window(key_hwnd, pm, bx, by);
+                        rs.painted = true;
+
+                        if do_ztick {
+                            if let Some(z) = rs.z.as_ref() {
+                                z.reassert(rs.core.pinned_wid);
+                            }
+                        }
                     }
-
-                    // Pin above the most-recently-touched cursor's target.
-                    let pinned = map
-                        .last_active
-                        .as_ref()
-                        .and_then(|k| map.cursors.get(k))
-                        .and_then(|rs| rs.core.pinned_wid);
-
-                    (Some(pm), arrived, pinned)
-                } else {
-                    (None, Vec::new(), None)
                 }
-            };
-
-            if let Some(pm) = pixmap {
-                update_layered_window(hwnd, &pm);
             }
 
             // Fire arrival oneshots for cursors whose path just ended — unblocks
@@ -639,22 +852,84 @@ unsafe extern "system" fn wnd_proc(
                 arrival_fire(k);
             }
 
-            // Z-order maintenance every 80ms — delegate to the cross-platform
-            // ZOrderEnforcer so the contract for "z+1 of the application under
-            // test" is documented once in `cursor_overlay::z_order`.
-            let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
-            if now_ms.wrapping_sub(last) >= 80 {
-                LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-                if let Some(enforcer) = Z_ORDER.get() {
-                    enforcer.reassert(pinned_wid);
+            LRESULT(0)
+        }
+        WM_DISPLAYCHANGE => {
+            // The desktop resolution / monitor layout changed (common on VMs,
+            // RDP, dock/undock, and — as hit in testing — a Mac-hosted Windows
+            // VM whose backing resolution flips, e.g. 1512×949 ↔ 2560×1440).
+            //
+            // The virtual-screen geometry was captured ONCE at thread start into
+            // `RenderMap.virt_*` and the overlay window was sized to it. If we
+            // don't refresh on resize, the overlay keeps covering only the old
+            // (smaller) region, the per-tick pixmap stays that size, and any
+            // cursor positioned in the newly-exposed area falls OUTSIDE the
+            // pixmap → it silently never paints. Re-query the metrics, update
+            // the shared map (the WM_TIMER tick rebuilds the pixmap from these),
+            // and resize/reposition the window to span the new virtual screen.
+            // (GetSystemMetrics / SM_* / SetWindowPos come from the
+            // WindowsAndMessaging glob imported at the top of this fn.)
+            let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if vw > 0 && vh > 0 {
+                if let Ok(mut guard) = RENDER.lock() {
+                    if let Some(map) = guard.as_mut() {
+                        map.virt_x = vx;
+                        map.virt_y = vy;
+                        map.virt_w = vw;
+                        map.virt_h = vh;
+                        // Resize/reposition EVERY per-key window to span the new
+                        // virtual screen and drop each pixmap so the next tick
+                        // reallocates it to the new size. SWP_NOZORDER makes the
+                        // insert-after handle irrelevant.
+                        for (_k, rs) in map.cursors.iter_mut() {
+                            if rs.hwnd_isize != 0 {
+                                let _ = SetWindowPos(
+                                    HWND(rs.hwnd_isize as *mut _),
+                                    HWND::default(),
+                                    vx,
+                                    vy,
+                                    vw,
+                                    vh,
+                                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER,
+                                );
+                            }
+                            rs.pm = None;
+                        }
+                    }
                 }
             }
-
             LRESULT(0)
         }
         WM_DESTROY => {
-            PostQuitMessage(0);
-            LRESULT(0)
+            // The shared wnd_proc backs every per-key window, so a per-session
+            // DestroyWindow also lands here. ONLY the supervisor/"default"
+            // window (the one owning the SetTimer + message loop) may quit the
+            // loop; a per-key teardown must NOT kill the whole overlay.
+            let supervisor = OVERLAY_HWND.load(std::sync::atomic::Ordering::Relaxed);
+            if hwnd.0 as isize == supervisor {
+                // Overlay is shutting down — destroy every per-key window so none
+                // leak (e.g. a session that never sent session_end). Skip the
+                // supervisor (it's being destroyed now). RENDER isn't held here
+                // (WM_DESTROY is a distinct message, not a WM_TIMER tick), so the
+                // lock is safe; each DestroyWindow re-enters this wnd_proc with a
+                // non-supervisor HWND → falls through, never re-quitting.
+                if let Ok(guard) = RENDER.lock() {
+                    if let Some(map) = guard.as_ref() {
+                        for rs in map.cursors.values() {
+                            if rs.hwnd_isize != 0 && rs.hwnd_isize != supervisor {
+                                destroy_session_window(rs.hwnd_isize);
+                            }
+                        }
+                    }
+                }
+                PostQuitMessage(0);
+                LRESULT(0)
+            } else {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -662,10 +937,16 @@ unsafe extern "system" fn wnd_proc(
 
 // ── UpdateLayeredWindow helper ────────────────────────────────────────────
 
+/// Blit `pixmap` into `hwnd` via `UpdateLayeredWindow`. `origin_x`/`origin_y`
+/// are the virtual-screen top-left (passed in rather than read from `RENDER`
+/// so this can be called WHILE the caller holds the `RENDER` lock — std Mutex
+/// is not reentrant and would deadlock on a self re-lock).
 #[cfg(target_os = "windows")]
 unsafe fn update_layered_window(
     hwnd: windows::Win32::Foundation::HWND,
     pixmap: &tiny_skia::Pixmap,
+    origin_x: i32,
+    origin_y: i32,
 ) {
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Gdi::*;
@@ -719,22 +1000,9 @@ unsafe fn update_layered_window(
         dst[i * 4 + 3] = a;
     }
 
-    // UpdateLayeredWindow.
-    let virt_x;
-    let virt_y;
-    {
-        let guard = RENDER.lock().unwrap();
-        if let Some(map) = &*guard {
-            virt_x = map.virt_x;
-            virt_y = map.virt_y;
-        } else {
-            virt_x = 0;
-            virt_y = 0;
-        }
-    }
-
+    // UpdateLayeredWindow — origin passed in (no RENDER re-lock; see doc above).
     let pt_src = POINT { x: 0, y: 0 };
-    let pt_dst = POINT { x: virt_x, y: virt_y };
+    let pt_dst = POINT { x: origin_x, y: origin_y };
     let sz = SIZE { cx: w, cy: h };
     let blend = BLENDFUNCTION {
         BlendOp: 0, // AC_SRC_OVER
@@ -867,7 +1135,6 @@ mod tests {
             last_tick: Instant::now(),
             template: CursorConfig::default(),
             ended: HashSet::new(),
-            last_active: None,
         }
     }
 
@@ -1003,12 +1270,15 @@ mod tests {
     }
 
     #[test]
-    fn remove_clears_last_active_for_that_key() {
+    fn remove_is_window_noop_when_no_hwnd() {
+        // In tests hwnd_isize is always 0 (no Win32 window), so Remove must be a
+        // pure data-model no-op for the window side: destroy_session_window is
+        // skipped and the entry is shift_removed + tombstoned as usual.
         let mut map = empty_map();
-        let k = apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        map.last_active = k;
-        assert_eq!(map.last_active.as_deref(), Some("sessA"));
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        assert_eq!(map.cursors["sessA"].hwnd_isize, 0);
         apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert_eq!(map.last_active, None, "removing the active cursor must clear last_active");
+        assert!(!map.cursors.contains_key("sessA"));
+        assert!(map.ended.contains("sessA"));
     }
 }

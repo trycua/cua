@@ -319,8 +319,10 @@ fn main() {
             // Fixed 100ms glide so every actuation lands on the beat regardless
             // of travel distance (and so "occupied for the glide window" has a
             // known length the pool sizes against).
+            // turn_radius 40 = half the default 80 → tighter glide curves, which
+            // read better in the small tiles.
             let _ = run_call(&cua, "set_agent_cursor_motion", &format!(
-                r#"{{"session":"{session}","cursor_label":"{}","cursor_size":15,"glide_duration_ms":{glide_ms},"spring":1.0,"arc_size":0.08,"dwell_after_click_ms":0,"idle_hide_ms":0}}"#,
+                r#"{{"session":"{session}","cursor_label":"{}","cursor_size":15,"glide_duration_ms":{glide_ms},"spring":1.0,"arc_size":0.08,"dwell_after_click_ms":0,"idle_hide_ms":0,"turn_radius":40}}"#,
                 t.name));
             let _ = run_call(&cua, "set_agent_cursor_style", &format!(
                 r#"{{"session":"{session}","gradient_colors":["{tip}","{}"],"bloom_color":"{}"}}"#,

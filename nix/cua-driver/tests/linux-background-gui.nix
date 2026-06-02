@@ -36,6 +36,10 @@ let
     # GTK apps load the AT-SPI atk-bridge module from GTK_PATH; without it a
     # GTK3 app (zenity) never registers with the AT-SPI registry. Chromium uses
     # its own AT-SPI implementation so it doesn't need this.
+    # A GTK3 app dlopens libatk-bridge-2.0.so by soname to join the AT-SPI bus;
+    # in this hand-rolled session it isn't on the loader path, so expose it.
+    # (Chromium ships its own AT-SPI implementation and doesn't need this.)
+    "LD_LIBRARY_PATH=${pkgs.at-spi2-atk}/lib"
     "GTK_PATH=${pkgs.at-spi2-atk}/lib/gtk-3.0"
     "GTK_MODULES=gail:atk-bridge"
     "GNOME_ACCESSIBILITY=1"

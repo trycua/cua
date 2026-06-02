@@ -43,8 +43,9 @@ let
     root.geometry("400x80+700+150")
     root.mainloop()
   '';
+  pythonTk = pkgs.python3.withPackages (ps: [ ps.tkinter ]);
   tkApp = pkgs.writeShellScript "cua-tk-entry.sh" ''
-    exec ${pkgs.python3Full}/bin/python3 ${tkAppPy}
+    exec ${pythonTk}/bin/python3 ${tkAppPy}
   '';
 
   apps = {
@@ -61,7 +62,7 @@ let
       launch = ''firefox --new-instance --profile /tmp/cua-firefox --window-size=480,360 "${htmlPage}"'';
     };
     tk = {
-      packages = [ pkgs.python3Full ];
+      packages = [ pythonTk ];
       memoryMB = 2048;
       launch = "${tkApp}";
     };

@@ -7,6 +7,11 @@
 # has cua-driver type into it, then reads the field's text back through AT-SPI
 # and asserts (a) the text landed and (b) focus never moved.
 #
+# Chromium-backed apps (chromium, electron) additionally exercise an approved
+# CDP override: AT-SPI exposes them read-only, so a focus-free *write* into the
+# background window goes through the Chrome DevTools Protocol (Input.insertText
+# targets the page's focused DOM element regardless of OS window focus).
+#
 # `app` selects one entry from `apps`, so flake.nix wires one matrix job per app.
 # To run: nix build .#checks.x86_64-linux.cua-driver-linux-background-gui-<app>
 {
@@ -77,6 +82,173 @@ let
     sys.exit(app.exec_())
   '';
 
+  # ── CDP (Chrome DevTools Protocol) focus-free write — approved override ──────
+  # AT-SPI exposes Chromium/Electron read-only, so the driver can't write into a
+  # *background* browser window through it. CDP talks to the renderer over the
+  # debug socket instead: Input.insertText lands in the page's focused DOM
+  # element (document.activeElement) regardless of whether the OS window holds X
+  # focus. This is a Chromium/Electron-specific override, not the generic path.
+  cdpPort = 9222;
+  cdpMarker = "cdptyped5678";
+
+  # Self-contained CDP client (stdlib only: HTTP target discovery + a minimal
+  # RFC-6455 WebSocket client), so it runs under plain python3 with no extra deps.
+  cdpWriteScript = pkgs.writeText "cdp-write.py" ''
+    import json, sys, time, socket, base64, os, struct, urllib.request
+    from urllib.parse import urlparse
+
+    PORT = ${toString cdpPort}
+    MARKER = "${cdpMarker}"
+
+    def http_json(path):
+        url = "http://127.0.0.1:%d%s" % (PORT, path)
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.load(r)
+
+    def pick_page():
+        cands = [t for t in http_json("/json")
+                 if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        for t in cands:
+            if t.get("title") == "cua-initial" or "cua-input" in t.get("url", ""):
+                return t["webSocketDebuggerUrl"]
+        return cands[0]["webSocketDebuggerUrl"] if cands else None
+
+    class WS:
+        def __init__(self, url):
+            u = urlparse(url)
+            self.sock = socket.create_connection((u.hostname, u.port), timeout=15)
+            key = base64.b64encode(os.urandom(16)).decode()
+            path = (u.path or "/") + (("?" + u.query) if u.query else "")
+            req = (
+                "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\n"
+                "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ) % (path, u.hostname, u.port, key)
+            self.sock.sendall(req.encode())
+            self._buf = b""
+            while b"\r\n\r\n" not in self._buf:
+                chunk = self.sock.recv(4096)
+                if not chunk:
+                    raise RuntimeError("ws handshake closed early")
+                self._buf += chunk
+            head, self._buf = self._buf.split(b"\r\n\r\n", 1)
+            if b"101" not in head.split(b"\r\n")[0]:
+                raise RuntimeError("ws handshake failed: " + head.decode("latin1"))
+
+        def _exact(self, n):
+            while len(self._buf) < n:
+                chunk = self.sock.recv(4096)
+                if not chunk:
+                    raise RuntimeError("ws closed")
+                self._buf += chunk
+            out, self._buf = self._buf[:n], self._buf[n:]
+            return out
+
+        def send_text(self, text):
+            payload = text.encode()
+            n = len(payload)
+            header = bytearray([0x81])
+            if n < 126:
+                header.append(0x80 | n)
+            elif n < 65536:
+                header.append(0x80 | 126); header += struct.pack(">H", n)
+            else:
+                header.append(0x80 | 127); header += struct.pack(">Q", n)
+            mask = os.urandom(4)
+            header += mask
+            self.sock.sendall(bytes(header) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+        def recv_text(self):
+            data = b""
+            while True:
+                b0, b1 = self._exact(2)
+                fin, opcode, masked, length = b0 & 0x80, b0 & 0x0F, b1 & 0x80, b1 & 0x7F
+                if length == 126:
+                    length = struct.unpack(">H", self._exact(2))[0]
+                elif length == 127:
+                    length = struct.unpack(">Q", self._exact(8))[0]
+                mask = self._exact(4) if masked else None
+                payload = self._exact(length)
+                if mask:
+                    payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+                if opcode == 0x8:
+                    raise RuntimeError("ws closed by server")
+                if opcode in (0x9, 0xA):
+                    continue
+                data += payload
+                if fin:
+                    return data.decode()
+
+        def close(self):
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+
+    ws_url = None
+    for _ in range(30):
+        try:
+            ws_url = pick_page()
+        except Exception:
+            ws_url = None
+        if ws_url:
+            break
+        time.sleep(1)
+    if not ws_url:
+        print("NO_CDP_PAGE_TARGET", flush=True); sys.exit(1)
+
+    ws = WS(ws_url)
+    _id = [0]
+    def cmd(method, params=None):
+        _id[0] += 1
+        mid = _id[0]
+        ws.send_text(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        while True:
+            msg = json.loads(ws.recv_text())
+            if msg.get("id") == mid:
+                return msg
+
+    cmd("Runtime.enable")
+    cmd("DOM.enable")
+    # Focus + clear the page input through the DOM (not OS window focus).
+    cmd("Runtime.evaluate", {"expression": 'var i=document.querySelector("input"); i.focus(); i.value=""; "ok"'})
+    # The override: CDP injects into the renderer's focused element, no OS focus.
+    cmd("Input.insertText", {"text": MARKER})
+    time.sleep(0.3)
+    res = cmd("Runtime.evaluate", {"expression": "document.querySelector('input').value", "returnByValue": True})
+    val = res.get("result", {}).get("result", {}).get("value", "")
+    print("CDP_VALUE: " + repr(val), flush=True)
+    ws.close()
+    if val == MARKER:
+        print("CDP_READBACK_OK", flush=True); sys.exit(0)
+    print("CDP_READBACK_MISMATCH", flush=True); sys.exit(1)
+  '';
+
+  # Minimal Electron app: a Chromium-backed BrowserWindow titled cua-initial,
+  # loading the same autofocused-input page. Gives a non-browser Chromium embed
+  # data point; like Chromium it's read-only over AT-SPI, writable via CDP.
+  electronMain = pkgs.writeText "main.js" ''
+    const { app, BrowserWindow } = require('electron');
+    app.commandLine.appendSwitch('remote-debugging-port', '${toString cdpPort}');
+    app.commandLine.appendSwitch('remote-allow-origins', '*');
+    app.commandLine.appendSwitch('no-sandbox');
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-dev-shm-usage');
+    app.commandLine.appendSwitch('force-renderer-accessibility');
+    app.disableHardwareAcceleration();
+    app.whenReady().then(() => {
+      const win = new BrowserWindow({ width: 480, height: 360, x: 700, y: 150, title: 'cua-initial' });
+      win.loadURL('file://${htmlFile}');
+    });
+  '';
+  electronApp = pkgs.runCommand "cua-electron-app" { } ''
+    mkdir -p $out
+    cp ${electronMain} $out/main.js
+    cp ${pkgs.writeText "package.json" (builtins.toJSON {
+      name = "cua-initial"; version = "1.0.0"; main = "main.js";
+    })} $out/package.json
+  '';
+
   apps = {
     gtk = {
       packages = [ pkgs.zenity ];
@@ -105,13 +277,23 @@ let
     chromium = {
       packages = [ pkgs.chromium ];
       memoryMB = 4096;
+      cdp = true;
       launch = pkgs.writeShellScript "cua-launch-chromium.sh" ''
         exec ${pkgs.chromium}/bin/chromium \
           --no-sandbox --no-first-run --no-default-browser-check --disable-gpu \
           --force-renderer-accessibility \
+          --remote-debugging-port=${toString cdpPort} --remote-allow-origins=* \
           --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
           --user-data-dir=/tmp/cua-chromium --window-position=700,150 --window-size=480,360 \
           --new-window file://${htmlFile}
+      '';
+    };
+    electron = {
+      packages = [ pkgs.electron ];
+      memoryMB = 4096;
+      cdp = true;
+      launch = pkgs.writeShellScript "cua-launch-electron.sh" ''
+        exec ${pkgs.electron}/bin/electron --no-sandbox ${electronApp}
       '';
     };
     firefox = {
@@ -126,6 +308,25 @@ let
   };
 
   selected = apps.${app};
+
+  # CDP focus-free write subtest — only for Chromium-backed apps (chromium,
+  # electron). Asserting (unlike the AT-SPI write): proves the approved override
+  # writes into the *background* window while the control terminal keeps focus.
+  cdpSubtest = lib.optionalString (selected.cdp or false) ''
+    with subtest("CDP focus-free write into the background window (approved override)"):
+        # CDP reaches the renderer over the debug socket, so Input.insertText lands
+        # in the page's focused DOM element while the OS window stays in the
+        # background. This is the one path that writes into an unfocused browser
+        # window; AT-SPI exposes Chromium/Electron read-only.
+        machine.copy_from_host("${cdpWriteScript}", "/tmp/cdp-write.py")
+        cdp_out = machine.succeed("${a11yEnv} timeout 120 python3 /tmp/cdp-write.py 2>&1")
+        machine.log(cdp_out)
+        assert "CDP_READBACK_OK" in cdp_out, cdp_out
+        # The override must remain focus-free: control terminal still active.
+        cdp_control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
+        cdp_active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
+        assert cdp_control == cdp_active, "focus moved during CDP write: got " + cdp_active
+  '';
 
   mcpTest = pkgs.writeText "mcp-background-gui-test.py" ''
     import json, os, sys, threading, time
@@ -350,6 +551,7 @@ pkgs.testers.nixosTest {
         active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
         assert control == active, "expected active window " + control + ", got " + active
 
+    ${cdpSubtest}
     with subtest("Confirm: focusing the window exposes the editable (diagnostic)"):
         # Direct confirmation of the focus-gate finding. Activate the target so it
         # becomes the focused window, then re-run the driver: with focus the

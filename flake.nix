@@ -100,7 +100,9 @@
                   # window within the launch timeout under the emulated CI VM
                   # (no KVM), so the job times out before any AT-SPI subtest
                   # runs. The browser/AT-SPI read path is covered by chromium.
-                ) [ "chromium" "gtk" "qt" ]
+                  # chromium + electron also exercise the CDP focus-free-write
+                  # override (Input.insertText into the background window).
+                ) [ "chromium" "electron" "gtk" "qt" ]
               )
             );
         }

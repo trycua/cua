@@ -296,6 +296,10 @@ pkgs.testers.nixosTest {
 
     with subtest("Launch target app (${app}) in the background"):
         machine.execute("sh -lc '${a11yEnv} ${selected.launch} >/tmp/target.log 2>&1 & echo $! >/tmp/target-pid.txt'")
+        # Surface the app's own stdout/stderr early so launch failures (e.g. a Qt
+        # platform-plugin error) are visible instead of just a window-find timeout.
+        machine.sleep(5)
+        machine.log("target.log after launch: " + machine.execute("cat /tmp/target.log")[1])
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --sync --onlyvisible --name cua-initial | head -1 >/tmp/target-xid.txt && test -s /tmp/target-xid.txt", timeout=120)
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/control-xid.txt)")
         machine.succeed("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/control-xid.txt)")

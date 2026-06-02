@@ -20,31 +20,19 @@
 let
   typed = "cuatyped1234";
 
-  # python3 with pyatspi — used both by cua-driver (it shells out to pyatspi)
-  # and by this test's AT-SPI readback. Becomes `python3` on PATH.
-  # pyatspi is a pure-Python wrapper over PyGObject (`gi`); without pygobject3
-  # the `import pyatspi` line fails with `ModuleNotFoundError: No module named 'gi'`.
-  pythonAtspi = pkgs.python3.withPackages (ps: [ ps.pyatspi ps.pygobject3 ]);
-
-  # Typelibs pyatspi / atk-bridge need at runtime.
-  giTypelibPath = lib.makeSearchPath "lib/girepository-1.0" [
-    pkgs.at-spi2-core
-    pkgs.glib
-    pkgs.gtk3
-    pkgs.pango
-    pkgs.gdk-pixbuf
-    pkgs.harfbuzz
-  ];
+  # Plain python3 (stdlib only) to drive the MCP JSON-RPC handshake in the test.
+  # The driver now speaks AT-SPI natively over D-Bus (no pyatspi / GI typelibs),
+  # so no accessibility Python packages are needed anywhere.
+  testPython = pkgs.python3;
 
   # Shared environment: same session D-Bus + a11y settings for the apps and the
-  # driver, so pyatspi in the driver reaches the same registry the apps register
-  # with. Fixed bus path so every `machine.*` shell can opt in.
+  # driver, so the driver's native AT-SPI client reaches the same registry the
+  # apps register with. Fixed bus path so every `machine.*` shell can opt in.
   a11yEnv = lib.concatStringsSep " " [
     "DISPLAY=:99"
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cua-session-bus"
     "XDG_RUNTIME_DIR=/run/user/0"
     "XDG_DATA_DIRS=/run/current-system/sw/share"
-    "GI_TYPELIB_PATH=${giTypelibPath}"
     "GTK_MODULES=gail:atk-bridge"
     "GNOME_ACCESSIBILITY=1"
     "QT_ACCESSIBILITY=1"
@@ -91,45 +79,6 @@ let
   };
 
   selected = apps.${app};
-
-  # AT-SPI readback: print the text of the app's focused (or first) editable.
-  readbackPy = pkgs.writeText "cua-atspi-readback.py" ''
-    import pyatspi, sys
-    target_pid = int(sys.argv[1])
-
-    found = []
-    focused = [None]
-    def collect(acc):
-        try:
-            acc.queryEditableText(); found.append(acc)
-            try:
-                if acc.getState().contains(pyatspi.STATE_FOCUSED):
-                    focused[0] = acc
-            except: pass
-        except: pass
-        for c in acc:
-            collect(c)
-
-    desktop = pyatspi.Registry.getDesktop(0)
-    app = None
-    for a in desktop:
-        try:
-            if a.get_process_id() == target_pid:
-                app = a; break
-        except: pass
-    if app is None:
-        print("NO_APP"); sys.exit(0)
-    for win in app:
-        collect(win)
-    target = focused[0] or (found[0] if found else None)
-    if target is None:
-        print("NO_EDITABLE"); sys.exit(0)
-    try:
-        txt = target.queryText()
-        print(txt.getText(0, txt.characterCount))
-    except Exception as e:
-        print("ERR:%s" % e); sys.exit(0)
-  '';
 
   mcpTest = pkgs.writeText "mcp-background-gui-test.py" ''
     import json, os, sys, threading, time
@@ -194,7 +143,7 @@ let
             recv(proc)
             send(proc, "notifications/initialized", {})
             time.sleep(0.3)
-            # Type into the *inactive* app window — focus-free, via AT-SPI.
+            # Type into the *inactive* app window — focus-free, via native AT-SPI.
             call_tool(proc, 2, "type_text", {
                 "pid": target_pid,
                 "window_id": target_xid,
@@ -202,6 +151,27 @@ let
             })
             time.sleep(1.5)
             print("background GUI test typed", flush=True)
+
+            # Read it back through the driver's *own* native AT-SPI client
+            # (page/get_text walks the same accessibility tree it just wrote to).
+            # Retry: a11y trees can take a moment to reflect the insertion.
+            readback = ""
+            for _ in range(20):
+                resp = call_tool(proc, 3, "page", {
+                    "action": "get_text",
+                    "pid": target_pid,
+                    "window_id": target_xid,
+                })
+                content = resp.get("result", {}).get("content", [])
+                readback = " ".join(
+                    c.get("text", "") for c in content if c.get("type") == "text"
+                )
+                if "${typed}" in readback:
+                    break
+                time.sleep(0.5)
+            print("READBACK_BEGIN", flush=True)
+            print(readback, flush=True)
+            print("READBACK_END", flush=True)
         finally:
             proc.stdin.close(); proc.terminate(); proc.wait(timeout=5)
 
@@ -233,7 +203,7 @@ pkgs.testers.nixosTest {
         xdotool
         dbus
         at-spi2-core
-        pythonAtspi
+        testPython
         jq
         procps
       ] ++ selected.packages;
@@ -270,12 +240,9 @@ pkgs.testers.nixosTest {
         machine.log(result)
         assert "background GUI test typed" in result, result
 
-    with subtest("Input landed: AT-SPI reads the typed text back"):
-        machine.copy_from_host("${readbackPy}", "/tmp/cua-atspi-readback.py")
-        pid = machine.succeed("cat /tmp/target-pid.txt").strip()
-        machine.wait_until_succeeds(
-            "${a11yEnv} python3 /tmp/cua-atspi-readback.py " + pid + " | grep -F '${typed}'",
-            timeout=30,
+    with subtest("Input landed: driver's native AT-SPI reads the typed text back"):
+        assert "${typed}" in result, (
+            "typed text not found in driver get_text readback:\n" + result
         )
 
     with subtest("Focus stayed on the control terminal"):

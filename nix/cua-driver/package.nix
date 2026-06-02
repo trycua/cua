@@ -23,7 +23,9 @@ pkgs.rustPlatform.buildRustPackage {
   # the workspace Cargo.lock includes macOS-only crates (apple-metal, apple-cf)
   # that may be unreachable from crates.io. fetchCargoVendor handles this
   # gracefully via `cargo vendor`.
-  cargoHash = "sha256-C4jconuKiz1T/hLN6VHkdoRiUsqPrHyGDyrV8OoRlDU=";
+  # Bumped when the dependency set changes (added `atspi`/zbus for native
+  # AT-SPI). If this mismatches, the nix build prints the expected value.
+  cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win

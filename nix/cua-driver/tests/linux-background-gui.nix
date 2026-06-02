@@ -87,10 +87,13 @@ let
 
     def start_driver():
         import subprocess
+        # CUA_ATSPI_DEBUG makes the driver log what its native AT-SPI walk finds
+        # (app/pid match, node counts) to stderr, surfaced in the test output.
+        env = {**os.environ, "CUA_ATSPI_DEBUG": "1"}
         proc = subprocess.Popen(
             [DRIVER_BIN, "mcp", "--no-daemon-relaunch"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={**os.environ},
+            env=env,
         )
         def drain():
             for line in proc.stderr:
@@ -156,12 +159,14 @@ let
             # (page/get_text walks the same accessibility tree it just wrote to).
             # Retry: a11y trees can take a moment to reflect the insertion.
             readback = ""
+            last_resp = None
             for _ in range(20):
                 resp = call_tool(proc, 3, "page", {
                     "action": "get_text",
                     "pid": target_pid,
                     "window_id": target_xid,
                 })
+                last_resp = resp
                 content = resp.get("result", {}).get("content", [])
                 readback = " ".join(
                     c.get("text", "") for c in content if c.get("type") == "text"
@@ -169,6 +174,7 @@ let
                 if "${typed}" in readback:
                     break
                 time.sleep(0.5)
+            print("RAW_GET_TEXT_RESPONSE: " + json.dumps(last_resp), flush=True)
             print("READBACK_BEGIN", flush=True)
             print(readback, flush=True)
             print("READBACK_END", flush=True)

@@ -12,6 +12,7 @@
 //! `get_element_bounds` index into that same ordered set.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use atspi::connection::AccessibilityConnection;
@@ -20,6 +21,31 @@ use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State};
 
 use super::AtspiNode;
+
+/// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
+/// lazily-built trees like Chromium's) must not stall the whole walk.
+const CALL_TIMEOUT: Duration = Duration::from_secs(3);
+/// Overall budget for one tree walk / operation.
+const OP_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Run `fut` with [`CALL_TIMEOUT`]; `None` on timeout so the caller can skip
+/// the node and keep walking rather than blocking forever.
+async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
+    tokio::time::timeout(CALL_TIMEOUT, fut).await.ok()
+}
+
+/// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
+/// driver's stderr is surfaced in the test logs, so this is how we see what the
+/// native walk actually found in CI.
+fn dbg_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("CUA_ATSPI_DEBUG").is_some())
+}
+macro_rules! dlog {
+    ($($arg:tt)*) => {
+        if dbg_enabled() { eprintln!("[cua-atspi] {}", format!($($arg)*)); }
+    };
+}
 
 /// Shared multi-threaded Tokio runtime for the blocking AT-SPI entry points.
 fn runtime() -> &'static tokio::runtime::Runtime {
@@ -38,6 +64,8 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 struct Visited<'a> {
     depth: usize,
     role: String,
+    /// Display text: the accessible `name`, or — for editable/text widgets that
+    /// expose no name — the Text-interface content (where typed text lives).
     name: String,
     value: Option<String>,
     actions: Vec<String>,
@@ -90,11 +118,16 @@ async fn app_for_pid<'a>(
         .await
         .map_err(|e| anyhow!("DBus proxy unavailable: {e}"))?;
 
-    for child in root.get_children().await.unwrap_or_default() {
-        if pid_of(&dbus, &child).await == Some(pid) {
+    let apps = root.get_children().await.unwrap_or_default();
+    dlog!("registry root has {} application(s); seeking pid {pid}", apps.len());
+    for child in apps {
+        let cpid = pid_of(&dbus, &child).await;
+        dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
+        if cpid == Some(pid) {
             return Ok(Some(accessible_for(zconn, &child).await?));
         }
     }
+    dlog!("no application accessible matched pid {pid}");
     Ok(None)
 }
 
@@ -113,66 +146,99 @@ async fn collect_visited<'a>(
     // Stack of (object ref, depth). Seed with the app's windows; push children
     // reversed so siblings pop left-to-right and each subtree completes before
     // the next sibling (pre-order).
-    let mut stack: Vec<(atspi::ObjectRefOwned, usize)> = app
-        .get_children()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .rev()
-        .map(|r| (r, 0usize))
-        .collect();
+    let mut stack: Vec<(atspi::ObjectRefOwned, usize)> = match call(app.get_children()).await {
+        Some(Ok(children)) => children.into_iter().rev().map(|r| (r, 0usize)).collect(),
+        _ => Vec::new(),
+    };
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
+    // Guard against pathological/looping trees.
+    let mut budget = 5000usize;
 
     while let Some((oref, depth)) = stack.pop() {
+        if budget == 0 {
+            dlog!("node budget exhausted; truncating walk");
+            break;
+        }
+        budget -= 1;
+
         let acc = match accessible_for(zconn, &oref).await {
             Ok(a) => a,
             Err(_) => continue,
         };
 
-        let ifaces = acc.get_interfaces().await.unwrap_or_default();
+        // Interfaces gate every other query; if even this times out the node is
+        // unreachable, so skip it rather than stall.
+        let ifaces = match call(acc.get_interfaces()).await {
+            Some(Ok(i)) => i,
+            _ => continue,
+        };
         let has_action = ifaces.contains(Interface::Action);
         let has_editable = ifaces.contains(Interface::EditableText);
         let has_value = ifaces.contains(Interface::Value);
         let has_component = ifaces.contains(Interface::Component);
         let has_text = ifaces.contains(Interface::Text);
 
-        let role = acc.get_role_name().await.unwrap_or_default();
-        let name = acc.name().await.unwrap_or_default();
+        let role = match call(acc.get_role_name()).await {
+            Some(Ok(r)) => r,
+            _ => String::new(),
+        };
+        let mut name = match call(acc.name()).await {
+            Some(Ok(n)) => n,
+            _ => String::new(),
+        };
 
-        // Collect action names and the numeric value (if any) up front, so the
-        // borrowed `Proxies` is dropped before `acc` moves into `visited`.
+        // Collect action names, numeric value, and (crucially) Text-interface
+        // content up front, so the borrowed `Proxies` is dropped before `acc`
+        // moves into `visited`.
         let mut actions: Vec<String> = Vec::new();
         let mut value: Option<String> = None;
-        if has_action || has_value {
-            if let Ok(proxies) = acc.proxies().await {
-                if has_action {
-                    if let Ok(ap) = proxies.action().await {
-                        let n = ap.n_actions().await.unwrap_or(0);
-                        for i in 0..n {
-                            if let Ok(an) = ap.get_name(i).await {
-                                actions.push(an);
-                            }
+        let mut text_content = String::new();
+        if let Ok(proxies) = acc.proxies().await {
+            if has_action {
+                if let Some(Ok(ap)) = call(proxies.action()).await {
+                    let n = call(ap.n_actions()).await.and_then(|r| r.ok()).unwrap_or(0);
+                    for i in 0..n {
+                        if let Some(Ok(an)) = call(ap.get_name(i)).await {
+                            actions.push(an);
                         }
                     }
                 }
-                if has_value {
-                    if let Ok(vp) = proxies.value().await {
-                        value = vp.current_value().await.ok().map(format_value);
+            }
+            if has_value {
+                if let Some(Ok(vp)) = call(proxies.value()).await {
+                    value = call(vp.current_value()).await.and_then(|r| r.ok()).map(format_value);
+                }
+            }
+            // Text content is where editable/entry text (the typed string) lives;
+            // `name` is usually empty for such widgets. Read a bounded slice.
+            if has_text {
+                if let Some(Ok(tp)) = call(proxies.text()).await {
+                    let count = call(tp.character_count()).await.and_then(|r| r.ok()).unwrap_or(0);
+                    if count > 0 {
+                        let end = count.min(4096);
+                        if let Some(Ok(t)) = call(tp.get_text(0, end)).await {
+                            text_content = t;
+                        }
                     }
                 }
             }
         }
 
-        let focused = matches!(acc.get_state().await, Ok(s) if s.contains(State::Focused));
-
-        // Enqueue children before moving `acc` into `visited`.
-        let children = acc.get_children().await.unwrap_or_default();
-        for c in children.into_iter().rev() {
-            stack.push((c, depth + 1));
+        // Surface Text content as the display name when the widget has no name.
+        if name.trim().is_empty() && !text_content.trim().is_empty() {
+            name = text_content;
         }
 
-        let _ = has_text;
+        let focused = matches!(call(acc.get_state()).await, Some(Ok(s)) if s.contains(State::Focused));
+
+        // Enqueue children before moving `acc` into `visited`.
+        if let Some(Ok(children)) = call(acc.get_children()).await {
+            for c in children.into_iter().rev() {
+                stack.push((c, depth + 1));
+            }
+        }
+
         visited.push(Visited {
             depth,
             role,
@@ -187,6 +253,7 @@ async fn collect_visited<'a>(
         });
     }
 
+    dlog!("walked pid {pid}: {} node(s)", visited.len());
     Ok(Some(visited))
 }
 
@@ -243,12 +310,21 @@ fn format_value(v: f64) -> String {
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
     runtime().block_on(async {
-        let conn = AccessibilityConnection::new()
-            .await
-            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-        match collect_visited(&conn, pid).await? {
-            Some(visited) => Ok(Some(render(&visited))),
-            None => Ok(None),
+        let work = async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            match collect_visited(&conn, pid).await? {
+                Some(visited) => Ok(Some(render(&visited))),
+                None => Ok(None),
+            }
+        };
+        match tokio::time::timeout(OP_TIMEOUT, work).await {
+            Ok(r) => r,
+            Err(_) => {
+                dlog!("walk_tree timed out for pid {pid}");
+                Ok(None)
+            }
         }
     })
 }

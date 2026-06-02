@@ -102,7 +102,9 @@
                   # runs. The browser/AT-SPI read path is covered by chromium.
                   # chromium + electron also exercise the CDP focus-free-write
                   # override (Input.insertText into the background window).
-                ) [ "chromium" "electron" "gtk" "qt" ]
+                  # gtk4/qt6 extend the native AT-SPI path to current toolkit
+                  # versions; tk is the negative control (no AT-SPI bridge).
+                ) [ "chromium" "electron" "gtk" "gtk4" "qt" "qt6" "tk" ]
               )
             );
         }

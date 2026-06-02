@@ -82,6 +82,69 @@ let
     sys.exit(app.exec_())
   '';
 
+  # Qt6 (PyQt6) variant of the same QLineEdit window — same AT-SPI bridge as Qt5
+  # but the current major version, so the native path is covered across both.
+  pyqt6Env = pkgs.python3.withPackages (ps: [ ps.pyqt6 ]);
+  qt6EntryScript = pkgs.writeText "cua-qt6-entry.py" ''
+    import sys
+    from PyQt6.QtWidgets import QApplication, QWidget, QLineEdit, QVBoxLayout
+    app = QApplication(sys.argv)
+    w = QWidget()
+    w.setWindowTitle("cua-initial")
+    entry = QLineEdit()
+    layout = QVBoxLayout(w)
+    layout.addWidget(entry)
+    w.resize(400, 120)
+    w.show()
+    entry.setFocus()
+    sys.exit(app.exec())
+  '';
+
+  # GTK4 app (compiled C) with a focused GtkEntry. GTK4 talks AT-SPI directly
+  # (no atk-bridge module), so it contrasts with the GTK3/zenity case which goes
+  # through the bridge. Cairo renderer + x11 backend keep it headless-safe.
+  gtk4App = pkgs.runCommandCC "cua-gtk4" {
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ pkgs.gtk4 ];
+  } ''
+    mkdir -p $out/bin
+    cat > app.c <<'EOF'
+    #include <gtk/gtk.h>
+    static void on_activate(GtkApplication *app, gpointer user_data) {
+      GtkWidget *win = gtk_application_window_new(app);
+      gtk_window_set_title(GTK_WINDOW(win), "cua-initial");
+      GtkWidget *entry = gtk_entry_new();
+      gtk_window_set_child(GTK_WINDOW(win), entry);
+      gtk_window_set_default_size(GTK_WINDOW(win), 400, 120);
+      gtk_widget_grab_focus(entry);
+      gtk_window_present(GTK_WINDOW(win));
+    }
+    int main(int argc, char **argv) {
+      GtkApplication *app = gtk_application_new("ai.cua.Initial", G_APPLICATION_DEFAULT_FLAGS);
+      g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+      int status = g_application_run(G_APPLICATION(app), argc, argv);
+      g_object_unref(app);
+      return status;
+    }
+    EOF
+    $CC app.c -o $out/bin/cua-gtk4 $(pkg-config --cflags --libs gtk4)
+  '';
+
+  # Tk (tkinter) app — Tk has no AT-SPI bridge, so this is the negative-control
+  # data point: the driver can't reach an editable, and get_text falls back to
+  # the X11 window node. Proves graceful degradation for non-accessible toolkits.
+  tkEnv = pkgs.python3.withPackages (ps: [ ps.tkinter ]);
+  tkScript = pkgs.writeText "cua-tk.py" ''
+    import tkinter as tk
+    root = tk.Tk()
+    root.title("cua-initial")
+    entry = tk.Entry(root, width=40)
+    entry.pack(padx=20, pady=20)
+    entry.focus_set()
+    root.geometry("400x120+700+150")
+    root.mainloop()
+  '';
+
   # ── CDP (Chrome DevTools Protocol) focus-free write — approved override ──────
   # AT-SPI exposes Chromium/Electron read-only, so the driver can't write into a
   # *background* browser window through it. CDP talks to the renderer over the
@@ -272,6 +335,38 @@ let
         export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
         export QT_ACCESSIBILITY=1
         exec ${pyqtEnv}/bin/python3 ${qtEntryScript}
+      '';
+    };
+    qt6 = {
+      packages = [ pyqt6Env ];
+      memoryMB = 2048;
+      launch = pkgs.writeShellScript "cua-launch-qt6.sh" ''
+        export QT_QPA_PLATFORM=xcb
+        # Bare PyQt6 doesn't inherit qtbase's plugin path; point Qt6 at it so the
+        # xcb platform plugin is found (Qt6 installs plugins under lib/qt-6).
+        export QT_PLUGIN_PATH=${pkgs.qt6.qtbase}/lib/qt-6/plugins
+        export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt6.qtbase}/lib/qt-6/plugins/platforms
+        # Qt 6.5+ aborts loading the xcb plugin unless libxcb-cursor is present.
+        export LD_LIBRARY_PATH=${pkgs.xcb-util-cursor}/lib:''${LD_LIBRARY_PATH:-}
+        export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
+        export QT_ACCESSIBILITY=1
+        exec ${pyqt6Env}/bin/python3 ${qt6EntryScript}
+      '';
+    };
+    gtk4 = {
+      packages = [ pkgs.gtk4 ];
+      memoryMB = 2048;
+      launch = pkgs.writeShellScript "cua-launch-gtk4.sh" ''
+        export GDK_BACKEND=x11
+        export GSK_RENDERER=cairo
+        exec ${gtk4App}/bin/cua-gtk4
+      '';
+    };
+    tk = {
+      packages = [ tkEnv ];
+      memoryMB = 2048;
+      launch = pkgs.writeShellScript "cua-launch-tk.sh" ''
+        exec ${tkEnv}/bin/python3 ${tkScript}
       '';
     };
     chromium = {

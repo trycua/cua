@@ -634,10 +634,12 @@ pkgs.testers.nixosTest {
     with subtest("Input landed: driver's native AT-SPI reads the window back"):
         # get_text must return the target window's accessibility/structure for a
         # background window — the proven read path. Chromium yields its full a11y
-        # tree; other toolkits yield at least the window node (native or via the
-        # X11 fallback). Either way get_text returns a window/frame description.
-        assert ('frame "' in result) or ('window "' in result) or ('document' in result), (
-            "driver get_text did not return a window/frame for the background app:\n"
+        # tree; GTK/X11-fallback toolkits yield at least the window/frame node;
+        # Qt (esp. Qt6) exposes the editable directly, so get_text returns a bare
+        # "text"/"entry" node (and the focus-free write even lands). Accept any
+        # of these accessibility-node forms.
+        assert any(tok in result for tok in ('frame "', 'window "', 'document', 'text "', 'entry "')), (
+            "driver get_text did not return an accessibility node for the background app:\n"
             + result
         )
 

@@ -95,6 +95,10 @@ let
         # the xcb platform plugin isn't found ("...in \"\""). Point Qt at it.
         export QT_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}
         export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}/platforms
+        # Force Qt's AT-SPI bridge on regardless of the bus enabled-handshake, so
+        # the app exports its accessible tree in this headless session.
+        export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
+        export QT_ACCESSIBILITY=1
         exec ${pyqtEnv}/bin/python3 ${qtEntryScript}
       '';
     };

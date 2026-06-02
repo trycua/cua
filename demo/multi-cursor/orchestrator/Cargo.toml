@@ -8,6 +8,8 @@ name = "orchestrator"
 path = "src/main.rs"
 
 [dependencies]
+# PNG decode + resize for the screenshot-based maze line-diff verification.
+image = { version = "0.25", default-features = false, features = ["png"] }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

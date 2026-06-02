@@ -21,5 +21,18 @@
   ],
   "mypy-type-checker.path": [
     "${workspaceFolder}"
-  ]
+  ],
+  "workbench.colorCustomizations": {
+    "activityBar.background": "#410A56",
+    "titleBar.activeBackground": "#5A0E78",
+    "titleBar.activeForeground": "#FEFBFF",
+    "titleBar.inactiveBackground": "#410A56",
+    "titleBar.inactiveForeground": "#FEFBFF",
+    "statusBar.background": "#410A56",
+    "statusBar.foreground": "#FEFBFF",
+    "statusBar.debuggingBackground": "#410A56",
+    "statusBar.debuggingForeground": "#FEFBFF",
+    "statusBar.noFolderBackground": "#410A56",
+    "statusBar.noFolderForeground": "#FEFBFF"
+  }
 }

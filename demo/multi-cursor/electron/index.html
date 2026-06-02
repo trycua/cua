@@ -3,33 +3,100 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  html, body { margin: 0; padding: 0; background: #f0f0f0; font-family: "Segoe UI", Tahoma, sans-serif; }
-  #form { position: relative; width: 480px; height: 300px; }
-  /* Absolute px coords matched to the other frameworks' layout (480x300). */
-  #title  { position:absolute; left:0; top:8px; width:480px; text-align:center; font-size:16px; font-weight:bold; color:#503000; }
-  #nameLbl{ position:absolute; left:20px; top:72px; font-size:13px; }
-  #box    { position:absolute; left:90px; top:70px; width:294px; height:20px; font-size:13px; }
-  #btn    { position:absolute; left:160px; top:150px; width:160px; height:46px; font-size:14px; }
-  #status { position:absolute; left:20px; top:220px; font-size:13px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: "Segoe UI", Tahoma, sans-serif; font-size: 13px; background: #f0f0f0; overflow: hidden; }
+  #app { display: grid; grid-template-rows: auto auto 1fr auto; height: 100vh; }
+  /* menu + toolbar */
+  #menu { background: #f7f7f7; border-bottom: 1px solid #c8c8c8; padding: 2px 0; }
+  #menu span { padding: 3px 10px; }
+  #menu span:hover { background: #cde2ff; }
+  #toolbar { background: #eee; border-bottom: 1px solid #c8c8c8; display: flex; }
+  #toolbar button { border: 1px solid transparent; background: transparent; padding: 3px 9px; }
+  #toolbar button:hover { border: 1px solid #b0c4de; background: #e6eefb; }
+  #toolbar .sep { width: 1px; background: #c8c8c8; margin: 2px 3px; }
+  /* main split */
+  #main { display: grid; grid-template-columns: 380px 1px 1fr; overflow: hidden; }
+  #split { background: #c8c8c8; }
+  /* dense form: label | control rows, only cell borders */
+  #form { display: grid; grid-template-columns: 120px 1fr; grid-auto-rows: 30px; background: #fff; align-content: start; }
+  #form .lbl { background: #f0f0f0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; padding-left: 8px; }
+  #form .cell { border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; }
+  #form .cell > * { width: 100%; height: 100%; border: 0; background: transparent; padding: 0 6px; font: inherit; }
+  #form input[type=range] { padding: 0; }
+  #saveRow { grid-column: 1 / span 2; }
+  #save { width: 100%; height: 38px; font-weight: bold; }
+  /* right side */
+  #right { display: grid; grid-template-rows: 150px 1px 1fr; overflow: hidden; }
+  #sigHdr { background: #e1e1e1; font-weight: bold; padding: 3px 6px; border-bottom: 1px solid #c8c8c8; }
+  #sigWrap { display: grid; grid-template-rows: auto 1fr; }
+  #doodle { width: 100%; height: 100%; background: #fff; display: block; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { border: 1px solid #d2d2d2; padding: 2px 6px; text-align: left; font-weight: normal; }
+  th { background: #eef1f5; font-weight: 600; }
+  #gridWrap { overflow: auto; }
+  #status { background: #e8e8e8; border-top: 1px solid #c8c8c8; display: flex; justify-content: space-between; padding: 3px 8px; }
 </style>
 </head>
 <body>
-  <div id="form">
-    <div id="title">Electron (Chromium)</div>
-    <div id="nameLbl">Name:</div>
-    <input id="box" type="text" />
-    <button id="btn">SUBMIT</button>
-    <div id="status">Clicks: 0&nbsp;&nbsp;&nbsp;&nbsp;Last: (none)</div>
+  <div id="app">
+    <div id="menu"><span>File</span><span>Edit</span><span>View</span><span>Record</span><span>Tools</span><span>Help</span></div>
+    <div id="toolbar">
+      <button>New</button><button>Open</button><button>Save</button><button>Delete</button>
+      <div class="sep"></div><button>◀ Prev</button><button>Next ▶</button>
+      <div class="sep"></div><button>Find</button>
+    </div>
+    <div id="main">
+      <div id="form">
+        <div class="lbl">Account Name</div><div class="cell"><input id="acct" type="text" /></div>
+        <div class="lbl">Account Type</div><div class="cell"><select id="type"><option>Enterprise</option><option>SMB</option><option>Government</option><option>Reseller</option></select></div>
+        <div class="lbl">Region</div><div class="cell"><select id="region"><option>North</option><option>South</option><option>EMEA</option><option>APAC</option><option>LATAM</option></select></div>
+        <div class="lbl">Priority (1-5)</div><div class="cell"><input id="pri" type="range" min="1" max="5" value="3" /></div>
+        <div class="lbl">Credit Limit</div><div class="cell"><input id="credit" type="range" min="0" max="100" value="40" /></div>
+        <div id="saveRow" class="cell"><button id="save">Add Record</button></div>
+      </div>
+      <div id="split"></div>
+      <div id="right">
+        <div id="sigWrap"><div id="sigHdr">Signature / Notes</div><canvas id="doodle"></canvas></div>
+        <div id="split"></div>
+        <div id="gridWrap">
+          <table id="grid"><thead><tr><th>Account</th><th>Type</th><th>Region</th><th>Pri</th><th>Credit</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+    <div id="status"><span id="statusMsg">Ready</span><span>USER: SYSTEM ▌ CONNECTED</span><span id="recCount">Records: 0</span></div>
   </div>
   <script>
-    let clicks = 0;
-    const btn = document.getElementById('btn');
-    const box = document.getElementById('box');
-    const status = document.getElementById('status');
-    btn.addEventListener('click', () => {
-      clicks++;
-      const last = box.value ? box.value : '(none)';
-      status.textContent = `Clicks: ${clicks}    Last: ${last}`;
+    // line tool: one straight segment per press-drag-release (down→up)
+    const cv = document.getElementById('doodle');
+    const ctx = cv.getContext('2d');
+    let segs = [], dn = null, cur = null;
+    function redraw() {
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.strokeStyle = '#191970'; ctx.lineWidth = 2;
+      for (const s of segs) { ctx.beginPath(); ctx.moveTo(s.x0, s.y0); ctx.lineTo(s.x1, s.y1); ctx.stroke(); }
+      if (dn && cur) { ctx.save(); ctx.globalAlpha = 0.45; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(dn.x, dn.y); ctx.lineTo(cur.x, cur.y); ctx.stroke(); ctx.restore(); }
+    }
+    function fit() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; redraw(); }
+    window.addEventListener('resize', fit); requestAnimationFrame(fit);
+    // Pointer events (not mouse): coordinate-routed background injection arrives
+    // as PEN/touch pointers; pointer* covers mouse + pen + touch uniformly.
+    cv.style.touchAction = 'none';
+    cv.addEventListener('pointerdown', e => { dn = { x: e.offsetX, y: e.offsetY }; cur = dn; });
+    cv.addEventListener('pointermove', e => { if (dn) { cur = { x: e.offsetX, y: e.offsetY }; redraw(); } });
+    cv.addEventListener('pointerup', e => { if (dn) { segs.push({ x0: dn.x, y0: dn.y, x1: e.offsetX, y1: e.offsetY }); dn = null; cur = null; redraw(); } });
+    // save
+    let records = 0;
+    const acct = document.getElementById('acct'), tbody = document.querySelector('#grid tbody');
+    document.getElementById('save').addEventListener('click', () => {
+      let nm = (acct.value || '').trim(); if (!nm) nm = '(unnamed)';
+      const tr = document.createElement('tr');
+      const credit = '$' + (document.getElementById('credit').value * 1000);
+      [nm, document.getElementById('type').value, document.getElementById('region').value, document.getElementById('pri').value, credit]
+        .forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+      tbody.appendChild(tr);
+      records++; document.getElementById('recCount').textContent = `Records: ${records}`;
+      document.getElementById('statusMsg').textContent = `Saved account '${nm}'.`;
+      acct.value = '';
     });
   </script>
 </body>

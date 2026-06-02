@@ -71,9 +71,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
-    GA_ROOT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, PT_PEN, PT_TOUCH,
-    SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_SETFOREGROUNDLOCKTIMEOUT, SWP_NOACTIVATE, SWP_NOMOVE,
+    IsWindow, SetCursorPos, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    SystemParametersInfoW, GA_ROOT, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, PT_PEN,
+    PT_TOUCH, SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_SETFOREGROUNDLOCKTIMEOUT, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOSIZE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_NOACTIVATE,
 };
 
@@ -223,7 +223,9 @@ impl NoActivateGuard {
             };
             let prev = GetWindowLongPtrW(root, GWL_EXSTYLE);
             let want = WS_EX_NOACTIVATE.0 as isize;
-            let applied = prev != 0 && (prev & want) == 0 && {
+            // Apply WS_EX_NOACTIVATE if not already set (prev can be 0, so don't
+            // gate on it — we just need to check the bit and set it if absent).
+            let applied = (prev & want) == 0 && {
                 SetWindowLongPtrW(root, GWL_EXSTYLE, prev | want);
                 // Confirm it took (cross-process SetWindowLongPtr can be denied
                 // by UIPI on higher-integrity targets).
@@ -303,8 +305,12 @@ struct ZorderGuard {
 impl ZorderGuard {
     unsafe fn arm(target: HWND) -> Self {
         let prev_fg = GetForegroundWindow();
-        // Raise a genuine *background* target into the topmost band so it wins
-        // the injection hit-test even over an active occluder — no activation.
+        // TODO: Check if target is actually occluded (WindowFromPoint over its
+        // client rect) before raising, and preserve its original topmost state
+        // (via GetWindowLongPtr/WS_EX_TOPMOST) so drop() can restore it instead
+        // of unconditionally demoting. Current behavior: raise any non-foreground
+        // target into topmost band (works for common case, but loses original z
+        // and raises even when not occluded).
         let raised = !target.0.is_null() && target != prev_fg;
         if raised {
             set_topmost(target, true);
@@ -388,7 +394,15 @@ fn pen_tap(sx: i32, sy: i32, barrel: bool) -> Result<()> {
 /// on Chromium content (returned errors), whereas synthetic-pen injection lands
 /// reliably and routes by coordinate with no foreground dependency.
 pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button: &str) -> Result<()> {
+    if target == 0 {
+        bail!("inject_click_screen: null target window");
+    }
     let target_h = HWND(target as *mut _);
+    unsafe {
+        if !IsWindow(target_h).as_bool() {
+            bail!("inject_click_screen: invalid or stale target HWND");
+        }
+    }
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(target) {
         // Higher-integrity target: injection into its queue is blocked too.
         bail!(msg);
@@ -582,7 +596,15 @@ pub fn inject_drag_screen(
     steps: usize,
     button: &str,
 ) -> Result<()> {
+    if target == 0 {
+        bail!("inject_drag_screen: null target window");
+    }
     let target_h = HWND(target as *mut _);
+    unsafe {
+        if !IsWindow(target_h).as_bool() {
+            bail!("inject_drag_screen: invalid or stale target HWND");
+        }
+    }
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(target) {
         bail!(msg);
     }

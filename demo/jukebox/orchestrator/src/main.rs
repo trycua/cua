@@ -632,7 +632,9 @@ fn load_midi(path: &str) -> Result<Song, String> {
     for tr in &smf.tracks {
         let mut tick = 0u64;
         let mut name = String::new();
-        let mut on: std::collections::HashMap<u8, (f64, u8)> = std::collections::HashMap::new();
+        // Key by (channel, pitch) so overlapping same-pitch notes on different
+        // channels don't collide, and polyphonic same-pitch (rare) is handled.
+        let mut on: std::collections::HashMap<(u8, u8), (f64, u8)> = std::collections::HashMap::new();
         let mut notes = Vec::new();
         let mut drum_notes = 0usize; // notes seen on MIDI channel 10 (index 9)
         for ev in tr {
@@ -642,14 +644,16 @@ fn load_midi(path: &str) -> Result<Song, String> {
                 TrackEventKind::Meta(MetaMessage::TrackName(bytes)) =>
                     if name.is_empty() { name = String::from_utf8_lossy(bytes).trim().to_string(); },
                 TrackEventKind::Midi { channel, message: MidiMessage::NoteOn { key, vel } } => {
+                    let ch = channel.as_int();
+                    let pitch = key.as_int();
                     if vel.as_int() > 0 {
-                        on.insert(key.as_int(), (now, vel.as_int()));
-                        if channel.as_int() == 9 { drum_notes += 1; }
+                        on.insert((ch, pitch), (now, vel.as_int()));
+                        if ch == 9 { drum_notes += 1; }
                     }
-                    else if let Some((t0, v)) = on.remove(&key.as_int()) { notes.push(Note { t: t0, pitch: key.as_int(), vel: v }); dur = dur.max(now); }
+                    else if let Some((t0, v)) = on.remove(&(ch, pitch)) { notes.push(Note { t: t0, pitch, vel: v }); dur = dur.max(now); }
                 }
-                TrackEventKind::Midi { message: MidiMessage::NoteOff { key, .. }, .. } => {
-                    if let Some((t0, v)) = on.remove(&key.as_int()) { notes.push(Note { t: t0, pitch: key.as_int(), vel: v }); dur = dur.max(now); }
+                TrackEventKind::Midi { channel, message: MidiMessage::NoteOff { key, .. } } => {
+                    if let Some((t0, v)) = on.remove(&(channel.as_int(), key.as_int())) { notes.push(Note { t: t0, pitch: key.as_int(), vel: v }); dur = dur.max(now); }
                 }
                 _ => {}
             }

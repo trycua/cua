@@ -1,36 +1,43 @@
-# Multi-cursor background computer-use demo
+# Multi-cursor background computer-use demo — "National Records System"
 
-Shows off cua-driver's Windows background actuation: **one human action in a
-foreground window is replayed onto four background windows at the same time**,
-each driven by its own cua-driver session = its own uniquely-coloured agent
-cursor — with **no window ever raised** and **the user's mouse never moved**.
+A fleet of deliberately **legacy-looking government records terminals** (navy
+banner, `UNCLASSIFIED // FOR OFFICIAL USE ONLY` strip, function-key bar,
+green-screen records grid, status line) — the kind of internal agency app that,
+in the age of AI, has *no* automation integration. cua-driver automates them
+anyway.
+
+One human action in the foreground "master" terminal is replayed onto **four
+background terminals at the same time**, each driven by its own cua-driver
+session = its own uniquely-coloured agent cursor — with **no window ever
+raised** and **the user's mouse never moved**.
 
 It also proves cua-driver works **with or without an accessibility tree**: the
 five windows span five UI frameworks, and cua-driver's default dispatch
 auto-selects UIA-Invoke where an a11y tree exists and falls back to
 pixel/pointer-injection where it doesn't.
 
-## Layout (2×2 + center)
+## Layout (each window = ½ work-width × ½ work-height)
+
+The four corners tile the taskbar-safe work area into quadrants; the master is
+centered, **overlapping all four**:
 
 ```
- ┌───────────────┐                 ┌───────────────┐
- │ Win32 GDI      │   crimson ●     │ WinForms       │   amber ●
- │ (NO a11y tree) │                 │ (.NET classic) │
- └───────────────┘                 └───────────────┘
-                 ┌───────────────┐
-                 │ MASTER         │  ← you click / type here (foreground)
-                 │ (Win32 ctrls)  │
-                 └───────────────┘
- ┌───────────────┐                 ┌───────────────┐
- │ WPF            │   aqua ●        │ Electron       │   mint_lime ●
- │ (XAML / UIA)   │                 │ (Chromium)     │
- └───────────────┘                 └───────────────┘
+ ┌────────────────────────┬────────────────────────┐
+ │ Win32 GDI (NO a11y)     │ WinForms (.NET)         │
+ │            crimson ●    │            amber ●      │
+ │           ┌────────────────────────┐             │
+ │           │ MASTER — Win32 controls │  ← you      │
+ ├───────────│ (foreground, overlaps)  │─────────────┤
+ │ WPF (XAML)│                         │ Electron    │
+ │           └────────────────────────┘ mint_lime ●  │
+ │            aqua ●       │            (Chromium)    │
+ └────────────────────────┴────────────────────────┘
 ```
 
-The four corners are background windows. When you click **SUBMIT** (or type a
-name and submit) in the center master, four coloured cursors glide onto the
-four corners and perform the same action there — concurrently, in the
-background. Watch the corners' "Clicks:"/"Last:" lines update without any
+Click **SUBMIT** (or type a subject name then submit) in the center master:
+four coloured cursors glide onto the four corner terminals and commit the same
+record there — concurrently, in the background. Watch each corner's
+green-screen records grid grow and its `RECORDS:` counter tick up, without any
 corner ever coming to the front.
 
 ## Frameworks (and what they exercise)

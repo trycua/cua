@@ -202,7 +202,8 @@ pub fn post_drag_screen(
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
     unsafe {
-        PostMessageW(target, WM_MOUSEMOVE, wparam, make_lparam(c_from.x, c_from.y))?;
+        // Pre-drag MOUSEMOVE (wParam=0, no buttons down yet) then DOWN at from.
+        PostMessageW(target, WM_MOUSEMOVE, WPARAM(0), make_lparam(c_from.x, c_from.y))?;
         PostMessageW(target, down_msg, wparam, make_lparam(c_from.x, c_from.y))?;
     }
     sleep(Duration::from_millis(CLICK_DELAY_MS));

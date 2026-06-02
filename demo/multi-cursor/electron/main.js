@@ -3,10 +3,10 @@ const path = require('path');
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 496,
-    height: 338,
-    resizable: false,
-    title: 'Electron (Chromium)',
+    width: 900,
+    height: 560,
+    resizable: true,
+    title: 'Meridian CRM — Account Record [Electron]',
     autoHideMenuBar: true,
     webPreferences: { contextIsolation: true },
   });

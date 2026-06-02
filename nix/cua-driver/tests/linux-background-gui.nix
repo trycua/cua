@@ -22,7 +22,9 @@ let
 
   # python3 with pyatspi — used both by cua-driver (it shells out to pyatspi)
   # and by this test's AT-SPI readback. Becomes `python3` on PATH.
-  pythonAtspi = pkgs.python3.withPackages (ps: [ ps.pyatspi ]);
+  # pyatspi is a pure-Python wrapper over PyGObject (`gi`); without pygobject3
+  # the `import pyatspi` line fails with `ModuleNotFoundError: No module named 'gi'`.
+  pythonAtspi = pkgs.python3.withPackages (ps: [ ps.pyatspi ps.pygobject3 ]);
 
   # Typelibs pyatspi / atk-bridge need at runtime.
   giTypelibPath = lib.makeSearchPath "lib/girepository-1.0" [

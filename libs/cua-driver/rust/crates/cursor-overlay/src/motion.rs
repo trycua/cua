@@ -53,6 +53,7 @@ impl Default for MotionConfig {
 }
 
 impl MotionConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn with_overrides(
         &self,
         start_handle: Option<f64>,

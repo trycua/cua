@@ -133,7 +133,8 @@ impl RenderStateCore {
         let mut fire_arrival = false;
 
         if let Some(ref p) = self.path {
-            let path_frac = (self.dist / p.length.max(1.0)).clamp(0.0, 1.0);
+            let path_len = p.length.max(1.0);
+            let path_frac = (self.dist / path_len).clamp(0.0, 1.0);
             let profile =
                 16.0 * path_frac * path_frac * (1.0 - path_frac) * (1.0 - path_frac);
             let floor = if path_frac < 0.5 {
@@ -141,19 +142,37 @@ impl RenderStateCore {
             } else {
                 self.motion.min_end_speed
             };
-            let speed = (floor + (self.motion.peak_speed - floor) * profile).max(floor);
+            let speed_based = (floor + (self.motion.peak_speed - floor) * profile).max(floor);
+            // Fixed-duration override: when `glide_duration_ms > 0` the move
+            // takes exactly that long regardless of distance, so an orchestrator
+            // can lock glides to a known cadence. `0` (the default) keeps the
+            // speed-based timing untouched. Shared verbatim with the macOS
+            // reference path (`tick_swift_constants`) — no platform drift.
+            let speed = if self.motion.glide_duration_ms > 0.0 {
+                path_len / (self.motion.glide_duration_ms / 1000.0)
+            } else {
+                speed_based
+            };
             self.dist += speed * dt;
 
-            let path_len = p.length.max(1.0);
             if self.dist >= path_len {
                 let end = p.sample(path_len);
                 let end_heading = p.end_visual_heading;
                 let vh = end.heading;
+                // In fixed-duration mode the constant speed can be large; base
+                // the settle impulse on the normal end-floor so the landing
+                // stays as crisp as a speed-based glide instead of overshooting
+                // proportionally to a short duration.
+                let impulse = if self.motion.glide_duration_ms > 0.0 {
+                    self.motion.min_end_speed
+                } else {
+                    speed
+                };
                 self.spring = Some(Spring {
                     ox: 0.0,
                     oy: 0.0,
-                    vx: speed * 0.5 * vh.cos(),
-                    vy: speed * 0.5 * vh.sin(),
+                    vx: impulse * 0.5 * vh.cos(),
+                    vy: impulse * 0.5 * vh.sin(),
                 });
                 self.spring_tgt = Some((end.x, end.y, end_heading));
                 self.pos = (end.x, end.y);
@@ -228,7 +247,17 @@ impl RenderStateCore {
             // Smootherstep speed profile (normalised: peak = 1.0).
             let profile = (30.0 * u * u * (1.0 - u) * (1.0 - u)) / 1.875;
             let floor_speed = if u < 0.5 { MIN_START_SPEED } else { MIN_END_SPEED };
-            let current_speed = floor_speed + (PEAK_SPEED - floor_speed) * profile;
+            let speed_based = floor_speed + (PEAK_SPEED - floor_speed) * profile;
+            // Fixed-duration override: when `glide_duration_ms > 0` the move
+            // takes exactly that long regardless of distance, so an orchestrator
+            // can lock glides to a known cadence. `0` (the default) keeps the
+            // speed-based timing untouched. Shared verbatim with the
+            // Windows/Linux path (`tick_motion`) — no platform drift.
+            let current_speed = if self.motion.glide_duration_ms > 0.0 {
+                path_len / (self.motion.glide_duration_ms / 1000.0)
+            } else {
+                speed_based
+            };
             self.dist += current_speed * dt;
 
             if self.dist >= path_len {
@@ -236,11 +265,20 @@ impl RenderStateCore {
                 let end = p.sample(path_len);
                 let end_heading = p.end_visual_heading;
                 let vh = end.heading;
+                // In fixed-duration mode the constant speed can be large; base
+                // the settle impulse on the normal end-floor so the landing
+                // stays as crisp as a speed-based glide instead of overshooting
+                // proportionally to a short duration.
+                let impulse = if self.motion.glide_duration_ms > 0.0 {
+                    MIN_END_SPEED
+                } else {
+                    current_speed
+                };
                 self.spring = Some(Spring {
                     ox: 0.0,
                     oy: 0.0,
-                    vx: current_speed * SPRING_OVERSHOOT * vh.cos(),
-                    vy: current_speed * SPRING_OVERSHOOT * vh.sin(),
+                    vx: impulse * SPRING_OVERSHOOT * vh.cos(),
+                    vy: impulse * SPRING_OVERSHOOT * vh.sin(),
                 });
                 self.spring_tgt = Some((end.x, end.y, end_heading));
                 self.pos = (end.x, end.y);
@@ -758,4 +796,53 @@ pub fn draw_default_arrow(
         tiny_skia::Transform::identity(),
         None,
     );
+}
+
+#[cfg(test)]
+mod glide_duration_tests {
+    use super::*;
+    use crate::{CursorConfig, PathPlanner};
+
+    /// Run a glide of `dist_pts` to completion and return how many seconds it
+    /// took. `tick` selects the platform path: `false` = `tick_motion`
+    /// (Windows/Linux), `true` = `tick_swift_constants` (macOS reference).
+    fn arrival_secs(glide_ms: f64, dist_pts: f64, swift: bool) -> f64 {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.glide_duration_ms = glide_ms;
+        core.motion.idle_hide_ms = 0.0;
+        core.pos = (0.0, 0.0);
+        // Aligned headings → an effectively straight path of length ~dist_pts.
+        core.path = Some(PathPlanner::plan(0.0, 0.0, 0.0, dist_pts, 0.0, 0.0, 0.0, 80.0));
+        core.dist = 0.0;
+        let dt = 1.0 / 240.0;
+        let mut t = 0.0;
+        for _ in 0..200_000 {
+            let arrived = if swift { core.tick_swift_constants(dt) } else { core.tick_motion(dt) };
+            t += dt;
+            if arrived { break; }
+        }
+        t
+    }
+
+    #[test]
+    fn fixed_duration_is_distance_independent_on_both_paths() {
+        for swift in [false, true] {
+            let short = arrival_secs(300.0, 120.0, swift);
+            let long = arrival_secs(300.0, 1400.0, swift);
+            // Both land in ~300ms regardless of distance (within a few ticks).
+            assert!((short - 0.3).abs() < 0.05, "swift={swift} short={short}");
+            assert!((long - 0.3).abs() < 0.05, "swift={swift} long={long}");
+        }
+    }
+
+    #[test]
+    fn zero_keeps_speed_based_timing() {
+        // glide_duration_ms == 0 (the default) → longer paths take longer, on
+        // both platform paths, exactly as before this field was implemented.
+        for swift in [false, true] {
+            let short = arrival_secs(0.0, 120.0, swift);
+            let long = arrival_secs(0.0, 1400.0, swift);
+            assert!(long > short + 0.2, "swift={swift} short={short} long={long}");
+        }
+    }
 }

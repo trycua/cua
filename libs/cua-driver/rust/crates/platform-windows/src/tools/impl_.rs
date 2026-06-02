@@ -2471,53 +2471,60 @@ impl Tool for TypeTextTool {
         // uses, which we've verified works on modern Notepad / WinUI3.
         // Legacy Win32 stays on the PostMessage path so the no-focus-
         // steal property is preserved.
-        if crate::input::is_xaml_host_hwnd(hwnd) {
-            if let Some(idx) = elem_idx {
-                let idx = idx as usize;
-                let state = self.state.clone();
-                let text_for_uia = text.clone();
-                let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                    let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
-                        .ok_or_else(|| anyhow::anyhow!(
-                            "Element {idx} not in cache — call get_window_state(pid={pid}, window_id={hwnd}) first."
-                        ))?;
-                    use windows::Win32::UI::Accessibility::{
-                        IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId,
-                    };
-                    use windows::core::{Interface, BSTR};
-                    let elem: IUIAutomationElement =
-                        unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
-                    let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId)? };
-                    std::mem::forget(elem);
-                    let vp: IUIAutomationValuePattern = pattern.cast()?;
-                    unsafe { vp.SetValue(&BSTR::from(text_for_uia.as_str()))? };
-                    Ok(())
-                }).await;
-                return match result {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern \
-                         (XAML / UWP target, element_index=[{idx}])."
-                    )),
-                    Ok(Err(e)) => ToolResult::error(format!("type_text (UIA path): {e}")),
-                    Err(e)     => ToolResult::error(format!("Task error: {e}")),
+        // ── Automatic routing — the caller need not know the framework. ──
+        // 1. With an element_index, try UIA ValuePattern.SetValue first: it works
+        //    for WPF / WinForms / UWP / XAML and many web inputs, sets the value
+        //    through the accessibility channel (no keystrokes), and the `_noact`
+        //    guard blocks any self-foreground — so it never raises. Auto-falls-
+        //    back to the WM_CHAR path below if the element has no ValuePattern
+        //    (most legacy Win32 EDITs consume WM_CHAR fine without focus steal).
+        if let Some(idx) = elem_idx {
+            let idx = idx as usize;
+            let state = self.state.clone();
+            let text_for_uia = text.clone();
+            let set_ok = tokio::task::spawn_blocking(move || -> bool {
+                let Some(ptr) = state.element_cache.get_element_ptr(pid, hwnd, idx) else { return false; };
+                use windows::Win32::UI::Accessibility::{
+                    IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId,
                 };
-            } else {
-                // XAML target without element_index: PostMessage will silently
-                // drop chars. Surface a clear error pointing the agent at the
-                // right workflow rather than lying with a "✅ Typed" message.
-                return ToolResult::error(format!(
-                    "type_text on a modern XAML / UWP target (pid {raw_pid}, hwnd {hwnd}) \
-                     requires `element_index` — its WM_CHAR pipeline ignores PostMessage \
-                     without keyboard focus. Call `get_window_state(pid={raw_pid}, \
-                     window_id={hwnd})` to enumerate elements, then re-call \
-                     `type_text(pid, window_id, element_index, text)`. Or call \
-                     `set_value(pid, window_id, element_index, value)` directly — same \
-                     UIA backend."
+                use windows::core::{Interface, BSTR};
+                let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+                let ok = (|| -> anyhow::Result<()> {
+                    let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) }?;
+                    let vp: IUIAutomationValuePattern = pattern.cast()?;
+                    unsafe { vp.SetValue(&BSTR::from(text_for_uia.as_str())) }?;
+                    Ok(())
+                })().is_ok();
+                std::mem::forget(elem);
+                ok
+            }).await.unwrap_or(false);
+            if set_ok {
+                return ToolResult::text(format!(
+                    "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern (element_index=[{idx}])."
                 ));
             }
+            // ValuePattern unavailable → fall through to the WM_CHAR path.
         }
 
-        // Legacy Win32 path — PostMessage WM_CHAR, no focus steal.
+        // 2. No element_index on a WPF target: WM_CHAR is dropped and there's no
+        //    element to SetValue, so deliver real keystrokes via the cloaked-
+        //    focus path (capability-first; the brief focus is hidden, foreground
+        //    restored). Supplying an element_index (path 1) is preferred and
+        //    never raises.
+        if elem_idx.is_none() && crate::input::dispatch::is_wpf_target_window(hwnd) {
+            drop(_noact);
+            let text2 = text.clone();
+            let r = tokio::task::spawn_blocking(move || crate::input::inject_text_cloaked(hwnd, &text2)).await;
+            return match r {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (WPF, cloaked focus)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
+        // 3. Legacy Win32 / GDI / Chromium-IME — PostMessage WM_CHAR, no focus steal.
         let result = tokio::task::spawn_blocking(move || {
             crate::input::post_type_text(hwnd, &text)
         }).await;
@@ -2959,6 +2966,17 @@ impl Tool for SetValueTool {
             Some(v) => v.to_owned(),
             None    => return ToolResult::error("Missing required string field value."),
         };
+
+        // No-raise guard: a WPF/XAML automation peer calls UIElement.Focus() →
+        // SetForegroundWindow during ValuePattern.SetValue. WS_EX_NOACTIVATE on
+        // the target makes that a no-op while the value is still set, so a
+        // background SetValue can't steal the user's foreground. Held across the
+        // whole write. (No-op for dispatch:"foreground".)
+        let _noact = if crate::input::dispatch::DispatchMode::from_args(&args)
+            != crate::input::dispatch::DispatchMode::Foreground
+        {
+            Some(crate::input::NoActivateGuard::arm(windows::Win32::Foundation::HWND(hwnd as *mut _)))
+        } else { None };
 
         // Glide the agent cursor onto the target element before writing its
         // value, so a value write gets the same visual feedback as a click —
@@ -3630,7 +3648,7 @@ impl Tool for DragTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::dispatch::{DispatchMode, EventKind};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -3693,11 +3711,43 @@ impl Tool for DragTool {
         let (sx_from, sy_from) = bitmap_to_screen(hwnd, from_x as i32, from_y as i32);
         let (sx_to,   sy_to)   = bitmap_to_screen(hwnd, to_x   as i32, to_y   as i32);
 
-        // dispatch:"background" — refuse if PostMessage drag would silently drop.
+        // dispatch:"background" — if a PostMessage drag would silently drop
+        // (Chromium/WPF/GTK canvas content reads mouse from the system input
+        // queue, not the per-window queue), fall back to coordinate-routed
+        // synthetic-pen drag injection instead of refusing. No foreground swap,
+        // no cursor move; the target is held non-activatable + cloaked for the
+        // stroke (mirrors the click pen path).
         if dispatch == DispatchMode::Background
             && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
         {
-            return background_unavailable_error(hwnd, EventKind::MouseClick);
+            let target = hwnd;
+            let btn = button.clone();
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, sx_from as f64, sy_from as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
+                x: sx_from as f64, y: sy_from as f64,
+            });
+            let inj = tokio::task::spawn_blocking(move || {
+                crate::input::inject::inject_drag_screen(
+                    target, sx_from, sy_from, sx_to, sy_to, steps.max(8), &btn,
+                )
+            })
+            .await;
+            return match inj {
+                Ok(Ok(())) => {
+                    overlay_glide_to(&cursor_key, sx_to as f64, sy_to as f64).await;
+                    crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
+                        x: sx_to as f64, y: sy_to as f64,
+                    });
+                    ToolResult::text(format!(
+                        "✅ Sent drag via synthetic-pen injection on pid {raw_pid} \
+                         from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
+                         (dispatch:background, PostMessage would have been dropped)."
+                    ))
+                }
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
         }
         // dispatch:"foreground" — SendInput-based drag. Required for WPF
         // Slider thumbs (and any framework that polls GetKeyState during
@@ -3751,10 +3801,13 @@ impl Tool for DragTool {
 
         let button_c = button.clone();
         let result = tokio::task::spawn_blocking(move || {
-            crate::input::mouse::post_drag(
+            // Screen-coord, deepest-child variant: routes the gesture to the
+            // child control under the start point (e.g. a WinForms Panel),
+            // not the top-level frame that would ignore it.
+            crate::input::mouse::post_drag_screen(
                 hwnd,
-                from_x as i32, from_y as i32,
-                to_x   as i32, to_y   as i32,
+                sx_from, sy_from,
+                sx_to,   sy_to,
                 duration_ms, steps, &button_c,
             )
         }).await;
@@ -3961,7 +4014,7 @@ impl Tool for SetAgentCursorMotionTool {
                 Motion curve (Bezier):\n\
                 - arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25\n\
                 - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
-                - glide_duration_ms: flight duration per move [50,5000]. Default 160\n\
+                - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based (the default)\n\
                 - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
                 - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000".into(),
             input_schema: json!({
@@ -3977,7 +4030,7 @@ impl Tool for SetAgentCursorMotionTool {
                     "arc_size":{"type":"number","description":"Arc deflection as fraction of path length [0,1]. Default 0.25."},
                     "arc_flow":{"type":"number","description":"Asymmetry bias [-1,1]. Default 0.0."},
                     "spring":{"type":"number","description":"Settle damping [0.3,1.0]. Default 0.72."},
-                    "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000,"description":"Flight duration per move in ms. Default 160."},
+                    "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000,"description":"Fixed flight duration per move in ms; omit for speed-based timing (the default)."},
                     "dwell_after_click_ms":{"type":"number","minimum":0,"maximum":5000,"description":"Pause after click ripple in ms. Default 80."},
                     "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000,"description":"Auto-hide delay in ms. 0=never. Default 20000."}
                 },"additionalProperties":false

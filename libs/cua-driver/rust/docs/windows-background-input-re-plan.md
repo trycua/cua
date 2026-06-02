@@ -33,6 +33,27 @@ daemon were killed mid-action, and (2) it's **ineffective** — our own injected
 posted input legitimizes the target's foreground claim, so the steal happens even
 under a maxed lock. `WS_EX_NOACTIVATE` is categorical and per-window; use it.
 
+### Typing — automatic, no-raise routing
+`type_text` picks the right delivery on its own (the caller never specifies a
+framework):
+1. **With an `element_index`** → try UIA `ValuePattern.SetValue` first. This sets
+   the value through the accessibility channel (no keystrokes) and, under the
+   `NoActivateGuard` (`WS_EX_NOACTIVATE`), a WPF/XAML automation peer's
+   `UIElement.Focus()`→`SetForegroundWindow` is denied — so WPF/WinForms/UWP and
+   many web inputs receive the text **with no foreground steal and no SendInput**
+   (RE-verified: text lands, foreground unchanged). Auto-falls-back to WM_CHAR if
+   the element has no ValuePattern.
+2. **Legacy Win32 / GDI / Chromium-IME** → `PostMessage(WM_CHAR)` (no focus steal).
+3. **WPF without an `element_index`** → cloaked-focus `SendInput` Unicode
+   keystrokes (capability-first; brief hidden focus). Supplying an `element_index`
+   (path 1) is preferred and never raises.
+
+`set_value` arms the same `NoActivateGuard`, so a background UIA value-write never
+raises. The cloaked-`SendInput` paths (`inject_text_cloaked`, `inject_key_cloaked`)
+are serialized by a global lock with a **1-second auto-expiry**, so concurrent
+sessions can't garble the shared input queue or race the foreground restore, and
+a stuck holder can never deadlock the others.
+
 ### Keyboard accelerators — capability-first, UX best-effort
 Plain **text** typing is fully background-free via `WM_CHAR` (no focus needed).
 Keyboard **accelerators / key-combos** (Ctrl+S, Ctrl+A) need the target focused

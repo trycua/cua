@@ -564,6 +564,35 @@ unsafe extern "system" fn wnd_proc(
                 .unwrap_or_default()
                 .as_millis() as u64;
 
+            // ── Optional overlay-FPS probe ───────────────────────────────────
+            // Set CUA_DRIVER_RS_OVERLAY_FPS_FILE=<path> to append a measured
+            // render-FPS line ~once/sec. Diagnostic only; when the env var is
+            // unset this is a single OnceLock read + branch (no behaviour change).
+            {
+                use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+                static FPS_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                static FPS_FRAMES: AtomicU64 = AtomicU64::new(0);
+                static FPS_LAST: AtomicU64 = AtomicU64::new(0);
+                if let Some(path) = FPS_PATH.get_or_init(|| std::env::var("CUA_DRIVER_RS_OVERLAY_FPS_FILE").ok()) {
+                    let n = FPS_FRAMES.fetch_add(1, Relaxed) + 1;
+                    let last = FPS_LAST.load(Relaxed);
+                    if last == 0 {
+                        FPS_LAST.store(now_ms, Relaxed);
+                    } else if now_ms.wrapping_sub(last) >= 1000 {
+                        let secs = (now_ms - last) as f64 / 1000.0;
+                        let fps = n as f64 / secs.max(1e-3);
+                        let cursors = RENDER.lock().ok()
+                            .and_then(|g| g.as_ref().map(|m| m.cursors.len())).unwrap_or(0);
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                            use std::io::Write;
+                            let _ = writeln!(f, "overlay fps={fps:.1} avg_dt_ms={:.1} cursors={cursors}", secs * 1000.0 / n as f64);
+                        }
+                        FPS_FRAMES.store(0, Relaxed);
+                        FPS_LAST.store(now_ms, Relaxed);
+                    }
+                }
+            }
+
             // ── Drain commands, tick all cursors, composite one pixmap ───────
             // Measure real dt from last tick — Windows timer resolution defaults
             // to 15ms so the hardcoded 8ms ran the animation at half speed.
@@ -572,9 +601,11 @@ unsafe extern "system" fn wnd_proc(
                 if let Some(map) = guard.as_mut() {
                     // Drain the channel via get-or-create; track the last-touched
                     // key so the z-order pin follows the most-recent cursor.
+                    let mut drained = 0u32;
                     if let Ok(rx_guard) = CMD_RX_WIN.try_lock() {
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
+                                drained += 1;
                                 if let Some(k) = apply_msg(map, m) {
                                     map.last_active = Some(k);
                                 }
@@ -597,24 +628,6 @@ unsafe extern "system" fn wnd_proc(
                         }
                     }
 
-                    // Composite every cursor into ONE virtual-screen pixmap.
-                    // tiny-skia fills are alpha-over, so insertion order =
-                    // paint/z-order; idle/hidden cursors early-return inside
-                    // paint_cursor so an idle session costs ~nothing.
-                    let w = map.virt_w.max(1) as u32;
-                    let h = map.virt_h.max(1) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    for (_k, rs) in &map.cursors {
-                        cursor_overlay::paint_cursor(
-                            &mut pm,
-                            &rs.core,
-                            map.virt_x as f64,
-                            map.virt_y as f64,
-                            None, // focus-rect is macOS-only
-                        );
-                    }
-
                     // Pin above the most-recently-touched cursor's target.
                     let pinned = map
                         .last_active
@@ -622,7 +635,45 @@ unsafe extern "system" fn wnd_proc(
                         .and_then(|k| map.cursors.get(k))
                         .and_then(|rs| rs.core.pinned_wid);
 
-                    (Some(pm), arrived, pinned)
+                    // Repaint-gate: compositing a full-virtual-screen pixmap and
+                    // blitting it through UpdateLayeredWindow is the dominant
+                    // per-frame cost (a DIB alloc + full-screen RGBA→BGRA copy +
+                    // GPU blit). Skip it entirely on frames where nothing visibly
+                    // changed — no command arrived, no cursor is mid-glide /
+                    // spring / click-pulse — so a resting overlay costs ~nothing
+                    // instead of burning that blit at the timer rate. One extra
+                    // frame is forced after activity stops (`was_active`) so the
+                    // final resting pose is drawn.
+                    let any_active = map.cursors.values().any(|rs| {
+                        rs.core.path.is_some() || rs.core.spring.is_some() || rs.core.click_t.is_some()
+                    });
+                    static OVERLAY_WAS_ACTIVE: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    let was_active = OVERLAY_WAS_ACTIVE.swap(any_active, std::sync::atomic::Ordering::Relaxed);
+                    let pixmap = if drained > 0 || any_active || was_active {
+                        // Composite every cursor into ONE virtual-screen pixmap.
+                        // tiny-skia fills are alpha-over, so insertion order =
+                        // paint/z-order; idle/hidden cursors early-return inside
+                        // paint_cursor so an idle session costs ~nothing.
+                        let w = map.virt_w.max(1) as u32;
+                        let h = map.virt_h.max(1) as u32;
+                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
+                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                        for (_k, rs) in &map.cursors {
+                            cursor_overlay::paint_cursor(
+                                &mut pm,
+                                &rs.core,
+                                map.virt_x as f64,
+                                map.virt_y as f64,
+                                None, // focus-rect is macOS-only
+                            );
+                        }
+                        Some(pm)
+                    } else {
+                        None
+                    };
+
+                    (pixmap, arrived, pinned)
                 } else {
                     (None, Vec::new(), None)
                 }

@@ -123,7 +123,7 @@ fn motion_def() -> &'static ToolDef {
             - arc_size: perpendicular deflection as fraction of path length [0,1]. Default 0.25\n\
             - arc_flow: asymmetry [-1,1]; positive bulges toward destination. Default 0.0\n\
             - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
-            - glide_duration_ms: flight duration per move [50,5000]. Default 160\n\
+            - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based (the default)\n\
             - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
             - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000".into(),
         input_schema: serde_json::json!({
@@ -159,7 +159,7 @@ fn motion_def() -> &'static ToolDef {
                     "type": "number",
                     "minimum": 50,
                     "maximum": 5000,
-                    "description": "Flight duration per move in ms. Default 160."
+                    "description": "Fixed flight duration per move in ms; omit for speed-based timing (the default)."
                 },
                 "dwell_after_click_ms": {
                     "type": "number",

@@ -28,6 +28,7 @@ mod autostart;
 mod bundle;
 mod cli;
 mod doctor;
+mod mcp_http;
 mod proxy;
 mod serve;
 mod skills;

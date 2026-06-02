@@ -59,6 +59,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "window_id", "element_index", "value"],
             "properties": {
+                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer" },
                 "window_id": {
                     "type": "integer",
@@ -90,12 +91,16 @@ impl Tool for SetValueTool {
         let element_index = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
         let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
 
-        let element_ptr = match self.state.element_cache.get_element_ptr(pid, window_id, element_index) {
-            Some(p) => p,
+        // Retain out of the cache so a concurrent get_window_state can't free
+        // the element mid-action (use-after-free → daemon crash). Guard lives
+        // to the end of this method, past the AX write below.
+        let element_guard = match self.state.element_cache.get_element_retained(pid, window_id, element_index) {
+            Some(e) => e,
             None => return ToolResult::error(format!(
                 "Element index {element_index} not found. Call get_window_state first."
             )),
         };
+        let element_ptr = element_guard.as_ptr();
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations

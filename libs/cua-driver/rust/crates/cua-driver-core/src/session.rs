@@ -18,12 +18,31 @@
 //! `recording.rs` — a registry-free, platform-pluggable hook set with no
 //! reverse coupling from core into the platform crates.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 type SessionEndHook = Box<dyn Fn(&str) + Send + Sync>;
 
 static SESSION_END_HOOKS: OnceLock<Mutex<Vec<SessionEndHook>>> = OnceLock::new();
+
+/// Last-activity timestamp per live session id. A session is "touched" every
+/// time a tool call carries its explicit `session` id (see the daemon boundary
+/// in `serve.rs`). The idle-TTL sweep ([`evict_idle`]) ends sessions that
+/// haven't been touched within the TTL — this is the cleanup path that replaces
+/// connection-EOF reaping now that a session is a caller-declared identity, not
+/// a per-MCP-connection one. `"default"` and empty ids are never tracked (they
+/// are the anonymous, cursor-less fallback).
+static SESSION_ACTIVITY: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+fn activity() -> &'static Mutex<HashMap<String, Instant>> {
+    SESSION_ACTIVITY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Whether `id` is a real, trackable session id (not the anonymous fallback).
+fn is_trackable(id: &str) -> bool {
+    !id.is_empty() && id != "default"
+}
 
 /// Session ids that have already had their `session_end` fired. Dedupes the
 /// control-connection EOF teardown (the reaper) against any stray legacy
@@ -80,6 +99,59 @@ pub fn is_session_ended(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().contains(session_id)
 }
 
+/// Record activity for an explicit session id, resetting its idle-TTL clock.
+/// Called at the daemon boundary on every tool call that carries an explicit
+/// `session`. No-op for the anonymous fallback (`"default"` / empty) and for a
+/// session that has already ended (so a late in-flight call can't resurrect a
+/// reaped session's TTL entry).
+pub fn touch_session(session_id: &str) {
+    if !is_trackable(session_id) || is_session_ended(session_id) {
+        return;
+    }
+    activity()
+        .lock()
+        .unwrap()
+        .insert(session_id.to_owned(), Instant::now());
+}
+
+/// End a session explicitly (the `end_session` tool / `session end` CLI verb):
+/// drop its idle-TTL entry and fan `fire_session_end` out to every cleanup hook
+/// (overlay remove, recording stop, config-override clear). Idempotent via
+/// `fire_session_end`'s dedupe. No-op for the anonymous fallback.
+pub fn end_session(session_id: &str) {
+    if !is_trackable(session_id) {
+        return;
+    }
+    activity().lock().unwrap().remove(session_id);
+    fire_session_end(session_id);
+}
+
+/// End every session whose last activity is older than `ttl`, returning the ids
+/// ended. This is the idle-TTL sweep the daemon runs periodically: a
+/// caller-declared session is no longer tied to a connection's lifetime, so a
+/// run that finishes (or crashes) without calling `end_session` is reclaimed
+/// here instead of leaking its cursor / recording. Sessions touched within the
+/// TTL are left untouched.
+pub fn evict_idle(ttl: Duration) -> Vec<String> {
+    let now = Instant::now();
+    let stale: Vec<String> = {
+        let map = activity().lock().unwrap();
+        map.iter()
+            .filter(|(_, last)| now.duration_since(**last) >= ttl)
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    for id in &stale {
+        end_session(id);
+    }
+    stale
+}
+
+/// Number of sessions with a live idle-TTL entry. Diagnostics only.
+pub fn active_session_count() -> usize {
+    activity().lock().unwrap().len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +183,36 @@ mod tests {
             1,
             "hook must run exactly once for a given session id"
         );
+    }
+
+    #[test]
+    fn touch_then_evict_by_ttl() {
+        let sid = "test-ttl-session-DDEEFF";
+        touch_session(sid);
+        // A huge TTL leaves it alone (just touched).
+        assert!(evict_idle(Duration::from_secs(3600)).iter().all(|s| s != sid));
+        // A zero TTL treats any prior activity as idle → evicts it.
+        let evicted = evict_idle(Duration::ZERO);
+        assert!(evicted.iter().any(|s| s == sid), "zero-TTL must evict a touched session");
+        assert!(is_session_ended(sid), "evicted session is ended");
+    }
+
+    #[test]
+    fn anonymous_ids_are_never_tracked() {
+        touch_session("default");
+        touch_session("");
+        // Neither shows up under a zero-TTL sweep (they were never inserted).
+        let evicted = evict_idle(Duration::ZERO);
+        assert!(!evicted.iter().any(|s| s == "default" || s.is_empty()));
+    }
+
+    #[test]
+    fn end_session_is_explicit_teardown() {
+        let sid = "test-end-session-112233";
+        touch_session(sid);
+        end_session(sid);
+        assert!(is_session_ended(sid));
+        // Its TTL entry is gone, so a later sweep doesn't re-fire for it.
+        assert!(!evict_idle(Duration::ZERO).iter().any(|s| s == sid));
     }
 }

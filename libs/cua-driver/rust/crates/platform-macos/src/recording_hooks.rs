@@ -49,8 +49,10 @@ pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> 
     let cache = ELEMENT_CACHE.get()?;
     let pid_i32 = i32::try_from(pid).ok()?;
     let window_id_u32 = u32::try_from(window_id).ok()?;
-    let ptr = cache.get_element_ptr(pid_i32, window_id_u32, element_index as usize)?;
-    let (sx, sy) = unsafe { element_screen_center(ptr as AXUIElementRef)? };
+    // Retain so a concurrent get_window_state can't free the element between
+    // the lookup and element_screen_center (use-after-free → daemon crash).
+    let element = cache.get_element_retained(pid_i32, window_id_u32, element_index as usize)?;
+    let (sx, sy) = unsafe { element_screen_center(element.as_ptr() as AXUIElementRef)? };
 
     let bounds = crate::windows::window_bounds_by_id(window_id_u32)?;
     // Probe the captured PNG's width to derive the Retina scale — the

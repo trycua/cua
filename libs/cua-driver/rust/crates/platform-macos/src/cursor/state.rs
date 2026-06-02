@@ -102,7 +102,9 @@ impl CursorRegistry {
         // Write-boundary resurrection guard (see get_or_create): no-op for an
         // ended session id so a post-session_end set_config can't resurrect the
         // cursor metadata. "default" / non-session ids are never ended.
-        if cua_driver_core::session::is_session_ended(&config.cursor_id) {
+        if config.cursor_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&config.cursor_id)
+        {
             return;
         }
         let mut inner = self.inner.lock().unwrap();
@@ -117,7 +119,7 @@ impl CursorRegistry {
         // Write-boundary resurrection guard (see get_or_create): no-op for an
         // ended session id so an in-flight move after session_end can't
         // re-create the cleared cursor. "default" / non-session ids never ended.
-        if cua_driver_core::session::is_session_ended(cursor_id) {
+        if cursor_id.is_empty() || cua_driver_core::session::is_session_ended(cursor_id) {
             return;
         }
         let mut inner = self.inner.lock().unwrap();
@@ -134,7 +136,7 @@ impl CursorRegistry {
         // Write-boundary resurrection guard (see get_or_create): no-op for an
         // ended session id so a post-session_end enable/disable can't resurrect
         // the cleared cursor. "default" / non-session ids are never ended.
-        if cua_driver_core::session::is_session_ended(cursor_id) {
+        if cursor_id.is_empty() || cua_driver_core::session::is_session_ended(cursor_id) {
             return;
         }
         let mut inner = self.inner.lock().unwrap();

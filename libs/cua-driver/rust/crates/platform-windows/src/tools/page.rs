@@ -228,10 +228,14 @@ impl PageBackend for WindowsPageBackend {
             use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
             let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
             let pin_wid = if !root.0.is_null() { root.0 as u64 } else { hwnd };
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(pin_wid));
+            crate::overlay::send_command_default(cursor_overlay::OverlayCommand::PinAbove(pin_wid));
         }
-        crate::overlay::animate_cursor_to(screen_x, screen_y).await;
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+        // The cross-platform `PageBackend::click_element` trait carries no
+        // caller `session`, so this drives the seeded `"default"` cursor rather
+        // than a per-session one. Threading session through the trait is a
+        // separate cross-platform change (tracked as a follow-up).
+        crate::overlay::animate_cursor_to("default".to_owned(), screen_x, screen_y).await;
+        crate::overlay::send_command_default(cursor_overlay::OverlayCommand::ClickPulse {
             x: screen_x,
             y: screen_y,
         });

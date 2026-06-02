@@ -73,6 +73,30 @@ jobs:
             visual: false
             result_link: result-linux-background-gui-chromium
             artifact_name: ""
+          - name: Linux background GUI test (electron)
+            check_attr: cua-driver-linux-background-gui-electron
+            timeout_minutes: 25
+            visual: false
+            result_link: result-linux-background-gui-electron
+            artifact_name: ""
+          - name: Linux background GUI test (gtk4)
+            check_attr: cua-driver-linux-background-gui-gtk4
+            timeout_minutes: 15
+            visual: false
+            result_link: result-linux-background-gui-gtk4
+            artifact_name: ""
+          - name: Linux background GUI test (qt6)
+            check_attr: cua-driver-linux-background-gui-qt6
+            timeout_minutes: 15
+            visual: false
+            result_link: result-linux-background-gui-qt6
+            artifact_name: ""
+          - name: Linux background GUI test (tk)
+            check_attr: cua-driver-linux-background-gui-tk
+            timeout_minutes: 15
+            visual: false
+            result_link: result-linux-background-gui-tk
+            artifact_name: ""
           # Firefox is temporarily disabled: under the emulated CI VM (no KVM) it
           # does not surface its window within the launch timeout, so the job
           # times out before any AT-SPI subtest runs. The browser/AT-SPI read

@@ -628,52 +628,54 @@ unsafe extern "system" fn wnd_proc(
                         }
                     }
 
-                    // Pin above the most-recently-touched cursor's target.
-                    let pinned = map
-                        .last_active
-                        .as_ref()
-                        .and_then(|k| map.cursors.get(k))
-                        .and_then(|rs| rs.core.pinned_wid);
-
-                    // Repaint-gate: compositing a full-virtual-screen pixmap and
-                    // blitting it through UpdateLayeredWindow is the dominant
-                    // per-frame cost (a DIB alloc + full-screen RGBA→BGRA copy +
-                    // GPU blit). Skip it entirely on frames where nothing visibly
-                    // changed — no command arrived, no cursor is mid-glide /
-                    // spring / click-pulse — so a resting overlay costs ~nothing
-                    // instead of burning that blit at the timer rate. One extra
-                    // frame is forced after activity stops (`was_active`) so the
-                    // final resting pose is drawn.
-                    let any_active = map.cursors.values().any(|rs| {
-                        rs.core.path.is_some() || rs.core.spring.is_some() || rs.core.click_t.is_some()
-                    });
-                    static OVERLAY_WAS_ACTIVE: std::sync::atomic::AtomicBool =
-                        std::sync::atomic::AtomicBool::new(false);
-                    let was_active = OVERLAY_WAS_ACTIVE.swap(any_active, std::sync::atomic::Ordering::Relaxed);
-                    let pixmap = if drained > 0 || any_active || was_active {
-                        // Composite every cursor into ONE virtual-screen pixmap.
-                        // tiny-skia fills are alpha-over, so insertion order =
-                        // paint/z-order; idle/hidden cursors early-return inside
-                        // paint_cursor so an idle session costs ~nothing.
-                        let w = map.virt_w.max(1) as u32;
-                        let h = map.virt_h.max(1) as u32;
-                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                        for (_k, rs) in &map.cursors {
-                            cursor_overlay::paint_cursor(
-                                &mut pm,
-                                &rs.core,
-                                map.virt_x as f64,
-                                map.virt_y as f64,
-                                None, // focus-rect is macOS-only
-                            );
+                    // Decide where to pin the single overlay window in z.
+                    //
+                    // The overlay is ONE full-virtual-screen layered window, so it
+                    // can occupy only one z-slot. It must sit ABOVE every window a
+                    // live cursor is actuating, but NOT above whatever sits above
+                    // those (the user's foreground). The right slot is therefore
+                    // "just above the HIGHEST-z actuating window": the overlay is
+                    // full-screen, so being above the topmost driven window puts it
+                    // above all of them (they're all at-or-below it), while still
+                    // below anything stacked above them. Pinning above one fixed
+                    // window (the old last-active behaviour) instead let any other
+                    // driven window stacked above it occlude its cursors — the
+                    // blink-out. NB: this is a RELATIVE z move (insert above a
+                    // specific window), which works from this non-foreground
+                    // thread; an absolute HWND_TOP can be refused by the
+                    // foreground lock and sink the overlay behind everything.
+                    let mut driven: Vec<u64> = Vec::new();
+                    for rs in map.cursors.values() {
+                        if !rs.core.visible || rs.core.idle_alpha < 0.004 { continue; }
+                        if let Some(w) = rs.core.pinned_wid {
+                            if !driven.contains(&w) { driven.push(w); }
                         }
-                        Some(pm)
-                    } else {
-                        None
-                    };
+                    }
+                    let pinned = unsafe { topmost_of(&driven) };
 
-                    (pixmap, arrived, pinned)
+                    // Composite every cursor into ONE virtual-screen pixmap and
+                    // blit it every frame. (An earlier "skip when idle" gate was
+                    // removed: starting/stopping the full-screen UpdateLayeredWindow
+                    // as activity comes and goes made all the resting cursors
+                    // flicker when any one of them clicked — very visible with many
+                    // cursors. A steady per-frame blit is flicker-free, and during
+                    // playback at least one cursor is almost always active anyway.)
+                    let _ = drained;
+                    let w = map.virt_w.max(1) as u32;
+                    let h = map.virt_h.max(1) as u32;
+                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
+                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                    for (_k, rs) in &map.cursors {
+                        cursor_overlay::paint_cursor(
+                            &mut pm,
+                            &rs.core,
+                            map.virt_x as f64,
+                            map.virt_y as f64,
+                            None, // focus-rect is macOS-only
+                        );
+                    }
+
+                    (Some(pm), arrived, pinned)
                 } else {
                     (None, Vec::new(), None)
                 }
@@ -819,6 +821,23 @@ unsafe fn update_layered_window(
 /// `WM_TIMER` branch in `wnd_proc` on the overlay STA thread.
 struct WinZOrderEnforcer {
     hwnd_isize: isize,
+}
+
+/// Of the given window ids, return the one highest in the current z-order (the
+/// first encountered walking top→bottom), or `None` if none are present. Used to
+/// pick the single window the overlay should pin just above so it covers every
+/// actuating window without rising above whatever sits above them.
+#[cfg(target_os = "windows")]
+unsafe fn topmost_of(ids: &[u64]) -> Option<u64> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetTopWindow, GetWindow, GW_HWNDNEXT};
+    if ids.is_empty() { return None; }
+    let mut h = GetTopWindow(None).unwrap_or(HWND(std::ptr::null_mut()));
+    while !h.0.is_null() {
+        if ids.contains(&(h.0 as u64)) { return Some(h.0 as u64); }
+        h = GetWindow(h, GW_HWNDNEXT).unwrap_or(HWND(std::ptr::null_mut()));
+    }
+    ids.first().copied()
 }
 
 impl ZOrderEnforcer for WinZOrderEnforcer {

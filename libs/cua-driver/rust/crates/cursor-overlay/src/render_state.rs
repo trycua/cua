@@ -387,7 +387,7 @@ impl RenderStateCore {
                 //   tx = clickPoint.x + cos(endAngle) * clickOffset
                 //   ty = clickPoint.y + sin(endAngle) * clickOffset
                 const CLICK_OFFSET: f64 = 16.0;
-                const TURN_RADIUS: f64 = 80.0;
+                let turn_radius = self.motion.turn_radius;
                 let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
                 let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
 
@@ -407,7 +407,7 @@ impl RenderStateCore {
                     ty,
                     th1,
                     end_heading_radians,
-                    TURN_RADIUS,
+                    turn_radius,
                 );
                 self.path = Some(plan);
                 self.dist = 0.0;

@@ -96,6 +96,28 @@ async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
         crate::overlay::send_command(key.to_owned(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
         return;
     }
+    // Fixed-duration glide → decouple the click from the render thread. When
+    // `glide_duration_ms > 0` the path completes in exactly that wall-clock time
+    // (see render_state::tick_motion), so instead of `await`-ing the render
+    // thread's arrival oneshot — which couples click latency to overlay FPS and
+    // degrades under many concurrent cursors — we fire the move and sleep the
+    // known duration. The click then lands a deterministic time after dispatch
+    // regardless of render load, while the cursor still animates visually on the
+    // render thread. Speed-based glides (`== 0`, the default) keep the precise
+    // arrival-await since their duration depends on distance.
+    let motion = crate::overlay::current_motion(key);
+    if motion.glide_duration_ms > 0.0 {
+        crate::overlay::send_command(
+            key.to_owned(),
+            cursor_overlay::OverlayCommand::MoveTo {
+                x: sx,
+                y: sy,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(motion.glide_duration_ms as u64)).await;
+        return;
+    }
     crate::overlay::animate_cursor_to(key.to_owned(), sx, sy).await;
 }
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
@@ -4032,7 +4054,8 @@ impl Tool for SetAgentCursorMotionTool {
                     "spring":{"type":"number","description":"Settle damping [0.3,1.0]. Default 0.72."},
                     "glide_duration_ms":{"type":"number","minimum":50,"maximum":5000,"description":"Fixed flight duration per move in ms; omit for speed-based timing (the default)."},
                     "dwell_after_click_ms":{"type":"number","minimum":0,"maximum":5000,"description":"Pause after click ripple in ms. Default 80."},
-                    "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000,"description":"Auto-hide delay in ms. 0=never. Default 20000."}
+                    "idle_hide_ms":{"type":"number","minimum":0,"maximum":60000,"description":"Auto-hide delay in ms. 0=never. Default 20000."},
+                    "turn_radius":{"type":"number","minimum":1,"maximum":1000,"description":"Minimum turning radius of the glide path in points; smaller = tighter curves. Default 80."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: true, open_world: false,
@@ -4068,6 +4091,7 @@ impl Tool for SetAgentCursorMotionTool {
             num(args.get("dwell_after_click_ms")),
             num(args.get("idle_hide_ms")),
             None, // press_duration_ms — not in Swift tool surface
+            num(args.get("turn_radius")),
         );
         crate::overlay::send_command(cursor_id.clone(), cursor_overlay::OverlayCommand::SetMotion(updated.clone()));
         // Match Swift text format 1:1.

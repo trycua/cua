@@ -172,6 +172,12 @@ fn motion_def() -> &'static ToolDef {
                     "minimum": 0,
                     "maximum": 60000,
                     "description": "Auto-hide delay in ms. 0 = never hide. Default 20000."
+                },
+                "turn_radius": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "description": "Minimum turning radius of the glide path in points; smaller = tighter curves. Default 80."
                 }
             },
             "additionalProperties": false
@@ -226,7 +232,8 @@ impl Tool for SetAgentCursorMotionTool {
             || args.get("spring").is_some()
             || args.get("glide_duration_ms").is_some()
             || args.get("dwell_after_click_ms").is_some()
-            || args.get("idle_hide_ms").is_some();
+            || args.get("idle_hide_ms").is_some()
+            || args.get("turn_radius").is_some();
 
         if motion_changed {
             // Read this cursor's current motion from the overlay, apply
@@ -242,6 +249,7 @@ impl Tool for SetAgentCursorMotionTool {
                 num(args.get("dwell_after_click_ms")),
                 num(args.get("idle_hide_ms")),
                 None, // press_duration_ms not exposed
+                num(args.get("turn_radius")),
             );
             crate::cursor::overlay::send_command(
                 cursor_id.clone(),

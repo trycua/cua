@@ -44,6 +44,7 @@ let
     # at runtime (which D-Bus-activates a second launcher and breaks the bus).
     "GSETTINGS_BACKEND=keyfile"
     "XDG_CONFIG_HOME=/tmp/cua-cfg"
+    "GSETTINGS_SCHEMA_DIR=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
     "GTK_MODULES=gail:atk-bridge"
     "GNOME_ACCESSIBILITY=1"
     "QT_ACCESSIBILITY=1"
@@ -244,7 +245,11 @@ pkgs.testers.nixosTest {
         # keyfile GSettings backend (shared XDG_CONFIG_HOME), so GTK3 apps export
         # their accessible trees. Done as a one-shot write — no org.a11y.Bus poke.
         machine.succeed("mkdir -p /tmp/cua-cfg")
-        machine.succeed("${a11yEnv} gsettings set org.gnome.desktop.interface toolkit-accessibility true")
+        # Non-fatal: log the outcome but don't abort the run if it errors, so the
+        # AT-SPI registration diagnostics still surface.
+        machine.execute("${a11yEnv} gsettings set org.gnome.desktop.interface toolkit-accessibility true 2>&1 | tee /tmp/gsettings.log")
+        machine.execute("${a11yEnv} gsettings get org.gnome.desktop.interface toolkit-accessibility 2>&1 | tee -a /tmp/gsettings.log")
+        machine.log("gsettings result: " + machine.execute("cat /tmp/gsettings.log")[1])
         machine.execute("${a11yEnv} ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher --launch-immediately >/tmp/atspi-launcher.log 2>&1 &")
 
     with subtest("Focused control terminal"):

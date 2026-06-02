@@ -349,5 +349,20 @@ pkgs.testers.nixosTest {
         control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
         active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
         assert control == active, "expected active window " + control + ", got " + active
+
+    with subtest("Confirm: focusing the window exposes the editable (diagnostic)"):
+        # Direct confirmation of the focus-gate finding. Activate the target so it
+        # becomes the focused window, then re-run the driver: with focus the
+        # toolkit exposes its editable, so type_text can land and get_text should
+        # read it back. Non-fatal — this is evidence in the logs, not a gate,
+        # because behaviour differs per toolkit (GTK's bridge still won't register
+        # here). Done last, after the focus-free assertions above.
+        machine.execute("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/target-xid.txt)")
+        machine.execute("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/target-xid.txt)")
+        machine.sleep(1)
+        status, focused = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
+        machine.log("FOCUSED-WINDOW RUN (exit=" + str(status) + "):")
+        machine.log(focused)
+        machine.log("focused readback contains typed text (${typed}): " + str("${typed}" in focused))
   '';
 }

@@ -4097,13 +4097,14 @@ impl Tool for SetAgentCursorMotionTool {
         // Match Swift text format 1:1.
         let summary = format!(
             "cursor motion: startHandle={sh} endHandle={eh} arcSize={asz} arcFlow={af} \
-             spring={sp} glideDurationMs={gd} dwellAfterClickMs={dw} idleHideMs={ih}",
+             spring={sp} glideDurationMs={gd} dwellAfterClickMs={dw} idleHideMs={ih} turnRadius={tr}",
             sh = updated.start_handle, eh = updated.end_handle,
             asz = updated.arc_size,   af = updated.arc_flow,
             sp = updated.spring,
             gd = updated.glide_duration_ms as i64,
             dw = updated.dwell_after_click_ms as i64,
             ih = updated.idle_hide_ms as i64,
+            tr = updated.turn_radius as i64,
         );
         ToolResult::text(format!("✅ {summary}")).with_structured(json!({
             "cursor_id":            cursor_id,
@@ -4115,6 +4116,7 @@ impl Tool for SetAgentCursorMotionTool {
             "glide_duration_ms":    updated.glide_duration_ms,
             "dwell_after_click_ms": updated.dwell_after_click_ms,
             "idle_hide_ms":         updated.idle_hide_ms,
+            "turn_radius":          updated.turn_radius,
         }))
     }
 }
@@ -4150,13 +4152,14 @@ impl Tool for GetAgentCursorStateTool {
         // Swift text format 1:1: single-line camelCase key=value pairs.
         let summary = format!(
             "cursor: enabled={enabled} startHandle={sh} endHandle={eh} arcSize={asz} \
-             arcFlow={af} spring={sp} glideDurationMs={gd} dwellAfterClickMs={dw} idleHideMs={ih}",
+             arcFlow={af} spring={sp} glideDurationMs={gd} dwellAfterClickMs={dw} idleHideMs={ih} turnRadius={tr}",
             sh = motion.start_handle, eh = motion.end_handle,
             asz = motion.arc_size,   af = motion.arc_flow,
             sp = motion.spring,
             gd = motion.glide_duration_ms as i64,
             dw = motion.dwell_after_click_ms as i64,
             ih = motion.idle_hide_ms as i64,
+            tr = motion.turn_radius as i64,
         );
         // Rust-only structured payload: the same fields + the multi-cursor
         // instance map. Cursor instances are a Rust extension Swift doesn't
@@ -4173,6 +4176,7 @@ impl Tool for GetAgentCursorStateTool {
                 "glide_duration_ms":    motion.glide_duration_ms,
                 "dwell_after_click_ms": motion.dwell_after_click_ms,
                 "idle_hide_ms":         motion.idle_hide_ms,
+                "turn_radius":          motion.turn_radius,
                 "cursors":              cursors,
             }))
     }

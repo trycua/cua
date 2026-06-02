@@ -179,46 +179,58 @@ async fn collect_visited<'a>(
         let has_component = ifaces.contains(Interface::Component);
         let has_text = ifaces.contains(Interface::Text);
 
-        let role = match call(acc.get_role_name()).await {
+        // These four are independent — issue them concurrently to cut the
+        // per-node round-trip cost (large trees like Chromium's have hundreds
+        // of nodes, so sequential reads dominate the walk time).
+        let (role_r, name_r, state_r, children_r) = tokio::join!(
+            call(acc.get_role_name()),
+            call(acc.name()),
+            call(acc.get_state()),
+            call(acc.get_children()),
+        );
+        let role = match role_r {
             Some(Ok(r)) => r,
             _ => String::new(),
         };
-        let mut name = match call(acc.name()).await {
+        let mut name = match name_r {
             Some(Ok(n)) => n,
             _ => String::new(),
         };
+        let focused = matches!(state_r, Some(Ok(s)) if s.contains(State::Focused));
 
         // Collect action names, numeric value, and (crucially) Text-interface
-        // content up front, so the borrowed `Proxies` is dropped before `acc`
-        // moves into `visited`.
+        // content. Only touch `proxies` when an interface is actually present,
+        // and drop the borrow before `acc` moves into `visited`.
         let mut actions: Vec<String> = Vec::new();
         let mut value: Option<String> = None;
         let mut text_content = String::new();
-        if let Ok(proxies) = acc.proxies().await {
-            if has_action {
-                if let Some(Ok(ap)) = call(proxies.action()).await {
-                    let n = call(ap.n_actions()).await.and_then(|r| r.ok()).unwrap_or(0);
-                    for i in 0..n {
-                        if let Some(Ok(an)) = call(ap.get_name(i)).await {
-                            actions.push(an);
+        if has_action || has_value || has_text {
+            if let Some(Ok(proxies)) = call(acc.proxies()).await {
+                if has_action {
+                    if let Some(Ok(ap)) = call(proxies.action()).await {
+                        let n = call(ap.n_actions()).await.and_then(|r| r.ok()).unwrap_or(0);
+                        for i in 0..n {
+                            if let Some(Ok(an)) = call(ap.get_name(i)).await {
+                                actions.push(an);
+                            }
                         }
                     }
                 }
-            }
-            if has_value {
-                if let Some(Ok(vp)) = call(proxies.value()).await {
-                    value = call(vp.current_value()).await.and_then(|r| r.ok()).map(format_value);
+                if has_value {
+                    if let Some(Ok(vp)) = call(proxies.value()).await {
+                        value = call(vp.current_value()).await.and_then(|r| r.ok()).map(format_value);
+                    }
                 }
-            }
-            // Text content is where editable/entry text (the typed string) lives;
-            // `name` is usually empty for such widgets. Read a bounded slice.
-            if has_text {
-                if let Some(Ok(tp)) = call(proxies.text()).await {
-                    let count = call(tp.character_count()).await.and_then(|r| r.ok()).unwrap_or(0);
-                    if count > 0 {
-                        let end = count.min(4096);
-                        if let Some(Ok(t)) = call(tp.get_text(0, end)).await {
-                            text_content = t;
+                // Text content is where editable/entry text (the typed string)
+                // lives; `name` is usually empty for such widgets.
+                if has_text {
+                    if let Some(Ok(tp)) = call(proxies.text()).await {
+                        let count = call(tp.character_count()).await.and_then(|r| r.ok()).unwrap_or(0);
+                        if count > 0 {
+                            let end = count.min(4096);
+                            if let Some(Ok(t)) = call(tp.get_text(0, end)).await {
+                                text_content = t;
+                            }
                         }
                     }
                 }
@@ -230,10 +242,8 @@ async fn collect_visited<'a>(
             name = text_content;
         }
 
-        let focused = matches!(call(acc.get_state()).await, Some(Ok(s)) if s.contains(State::Focused));
-
-        // Enqueue children before moving `acc` into `visited`.
-        if let Some(Ok(children)) = call(acc.get_children()).await {
+        // Enqueue children (fetched above) before moving `acc` into `visited`.
+        if let Some(Ok(children)) = children_r {
             for c in children.into_iter().rev() {
                 stack.push((c, depth + 1));
             }

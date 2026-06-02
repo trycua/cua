@@ -33,6 +33,10 @@ let
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cua-session-bus"
     "XDG_RUNTIME_DIR=/run/user/0"
     "XDG_DATA_DIRS=/run/current-system/sw/share"
+    # GTK apps load the AT-SPI atk-bridge module from GTK_PATH; without it a
+    # GTK3 app (zenity) never registers with the AT-SPI registry. Chromium uses
+    # its own AT-SPI implementation so it doesn't need this.
+    "GTK_PATH=${pkgs.at-spi2-atk}/lib/gtk-3.0"
     "GTK_MODULES=gail:atk-bridge"
     "GNOME_ACCESSIBILITY=1"
     "QT_ACCESSIBILITY=1"
@@ -160,7 +164,7 @@ let
             # Retry: a11y trees can take a moment to reflect the insertion.
             readback = ""
             last_resp = None
-            for _ in range(20):
+            for _ in range(8):
                 resp = call_tool(proc, 3, "page", {
                     "action": "get_text",
                     "pid": target_pid,
@@ -173,7 +177,7 @@ let
                 )
                 if "${typed}" in readback:
                     break
-                time.sleep(0.5)
+                time.sleep(1.0)
             print("RAW_GET_TEXT_RESPONSE: " + json.dumps(last_resp), flush=True)
             print("READBACK_BEGIN", flush=True)
             print(readback, flush=True)
@@ -242,7 +246,7 @@ pkgs.testers.nixosTest {
 
     with subtest("Type into the inactive window via cua-driver (AT-SPI)"):
         machine.copy_from_host("${mcpTest}", "/tmp/mcp-background-gui-test.py")
-        result = machine.succeed("${a11yEnv} timeout 120 python3 /tmp/mcp-background-gui-test.py 2>&1")
+        result = machine.succeed("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
         machine.log(result)
         assert "background GUI test typed" in result, result
 

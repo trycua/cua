@@ -33,14 +33,17 @@ let
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cua-session-bus"
     "XDG_RUNTIME_DIR=/run/user/0"
     "XDG_DATA_DIRS=/run/current-system/sw/share"
-    # GTK apps load the AT-SPI atk-bridge module from GTK_PATH; without it a
-    # GTK3 app (zenity) never registers with the AT-SPI registry. Chromium uses
-    # its own AT-SPI implementation so it doesn't need this.
     # A GTK3 app dlopens libatk-bridge-2.0.so by soname to join the AT-SPI bus;
     # in this hand-rolled session it isn't on the loader path, so expose it.
     # (Chromium ships its own AT-SPI implementation and doesn't need this.)
     "LD_LIBRARY_PATH=${pkgs.at-spi2-atk}/lib"
-    "GTK_PATH=${pkgs.at-spi2-atk}/lib/gtk-3.0"
+    # GTK3 only exports its accessible tree when assistive tech is enabled. That
+    # flag is the GSettings key org.gnome.desktop.interface toolkit-accessibility.
+    # Use the keyfile backend with a shared config dir so a one-shot `gsettings
+    # set` is visible to every app + the bus launcher, without poking org.a11y.Bus
+    # at runtime (which D-Bus-activates a second launcher and breaks the bus).
+    "GSETTINGS_BACKEND=keyfile"
+    "XDG_CONFIG_HOME=/tmp/cua-cfg"
     "GTK_MODULES=gail:atk-bridge"
     "GNOME_ACCESSIBILITY=1"
     "QT_ACCESSIBILITY=1"
@@ -220,6 +223,8 @@ pkgs.testers.nixosTest {
         testPython
         jq
         procps
+        glib                      # `gsettings` to flip toolkit-accessibility
+        gsettings-desktop-schemas # provides org.gnome.desktop.interface schema
       ] ++ selected.packages;
     };
 
@@ -235,6 +240,11 @@ pkgs.testers.nixosTest {
         machine.succeed("mkdir -p /run/user/0 && chmod 700 /run/user/0")
         machine.execute("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork >/tmp/dbus.log 2>&1")
         machine.wait_until_succeeds("test -S /tmp/cua-session-bus", timeout=10)
+        # Mark assistive tech enabled BEFORE the bus launcher/apps start, via the
+        # keyfile GSettings backend (shared XDG_CONFIG_HOME), so GTK3 apps export
+        # their accessible trees. Done as a one-shot write — no org.a11y.Bus poke.
+        machine.succeed("mkdir -p /tmp/cua-cfg")
+        machine.succeed("${a11yEnv} gsettings set org.gnome.desktop.interface toolkit-accessibility true")
         machine.execute("${a11yEnv} ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher --launch-immediately >/tmp/atspi-launcher.log 2>&1 &")
 
     with subtest("Focused control terminal"):

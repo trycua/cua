@@ -183,9 +183,11 @@ impl RenderStateCore {
             } else {
                 let s: PathState = p.sample(self.dist);
                 self.pos = (s.x, s.y);
-                let desired = s.heading + std::f64::consts::PI;
-                let max_step = 14.0 * dt;
-                self.heading = crate::util::rotate_toward(self.heading, desired, max_step);
+                // Point the arrow exactly along the path tangent (the renderer
+                // adds π, so we store tangent+π). Assigned directly rather than
+                // rate-limited toward it, so the tip actually tracks the
+                // trajectory instead of lagging behind on fast/short glides.
+                self.heading = s.heading + std::f64::consts::PI;
             }
         } else if let Some(mut s) = self.spring {
             if let Some((tx, ty, th)) = self.spring_tgt {
@@ -289,10 +291,10 @@ impl RenderStateCore {
             } else {
                 let s: PathState = p.sample(self.dist);
                 self.pos = (s.x, s.y);
-                // Smooth heading rotation toward motion heading.
-                let desired = s.heading + std::f64::consts::PI;
-                let max_step = 14.0 * dt;
-                self.heading = crate::util::rotate_toward(self.heading, desired, max_step);
+                // Point the arrow exactly along the path tangent (renderer adds
+                // π, so store tangent+π). Direct assignment, not rate-limited, so
+                // the tip tracks the trajectory instead of lagging on fast moves.
+                self.heading = s.heading + std::f64::consts::PI;
             }
         } else if let Some(mut s) = self.spring {
             if let Some((tx, ty, th)) = self.spring_tgt {

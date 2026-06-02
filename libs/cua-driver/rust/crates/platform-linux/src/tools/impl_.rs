@@ -696,6 +696,39 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
+            // Try X11 keystroke injection first (works for focused windows).
+            if crate::input::send_type_text(xid, &text).is_ok() {
+                return Ok(());
+            }
+
+            // Fallback: clipboard+paste for GTK4 and other widgets that don't
+            // accept XSendEvent keystrokes when unfocused. This establishes
+            // internal widget focus without activating the window.
+            if let Some((cx, cy)) = crate::atspi::get_entry_widget_center(pid) {
+                // Convert screen coords to window-local coords for the click.
+                let win_info = crate::x11::list_windows(Some(pid))
+                    .into_iter()
+                    .find(|w| w.xid == xid);
+                if let Some(win) = win_info {
+                    let wx = cx - win.x;
+                    let wy = cy - win.y;
+
+                    // Set clipboard, click entry center, then paste.
+                    if crate::input::set_clipboard(&text).is_ok() {
+                        // Click the entry widget to establish internal focus
+                        // (without raising the window).
+                        let _ = crate::input::send_click(xid, wx, wy, 1, 1);
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+
+                        // Send Ctrl+V paste keystroke.
+                        if crate::input::send_paste(xid).is_ok() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            // Final fallback: direct XSendEvent (may not work for unfocused windows).
             crate::input::send_type_text(xid, &text)
         }).await;
         match result {

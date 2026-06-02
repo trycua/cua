@@ -187,6 +187,67 @@ except Exception as e:
     Ok((parts[0] as i32, parts[1] as i32, parts[2] as u32, parts[3] as u32))
 }
 
+/// Find the first editable entry widget in the app's tree and return its
+/// screen-coordinate center (x, y). Returns None if no entry widget found.
+pub fn get_entry_widget_center(pid: u32) -> Option<(i32, i32)> {
+    let script = format!(r#"
+import pyatspi, sys
+
+def find_entry(acc):
+    role = acc.getRoleName()
+    # Look for entry, text, or editable widgets
+    if role in ("entry", "text", "password text", "paragraph"):
+        try:
+            # Check if it's editable
+            acc.queryEditableText()
+            return acc
+        except:
+            pass
+    # Recurse to children
+    for child in acc:
+        result = find_entry(child)
+        if result:
+            return result
+    return None
+
+desktop = pyatspi.Registry.getDesktop(0)
+entry = None
+for app in desktop:
+    if app.get_process_id() == {pid}:
+        for win in app:
+            entry = find_entry(win)
+            if entry:
+                break
+        break
+
+if not entry:
+    sys.exit(1)
+
+try:
+    comp = entry.queryComponent()
+    ext = comp.getExtents(pyatspi.DESKTOP_COORDS)
+    cx = ext.x + ext.width // 2
+    cy = ext.y + ext.height // 2
+    print(f"{{cx}},{{cy}}")
+except Exception:
+    sys.exit(1)
+"#, pid = pid);
+
+    let out = Command::new("python3").arg("-c").arg(&script).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let parts: Vec<i32> = line.split(',')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if parts.len() >= 2 {
+        Some((parts[0], parts[1]))
+    } else {
+        None
+    }
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Walk via pyatspi subprocess. Returns (markdown, nodes) on success.

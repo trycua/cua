@@ -278,6 +278,39 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Set X11 clipboard content via xclip.
+/// Uses CLIPBOARD selection (Ctrl+V) rather than PRIMARY (middle-click paste).
+/// xclip stays running to serve the selection until another app claims it.
+pub fn set_clipboard(text: &str) -> Result<()> {
+    use std::process::{Command, Stdio};
+    use std::io::Write;
+
+    let mut child = Command::new("xclip")
+        .args(["-selection", "clipboard", "-i"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("xclip spawn failed: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())
+            .map_err(|e| anyhow::anyhow!("xclip write failed: {e}"))?;
+    }
+
+    let status = child.wait()
+        .map_err(|e| anyhow::anyhow!("xclip wait failed: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("xclip exited with error status")
+    }
+}
+
+/// Send Ctrl+V paste keystroke to a window.
+pub fn send_paste(xid: u64) -> Result<()> {
+    send_key(xid, "v", &["ctrl"])
+}
+
 fn char_to_keycode(conn: &RustConnection, ch: char) -> Option<u8> {
     // Use XStringToKeysym equivalent: look up by character keysym.
     // Keysym for ASCII is just the ASCII code.

@@ -74,15 +74,23 @@ fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
-/// On the very first call the cursor is at the off-screen initial position
-/// (-200, -200).  Animating from there would cause a jarring off-screen fly-in,
-/// so we snap to the target with a ClickPulse first and skip the glide wait.
+/// Always glides — including the session's FIRST action. A brand-new cursor
+/// still parked at the off-screen sentinel `(-200, -200)` is seeded on-screen
+/// (offset up-left of the target) inside [`crate::overlay::animate_cursor_to`]
+/// via `seed_start_if_sentinel`, so the `MoveTo` below glides INTO the target
+/// instead of snapping. We previously short-circuited the first action with a
+/// static `ClickPulse` to skip the arrival wait, but on a pure accessibility
+/// action (no real pointer movement) that snap was a single-frame pulse that
+/// was easy to miss — the cursor appeared to never move. Mirrors
+/// `platform_macos::cursor::overlay::animate_cursor_to`, which dropped the same
+/// snap-first shortcut for this reason.
 ///
-/// For all subsequent calls this defers to
-/// [`crate::overlay::animate_cursor_to`], which sends `MoveTo` and awaits the
-/// render thread's arrival oneshot — that's how we keep the click action
-/// from firing before the cursor has visually landed (the old heuristic
-/// `tokio::sleep(80..600 ms)` was racing the spring-physics glide).
+/// [`crate::overlay::animate_cursor_to`] sends `MoveTo` and awaits the render
+/// thread's arrival oneshot — that's how we keep the action from firing before
+/// the cursor has visually landed (the old heuristic `tokio::sleep(80..600 ms)`
+/// was racing the spring-physics glide). It is itself a no-op (returns without
+/// waiting) when the cursor is disabled, so the redundant guard here just saves
+/// the allocation in the common cursor-less case.
 ///
 /// `key` is the session's cursor key (see [`resolve_cursor_key`]). An empty key
 /// (anonymous, no declared session) is cursor-less: every overlay op
@@ -90,12 +98,6 @@ fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
 async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
     if key.is_empty() { return; }
     if !crate::overlay::is_enabled(key) { return; }
-    let pos = crate::overlay::current_position(key);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
-        // Snap to target on first use; no animation to wait for.
-        crate::overlay::send_command(key.to_owned(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
-        return;
-    }
     crate::overlay::animate_cursor_to(key.to_owned(), sx, sy).await;
 }
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
@@ -3944,6 +3946,34 @@ impl Tool for SetAgentCursorMotionTool {
             if let Some(v) = num(args.get("cursor_size"))    { cfg.cursor_size    = Some(v); }
             if let Some(v) = num(args.get("cursor_opacity")) { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
         });
+        // 1b. Make `cursor_color` actually RENDER. The painter only reads the
+        // per-cursor `gradient_override` (set via SetGradient) or the palette —
+        // it never consulted the config's `cursor_color`, so before this the
+        // field was stored + echoed by get_agent_cursor_state but invisible on
+        // screen (every cursor stayed the palette/default colour, which is why
+        // per-session cursors all looked identical). Translate a single colour
+        // into a solid one-stop gradient (the painter repeats a 1-element
+        // gradient across tip→tail) plus a lightened bloom so the halo matches,
+        // so `set_agent_cursor_motion {cursor_color}` is the natural way to give
+        // each session a distinct, visible colour. Sending SetGradient also
+        // keeps this on the same render path as `set_agent_cursor_style`.
+        if let Some(hex) = args.get("cursor_color").and_then(|v| v.as_str()) {
+            if let Some(rgba) = parse_hex_color(hex) {
+                let bloom = [
+                    ((rgba[0] as u16 + 255) / 2) as u8,
+                    ((rgba[1] as u16 + 255) / 2) as u8,
+                    ((rgba[2] as u16 + 255) / 2) as u8,
+                    rgba[3],
+                ];
+                crate::overlay::send_command(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::SetGradient {
+                        gradient_colors: vec![rgba],
+                        bloom_color: Some(bloom),
+                    },
+                );
+            }
+        }
         // 2. Apply motion knobs to the live render state — was silently
         // dropped before; this is the Swift parity behavior.
         let current = crate::overlay::current_motion(&cursor_id);

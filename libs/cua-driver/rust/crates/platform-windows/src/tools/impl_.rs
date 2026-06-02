@@ -1825,6 +1825,19 @@ impl Tool for ClickTool {
         let button = args.str_or("button", "left");
         let count = args.u64_or("count", 1) as usize;
         let dispatch = DispatchMode::from_args(&args);
+        // For every non-foreground click, mark the target window
+        // non-activatable (WS_EX_NOACTIVATE) for the duration so a target that
+        // self-activates in its UIA-Invoke / click handler (WPF
+        // `UIElement.Focus()`, XAML, Tauri/WebView2) CANNOT steal the user's
+        // foreground — the window still receives the click. Held for the whole
+        // invoke; a no-op for dispatch:"foreground" (which wants the swap) and
+        // when no window_id was given.
+        let _noact = match (dispatch != DispatchMode::Foreground, hwnd_opt) {
+            (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
+                windows::Win32::Foundation::HWND(h as *mut _),
+            )),
+            _ => None,
+        };
         // Optional `action` arg picks among the actions exposed in the
         // accessibility tree. Today this only changes behavior for MSAA
         // BUTTONDROPDOWN: `"expand"` clicks the right-edge (dropdown arrow
@@ -2058,14 +2071,22 @@ impl Tool for ClickTool {
                     }
                 }
                 // PostMessage fallback (legacy Win32 + non-Invokable elements).
-                // dispatch:"background" refuses the fallback on targets known
-                // to silently drop PostMessage clicks (Chromium content, GTK
-                // buttons). We surface a tagged error here so the outer match
-                // can convert to the structured background_unavailable result.
+                // dispatch:"background" on targets that silently drop PostMessage
+                // clicks (Chromium content, GTK buttons): route through the
+                // universal coordinate-injection actuator (touch injection, no
+                // foreground swap, z-order preserved) so the caller never needs
+                // to know the target is Chromium/GTK and never sees a raise.
+                // Only the structured error remains as a last resort (e.g. a
+                // right-click, which has no clean touch mapping).
                 if dispatch == DispatchMode::Background
                     && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
                 {
-                    anyhow::bail!("__CUA_BG_UNAVAILABLE_CLICK__");
+                    match crate::input::inject_click_screen(hwnd, cx, cy, count, &btn) {
+                        Ok(()) => return Ok(format!(
+                            "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
+                        )),
+                        Err(_) => anyhow::bail!("__CUA_BG_UNAVAILABLE_CLICK__"),
+                    }
                 }
                 crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
                 let action_name = match btn.as_str() {
@@ -2173,18 +2194,38 @@ impl Tool for ClickTool {
                 }
             }
 
-            // UIA hit-test didn't land. Decide between PostMessage / SendInput
-            // based on dispatch mode.
+            // UIA hit-test didn't land. Decide between PostMessage / injection /
+            // SendInput based on dispatch mode.
             //
-            // dispatch:"background" — refuse to swap foreground. If the target
-            // is known to silently drop PostMessage mouse events (Chromium
-            // DOM content, GTK button widgets), surface a structured
-            // background_unavailable error so the caller can bring_to_front
-            // then retry with dispatch:"foreground".
+            // dispatch:"background" (the default) — never swap foreground. If the
+            // target silently drops PostMessage mouse events (Chromium DOM
+            // content, GTK button widgets), route through the universal
+            // coordinate-injection actuator: touch injection lands in the system
+            // input queue (so Chromium/Electron/WPF accept it; the OS promotes to
+            // WM_*BUTTON for legacy Win32) WITHOUT SetForegroundWindow, and a
+            // cloak+restore z-order guard keeps the target from visibly raising.
+            // This is what lets a caller "just target the app and play actions"
+            // without knowing whether it's Chromium/GTK/etc. The structured
+            // background_unavailable error only survives as a last resort for
+            // inputs injection can't express (e.g. right/middle clicks).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let btn2 = btn.clone();
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, sx as i32, sy as i32, count, &btn2)
+                })
+                .await;
+                return match inj {
+                    Ok(Ok(())) => {
+                        let click_word = match count { 2 => "double-click", 3 => "triple-click", _ => "click" };
+                        ToolResult::text(format!(
+                            "✅ Injected {click_word} to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
+                        ))
+                    }
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
 
             // dispatch:"auto" — historical heuristic: Chromium targets get
@@ -2356,6 +2397,17 @@ impl Tool for TypeTextTool {
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.");
         }
+        // Same no-raise guard as click: a XAML/WPF ValuePattern.SetValue handler
+        // calls UIElement.Focus()→SetForegroundWindow; WS_EX_NOACTIVATE on the
+        // target makes that a no-op while the value still gets set. Safe because
+        // type_text never uses the SendInput foreground-swap path. No-op for
+        // dispatch:"foreground" and when no window_id was given.
+        let _noact = match (dispatch != DispatchMode::Foreground, hwnd_opt) {
+            (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
+                windows::Win32::Foundation::HWND(h as *mut _),
+            )),
+            _ => None,
+        };
         let _delay_ms = args.u64_or("delay_ms", 30);
         let hwnd = match hwnd_opt {
             Some(h) => h,
@@ -2553,7 +2605,24 @@ impl Tool for PressKeyTool {
         if dispatch == DispatchMode::Background
             && crate::input::dispatch::would_be_silently_dropped(hwnd, event_kind)
         {
-            return background_unavailable_error(hwnd, event_kind);
+            // Universal background keyboard actuator: cloaked focus + SendInput,
+            // so TranslateAccelerator-based shortcuts (VCL/classic Win32) and
+            // Chromium key-combos fire without a visible foreground raise. The
+            // structured error only survives when focus can't be obtained
+            // (foreground-lock + no UIAccess → route via the uia worker).
+            let key_i = key.clone();
+            let mods_i: Vec<String> = mods.clone();
+            let inj = tokio::task::spawn_blocking(move || {
+                let m: Vec<&str> = mods_i.iter().map(String::as_str).collect();
+                crate::input::inject_key_cloaked(hwnd, &key_i, &m)
+            }).await;
+            return match inj {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Sent {key_display} on pid {raw_pid} (background; cloaked focus if needed)."
+                )),
+                Ok(Err(_)) => background_unavailable_error(hwnd, event_kind),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
         }
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
         if dispatch == DispatchMode::Foreground {
@@ -2783,7 +2852,22 @@ impl Tool for HotkeyTool {
         if dispatch == DispatchMode::Background
             && crate::input::dispatch::would_be_silently_dropped(hwnd, event_kind)
         {
-            return background_unavailable_error(hwnd, event_kind);
+            // Universal background keyboard actuator (see press_key): cloaked
+            // focus + SendInput so VCL/Chromium accelerators fire without a
+            // visible raise. Structured error only if focus can't be obtained.
+            let key_i = key.clone();
+            let mods_i: Vec<String> = mods.clone();
+            let inj = tokio::task::spawn_blocking(move || {
+                let m: Vec<&str> = mods_i.iter().map(String::as_str).collect();
+                crate::input::inject_key_cloaked(hwnd, &key_i, &m)
+            }).await;
+            return match inj {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Pressed {key_display} on pid {raw_pid} (background; cloaked focus if needed)."
+                )),
+                Ok(Err(_)) => background_unavailable_error(hwnd, event_kind),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
         }
         // dispatch:"foreground" — explicit SendInput swap (the path that
         // unblocks TranslateAccelerator-style apps). Auto mode preserves the

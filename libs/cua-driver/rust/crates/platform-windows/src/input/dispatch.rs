@@ -92,15 +92,17 @@ pub fn dispatch_schema() -> Value {
         "enum": ["background", "foreground", "auto"],
         "default": "background",
         "description":
-            "Dispatch mode. 'background' (default) refuses to swap \
-             foreground; returns a structured background_unavailable error \
-             if PostMessage would be silently dropped for this event kind \
-             on this target. 'foreground' explicitly accepts a brief \
-             SetForegroundWindow swap (SendInput path) — required to drive \
-             Chromium-content or GTK-button widget targets reliably. \
-             'auto' uses cua-driver's internal heuristics (silent fallback \
-             to SendInput on known-problematic targets); opt-in for \
-             callers that prefer the historical behavior."
+            "Dispatch mode. 'background' (default) never swaps foreground: it \
+             routes through UIA Invoke / PostMessage, and for targets that \
+             silently drop posted clicks (Chromium/Electron content, GTK \
+             buttons) it transparently falls back to coordinate-based pointer \
+             injection — so a caller can just target the app and click without \
+             knowing its internals, and the window is never raised. (A \
+             background_unavailable error only surfaces for inputs injection \
+             can't express, e.g. a right/middle click on such a target.) \
+             'foreground' explicitly accepts a brief SetForegroundWindow swap \
+             (SendInput path). 'auto' uses cua-driver's historical heuristics \
+             (silent SendInput fallback on known-problematic targets)."
     })
 }
 

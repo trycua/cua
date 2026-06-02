@@ -12,7 +12,9 @@
 pub mod mouse;
 pub mod keyboard;
 pub mod dispatch;
+pub mod inject;
 
+pub use inject::{inject_click_screen, inject_key_cloaked, NoActivateGuard};
 pub use mouse::{is_chromium_target_window, post_click, post_click_screen, send_click_synthesized};
 pub use keyboard::{
     is_xaml_host_hwnd, post_char, post_key, post_type_text, post_type_text_with_delay,

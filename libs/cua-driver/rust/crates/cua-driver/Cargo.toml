@@ -69,4 +69,15 @@ tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }
-windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    # Job Object: assign every spawned test child to a KILL_ON_JOB_CLOSE job so
+    # the OS terminates the whole tree when the test process dies for ANY reason
+    # (including SIGKILL / Ctrl-C) — guarantees no orphaned windows or held ports.
+    "Win32_System_JobObjects",
+    # CreateJobObjectW's signature references SECURITY_ATTRIBUTES;
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION embeds IO_COUNTERS (Threading).
+    "Win32_Security",
+    "Win32_System_Threading",
+] }

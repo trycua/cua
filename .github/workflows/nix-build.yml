@@ -55,6 +55,24 @@ jobs:
             visual: true
             result_link: result-linux-background-terminal-gif
             artifact_name: cua-driver-linux-background-terminal-gif
+          - name: Linux background GUI test (tk)
+            check_attr: cua-driver-linux-background-gui-tk
+            timeout_minutes: 12
+            visual: false
+            result_link: result-linux-background-gui-tk
+            artifact_name: ""
+          - name: Linux background GUI test (chromium)
+            check_attr: cua-driver-linux-background-gui-chromium
+            timeout_minutes: 25
+            visual: false
+            result_link: result-linux-background-gui-chromium
+            artifact_name: ""
+          - name: Linux background GUI test (firefox)
+            check_attr: cua-driver-linux-background-gui-firefox
+            timeout_minutes: 25
+            visual: false
+            result_link: result-linux-background-gui-firefox
+            artifact_name: ""
 
     steps:
       - name: Checkout

@@ -79,7 +79,26 @@
                   services.cua-driver.package = cuaDriverPackage;
                 };
               };
-            };
+            }
+            // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
+              # Background GUI input coverage — one independent matrix job per
+              # app, proving focus-free typing into real toolkit/browser windows.
+              pkgs.lib.listToAttrs (
+                map (
+                  app:
+                  pkgs.lib.nameValuePair "cua-driver-linux-background-gui-${app}" (
+                    import ./nix/cua-driver/tests/linux-background-gui.nix {
+                      inherit pkgs app;
+                      inherit (pkgs) lib;
+                      cuaDriverModule = {
+                        imports = [ ./nix/cua-driver/module.nix ];
+                        services.cua-driver.package = cuaDriverPackage;
+                      };
+                    }
+                  )
+                ) [ "chromium" "firefox" "tk" ]
+              )
+            );
         }
       )
     // {

@@ -25,9 +25,15 @@ let
   # doesn't depend on the X keymap's shift levels.
   typed = "cuatyped1234";
 
-  # An autofocused input that mirrors its value into document.title — which the
-  # browser publishes as the top-level X11 window title (WM_NAME).
-  htmlPage = "data:text/html,<html><body><input autofocus oninput=\"document.title=this.value\"></body></html>";
+  # A page with an autofocused input that mirrors its value into document.title
+  # — which the browser publishes as the top-level X11 window title (WM_NAME).
+  # Served from a file:// URL so nothing has to be quoted on the launch line.
+  # Starts with a known title so the window can be found by name (not pid:
+  # Tk doesn't set _NET_WM_PID and browser window pids differ from the launcher).
+  htmlFile = pkgs.writeText "cua-input.html" ''
+    <html><head><title>cua-initial</title></head>
+    <body><input autofocus oninput="document.title=this.value"></body></html>
+  '';
 
   # A native Tk app (python stdlib tkinter) whose entry mirrors into the window
   # title on each keystroke — same readback contract as the browsers, but for a
@@ -35,36 +41,45 @@ let
   tkAppPy = pkgs.writeText "cua-tk-entry.py" ''
     import tkinter as tk
     root = tk.Tk()
-    root.title("cua-tk-initial")
+    root.title("cua-initial")
     entry = tk.Entry(root, width=40)
     entry.pack()
     entry.focus_set()
-    entry.bind("<KeyRelease>", lambda _e: root.title(entry.get() or "cua-tk-initial"))
+    entry.bind("<KeyRelease>", lambda _e: root.title(entry.get() or "cua-initial"))
     root.geometry("400x80+700+150")
     root.mainloop()
   '';
   pythonTk = pkgs.python3.withPackages (ps: [ ps.tkinter ]);
-  tkApp = pkgs.writeShellScript "cua-tk-entry.sh" ''
-    exec ${pythonTk}/bin/python3 ${tkAppPy}
-  '';
 
+  # Each launch is a quote-free store path that `exec`s the app, so the
+  # backgrounded `$!` in the test is the app's own pid.
   apps = {
     chromium = {
       packages = [ pkgs.chromium ];
       memoryMB = 4096;
-      # --new-window + occlusion/backgrounding flags so a non-focused but visible
-      # window keeps processing input and title updates.
-      launch = ''chromium --no-sandbox --no-first-run --no-default-browser-check --disable-gpu --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --user-data-dir=/tmp/cua-chromium --window-position=700,150 --window-size=480,360 --new-window "${htmlPage}"'';
+      launch = pkgs.writeShellScript "cua-launch-chromium.sh" ''
+        exec ${pkgs.chromium}/bin/chromium \
+          --no-sandbox --no-first-run --no-default-browser-check --disable-gpu \
+          --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
+          --user-data-dir=/tmp/cua-chromium --window-position=700,150 --window-size=480,360 \
+          --new-window file://${htmlFile}
+      '';
     };
     firefox = {
       packages = [ pkgs.firefox ];
       memoryMB = 4096;
-      launch = ''firefox --new-instance --profile /tmp/cua-firefox --window-size=480,360 "${htmlPage}"'';
+      launch = pkgs.writeShellScript "cua-launch-firefox.sh" ''
+        exec ${pkgs.firefox}/bin/firefox \
+          --new-instance --profile /tmp/cua-firefox --window-size=480,360 \
+          file://${htmlFile}
+      '';
     };
     tk = {
       packages = [ pythonTk ];
       memoryMB = 2048;
-      launch = "${tkApp}";
+      launch = pkgs.writeShellScript "cua-launch-tk.sh" ''
+        exec ${pythonTk}/bin/python3 ${tkAppPy}
+      '';
     };
   };
 
@@ -186,15 +201,17 @@ pkgs.testers.nixosTest {
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
         machine.execute("DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &")
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
-        machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Control' -geometry 60x20+40+120 >/tmp/control.log 2>&1 & echo \\$! >/tmp/control-pid.txt\"")
+        machine.execute("sh -lc 'DISPLAY=:99 xterm -T Control -geometry 60x20+40+120 >/tmp/control.log 2>&1 & echo $! >/tmp/control-pid.txt'")
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --sync --pid $(cat /tmp/control-pid.txt) >/tmp/control-xid.txt", timeout=20)
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/control-xid.txt)")
         machine.succeed("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/control-xid.txt)")
 
     with subtest("Launch target app (${app}) in the background"):
-        machine.execute("sh -lc \"DISPLAY=:99 ${selected.launch} >/tmp/target.log 2>&1 & echo \\$! >/tmp/target-pid.txt\"")
-        # Wait for the app's top-level window, then keep focus on the control.
-        machine.wait_until_succeeds("DISPLAY=:99 xdotool search --sync --onlyvisible --pid $(cat /tmp/target-pid.txt) | head -1 >/tmp/target-xid.txt && test -s /tmp/target-xid.txt", timeout=90)
+        machine.execute("sh -lc 'DISPLAY=:99 ${selected.launch} >/tmp/target.log 2>&1 & echo $! >/tmp/target-pid.txt'")
+        # Find the app's window by its known initial title (apps set WM_NAME to
+        # "cua-initial"); pid-based search is unreliable here. Then keep focus on
+        # the control terminal so the app stays inactive.
+        machine.wait_until_succeeds("DISPLAY=:99 xdotool search --sync --onlyvisible --name cua-initial | head -1 >/tmp/target-xid.txt && test -s /tmp/target-xid.txt", timeout=120)
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/control-xid.txt)")
         machine.succeed("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/control-xid.txt)")
 
@@ -207,13 +224,13 @@ pkgs.testers.nixosTest {
     with subtest("Input landed: window title mirrors the typed string"):
         target = machine.succeed("head -1 /tmp/target-xid.txt").strip()
         machine.wait_until_succeeds(
-            f"DISPLAY=:99 xdotool getwindowname {target} | grep -F '${typed}'",
+            "DISPLAY=:99 xdotool getwindowname " + target + " | grep -F '${typed}'",
             timeout=30,
         )
 
     with subtest("Focus stayed on the control terminal"):
         control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
         active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
-        assert control == active, f"expected active window {control}, got {active}"
+        assert control == active, "expected active window " + control + ", got " + active
   '';
 }

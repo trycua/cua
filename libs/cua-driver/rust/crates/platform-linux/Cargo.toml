@@ -19,8 +19,13 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # X11 background input + window enumeration
-x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape"] }
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }
 # kill(2) for the kill_app tool — SIGKILL via libc::kill.
 libc = "0.2"
+# Native AT-SPI over D-Bus (pure Rust, via zbus) — replaces the pyatspi
+# subprocess bridge so accessibility input/readback needs no Python or GI
+# typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
+# re-exports the bus types we need (fdo::DBusProxy for pid resolution).
+atspi = { version = "0.30", features = ["tokio", "zbus"] }

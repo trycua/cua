@@ -236,21 +236,6 @@ pkgs.testers.nixosTest {
         machine.execute("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork >/tmp/dbus.log 2>&1")
         machine.wait_until_succeeds("test -S /tmp/cua-session-bus", timeout=10)
         machine.execute("${a11yEnv} ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher --launch-immediately >/tmp/atspi-launcher.log 2>&1 &")
-        # GTK3 apps only export their accessible tree when assistive tech is
-        # marked enabled (org.a11y.Status.IsEnabled). GNOME sets this via
-        # gsettings; in this hand-rolled session we must set it ourselves, or
-        # toolkit apps (zenity) register nothing. Chromium ignores this gate.
-        machine.wait_until_succeeds(
-            "${a11yEnv} dbus-send --session --print-reply --dest=org.a11y.Bus "
-            "/org/a11y/bus org.freedesktop.DBus.Properties.Get "
-            "string:org.a11y.Status string:IsEnabled",
-            timeout=15,
-        )
-        machine.succeed(
-            "${a11yEnv} dbus-send --session --dest=org.a11y.Bus "
-            "/org/a11y/bus org.freedesktop.DBus.Properties.Set "
-            "string:org.a11y.Status string:IsEnabled variant:boolean:true"
-        )
 
     with subtest("Focused control terminal"):
         machine.execute("sh -lc 'DISPLAY=:99 xterm -T Control -geometry 60x20+40+120 >/tmp/control.log 2>&1 & echo $! >/tmp/control-pid.txt'")

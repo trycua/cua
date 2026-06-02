@@ -1,165 +1,25 @@
-//! Background input injection for Linux.
+//! Background input injection for Linux via X11 XSendEvent.
 //!
-//! Pointer events (click, drag) go out via XSendEvent: synthetic events
-//! delivered directly to a window without changing input focus — the Linux
-//! equivalent of PostMessage on Windows.
+//! XSendEvent sends synthetic events directly to a window without changing
+//! input focus — the Linux equivalent of PostMessage on Windows, and the
+//! mechanism behind the cross-platform "no focus steal" contract.
 //!
-//! Keyboard input (type / key) goes through the XTEST extension instead.
-//! XSendEvent keystrokes carry the `send_event` flag, which a large class of
-//! apps deliberately ignore — terminal emulators (xterm and friends) most
-//! notably, but also some games and security-sensitive apps. XTEST injects at
-//! the server level with no such flag, so it lands everywhere a real keyboard
-//! would. The one catch is that XTEST delivers to the *focused* window, so we
-//! briefly focus the target, inject, and restore the prior focus (see
-//! `with_focus`) to keep the same no-focus-steal contract as the pointer path.
+//! Note: a few apps check the `send_event` flag and ignore synthetic events.
+//! Terminal emulators are the notable case (xterm's `allowSendEvents` is off by
+//! default); those are handled out of band by writing to the pty master — see
+//! `crate::tty`. We deliberately do NOT fall back to the XTest extension for
+//! them, because XTest delivers to the *focused* window and would break the
+//! no-focus-steal contract.
 
 use anyhow::Result;
 use std::thread::sleep;
 use std::time::Duration;
-use x11rb::connection::{Connection, RequestConnection};
+use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
-use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
-/// Pause after a focus/activation request so an asynchronous window manager can
-/// act on it before we inject or restore focus.
-const FOCUS_SETTLE_MS: u64 = 60;
-
-fn xtest_available(conn: &RustConnection) -> bool {
-    conn.extension_information(x11rb::protocol::xtest::X11_EXTENSION_NAME)
-        .ok()
-        .flatten()
-        .is_some()
-}
-
-fn xtest_key_press(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
-    conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)?;
-    conn.flush()?;
-    Ok(())
-}
-
-fn xtest_key_release(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
-    conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)?;
-    conn.flush()?;
-    Ok(())
-}
-
-fn xtest_settle(conn: &RustConnection) -> Result<()> {
-    // Force a round-trip so the server processes the synthetic release before
-    // this short-lived connection is dropped or the next tool call starts.
-    conn.get_input_focus()?.reply()?;
-    Ok(())
-}
-
-fn xtest_key_tap(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
-    xtest_key_press(conn, root, keycode)?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
-    xtest_key_release(conn, root, keycode)?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
-    Ok(())
-}
-
-/// Read `_NET_ACTIVE_WINDOW` from the root — the value `xdotool getactivewindow`
-/// reports. `None` when no EWMH window manager is running.
-fn net_active_window(conn: &RustConnection, root: Window) -> Option<Window> {
-    let atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW").ok()?.reply().ok()?.atom;
-    let reply = conn
-        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
-        .ok()?
-        .reply()
-        .ok()?;
-    let win = reply.value32()?.next()?;
-    (win != 0).then_some(win)
-}
-
-/// Ask an EWMH window manager to activate `window` via a `_NET_ACTIVE_WINDOW`
-/// client message (source = 2, "pager", so the WM bypasses focus-stealing
-/// prevention — the same nudge `xdotool windowactivate` sends). A no-op when no
-/// WM is listening for the SubstructureRedirect on the root.
-fn ewmh_activate(conn: &RustConnection, root: Window, window: Window) -> Result<()> {
-    let atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
-    let event = ClientMessageEvent::new(32, window, atom, [2u32, x11rb::CURRENT_TIME, 0, 0, 0]);
-    conn.send_event(
-        false,
-        root,
-        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
-        &event,
-    )?;
-    conn.flush()?;
-    Ok(())
-}
-
-/// Round-trip with the server, then pause briefly so an asynchronous WM has time
-/// to act on a focus/activation request before we read or change focus again.
-fn focus_settle(conn: &RustConnection) {
-    if let Ok(cookie) = conn.get_input_focus() {
-        let _ = cookie.reply();
-    }
-    sleep(Duration::from_millis(FOCUS_SETTLE_MS));
-}
-
-/// Temporarily move focus to `window`, run `f`, then restore the previously
-/// active window. XTEST delivers synthetic key events to whatever window holds
-/// input focus, so we focus the target just long enough to inject — and put
-/// focus back afterwards to honour the same no-focus-steal contract the
-/// XSendEvent pointer path keeps. We drive focus two ways: a low-level
-/// `SetInputFocus` (so injection still works with no window manager) and, when
-/// an EWMH WM is present, a `_NET_ACTIVE_WINDOW` message (so the WM doesn't
-/// reassert its own choice and so `_NET_ACTIVE_WINDOW` lands back where it was).
-fn with_focus<R>(
-    conn: &RustConnection,
-    root: Window,
-    window: Window,
-    f: impl FnOnce(&RustConnection) -> Result<R>,
-) -> Result<R> {
-    let prev_focus = conn.get_input_focus()?.reply()?;
-    let prev_active = net_active_window(conn, root);
-
-    let _ = conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME);
-    let _ = ewmh_activate(conn, root, window);
-    let _ = conn.flush();
-    focus_settle(conn);
-
-    let result = f(conn);
-
-    // Restore prior focus, even if injection failed. Prefer EWMH so the WM's
-    // _NET_ACTIVE_WINDOW returns to its old value; SetInputFocus covers the
-    // no-WM case.
-    if let Some(prev) = prev_active {
-        let _ = ewmh_activate(conn, root, prev);
-    }
-    let _ = conn.set_input_focus(prev_focus.revert_to, prev_focus.focus, x11rb::CURRENT_TIME);
-    let _ = conn.flush();
-    focus_settle(conn);
-
-    result
-}
-
-/// Look up the keycode that produces `keysym`, plus whether Shift must be held
-/// (i.e. the keysym lives in the shifted column of the keyboard map). Prefers
-/// the unshifted column when a keysym appears in both.
-fn keysym_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Option<(u8, bool)> {
-    let per = mapping.keysyms_per_keycode as usize;
-    if per == 0 {
-        return None;
-    }
-    for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
-        if syms.first() == Some(&keysym) {
-            return Some(((8 + i) as u8, false));
-        }
-        if per > 1 && syms.get(1) == Some(&keysym) {
-            return Some(((8 + i) as u8, true));
-        }
-    }
-    None
-}
-
-/// Resolve a keysym to its keycode, ignoring the shift level.
-fn keysym_to_keycode(mapping: &GetKeyboardMappingReply, keysym: u32) -> Option<u8> {
-    keysym_to_keycode_shift(mapping, keysym).map(|(kc, _)| kc)
-}
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
@@ -289,80 +149,125 @@ pub fn send_drag(
     Ok(())
 }
 
-/// Type a string by faking key taps through XTEST. Works on any window that
-/// can hold focus — including terminal emulators that ignore the `send_event`
-/// flag and so never saw our old XSendEvent keystrokes.
+/// Type a string by sending KeyPress/KeyRelease events for each character.
 pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
 /// Type a string with an additional `inter_char_ms` delay between each character.
 pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Result<()> {
-    let (conn, screen_num) = RustConnection::connect(None)?;
-    if !xtest_available(&conn) {
-        anyhow::bail!("XTEST extension unavailable; cannot inject keyboard input");
-    }
-    let root = conn.setup().roots[screen_num].root;
+    let (conn, _) = RustConnection::connect(None)?;
+    let window = xid as u32;
+    let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let shift_kc = keysym_to_keycode(&mapping, 0xFFE1); // Shift_L
 
-    with_focus(&conn, root, xid as Window, |conn| {
-        for ch in text.chars() {
-            // Keysym for ASCII / Latin-1 is just the codepoint.
-            let Some((keycode, needs_shift)) = keysym_to_keycode_shift(&mapping, ch as u32) else {
-                continue;
-            };
-            if needs_shift {
-                if let Some(s) = shift_kc {
-                    xtest_key_press(conn, root, s)?;
-                }
-            }
-            xtest_key_tap(conn, root, keycode)?;
-            if needs_shift {
-                if let Some(s) = shift_kc {
-                    xtest_key_release(conn, root, s)?;
-                }
-            }
-            if inter_char_ms > 0 {
-                sleep(Duration::from_millis(inter_char_ms));
-            }
+    for ch in text.chars() {
+        // Resolve the keycode and whether Shift must be held — without it,
+        // uppercase and shifted symbols would otherwise type their unshifted
+        // form (e.g. "A" arriving as "a").
+        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, ch as u32) else {
+            continue;
+        };
+        let state = if needs_shift { KeyButMask::SHIFT } else { KeyButMask::from(0u16) };
+
+        let press = KeyPressEvent {
+            response_type: KEY_PRESS_EVENT,
+            detail: keycode,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root, event: window, child: x11rb::NONE,
+            root_x: 0, root_y: 0, event_x: 0, event_y: 0,
+            state,
+            same_screen: true,
+        };
+        let release = KeyReleaseEvent {
+            response_type: KEY_RELEASE_EVENT,
+            detail: keycode,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root, event: window, child: x11rb::NONE,
+            root_x: 0, root_y: 0, event_x: 0, event_y: 0,
+            state,
+            same_screen: true,
+        };
+
+        conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+        sleep(Duration::from_millis(KEY_DELAY_MS));
+        conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
+        conn.flush()?;
+        if inter_char_ms > 0 {
+            sleep(Duration::from_millis(inter_char_ms));
         }
-        xtest_settle(conn)
-    })
+    }
+    Ok(())
 }
 
-/// Send a named key (optionally with modifiers held) through XTEST.
+/// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
-    let (conn, screen_num) = RustConnection::connect(None)?;
-    if !xtest_available(&conn) {
-        anyhow::bail!("XTEST extension unavailable; cannot inject keyboard input");
-    }
-    let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let (conn, _) = RustConnection::connect(None)?;
+    let window = xid as u32;
+    let root = conn.setup().roots[0].root;
 
-    let keysym = key_name_to_keysym(key)?;
-    let keycode = keysym_to_keycode(&mapping, keysym)
-        .ok_or_else(|| anyhow::anyhow!("Keysym 0x{keysym:X} not in keyboard map for key '{key}'"))?;
-    let mod_keycodes: Vec<u8> = modifiers
-        .iter()
-        .filter_map(|m| modifier_keysym(m))
-        .filter_map(|ks| keysym_to_keycode(&mapping, ks))
-        .collect();
+    let keycode = key_name_to_keycode(&conn, key)?;
+    let state = modifiers_to_state(modifiers);
 
-    with_focus(&conn, root, xid as Window, |conn| {
-        for &mk in &mod_keycodes {
-            xtest_key_press(conn, root, mk)?;
-        }
-        xtest_key_tap(conn, root, keycode)?;
-        for &mk in mod_keycodes.iter().rev() {
-            xtest_key_release(conn, root, mk)?;
-        }
-        xtest_settle(conn)
-    })
+    let press = KeyPressEvent {
+        response_type: KEY_PRESS_EVENT,
+        detail: keycode,
+        sequence: 0,
+        time: x11rb::CURRENT_TIME,
+        root,
+        event: window,
+        child: x11rb::NONE,
+        root_x: 0, root_y: 0,
+        event_x: 0, event_y: 0,
+        state,
+        same_screen: true,
+    };
+
+    let release = KeyReleaseEvent {
+        response_type: KEY_RELEASE_EVENT,
+        detail: keycode,
+        sequence: 0,
+        time: x11rb::CURRENT_TIME,
+        root,
+        event: window,
+        child: x11rb::NONE,
+        root_x: 0, root_y: 0,
+        event_x: 0, event_y: 0,
+        state,
+        same_screen: true,
+    };
+
+    conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+    sleep(Duration::from_millis(KEY_DELAY_MS));
+    conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
+    conn.flush()?;
+    Ok(())
 }
 
-/// Map a key name (e.g. "enter", "tab", "a") to its X11 keysym.
-fn key_name_to_keysym(key: &str) -> Result<u32> {
+/// Find the keycode that emits `keysym`, plus whether Shift must be held (the
+/// keysym sits in the shifted column of the keyboard map). Prefers the
+/// unshifted column when a keysym appears in both. Keysym for ASCII / Latin-1
+/// is just the codepoint.
+fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Option<(u8, bool)> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per == 0 {
+        return None;
+    }
+    for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
+        if syms.first() == Some(&keysym) {
+            return Some(((8 + i) as u8, false));
+        }
+        if per > 1 && syms.get(1) == Some(&keysym) {
+            return Some(((8 + i) as u8, true));
+        }
+    }
+    None
+}
+
+fn key_name_to_keycode(conn: &RustConnection, key: &str) -> Result<u8> {
+    // Common X11 keysym names.
     let keysym: u32 = match key.to_lowercase().as_str() {
         "return" | "enter" => 0xFF0D,
         "tab" => 0xFF09,
@@ -382,22 +287,32 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "f1" => 0xFFBE, "f2" => 0xFFBF, "f3" => 0xFFC0, "f4" => 0xFFC1,
         "f5" => 0xFFC2, "f6" => 0xFFC3, "f7" => 0xFFC4, "f8" => 0xFFC5,
         "f9" => 0xFFC6, "f10" => 0xFFC7, "f11" => 0xFFC8, "f12" => 0xFFC9,
-        "shift" => 0xFFE1, "ctrl" | "control" => 0xFFE3, "alt" => 0xFFE9,
-        "super" | "meta" | "win" => 0xFFEB,
+        "shift" => 0xFFE1, "ctrl" | "control" => 0xFFE3, "alt" => 0xFFE9, "super" | "meta" | "win" => 0xFFEB,
         "capslock" => 0xFFE5, "numlock" => 0xFF7F,
-        s if s.chars().count() == 1 => s.chars().next().unwrap() as u32,
+        s if s.len() == 1 => s.chars().next().unwrap() as u32,
         _ => anyhow::bail!("Unknown key: {key}"),
     };
-    Ok(keysym)
+
+    let km = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let kpc = km.keysyms_per_keycode as usize;
+    for (i, syms) in km.keysyms.chunks(kpc).enumerate() {
+        if syms.iter().any(|&s| s == keysym) {
+            return Ok((8 + i) as u8);
+        }
+    }
+    anyhow::bail!("Keysym 0x{keysym:X} not in keyboard map for key '{key}'")
 }
 
-/// Map a modifier name to its keysym (Shift_L / Control_L / Alt_L / Super_L).
-fn modifier_keysym(m: &str) -> Option<u32> {
-    match m.to_lowercase().as_str() {
-        "shift" => Some(0xFFE1),
-        "ctrl" | "control" => Some(0xFFE3),
-        "alt" | "mod1" => Some(0xFFE9),
-        "super" | "mod4" | "win" | "meta" => Some(0xFFEB),
-        _ => None,
+fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {
+    let mut state = 0u16;
+    for m in modifiers {
+        match m.to_lowercase().as_str() {
+            "shift" => state |= u16::from(KeyButMask::SHIFT),
+            "ctrl" | "control" => state |= u16::from(KeyButMask::CONTROL),
+            "alt" | "mod1" => state |= u16::from(KeyButMask::MOD1),
+            "super" | "mod4" | "win" | "meta" => state |= u16::from(KeyButMask::MOD4),
+            _ => {}
+        }
     }
+    KeyButMask::from(state)
 }

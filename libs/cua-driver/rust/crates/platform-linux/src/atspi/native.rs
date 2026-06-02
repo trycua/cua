@@ -365,6 +365,13 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             None => return Ok(false),
         };
 
+        dlog!(
+            "insert_text: {} node(s), {} editable, {} entry/text-role",
+            visited.len(),
+            visited.iter().filter(|v| v.has_editable).count(),
+            visited.iter().filter(|v| v.role.contains("entry") || v.role.contains("text")).count(),
+        );
+
         // Target priority:
         //   1. the focused editable (if the toolkit exposes focus),
         //   2. an editable inside web/document content — for a browser this is

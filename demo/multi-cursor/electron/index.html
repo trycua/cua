@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0f0f0; font-family: "Segoe UI", Tahoma, sans-serif; }
+  #form { position: relative; width: 480px; height: 300px; }
+  /* Absolute px coords matched to the other frameworks' layout (480x300). */
+  #title  { position:absolute; left:0; top:8px; width:480px; text-align:center; font-size:16px; font-weight:bold; color:#503000; }
+  #nameLbl{ position:absolute; left:20px; top:72px; font-size:13px; }
+  #box    { position:absolute; left:90px; top:70px; width:294px; height:20px; font-size:13px; }
+  #btn    { position:absolute; left:160px; top:150px; width:160px; height:46px; font-size:14px; }
+  #status { position:absolute; left:20px; top:220px; font-size:13px; }
+</style>
+</head>
+<body>
+  <div id="form">
+    <div id="title">Electron (Chromium)</div>
+    <div id="nameLbl">Name:</div>
+    <input id="box" type="text" />
+    <button id="btn">SUBMIT</button>
+    <div id="status">Clicks: 0&nbsp;&nbsp;&nbsp;&nbsp;Last: (none)</div>
+  </div>
+  <script>
+    let clicks = 0;
+    const btn = document.getElementById('btn');
+    const box = document.getElementById('box');
+    const status = document.getElementById('status');
+    btn.addEventListener('click', () => {
+      clicks++;
+      const last = box.value ? box.value : '(none)';
+      status.textContent = `Clicks: ${clicks}    Last: ${last}`;
+    });
+  </script>
+</body>
+</html>

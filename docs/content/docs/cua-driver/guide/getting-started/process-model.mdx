@@ -51,6 +51,39 @@ When `cua-driver mcp` is spawned from an IDE terminal (Claude Code, Cursor, VS C
 
 Two processes, one stdio session. The daemon runs under the right TCC context; the mcp client just shuttles bytes.
 
+#### Request flow over JSON-RPC
+
+The MCP client speaks JSON-RPC 2.0 to the proxy over stdio; the proxy relays the same calls to the daemon over the line-delimited JSON socket protocol. The `tools/list` response is cached once at startup, and each `tools/call` result comes back in the exact same envelope the in-process server would return — no proxy-specific wrapping.
+
+<Mermaid
+  chart={`sequenceDiagram
+    participant Client as MCP Client<br/>(Claude Code / Cursor)
+    participant Proxy as cua-driver mcp<br/>(stdio proxy)
+    participant Daemon as cua-driver serve<br/>(daemon)
+    participant OS as AX + ScreenCaptureKit
+
+    Note over Client,Daemon: Startup
+    Client->>Proxy: spawn (stdio)
+    Proxy->>Daemon: open long-lived control connection (UDS)
+    Note right of Proxy: mints a session identity,<br/>stamps it on every request
+    Proxy->>Daemon: {"jsonrpc":"2.0","id":1,"method":"tools/list"}
+    Daemon-->>Proxy: {"id":1,"result":{"tools":[...]}}
+    Note right of Proxy: tool list cached once
+
+    Note over Client,Daemon: Per tool call
+    Client->>Proxy: tools/call get_screen_size<br/>(JSON-RPC over stdio)
+    Proxy->>Daemon: forward over per-call UDS connection<br/>(stamped with session id)
+    Daemon->>OS: AX walk / screenshot under com.trycua.driver
+    OS-->>Daemon: result
+    Daemon-->>Proxy: {"id":2,"result":{"structuredContent":{...}}}
+    Proxy-->>Client: same result envelope (no proxy wrapping)
+
+    Note over Client,Daemon: Teardown
+    Client->>Proxy: close stdin (EOF) or kill -9
+    Proxy--xDaemon: kernel closes control connection
+    Note right of Daemon: EOF on control conn fires session_end,<br/>dropping recording / config / cursor state`}
+/>
+
 ## Detecting which mode is active
 
 `cua-driver mcp` emits a single stderr line on startup when it engages the daemon-proxy path:

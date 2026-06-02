@@ -287,11 +287,20 @@ pkgs.testers.nixosTest {
         # registered (or IsEnabled is set explicitly); GTK3 apps check this at
         # startup and stay silent otherwise. Set it on the now-owned launcher.
         machine.execute(
-            "${a11yEnv} dbus-send --session --dest=org.a11y.Bus "
+            "${a11yEnv} dbus-send --session --print-reply --dest=org.a11y.Bus "
             "/org/a11y/bus org.freedesktop.DBus.Properties.Set "
             "string:org.a11y.Status string:IsEnabled variant:boolean:true 2>&1 | tee /tmp/a11y-enable.log"
         )
         machine.log("a11y IsEnabled set: " + machine.execute("cat /tmp/a11y-enable.log")[1])
+        # Read it back + dump the launcher log to see whether the Set actually
+        # stuck (vs. the toolkit bridges simply not activating).
+        machine.execute(
+            "${a11yEnv} dbus-send --session --print-reply --dest=org.a11y.Bus "
+            "/org/a11y/bus org.freedesktop.DBus.Properties.Get "
+            "string:org.a11y.Status string:IsEnabled 2>&1 | tee /tmp/a11y-get.log"
+        )
+        machine.log("a11y IsEnabled get: " + machine.execute("cat /tmp/a11y-get.log")[1])
+        machine.log("atspi-launcher.log: " + machine.execute("cat /tmp/atspi-launcher.log")[1])
 
     with subtest("Focused control terminal"):
         machine.execute("sh -lc 'DISPLAY=:99 xterm -T Control -geometry 60x20+40+120 >/tmp/control.log 2>&1 & echo $! >/tmp/control-pid.txt'")

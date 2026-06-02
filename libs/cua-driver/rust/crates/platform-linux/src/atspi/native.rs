@@ -389,8 +389,8 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             None => return Ok(false),
         };
         dlog!(
-            "insert target: role={:?} in_web_doc={} focused={}",
-            target.role, target.in_web_doc, target.focused
+            "insert target: role={:?} in_web_doc={} focused={} has_component={}",
+            target.role, target.in_web_doc, target.focused, target.has_component
         );
 
         let proxies = target
@@ -398,6 +398,26 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             .proxies()
             .await
             .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+
+        // Try to grab focus on the widget via AT-SPI Component.GrabFocus.
+        // This should give the widget internal keyboard focus without activating
+        // the window, allowing GTK4 (and similar toolkits) to expose EditableText
+        // on an unfocused window's focused widget.
+        if target.has_component {
+            if let Ok(comp) = proxies.component().await {
+                match call(comp.grab_focus()).await {
+                    Some(Ok(true)) => dlog!("GrabFocus succeeded on {:?}", target.role),
+                    Some(Ok(false)) => dlog!("GrabFocus returned false on {:?}", target.role),
+                    Some(Err(e)) => dlog!("GrabFocus failed on {:?}: {}", target.role, e),
+                    None => dlog!("GrabFocus timed out on {:?}", target.role),
+                }
+            } else {
+                dlog!("Component interface unavailable despite has_component=true");
+            }
+        } else {
+            dlog!("Target has no Component interface, skipping GrabFocus");
+        }
+
         let et = proxies
             .editable_text()
             .await

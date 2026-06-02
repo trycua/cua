@@ -91,6 +91,10 @@ let
       memoryMB = 2048;
       launch = pkgs.writeShellScript "cua-launch-qt.sh" ''
         export QT_QPA_PLATFORM=xcb
+        # PyQt5 run as a bare script doesn't inherit qtbase's plugin path, so
+        # the xcb platform plugin isn't found ("...in \"\""). Point Qt at it.
+        export QT_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}
+        export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}/platforms
         exec ${pyqtEnv}/bin/python3 ${qtEntryScript}
       '';
     };

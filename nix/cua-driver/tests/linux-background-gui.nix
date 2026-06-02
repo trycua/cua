@@ -264,7 +264,7 @@ pkgs.testers.nixosTest {
 
     with subtest("Type into the inactive window via cua-driver (AT-SPI)"):
         machine.copy_from_host("${mcpTest}", "/tmp/mcp-background-gui-test.py")
-        result = machine.succeed("timeout 120 ${a11yEnv} python3 /tmp/mcp-background-gui-test.py 2>&1")
+        result = machine.succeed("${a11yEnv} timeout 120 python3 /tmp/mcp-background-gui-test.py 2>&1")
         machine.log(result)
         assert "background GUI test typed" in result, result
 

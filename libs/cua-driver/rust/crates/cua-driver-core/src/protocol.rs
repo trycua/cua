@@ -156,6 +156,27 @@ pub fn initialize_result() -> Value {
     })
 }
 
+/// Live MCP HTTP endpoint URL, published by the daemon's `mcp_http` listener
+/// once it has SUCCESSFULLY bound (and cleared on shutdown / if it never binds).
+/// `agent_instructions()` appends it so a connecting client is told the concrete
+/// parallel endpoint only when it is genuinely reachable — not merely when the
+/// port was requested but the bind lost a race. `None` keeps the instructions in
+/// their "how to enable" form.
+static MCP_HTTP_ENDPOINT: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Record (or clear with `None`) the live MCP HTTP endpoint URL. Called by the
+/// cua-driver binary's HTTP listener on a successful bind, and on shutdown.
+pub fn set_mcp_http_endpoint(url: Option<String>) {
+    if let Ok(mut g) = MCP_HTTP_ENDPOINT.write() {
+        *g = url;
+    }
+}
+
+/// The live MCP HTTP endpoint URL, if the listener is currently bound.
+pub fn mcp_http_endpoint() -> Option<String> {
+    MCP_HTTP_ENDPOINT.read().ok().and_then(|g| g.clone())
+}
+
 /// MCP `instructions` (`InitializeResult.instructions`) sent to every
 /// connecting client. The spec frames this as a "hint... MAY be added
 /// to the system prompt" — eager, every-turn cost. We keep it under
@@ -185,6 +206,16 @@ fn agent_instructions() -> String {
         )
     };
 
+    // Parallel-agents line: when the HTTP listener is genuinely bound, name the
+    // concrete live endpoint; otherwise tell the reader how to turn it on. Kept
+    // to one line either way so the eager every-turn instructions stay lean.
+    let parallel_line = match mcp_http_endpoint() {
+        Some(url) => format!(
+            "Parallel agents: ONE session = one connection = sequential — issue a call, await it, then the next (FIFO). Parallelism is ACROSS sessions, NEVER within one (the per-session cursor + recording assume an ordered, one-at-a-time stream). This daemon's HTTP transport is LIVE at {url}: give each agent its OWN connection there, POSTing JSON-RPC `tools/call` bodies with its own `session`. Details + example in SKILL.md."
+        ),
+        None => "Parallel agents: a single stdio `cua-driver mcp` connection serializes all its calls. ONE session = one connection = sequential; parallelism is ACROSS sessions, NEVER within one (the per-session cursor + recording assume an ordered, one-at-a-time stream). For concurrent agents, start `cua-driver serve --http-port <port>` (or set CUA_DRIVER_RS_MCP_HTTP_PORT) and give each agent its OWN connection POSTing JSON-RPC `tools/call` to http://127.0.0.1:<port>/mcp. Details + example in SKILL.md.".to_owned(),
+    };
+
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
@@ -198,8 +229,36 @@ Workflow per turn:
 4. click/type_text/press_key using element_index from step 3 (+ your `session`)
 5. get_window_state(pid, window_id) again → verify the action landed
 
-Agent cursor: a per-SESSION overlay cursor visualises where a run is acting without moving the real pointer. It is shown only for a DECLARED session (pass `session`), is color-coded by the session id, and is removed by end_session or the idle-TTL. The same id over MCP, the CLI, or the raw socket drives the same cursor. set_agent_cursor_* tools hide/show/customise it. Note: a pure accessibility-action (element_index) click snaps the cursor with a brief pulse on its first action rather than a long glide, so it can be easy to miss — issue a pixel click or move_cursor first for a visibly gliding demo/recording.
+Agent cursor: a per-SESSION overlay cursor visualises where a run is acting without moving the real pointer. It is shown only for a DECLARED session (pass `session`), is color-coded by the session id, and is removed by end_session or the idle-TTL. The same id over MCP, the CLI, or the raw socket drives the same cursor. set_agent_cursor_* tools hide/show/customise it. Note: on its FIRST action a pure accessibility-action (element_index) run seeds the cursor near the target and plays a short glide+pulse (not the long sweep it traces once already on-screen), so it can be easy to miss — issue a pixel click or move_cursor first for a fully gliding demo/recording.
+
+{parallel_line}
 
 If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::{agent_instructions, set_mcp_http_endpoint};
+
+    /// One test, mutating the shared endpoint serially, so the two branches are
+    /// asserted without racing the process-global on parallel test threads.
+    #[test]
+    fn parallel_line_reflects_live_http_endpoint() {
+        // Bound → advertise the concrete live URL.
+        set_mcp_http_endpoint(Some("http://127.0.0.1:8799/mcp".to_owned()));
+        let live = agent_instructions();
+        assert!(
+            live.contains("LIVE at http://127.0.0.1:8799/mcp"),
+            "bound endpoint must advertise the concrete URL, got:\n{live}"
+        );
+
+        // Not bound → fall back to the "how to enable" form (no false advert).
+        set_mcp_http_endpoint(None);
+        let disabled = agent_instructions();
+        assert!(
+            disabled.contains("--http-port") && !disabled.contains("is LIVE at"),
+            "unbound endpoint must show enablement help, not a live URL, got:\n{disabled}"
+        );
+    }
 }

@@ -44,6 +44,19 @@ pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
         match TcpListener::bind(addr).await {
             Ok(listener) => {
                 info!("MCP HTTP transport listening on http://{addr}/mcp (one connection per agent → parallel)");
+                // Publish the live endpoint exactly once it is bound: into the
+                // in-process registry (so `agent_instructions()` advertises the
+                // concrete URL) AND into a sibling state file (so the separate
+                // `cua-driver status` process can report it). Both are torn down
+                // on graceful shutdown; `status` also re-probes the port, so a
+                // stale file left by a crash reads as "not listening".
+                let url = format!("http://127.0.0.1:{port}/mcp");
+                cua_driver_core::protocol::set_mcp_http_endpoint(Some(url.clone()));
+                let url_file = crate::serve::mcp_http_url_file_path();
+                if let Some(dir) = std::path::Path::new(&url_file).parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&url_file, &url);
                 loop {
                     match listener.accept().await {
                         Ok((stream, peer)) => {
@@ -61,7 +74,12 @@ pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
                     }
                 }
             }
-            Err(e) => warn!("MCP HTTP transport disabled — bind {addr} failed: {e}"),
+            Err(e) => {
+                // Lost the port (already in use, etc.) — make sure nothing
+                // advertises an endpoint that never came up.
+                cua_driver_core::protocol::set_mcp_http_endpoint(None);
+                warn!("MCP HTTP transport disabled — bind {addr} failed: {e}");
+            }
         }
     });
 }

@@ -48,6 +48,176 @@ macro_rules! dlog {
 }
 
 /// Shared multi-threaded Tokio runtime for the blocking AT-SPI entry points.
+// ── Workspace isolation for invisible focus steal ────────────────────────────
+
+use std::sync::Mutex;
+
+/// State for workspace-isolated activation: saved so restore can undo everything.
+struct WorkspaceState {
+    saved_active_window: Option<u64>,
+    saved_current_desktop: Option<u32>,
+    target_xid: u64,
+    target_original_desktop: Option<u32>,
+    isolation_desktop: Option<u32>,
+}
+
+static WORKSPACE_STATE: Mutex<Option<WorkspaceState>> = Mutex::new(None);
+
+/// Try to activate `xid` invisibly by moving it to a background workspace first.
+/// Returns `true` if workspace isolation succeeded, `false` if it fell back to
+/// direct activation (single workspace, WM doesn't support EWMH desktops, etc.).
+async fn try_workspace_isolated_activation(xid: u64) -> bool {
+    // Query workspace info: how many desktops, which one is current, which one
+    // the target window is on. If any query fails, workspace isolation isn't
+    // available — fall through to direct activation.
+    let num_desktops = match crate::x11::get_number_of_desktops() {
+        Ok(Some(n)) if n > 1 => n,
+        _ => {
+            dlog!("workspace isolation: single/no desktops, using direct activation");
+            // Fallback: direct activation without workspace isolation.
+            let saved_active = crate::x11::get_active_window().ok().flatten();
+            if crate::x11::activate_window(xid).is_ok() {
+                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                // Save minimal state for restore (no workspace moves needed).
+                *WORKSPACE_STATE.lock().unwrap() = Some(WorkspaceState {
+                    saved_active_window: saved_active,
+                    saved_current_desktop: None,
+                    target_xid: xid,
+                    target_original_desktop: None,
+                    isolation_desktop: None,
+                });
+                return false;
+            }
+            return false;
+        }
+    };
+
+    let current_desktop = match crate::x11::get_current_desktop() {
+        Ok(Some(d)) => d,
+        _ => {
+            dlog!("workspace isolation: can't read current desktop, using direct activation");
+            let saved_active = crate::x11::get_active_window().ok().flatten();
+            if crate::x11::activate_window(xid).is_ok() {
+                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                *WORKSPACE_STATE.lock().unwrap() = Some(WorkspaceState {
+                    saved_active_window: saved_active,
+                    saved_current_desktop: None,
+                    target_xid: xid,
+                    target_original_desktop: None,
+                    isolation_desktop: None,
+                });
+                return false;
+            }
+            return false;
+        }
+    };
+
+    let target_desktop = crate::x11::get_window_desktop(xid).ok().flatten();
+
+    // Pick an isolation desktop: prefer the last workspace (least likely to be
+    // visible), but any desktop != current works. If the target is already on a
+    // non-current desktop, we can activate it there without moving it.
+    let isolation_desktop = if let Some(td) = target_desktop {
+        if td != current_desktop {
+            // Target is already on a background workspace; activate it there.
+            td
+        } else {
+            // Target is on the current workspace; move it to the last one.
+            num_desktops - 1
+        }
+    } else {
+        // Target desktop unknown; try the last workspace.
+        num_desktops - 1
+    };
+
+    // Save current state so restore can undo everything.
+    let saved_active = crate::x11::get_active_window().ok().flatten();
+    let state = WorkspaceState {
+        saved_active_window: saved_active,
+        saved_current_desktop: Some(current_desktop),
+        target_xid: xid,
+        target_original_desktop: target_desktop,
+        isolation_desktop: Some(isolation_desktop),
+    };
+
+    dlog!(
+        "workspace isolation: current={} target_ws={:?} isolation={} num={}",
+        current_desktop,
+        target_desktop,
+        isolation_desktop,
+        num_desktops
+    );
+
+    // Move the target window to the isolation desktop if it's not already there.
+    if target_desktop != Some(isolation_desktop) {
+        if let Err(e) = crate::x11::set_window_desktop(xid, isolation_desktop) {
+            dlog!("workspace isolation: set_window_desktop failed: {}, using direct activation", e);
+            // Fallback: direct activation on the current desktop.
+            if crate::x11::activate_window(xid).is_ok() {
+                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                *WORKSPACE_STATE.lock().unwrap() = Some(WorkspaceState {
+                    saved_active_window: saved_active,
+                    saved_current_desktop: None,
+                    target_xid: xid,
+                    target_original_desktop: None,
+                    isolation_desktop: None,
+                });
+                return false;
+            }
+            return false;
+        }
+        // Give the WM a moment to process the workspace move.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    // Activate the target window (now on the isolation desktop, invisible to user).
+    if let Err(e) = crate::x11::activate_window(xid) {
+        dlog!("workspace isolation: activate_window failed: {}", e);
+        // Attempt to restore the window to its original workspace before bailing.
+        if let Some(orig) = target_desktop {
+            let _ = crate::x11::set_window_desktop(xid, orig);
+        }
+        return false;
+    }
+
+    // Give the toolkit time to register activation and expose its AT-SPI editable.
+    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+    *WORKSPACE_STATE.lock().unwrap() = Some(state);
+    true
+}
+
+/// Restore workspace and focus after workspace-isolated activation. Safe to call
+/// even if try_workspace_isolated_activation returned false (it's a no-op then,
+/// or restores just the active window if direct activation was used).
+async fn restore_after_workspace_activation() {
+    let state = WORKSPACE_STATE.lock().unwrap().take();
+    let Some(state) = state else {
+        return;
+    };
+
+    // If workspace isolation was used, move the target back to its original desktop.
+    if let (Some(orig_desktop), Some(_iso_desktop)) = (state.target_original_desktop, state.isolation_desktop) {
+        dlog!("restoring window {} to workspace {}", state.target_xid, orig_desktop);
+        if let Err(e) = crate::x11::set_window_desktop(state.target_xid, orig_desktop) {
+            dlog!("restore: set_window_desktop failed: {}", e);
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    // Restore the previously active window (whether workspace isolation or direct).
+    if let Some(prev_xid) = state.saved_active_window {
+        dlog!("restoring focus to window {}", prev_xid);
+        if crate::x11::activate_window(prev_xid).is_ok() {
+            // Give the WM time to process the focus change so the caller sees the
+            // restored state immediately (test assertions check focus stayed put).
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 fn runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
@@ -388,86 +558,80 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         // If no editable found (GTK4/most toolkits gate editables on focus), try
         // temporarily activating the window. Qt6's AT-SPI bridge exposes editables
         // unfocused, but GTK4 doesn't. This is the focus-free write workaround.
+        //
+        // IMPROVEMENT: Use workspace isolation to make the focus steal invisible.
+        // Move the target window to a background workspace, activate it there (so
+        // the user doesn't see the focus change), perform the write, then restore
+        // everything. Falls back to direct activation if workspaces aren't available.
         if target.is_none() {
             dlog!("no editable found unfocused; attempting activation workaround");
             // Get the first window for this pid and activate it.
             let windows = crate::x11::list_windows(Some(pid));
             if let Some(win) = windows.first() {
                 let xid = win.xid;
-                // Save the currently active window so we can restore it.
-                let saved_active = crate::x11::get_active_window().ok().flatten();
-                dlog!("activating window {} (saved active: {:?})", xid, saved_active);
+                
+                // Try workspace isolation first (invisible focus steal).
+                let workspace_isolated = try_workspace_isolated_activation(xid).await;
+                
+                if !workspace_isolated {
+                    // Fallback: direct activation (visible but brief focus steal).
+                    dlog!("workspace isolation unavailable; using direct activation");
+                }
+                
+                // Common path: whether workspace-isolated or direct, the window is now
+                // active (either on a background workspace or here). Re-walk the tree.
+                if let Some(revisited) = collect_visited(&conn, pid).await? {
+                    dlog!(
+                        "post-activation: {} editable",
+                        revisited.iter().filter(|v| v.has_editable).count()
+                    );
+                    let target_activated = revisited
+                        .iter()
+                        .find(|v| v.has_editable && v.focused)
+                        .or_else(|| revisited.iter().find(|v| v.has_editable && v.in_web_doc))
+                        .or_else(|| revisited.iter().find(|v| v.has_editable));
 
-                // Activate the target window.
-                if crate::x11::activate_window(xid).is_ok() {
-                    // Give the toolkit a moment to register the activation and expose
-                    // its editable via AT-SPI (GTK4's bridge gates on focus state).
-                    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-
-                    // Re-walk the tree now that the window is focused.
-                    if let Some(revisited) = collect_visited(&conn, pid).await? {
+                    if let Some(t) = target_activated {
                         dlog!(
-                            "post-activation: {} editable",
-                            revisited.iter().filter(|v| v.has_editable).count()
+                            "insert target (post-activation): role={:?} focused={}",
+                            t.role, t.focused
                         );
-                        let target_activated = revisited
-                            .iter()
-                            .find(|v| v.has_editable && v.focused)
-                            .or_else(|| revisited.iter().find(|v| v.has_editable && v.in_web_doc))
-                            .or_else(|| revisited.iter().find(|v| v.has_editable));
+                        let proxies = t
+                            .acc
+                            .proxies()
+                            .await
+                            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+                        let et = proxies
+                            .editable_text()
+                            .await
+                            .map_err(|e| anyhow!("EditableText unavailable: {e}"))?;
 
-                        if let Some(t) = target_activated {
-                            dlog!(
-                                "insert target (post-activation): role={:?} focused={}",
-                                t.role, t.focused
-                            );
-                            let proxies = t
-                                .acc
-                                .proxies()
-                                .await
-                                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
-                            let et = proxies
-                                .editable_text()
-                                .await
-                                .map_err(|e| anyhow!("EditableText unavailable: {e}"))?;
+                        let off = match proxies.text().await {
+                            Ok(tp) => tp.caret_offset().await.unwrap_or(0),
+                            Err(_) => 0,
+                        };
+                        let len = text.chars().count() as i32;
 
-                            let off = match proxies.text().await {
-                                Ok(tp) => tp.caret_offset().await.unwrap_or(0),
-                                Err(_) => 0,
-                            };
-                            let len = text.chars().count() as i32;
+                        let success = if et.insert_text(off, text, len).await.unwrap_or(false) {
+                            true
+                        } else {
+                            et.set_text_contents(text).await.unwrap_or(false)
+                        };
 
-                            let success = if et.insert_text(off, text, len).await.unwrap_or(false) {
-                                true
-                            } else {
-                                et.set_text_contents(text).await.unwrap_or(false)
-                            };
+                        // Restore workspace and focus (no-op if direct activation was used).
+                        restore_after_workspace_activation().await;
 
-                            // Restore the previously active window.
-                            if let Some(prev_xid) = saved_active {
-                                dlog!("restoring focus to window {}", prev_xid);
-                                if crate::x11::activate_window(prev_xid).is_ok() {
-                                    // Give the window manager time to process the focus change
-                                    // so the caller sees the restored focus state immediately.
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                                }
-                            }
-
-                            return Ok(success);
-                        }
-                    }
-
-                    // Restore focus even if insertion failed.
-                    if let Some(prev_xid) = saved_active {
-                        if crate::x11::activate_window(prev_xid).is_ok() {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                        }
+                        return Ok(success);
                     }
                 }
+
+                // Restore even if insertion failed.
+                restore_after_workspace_activation().await;
             }
 
             // Activation workaround didn't help; return false.
             return Ok(false);
+        }
         }
 
         let target = target.unwrap();

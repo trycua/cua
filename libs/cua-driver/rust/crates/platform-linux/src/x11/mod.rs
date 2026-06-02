@@ -154,3 +154,70 @@ pub fn activate_window(xid: u64) -> Result<()> {
 
     Ok(())
 }
+
+/// Get the current desktop/workspace index (via _NET_CURRENT_DESKTOP).
+pub fn get_current_desktop() -> Result<Option<u32>> {
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let screen = &conn.setup().roots[screen_num];
+    let root = screen.root;
+
+    let atom = get_atom(&conn, "_NET_CURRENT_DESKTOP")?;
+    let reply = conn.get_property(false, root, atom, AtomEnum::CARDINAL, 0, 1)?.reply()?;
+    Ok(reply.value32().and_then(|mut i| i.next()))
+}
+
+/// Get the total number of desktops/workspaces (via _NET_NUMBER_OF_DESKTOPS).
+pub fn get_number_of_desktops() -> Result<Option<u32>> {
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let screen = &conn.setup().roots[screen_num];
+    let root = screen.root;
+
+    let atom = get_atom(&conn, "_NET_NUMBER_OF_DESKTOPS")?;
+    let reply = conn.get_property(false, root, atom, AtomEnum::CARDINAL, 0, 1)?.reply()?;
+    Ok(reply.value32().and_then(|mut i| i.next()))
+}
+
+/// Get the desktop/workspace a window is on (via _NET_WM_DESKTOP).
+pub fn get_window_desktop(xid: u64) -> Result<Option<u32>> {
+    let (conn, _screen_num) = RustConnection::connect(None)?;
+    let window = xid as Window;
+
+    let atom = get_atom(&conn, "_NET_WM_DESKTOP")?;
+    let reply = conn.get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1)?.reply()?;
+    Ok(reply.value32().and_then(|mut i| i.next()))
+}
+
+/// Move a window to a specific desktop/workspace (via _NET_WM_DESKTOP ClientMessage).
+pub fn set_window_desktop(xid: u64, desktop: u32) -> Result<()> {
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let screen = &conn.setup().roots[screen_num];
+    let root = screen.root;
+    let window = xid as Window;
+
+    let atom = get_atom(&conn, "_NET_WM_DESKTOP")?;
+
+    // EWMH spec: _NET_WM_DESKTOP ClientMessage
+    // window = target window
+    // message_type = _NET_WM_DESKTOP
+    // format = 32
+    // data.data32[0] = new desktop index
+    // data.data32[1] = source indication (1 = application, 2 = pager)
+    let event = ClientMessageEvent {
+        response_type: CLIENT_MESSAGE_EVENT,
+        format: 32,
+        sequence: 0,
+        window,
+        type_: atom,
+        data: [desktop, 2, 0, 0, 0].into(), // desktop, source=2 (pager/user action)
+    };
+
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        event,
+    )?.check()?;
+    conn.flush()?;
+
+    Ok(())
+}

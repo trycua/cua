@@ -58,6 +58,25 @@ let
     <body><input autofocus></body></html>
   '';
 
+  # Minimal Qt app: a focused QLineEdit in a window titled cua-initial. Qt
+  # exposes it over AT-SPI (with EditableText) when QT_ACCESSIBILITY=1, giving
+  # a non-GTK toolkit data point for focus-free typing.
+  pyqtEnv = pkgs.python3.withPackages (ps: [ ps.pyqt5 ]);
+  qtEntryScript = pkgs.writeText "cua-qt-entry.py" ''
+    import sys
+    from PyQt5.QtWidgets import QApplication, QWidget, QLineEdit, QVBoxLayout
+    app = QApplication(sys.argv)
+    w = QWidget()
+    w.setWindowTitle("cua-initial")
+    entry = QLineEdit()
+    layout = QVBoxLayout(w)
+    layout.addWidget(entry)
+    w.resize(400, 120)
+    w.show()
+    entry.setFocus()
+    sys.exit(app.exec_())
+  '';
+
   apps = {
     gtk = {
       packages = [ pkgs.zenity ];
@@ -65,6 +84,14 @@ let
       # zenity is a GTK app exposing AT-SPI; --entry gives a focused GtkEntry.
       launch = pkgs.writeShellScript "cua-launch-gtk.sh" ''
         exec ${pkgs.zenity}/bin/zenity --entry --title=cua-initial --text=cua --width=400
+      '';
+    };
+    qt = {
+      packages = [ pyqtEnv ];
+      memoryMB = 2048;
+      launch = pkgs.writeShellScript "cua-launch-qt.sh" ''
+        export QT_QPA_PLATFORM=xcb
+        exec ${pyqtEnv}/bin/python3 ${qtEntryScript}
       '';
     };
     chromium = {

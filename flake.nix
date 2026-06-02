@@ -96,7 +96,7 @@
                       };
                     }
                   )
-                ) [ "chromium" "firefox" "gtk" ]
+                ) [ "chromium" "firefox" "gtk" "qt" ]
               )
             );
         }

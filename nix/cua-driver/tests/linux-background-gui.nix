@@ -241,16 +241,26 @@ pkgs.testers.nixosTest {
         machine.succeed("mkdir -p /run/user/0 && chmod 700 /run/user/0")
         machine.execute("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork >/tmp/dbus.log 2>&1")
         machine.wait_until_succeeds("test -S /tmp/cua-session-bus", timeout=10)
-        # Mark assistive tech enabled BEFORE the bus launcher/apps start, via the
-        # keyfile GSettings backend (shared XDG_CONFIG_HOME), so GTK3 apps export
-        # their accessible trees. Done as a one-shot write — no org.a11y.Bus poke.
         machine.succeed("mkdir -p /tmp/cua-cfg")
-        # Non-fatal: log the outcome but don't abort the run if it errors, so the
-        # AT-SPI registration diagnostics still surface.
-        machine.execute("${a11yEnv} gsettings set org.gnome.desktop.interface toolkit-accessibility true 2>&1 | tee /tmp/gsettings.log")
-        machine.execute("${a11yEnv} gsettings get org.gnome.desktop.interface toolkit-accessibility 2>&1 | tee -a /tmp/gsettings.log")
-        machine.log("gsettings result: " + machine.execute("cat /tmp/gsettings.log")[1])
+        # Start the AT-SPI bus launcher and wait until *it* owns org.a11y.Bus,
+        # checked via the bus driver's NameHasOwner (which does NOT D-Bus-activate
+        # the name — activating it would spawn a second, conflicting launcher).
         machine.execute("${a11yEnv} ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher --launch-immediately >/tmp/atspi-launcher.log 2>&1 &")
+        machine.wait_until_succeeds(
+            "${a11yEnv} dbus-send --session --print-reply "
+            "--dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner "
+            "string:org.a11y.Bus | grep -q 'boolean true'",
+            timeout=15,
+        )
+        # at-spi-bus-launcher reports a11y enabled only once an AT client has
+        # registered (or IsEnabled is set explicitly); GTK3 apps check this at
+        # startup and stay silent otherwise. Set it on the now-owned launcher.
+        machine.execute(
+            "${a11yEnv} dbus-send --session --dest=org.a11y.Bus "
+            "/org/a11y/bus org.freedesktop.DBus.Properties.Set "
+            "string:org.a11y.Status string:IsEnabled variant:boolean:true 2>&1 | tee /tmp/a11y-enable.log"
+        )
+        machine.log("a11y IsEnabled set: " + machine.execute("cat /tmp/a11y-enable.log")[1])
 
     with subtest("Focused control terminal"):
         machine.execute("sh -lc 'DISPLAY=:99 xterm -T Control -geometry 60x20+40+120 >/tmp/control.log 2>&1 & echo $! >/tmp/control-pid.txt'")

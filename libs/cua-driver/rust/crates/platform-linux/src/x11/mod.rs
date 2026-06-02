@@ -106,3 +106,51 @@ fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
     let reply = conn.get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)?.reply()?;
     Ok(String::from_utf8_lossy(&reply.value).into_owned())
 }
+
+/// Get the currently active window (via _NET_ACTIVE_WINDOW).
+pub fn get_active_window() -> Result<Option<u64>> {
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let screen = &conn.setup().roots[screen_num];
+    let root = screen.root;
+
+    let atom = get_atom(&conn, "_NET_ACTIVE_WINDOW")?;
+    let reply = conn.get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)?.reply()?;
+    Ok(reply.value32().and_then(|mut i| i.next()).map(|w| w as u64))
+}
+
+/// Activate (focus/raise) a window by sending a _NET_ACTIVE_WINDOW client message.
+/// This is the EWMH-compliant way to request focus on a window.
+pub fn activate_window(xid: u64) -> Result<()> {
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let screen = &conn.setup().roots[screen_num];
+    let root = screen.root;
+    let window = xid as Window;
+
+    let atom = get_atom(&conn, "_NET_ACTIVE_WINDOW")?;
+
+    // Build the ClientMessage event as per EWMH spec:
+    // window = target window
+    // message_type = _NET_ACTIVE_WINDOW
+    // format = 32
+    // data.data32[0] = source indication (1 = application, 2 = pager/user)
+    // data.data32[1] = timestamp (0 = CurrentTime)
+    // data.data32[2] = requestor's active window (0 = none)
+    let event = ClientMessageEvent {
+        response_type: CLIENT_MESSAGE_EVENT,
+        format: 32,
+        sequence: 0,
+        window,
+        type_: atom,
+        data: [2, 0, 0, 0, 0].into(), // source=2 (user action), timestamp=0
+    };
+
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        event,
+    )?.check()?;
+    conn.flush()?;
+
+    Ok(())
+}

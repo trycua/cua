@@ -384,10 +384,93 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             .find(|v| v.has_editable && v.focused)
             .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
             .or_else(|| visited.iter().find(|v| v.has_editable));
-        let target = match target {
-            Some(t) => t,
-            None => return Ok(false),
-        };
+
+        // If no editable found (GTK4/most toolkits gate editables on focus), try
+        // temporarily activating the window. Qt6's AT-SPI bridge exposes editables
+        // unfocused, but GTK4 doesn't. This is the focus-free write workaround.
+        if target.is_none() {
+            dlog!("no editable found unfocused; attempting activation workaround");
+            // Get the first window for this pid and activate it.
+            let windows = crate::x11::list_windows(Some(pid));
+            if let Some(win) = windows.first() {
+                let xid = win.xid;
+                // Save the currently active window so we can restore it.
+                let saved_active = crate::x11::get_active_window().ok().flatten();
+                dlog!("activating window {} (saved active: {:?})", xid, saved_active);
+
+                // Activate the target window.
+                if crate::x11::activate_window(xid).is_ok() {
+                    // Give the toolkit a moment to register the activation and expose
+                    // its editable via AT-SPI (GTK4's bridge gates on focus state).
+                    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+                    // Re-walk the tree now that the window is focused.
+                    if let Some(revisited) = collect_visited(&conn, pid).await? {
+                        dlog!(
+                            "post-activation: {} editable",
+                            revisited.iter().filter(|v| v.has_editable).count()
+                        );
+                        let target_activated = revisited
+                            .iter()
+                            .find(|v| v.has_editable && v.focused)
+                            .or_else(|| revisited.iter().find(|v| v.has_editable && v.in_web_doc))
+                            .or_else(|| revisited.iter().find(|v| v.has_editable));
+
+                        if let Some(t) = target_activated {
+                            dlog!(
+                                "insert target (post-activation): role={:?} focused={}",
+                                t.role, t.focused
+                            );
+                            let proxies = t
+                                .acc
+                                .proxies()
+                                .await
+                                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+                            let et = proxies
+                                .editable_text()
+                                .await
+                                .map_err(|e| anyhow!("EditableText unavailable: {e}"))?;
+
+                            let off = match proxies.text().await {
+                                Ok(tp) => tp.caret_offset().await.unwrap_or(0),
+                                Err(_) => 0,
+                            };
+                            let len = text.chars().count() as i32;
+
+                            let success = if et.insert_text(off, text, len).await.unwrap_or(false) {
+                                true
+                            } else {
+                                et.set_text_contents(text).await.unwrap_or(false)
+                            };
+
+                            // Restore the previously active window.
+                            if let Some(prev_xid) = saved_active {
+                                dlog!("restoring focus to window {}", prev_xid);
+                                if crate::x11::activate_window(prev_xid).is_ok() {
+                                    // Give the window manager time to process the focus change
+                                    // so the caller sees the restored focus state immediately.
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                                }
+                            }
+
+                            return Ok(success);
+                        }
+                    }
+
+                    // Restore focus even if insertion failed.
+                    if let Some(prev_xid) = saved_active {
+                        if crate::x11::activate_window(prev_xid).is_ok() {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        }
+                    }
+                }
+            }
+
+            // Activation workaround didn't help; return false.
+            return Ok(false);
+        }
+
+        let target = target.unwrap();
         dlog!(
             "insert target: role={:?} in_web_doc={} focused={}",
             target.role, target.in_web_doc, target.focused

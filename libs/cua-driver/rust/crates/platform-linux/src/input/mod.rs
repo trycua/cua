@@ -23,6 +23,9 @@ use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
+/// Pause after a focus/activation request so an asynchronous window manager can
+/// act on it before we inject or restore focus.
+const FOCUS_SETTLE_MS: u64 = 60;
 
 fn xtest_available(conn: &RustConnection) -> bool {
     conn.extension_information(x11rb::protocol::xtest::X11_EXTENSION_NAME)
@@ -58,23 +61,79 @@ fn xtest_key_tap(conn: &RustConnection, root: Window, keycode: u8) -> Result<()>
     Ok(())
 }
 
-/// Temporarily move X input focus to `window`, run `f`, then restore the
-/// previously-focused window. XTEST delivers synthetic key events to whatever
-/// window currently holds input focus, so we focus the target just long enough
-/// to inject — and put focus back afterwards so the keyboard path honours the
-/// same no-focus-steal contract the XSendEvent pointer path keeps.
+/// Read `_NET_ACTIVE_WINDOW` from the root — the value `xdotool getactivewindow`
+/// reports. `None` when no EWMH window manager is running.
+fn net_active_window(conn: &RustConnection, root: Window) -> Option<Window> {
+    let atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW").ok()?.reply().ok()?.atom;
+    let reply = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    let win = reply.value32()?.next()?;
+    (win != 0).then_some(win)
+}
+
+/// Ask an EWMH window manager to activate `window` via a `_NET_ACTIVE_WINDOW`
+/// client message (source = 2, "pager", so the WM bypasses focus-stealing
+/// prevention — the same nudge `xdotool windowactivate` sends). A no-op when no
+/// WM is listening for the SubstructureRedirect on the root.
+fn ewmh_activate(conn: &RustConnection, root: Window, window: Window) -> Result<()> {
+    let atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW")?.reply()?.atom;
+    let event = ClientMessageEvent::new(32, window, atom, [2u32, x11rb::CURRENT_TIME, 0, 0, 0]);
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+        &event,
+    )?;
+    conn.flush()?;
+    Ok(())
+}
+
+/// Round-trip with the server, then pause briefly so an asynchronous WM has time
+/// to act on a focus/activation request before we read or change focus again.
+fn focus_settle(conn: &RustConnection) {
+    if let Ok(cookie) = conn.get_input_focus() {
+        let _ = cookie.reply();
+    }
+    sleep(Duration::from_millis(FOCUS_SETTLE_MS));
+}
+
+/// Temporarily move focus to `window`, run `f`, then restore the previously
+/// active window. XTEST delivers synthetic key events to whatever window holds
+/// input focus, so we focus the target just long enough to inject — and put
+/// focus back afterwards to honour the same no-focus-steal contract the
+/// XSendEvent pointer path keeps. We drive focus two ways: a low-level
+/// `SetInputFocus` (so injection still works with no window manager) and, when
+/// an EWMH WM is present, a `_NET_ACTIVE_WINDOW` message (so the WM doesn't
+/// reassert its own choice and so `_NET_ACTIVE_WINDOW` lands back where it was).
 fn with_focus<R>(
     conn: &RustConnection,
+    root: Window,
     window: Window,
     f: impl FnOnce(&RustConnection) -> Result<R>,
 ) -> Result<R> {
-    let prev = conn.get_input_focus()?.reply()?;
-    conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)?;
-    conn.flush()?;
-    let result = f(conn);
-    // Always attempt to restore the prior focus, even if injection failed.
-    let _ = conn.set_input_focus(prev.revert_to, prev.focus, x11rb::CURRENT_TIME);
+    let prev_focus = conn.get_input_focus()?.reply()?;
+    let prev_active = net_active_window(conn, root);
+
+    let _ = conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME);
+    let _ = ewmh_activate(conn, root, window);
     let _ = conn.flush();
+    focus_settle(conn);
+
+    let result = f(conn);
+
+    // Restore prior focus, even if injection failed. Prefer EWMH so the WM's
+    // _NET_ACTIVE_WINDOW returns to its old value; SetInputFocus covers the
+    // no-WM case.
+    if let Some(prev) = prev_active {
+        let _ = ewmh_activate(conn, root, prev);
+    }
+    let _ = conn.set_input_focus(prev_focus.revert_to, prev_focus.focus, x11rb::CURRENT_TIME);
+    let _ = conn.flush();
+    focus_settle(conn);
+
     result
 }
 
@@ -247,7 +306,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let shift_kc = keysym_to_keycode(&mapping, 0xFFE1); // Shift_L
 
-    with_focus(&conn, xid as Window, |conn| {
+    with_focus(&conn, root, xid as Window, |conn| {
         for ch in text.chars() {
             // Keysym for ASCII / Latin-1 is just the codepoint.
             let Some((keycode, needs_shift)) = keysym_to_keycode_shift(&mapping, ch as u32) else {
@@ -290,7 +349,7 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         .filter_map(|ks| keysym_to_keycode(&mapping, ks))
         .collect();
 
-    with_focus(&conn, xid as Window, |conn| {
+    with_focus(&conn, root, xid as Window, |conn| {
         for &mk in &mod_keycodes {
             xtest_key_press(conn, root, mk)?;
         }

@@ -316,3 +316,56 @@ fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {
     }
     KeyButMask::from(state)
 }
+
+/// Inject text into a Tk window via Tk's `send` command — the Tk-specific
+/// override for focus-free writes (Tk has no AT-SPI bridge). Requires the target
+/// app to have registered itself with a known name via `tk appname <name>`.
+/// Returns Ok(true) if text was sent, Ok(false) if the target isn't reachable
+/// (not a Tk app or `wish` unavailable), Err on a send failure.
+pub fn inject_tk_send(text: &str) -> Result<bool> {
+    use std::io::Write;
+
+    // Escape the text for safe Tcl interpolation (braces for literal strings).
+    // Tcl's `send` command: `send <target-app-name> <tcl-command>`.
+    // We target "cua-tk-target" (the name the test app registers with) and
+    // insert at the entry widget's current cursor position.
+    let tcl_text = text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}");
+    let tcl_script = format!(
+        r#"if {{[catch {{send cua-tk-target {{.entry insert insert {{{}}}}}}} err]}} {{
+    puts stderr "tk send failed: $err"
+    exit 1
+}}
+exit 0"#,
+        tcl_text
+    );
+
+    // Try to spawn wish (Tk's shell). If it's not available, this isn't a
+    // Tk-based environment and we should fall back to XSendEvent.
+    let mut child = match std::process::Command::new("wish")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn() {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(tcl_script.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        // If send fails (e.g., target not registered), treat as "not a Tk app"
+        // and let the caller fall back to XSendEvent.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("application named") || stderr.contains("no registered") {
+            Ok(false)
+        } else {
+            anyhow::bail!("wish send failed: {}", stderr)
+        }
+    }
+}

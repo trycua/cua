@@ -73,7 +73,18 @@ struct Visited<'a> {
     has_value: bool,
     has_component: bool,
     focused: bool,
+    /// True when an ancestor is a web document (e.g. role "document web"),
+    /// i.e. this node is page content rather than browser chrome.
+    in_web_doc: bool,
     acc: AccessibleProxy<'a>,
+}
+
+/// Role names that denote embedded web/document content. An editable beneath
+/// one of these is page content (the field a user means when typing into a
+/// background browser) rather than browser chrome like the address bar.
+fn is_document_role(role: &str) -> bool {
+    let r = role.to_ascii_lowercase();
+    r.contains("document") || r == "embedded"
 }
 
 /// Build an `AccessibleProxy` for an arbitrary (bus name, path) in the tree.
@@ -143,11 +154,12 @@ async fn collect_visited<'a>(
     };
     let zconn = conn.connection();
 
-    // Stack of (object ref, depth). Seed with the app's windows; push children
-    // reversed so siblings pop left-to-right and each subtree completes before
-    // the next sibling (pre-order).
-    let mut stack: Vec<(atspi::ObjectRefOwned, usize)> = match call(app.get_children()).await {
-        Some(Ok(children)) => children.into_iter().rev().map(|r| (r, 0usize)).collect(),
+    // Stack of (object ref, depth, in_web_doc). Seed with the app's windows;
+    // push children reversed so siblings pop left-to-right and each subtree
+    // completes before the next sibling (pre-order). `in_web_doc` is inherited
+    // from ancestors so editables in page content can be told from chrome.
+    let mut stack: Vec<(atspi::ObjectRefOwned, usize, bool)> = match call(app.get_children()).await {
+        Some(Ok(children)) => children.into_iter().rev().map(|r| (r, 0usize, false)).collect(),
         _ => Vec::new(),
     };
 
@@ -155,7 +167,7 @@ async fn collect_visited<'a>(
     // Guard against pathological/looping trees.
     let mut budget = 5000usize;
 
-    while let Some((oref, depth)) = stack.pop() {
+    while let Some((oref, depth, in_web_doc)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
             break;
@@ -242,10 +254,13 @@ async fn collect_visited<'a>(
             name = text_content;
         }
 
+        // Children inherit web-document context, plus this node's own role.
+        let child_in_web_doc = in_web_doc || is_document_role(&role);
+
         // Enqueue children (fetched above) before moving `acc` into `visited`.
         if let Some(Ok(children)) = children_r {
             for c in children.into_iter().rev() {
-                stack.push((c, depth + 1));
+                stack.push((c, depth + 1, child_in_web_doc));
             }
         }
 
@@ -259,6 +274,7 @@ async fn collect_visited<'a>(
             has_value,
             has_component,
             focused,
+            in_web_doc,
             acc,
         });
     }
@@ -349,15 +365,26 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             None => return Ok(false),
         };
 
-        // Prefer the focused editable; else the first editable in the tree.
+        // Target priority:
+        //   1. the focused editable (if the toolkit exposes focus),
+        //   2. an editable inside web/document content — for a browser this is
+        //      the page's field, not the address bar (which sorts first in the
+        //      tree but is chrome),
+        //   3. the first editable anywhere (covers single-field apps like a
+        //      GTK dialog entry).
         let target = visited
             .iter()
             .find(|v| v.has_editable && v.focused)
+            .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
             .or_else(|| visited.iter().find(|v| v.has_editable));
         let target = match target {
             Some(t) => t,
             None => return Ok(false),
         };
+        dlog!(
+            "insert target: role={:?} in_web_doc={} focused={}",
+            target.role, target.in_web_doc, target.focused
+        );
 
         let proxies = target
             .acc

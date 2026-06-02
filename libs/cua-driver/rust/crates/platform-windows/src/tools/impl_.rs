@@ -2176,6 +2176,10 @@ impl Tool for ClickTool {
             // UIA hit-test didn't land. Decide between PostMessage / SendInput
             // based on dispatch mode.
             //
+            // See ADR-0001 for why this remains the last background-safe tier
+            // instead of silently escalating to InputInjector / sparse-package
+            // global input injection.
+            //
             // dispatch:"background" — refuse to swap foreground. If the target
             // is known to silently drop PostMessage mouse events (Chromium
             // DOM content, GTK button widgets), surface a structured

@@ -55,11 +55,11 @@ jobs:
             visual: true
             result_link: result-linux-background-terminal-gif
             artifact_name: cua-driver-linux-background-terminal-gif
-          - name: Linux background GUI test (tk)
-            check_attr: cua-driver-linux-background-gui-tk
-            timeout_minutes: 12
+          - name: Linux background GUI test (gtk)
+            check_attr: cua-driver-linux-background-gui-gtk
+            timeout_minutes: 15
             visual: false
-            result_link: result-linux-background-gui-tk
+            result_link: result-linux-background-gui-gtk
             artifact_name: ""
           - name: Linux background GUI test (chromium)
             check_attr: cua-driver-linux-background-gui-chromium

@@ -96,7 +96,7 @@
                       };
                     }
                   )
-                ) [ "chromium" "firefox" "tk" ]
+                ) [ "chromium" "firefox" "gtk" ]
               )
             );
         }

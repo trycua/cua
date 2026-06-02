@@ -850,7 +850,15 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
+            // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
+                return Ok(());
+            }
+            // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
+            // focused widget, so background XSendEvent typing doesn't land. Fill
+            // the editable field via AT-SPI instead — focus-free and toolkit-
+            // agnostic. Fall back to XSendEvent when no a11y field is exposed.
+            if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
                 return Ok(());
             }
             crate::input::send_type_text(xid, &text)

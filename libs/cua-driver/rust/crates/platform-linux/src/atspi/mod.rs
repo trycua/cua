@@ -139,6 +139,71 @@ except:
     Ok(())
 }
 
+/// Insert `text` into a GUI app's editable field via AT-SPI EditableText —
+/// focus-free and toolkit-agnostic, unlike X11 key injection which only reaches
+/// the *focused* toplevel's focused widget. Targets the focused editable element
+/// if the toolkit exposes one, else the first editable element in the tree.
+/// Returns Ok(true) if text was inserted, Ok(false) if the app exposes no
+/// editable element (so the caller can fall back), Err on an AT-SPI failure.
+pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
+    let safe_value = text.replace('\\', "\\\\").replace('\'', "\\'");
+    let script = format!(r#"
+import pyatspi, sys
+
+TEXT = '{safe_value}'
+
+editables = []
+focused = [None]
+def is_editable(acc):
+    try:
+        acc.queryEditableText(); return True
+    except: return False
+def collect(acc):
+    if is_editable(acc):
+        editables.append(acc)
+        try:
+            if acc.getState().contains(pyatspi.STATE_FOCUSED):
+                focused[0] = acc
+        except: pass
+    for child in acc:
+        collect(child)
+
+desktop = pyatspi.Registry.getDesktop(0)
+app = None
+for a in desktop:
+    try:
+        if a.get_process_id() == {pid}:
+            app = a; break
+    except: pass
+if app is None:
+    print("none"); sys.exit(0)
+for win in app:
+    collect(win)
+
+target = focused[0] or (editables[0] if editables else None)
+if target is None:
+    print("none"); sys.exit(0)
+
+et = target.queryEditableText()
+try:
+    off = target.queryText().caretOffset
+except: off = 0
+try:
+    et.insertText(off, TEXT, len(TEXT)); print("ok")
+except Exception:
+    try:
+        et.setTextContents(TEXT); print("ok")
+    except Exception as e:
+        print("ERROR: %s" % e, file=sys.stderr); sys.exit(1)
+"#, pid = pid, safe_value = safe_value);
+
+    let out = Command::new("python3").arg("-c").arg(&script).output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim() == "ok")
+}
+
 /// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     let script = format!(r#"

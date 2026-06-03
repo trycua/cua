@@ -90,6 +90,22 @@ fn is_document_role(role: &str) -> bool {
 /// Build an `AccessibleProxy` for an arbitrary (bus name, path) in the tree.
 /// Uses owned `String`s for destination/path so the resulting `BusName`/
 /// `ObjectPath` are `'static` and the proxy borrows only the connection.
+///
+/// `cache_properties(No)` is load-bearing, not just an optimization: with the
+/// zbus default (`Lazily`) the first property read on the proxy — our
+/// `acc.name()` during the walk — makes zbus issue
+/// `org.freedesktop.DBus.Properties.GetAll` (one argument: the interface name)
+/// to warm the cache. Qt5's AT-SPI bridge (`AtSpiAdaptor::handleMessage`)
+/// assumes every Properties call is `Get`/`Set` and unconditionally reads
+/// `message.arguments().at(1)`; for a one-argument `GetAll` that index is out
+/// of range, so the following `QVariant::toString()` dereferences garbage and
+/// the Qt5 app *segfaults* (observed crash: `libQt5Core` via
+/// `AtSpiAdaptor::handleMessage`). Qt6's bridge handles `GetAll`, which is why
+/// only Qt5 crashed. Forcing `No` makes zbus issue per-property `Get` calls
+/// (two arguments) instead, which Qt5 handles correctly — so the Qt5 window can
+/// be walked and written without killing the app. Other toolkits are
+/// unaffected (they already tolerate `GetAll`), and the sub-interface proxies
+/// from `proxies()` already use `CacheProperties::No`.
 async fn accessible_for<'a>(
     conn: &'a atspi::zbus::Connection,
     oref: &atspi::ObjectRefOwned,
@@ -100,6 +116,7 @@ async fn accessible_for<'a>(
         .to_owned();
     let path = oref.path_as_str().to_owned();
     AccessibleProxy::builder(conn)
+        .cache_properties(atspi::zbus::proxy::CacheProperties::No)
         .destination(dest)
         .map_err(|e| anyhow!("bad a11y destination: {e}"))?
         .path(path)

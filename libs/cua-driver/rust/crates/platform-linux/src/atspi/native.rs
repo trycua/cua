@@ -473,9 +473,20 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         }
 
         // GTK3 fallback: the toolkit exposes entry/text nodes in the tree (so
-        // get_text reads work) but gates EditableText on focus/activation. Try
-        // finding an entry/text role with Component bounds and use X11 click+type.
-        dlog!("AT-SPI EditableText unavailable; checking for entry/text with Component for X11 fallback");
+        // get_text reads work) but gates EditableText on focus/activation. Find
+        // an entry/text role with a Component, give it *widget* focus via AT-SPI
+        // Component.GrabFocus (no window activation), then type via X11
+        // XSendEvent directed at the window.
+        //
+        // This path is deliberately focus-free: it does NOT synthesize a pointer
+        // click on the entry. Under a stacking WM (openbox) a synthetic button
+        // press on a background window raises/activates that window, which would
+        // move X focus off the control terminal and break the test's "Focus
+        // stayed on the control terminal" assertion. GrabFocus moves only the
+        // *widget* focus inside the app, leaving window focus untouched, so the
+        // subsequent XSendEvent keystrokes land in the GtkEntry without the
+        // window ever becoming active.
+        dlog!("AT-SPI EditableText unavailable; checking for entry/text with Component for focus-free GrabFocus+type fallback");
 
         let entry_candidate = visited
             .iter()
@@ -486,52 +497,44 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 
         if let Some(entry) = entry_candidate {
             dlog!(
-                "GTK3 fallback: found entry role={:?} with Component; attempting X11 click+type",
+                "GTK3 fallback: found entry role={:?} with Component; attempting focus-free GrabFocus+type",
                 entry.role
             );
 
-            // Get the entry widget's screen bounds via Component.GetExtents.
             if let Ok(proxies) = entry.acc.proxies().await {
                 if let Ok(comp) = proxies.component().await {
-                    if let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Screen)).await {
-                        // Click the center of the entry to establish widget focus (not window focus).
-                        let cx = x + (w.max(0) / 2);
-                        let cy = y + (h.max(0) / 2);
-                        dlog!("GTK3 fallback: entry bounds ({x},{y} {w}x{h}), clicking center ({cx},{cy})");
-
-                        // Get the window XID for this app so we can send X11 events to it.
-                        let Some(xid) = entry_find_window_xid(pid).await else {
-                            dlog!("GTK3 fallback: could not find window XID");
-                            return Ok(false);
-                        };
-
-                        // Translate screen coords to window-local coords for XSendEvent.
-                        let Some((wx, wy)) = screen_to_window_coords(xid, cx, cy) else {
-                            dlog!("GTK3 fallback: screen-to-window coord translation failed");
-                            return Ok(false);
-                        };
-
-                        dlog!("GTK3 fallback: window XID {xid}, local coords ({wx},{wy})");
-
-                        // Click the entry to focus the widget (widget focus, not window focus).
-                        if let Err(e) = crate::input::send_click(xid as u64, wx, wy, 1, 1) {
-                            dlog!("GTK3 fallback: click failed: {e}");
-                            return Ok(false);
-                        };
-
-                        // Small delay for the click to register and the widget to update focus.
-                        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-
-                        // Now type via X11 XSendEvent — the entry widget has internal focus
-                        // so it should accept the keystrokes even though the window is unfocused.
-                        if let Err(e) = crate::input::send_type_text(xid as u64, text) {
-                            dlog!("GTK3 fallback: send_type_text failed: {e}");
-                            return Ok(false);
-                        }
-
-                        dlog!("GTK3 fallback: X11 click+type succeeded");
-                        return Ok(true);
+                    // Grab *widget* focus on the entry via AT-SPI. This gives the
+                    // GtkEntry internal keyboard focus without activating/raising
+                    // the toplevel window, so the window stays in the background.
+                    match call(comp.grab_focus()).await {
+                        Some(Ok(true)) => dlog!("GTK3 fallback: GrabFocus succeeded on {:?}", entry.role),
+                        Some(Ok(false)) => dlog!("GTK3 fallback: GrabFocus returned false on {:?}", entry.role),
+                        Some(Err(e)) => dlog!("GTK3 fallback: GrabFocus failed on {:?}: {}", entry.role, e),
+                        None => dlog!("GTK3 fallback: GrabFocus timed out on {:?}", entry.role),
                     }
+
+                    // Brief settle for the widget to update its internal focus.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+                    // Get the window XID for this app so we can direct X11 events at it.
+                    let Some(xid) = entry_find_window_xid(pid).await else {
+                        dlog!("GTK3 fallback: could not find window XID");
+                        return Ok(false);
+                    };
+
+                    dlog!("GTK3 fallback: window XID {xid}; typing via XSendEvent (no click)");
+
+                    // Type via X11 XSendEvent — the entry widget now has internal
+                    // focus, so it accepts the keystrokes even though its window is
+                    // unfocused/in the background. No pointer click is sent, so the
+                    // window is never raised or activated and X focus stays put.
+                    if let Err(e) = crate::input::send_type_text(xid as u64, text) {
+                        dlog!("GTK3 fallback: send_type_text failed: {e}");
+                        return Ok(false);
+                    }
+
+                    dlog!("GTK3 fallback: focus-free GrabFocus+type succeeded");
+                    return Ok(true);
                 }
             }
         }
@@ -548,25 +551,6 @@ async fn entry_find_window_xid(pid: u32) -> Option<u64> {
     let windows = list_windows(Some(pid));
     let xid = windows.first()?.xid;
     Some(xid)
-}
-
-/// Translate screen coordinates to window-local coordinates.
-fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i32, i32)> {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
-    use x11rb::rust_connection::RustConnection;
-
-    let (conn, _) = RustConnection::connect(None).ok()?;
-    let window = xid as u32;
-
-    // Get window geometry to find its screen position.
-    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
-
-    // Translate to root coordinates (screen coords of window's origin).
-    let trans = conn.translate_coordinates(window, geom.root, 0, 0).ok()?.reply().ok()?;
-
-    // Window-local = screen - window_origin.
-    Some((screen_x - trans.dst_x as i32, screen_y - trans.dst_y as i32))
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<String> {

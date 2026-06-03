@@ -342,15 +342,25 @@ let
       # GTK4, which speaks AT-SPI directly) only joins the AT-SPI bus by dlopening
       # libatk-bridge-2.0.so, and atk-bridge only registers the app's accessible
       # tree at startup when the a11y bus reports org.a11y.Status IsEnabled=true.
-      # In this hand-rolled headless session that handshake is racy: the bridge
-      # reads IsEnabled once at process start, before our `dbus-send ... Set
-      # IsEnabled true` reliably lands, so zenity frequently never registers and
-      # the driver's tree walk finds zero nodes for its pid. Because that
-      # registration is not reliably achievable here, gtk (zenity/GTK3) stays
-      # READ-ONLY in the assertions below (no typed-text assert). It is NOT
-      # fundamentally impossible — with a guaranteed IsEnabled-before-launch
-      # ordering GTK3 would expose its tree — but it was not reliably reproducible
-      # in this CI session, so we do not assert a write for it.
+      # In this hand-rolled headless session that handshake was racy: the bridge
+      # reads IsEnabled once at process start, and if our `dbus-send ... Set
+      # IsEnabled true` hadn't landed yet zenity never registered, so the
+      # driver's tree walk found zero nodes for its pid and there was nothing to
+      # write into. Root fix (see testScript below): the a11y enable is made
+      # deterministic *before* zenity launches —
+      #   1. The GSettings keyfile is pre-seeded with
+      #      `org.gnome.desktop.interface toolkit-accessibility=true`, which is
+      #      the in-process flag atk-bridge consults, so it is true the instant
+      #      zenity starts (no dependence on a runtime D-Bus race).
+      #   2. `org.a11y.Status IsEnabled` is set on the bus and then read back /
+      #      waited on before any app is launched.
+      #   3. After launch the test waits for the GtkEntry to appear in the tree.
+      # With the entry reliably exposed, the driver's GTK3 fallback writes into
+      # it *focus-free*: AT-SPI Component.GrabFocus on the GtkEntry (widget focus,
+      # no window activation) followed by XSendEvent typing — no synthetic pointer
+      # click, so the background window is never raised and X focus stays on the
+      # control terminal. gtk therefore asserts the write below (see the typed
+      # readback list) alongside qt/qt6/gtk4.
       launch = pkgs.writeShellScript "cua-launch-gtk.sh" ''
         exec ${pkgs.zenity}/bin/zenity --entry --title=cua-initial --text=cua --width=400
       '';
@@ -661,6 +671,21 @@ pkgs.testers.nixosTest {
         machine.execute("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork >/tmp/dbus.log 2>&1")
         machine.wait_until_succeeds("test -S /tmp/cua-session-bus", timeout=10)
         machine.succeed("mkdir -p /tmp/cua-cfg")
+        # Pre-seed the GSettings keyfile so org.gnome.desktop.interface
+        # toolkit-accessibility=true is visible the instant any app starts. This
+        # is the in-process flag GTK3's atk-bridge consults at startup to decide
+        # whether to register the app's accessible tree; making it true *before*
+        # launch (rather than relying on a runtime org.a11y.Bus race) is the root
+        # fix for GTK3/zenity not exposing its GtkEntry. The keyfile backend reads
+        # $XDG_CONFIG_HOME/glib-2.0/settings/keyfile, which we point at /tmp/cua-cfg.
+        machine.succeed("mkdir -p /tmp/cua-cfg/glib-2.0/settings")
+        machine.succeed(
+            "${a11yEnv} gsettings set org.gnome.desktop.interface toolkit-accessibility true"
+        )
+        machine.log(
+            "toolkit-accessibility: "
+            + machine.execute("${a11yEnv} gsettings get org.gnome.desktop.interface toolkit-accessibility")[1]
+        )
         # Start the AT-SPI bus launcher and wait until *it* owns org.a11y.Bus,
         # checked via the bus driver's NameHasOwner (which does NOT D-Bus-activate
         # the name — activating it would spawn a second, conflicting launcher).
@@ -704,6 +729,15 @@ pkgs.testers.nixosTest {
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --sync --onlyvisible --name cua-initial | head -1 >/tmp/target-xid.txt && test -s /tmp/target-xid.txt", timeout=120)
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/control-xid.txt)")
         machine.succeed("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/control-xid.txt)")
+        ${lib.optionalString (app == "gtk") ''
+          # GTK3/zenity registers its accessible tree with the AT-SPI bus
+          # asynchronously after the window maps (its atk-bridge does the
+          # GetItems/embed handshake a beat after startup). With
+          # toolkit-accessibility pre-seeded true the registration is reliable,
+          # but it is not instantaneous — give the bridge a short, deterministic
+          # settle so the GtkEntry is in the tree before the driver walks it.
+          machine.sleep(3)
+        ''}
 
     with subtest("Drive cua-driver against the inactive window (AT-SPI)"):
         machine.copy_from_host("${mcpTest}", "/tmp/mcp-background-gui-test.py")
@@ -728,14 +762,12 @@ pkgs.testers.nixosTest {
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
         machine.execute("test -s ${outputGif}")
         machine.copy_from_machine("${outputGif}", "")
-        # type_text is exercised (it returns ok via AT-SPI insert or the X11
-        # fallback), but we do NOT assert the typed text reads back: focus-free
-        # WRITE into a *background, unfocused* toolkit window is not reliably
-        # supported — toolkits gate editable accessibility on focus/activation
-        # (Chromium exposes its fields read-only over AT-SPI; an unfocused Qt
-        # window exposes only its top node; a GTK app's atk-bridge does not even
-        # register in this headless session). The driver's value validated here
-        # is the native AT-SPI READ path.
+        # type_text is exercised here for every app (it returns ok via AT-SPI
+        # insert, the GTK3 GrabFocus+type fallback, or the X11 fallback). The
+        # typed-text readback is asserted per-toolkit further below: the
+        # accessible toolkits (qt/qt6/gtk4/gtk) assert the focus-free write
+        # landed, while Chromium/Electron (read-only over AT-SPI) and Firefox
+        # validate only the native AT-SPI READ path here.
         assert "background GUI test typed" in result, result
 
     with subtest("Input landed: driver's native AT-SPI reads the window back"):
@@ -749,14 +781,21 @@ pkgs.testers.nixosTest {
             "driver get_text did not return an accessibility node for the background app:\n"
             + result
         )
-        # For Qt and GTK4 apps, assert the typed text actually landed.
+        # For Qt, GTK4 and GTK3 apps, assert the typed text actually landed.
         #   - Qt5: synthetic-focus workaround exposes the widget tree.
         #   - Qt6: exposes the editable natively over AT-SPI.
         #   - GTK4: launched with GTK_A11Y=atspi so it exports its accessible tree
         #     (GtkEntry with EditableText) over AT-SPI; the driver's generic
-        #     EditableText+GrabFocus path writes into it, with a synthetic-focus
-        #     re-walk fallback in atspi::insert_text for the unfocused-window gate.
-        if "${app}" in ["qt", "qt6", "gtk4"]:
+        #     EditableText+GrabFocus path writes into it.
+        #   - GTK3 (gtk/zenity): with toolkit-accessibility pre-seeded true the
+        #     atk-bridge reliably registers the GtkEntry. GTK3 still gates its
+        #     EditableText write on focus, so the driver's GTK3 fallback writes
+        #     focus-free instead: AT-SPI Component.GrabFocus on the entry (widget
+        #     focus only, no window activation) followed by XSendEvent typing — no
+        #     synthetic click, so the background window is never raised. The
+        #     "Focus stayed on the control terminal" subtest below then confirms
+        #     the write was genuinely focus-free.
+        if "${app}" in ["qt", "qt6", "gtk4", "gtk"]:
             assert "${typed}" in result, (
                 "${app} app should support focus-free write, but typed text not found in readback:\n"
                 + result

@@ -13,7 +13,7 @@
 fn main() {
     #[cfg(target_os = "windows")]
     {
-        embed_resource::compile("cua-driver.manifest", embed_resource::NONE);
+        embed_resource::compile("cua-driver.rc", embed_resource::NONE);
     }
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {

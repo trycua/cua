@@ -23,6 +23,9 @@ pub mod x11;
 pub mod input;
 
 #[cfg(target_os = "linux")]
+pub mod tty;
+
+#[cfg(target_os = "linux")]
 pub mod proc_fs;
 
 #[cfg(target_os = "linux")]

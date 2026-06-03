@@ -24,3 +24,8 @@ base64 = { workspace = true }
 image = { workspace = true }
 # kill(2) for the kill_app tool — SIGKILL via libc::kill.
 libc = "0.2"
+# Native AT-SPI over D-Bus (pure Rust, via zbus) — replaces the pyatspi
+# subprocess bridge so accessibility input/readback needs no Python or GI
+# typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
+# re-exports the bus types we need (fdo::DBusProxy for pid resolution).
+atspi = { version = "0.30", features = ["tokio", "zbus"] }

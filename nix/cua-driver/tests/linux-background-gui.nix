@@ -432,17 +432,40 @@ let
   # Tk-specific override (using Tk's `send` command) writes into the background
   # window while the control terminal keeps focus. Tk has no AT-SPI bridge, so
   # this is the approved override path for focus-free Tk input.
+  # Readback script: read the entry value back over Tk `send`. `send` is
+  # synchronous and blocks the sender until the target's Tcl event loop replies;
+  # if the target is wedged or the X server refuses `send` (SECURITY ext / xauth
+  # mismatch) it would otherwise hang forever. Guard it with a Tcl `after` timer
+  # that prints a marker and force-exits, so wish always terminates promptly —
+  # and the invocation is additionally wrapped in `timeout` below as a backstop.
   tkGetScript = pkgs.writeText "tk-get-value.tcl" ''
-    puts [send cua-tk-target {.entry get}]
+    set ::rc 1
+    after 20000 {
+        puts "TK_SEND_READBACK_TIMEOUT"
+        flush stdout
+        exit 1
+    }
+    if {[catch {send cua-tk-target {.entry get}} val]} {
+        puts "TK_SEND_READBACK_ERROR: $val"
+        flush stdout
+        exit 1
+    }
+    puts $val
+    flush stdout
+    exit 0
   '';
   tkSubtest = lib.optionalString (selected.tksend or false) ''
     with subtest("Tk send focus-free write into the background window (Tk override)"):
         # The driver already typed via inject_tk_send in the main test. Now read
         # the entry widget's value back via Tk send to prove the write landed.
+        # `timeout` is a hard backstop on top of the Tcl `after` timer in the
+        # script: even if wish wedges before reaching its event loop, the step
+        # fails fast (within ~30s) with diagnostics instead of hanging 15 min.
         machine.copy_from_host("${tkGetScript}", "/tmp/tk-get-value.tcl")
-        tk_readback = machine.succeed("${a11yEnv} ${pkgs.tk}/bin/wish /tmp/tk-get-value.tcl 2>&1").strip()
-        machine.log("Tk send readback: " + repr(tk_readback))
-        assert "${typed}" in tk_readback, f"Expected '${typed}' in Tk entry, got: {tk_readback}"
+        status, tk_readback = machine.execute("${a11yEnv} timeout 30 ${pkgs.tk}/bin/wish /tmp/tk-get-value.tcl 2>&1")
+        tk_readback = tk_readback.strip()
+        machine.log("Tk send readback (exit=" + str(status) + "): " + repr(tk_readback))
+        assert "${typed}" in tk_readback, f"Expected '${typed}' in Tk entry, got (exit={status}): {tk_readback}"
         # The override must remain focus-free: control terminal still active.
         tk_control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
         tk_active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()

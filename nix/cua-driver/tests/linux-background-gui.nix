@@ -12,6 +12,12 @@
 # background window goes through the Chrome DevTools Protocol (Input.insertText
 # targets the page's focused DOM element regardless of OS window focus).
 #
+# Each run also screen-records X11 display :99 into a per-app animated GIF
+# (/tmp/cua-driver-linux-background-gui-<app>.gif) and copies it into the test
+# derivation's $out, so the Nix workflow's `visual: true` artifact upload finds
+# a `.gif` for every matrix job. The GIF is stopped and copied out before any
+# toolkit assertion can fail, so even the failing jobs (qt, tk) still upload one.
+#
 # `app` selects one entry from `apps`, so flake.nix wires one matrix job per app.
 # To run: nix build .#checks.x86_64-linux.cua-driver-linux-background-gui-<app>
 {
@@ -24,6 +30,18 @@
 
 let
   typed = "cuatyped1234";
+
+  # Records an animated GIF of X11 display :99 while the driver interacts with
+  # the background window, so every matrix job (not just the dedicated GIF
+  # tests) produces a `.gif` artifact for the Nix workflow's `visual: true`
+  # upload. Shared with the linux-cursor-click / linux-background-terminal GIF
+  # tests. Needs `pkgs.imagemagick` in environment.systemPackages (below).
+  recordGifScript = import ./record-x11-gif.nix { inherit pkgs; };
+
+  # Distinct per-app GIF name so concurrent matrix jobs and their artifacts
+  # never collide; the workflow's `find -L "<result>/" -name '*.gif'` picks it
+  # up once it has been copied into the test derivation's $out.
+  outputGif = "/tmp/cua-driver-linux-background-gui-${app}.gif";
 
   # Plain python3 (stdlib only) to drive the MCP JSON-RPC handshake in the test.
   # The driver now speaks AT-SPI natively over D-Bus (no pyatspi / GI typelibs),
@@ -576,6 +594,7 @@ pkgs.testers.nixosTest {
         openbox
         picom
         xdotool
+        imagemagick               # `import` + `convert` for the screen-recorded GIF
         dbus
         at-spi2-core
         testPython
@@ -645,8 +664,27 @@ pkgs.testers.nixosTest {
 
     with subtest("Drive cua-driver against the inactive window (AT-SPI)"):
         machine.copy_from_host("${mcpTest}", "/tmp/mcp-background-gui-test.py")
-        result = machine.succeed("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
+        # Record a GIF of display :99 while the driver types into the background
+        # window. Started here and stopped + copied out *before* any failing
+        # assertion (the qt/tk toolkit checks below), so every matrix job —
+        # including the ones that fail — still produces a GIF of the interaction.
+        machine.execute(
+            "sh -lc '${recordGifScript} :99 /tmp/gui-frames ${outputGif} "
+            "/tmp/stop-gui-recorder /tmp/record-gui.log 10 0.2 >/dev/null 2>&1 & echo $! >/tmp/record-gui.pid'"
+        )
+        # Use execute (not succeed) so a non-zero driver exit can't abort the
+        # test before the recorder is stopped and the GIF is copied out.
+        status, result = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
         machine.log(result)
+        # Stop the recorder and copy the GIF into $out *now*, before any
+        # assertion below can fail and abort the test. This guarantees every
+        # matrix job (including qt/tk, whose later toolkit assertions fail)
+        # uploads a GIF showing the focus-free drive interaction.
+        machine.execute("touch /tmp/stop-gui-recorder")
+        machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
+        machine.execute("test -s ${outputGif}")
+        machine.copy_from_machine("${outputGif}", "")
         # type_text is exercised (it returns ok via AT-SPI insert or the X11
         # fallback), but we do NOT assert the typed text reads back: focus-free
         # WRITE into a *background, unfocused* toolkit window is not reliably

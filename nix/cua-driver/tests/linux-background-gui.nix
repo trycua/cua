@@ -320,7 +320,19 @@ let
     gtk = {
       packages = [ pkgs.zenity ];
       memoryMB = 2048;
-      # zenity is a GTK app exposing AT-SPI; --entry gives a focused GtkEntry.
+      # zenity is a GTK3 app; --entry gives a focused GtkEntry. GTK3 (unlike
+      # GTK4, which speaks AT-SPI directly) only joins the AT-SPI bus by dlopening
+      # libatk-bridge-2.0.so, and atk-bridge only registers the app's accessible
+      # tree at startup when the a11y bus reports org.a11y.Status IsEnabled=true.
+      # In this hand-rolled headless session that handshake is racy: the bridge
+      # reads IsEnabled once at process start, before our `dbus-send ... Set
+      # IsEnabled true` reliably lands, so zenity frequently never registers and
+      # the driver's tree walk finds zero nodes for its pid. Because that
+      # registration is not reliably achievable here, gtk (zenity/GTK3) stays
+      # READ-ONLY in the assertions below (no typed-text assert). It is NOT
+      # fundamentally impossible — with a guaranteed IsEnabled-before-launch
+      # ordering GTK3 would expose its tree — but it was not reliably reproducible
+      # in this CI session, so we do not assert a write for it.
       launch = pkgs.writeShellScript "cua-launch-gtk.sh" ''
         exec ${pkgs.zenity}/bin/zenity --entry --title=cua-initial --text=cua --width=400
       '';
@@ -363,6 +375,14 @@ let
       launch = pkgs.writeShellScript "cua-launch-gtk4.sh" ''
         export GDK_BACKEND=x11
         export GSK_RENDERER=cairo
+        # GTK4 talks AT-SPI directly (not via atk-bridge), but it only builds and
+        # exports its accessible tree when it selects the AT-SPI accessibility
+        # backend at startup. In this hand-rolled headless session GTK4's
+        # auto-detection can pick the "none" backend, leaving the a11y tree empty
+        # (only the top window node is exposed, no GtkEntry child) — which is why
+        # focus-free writes had nothing editable to target. GTK_A11Y=atspi forces
+        # the AT-SPI backend on so the GtkEntry is exposed with EditableText.
+        export GTK_A11Y=atspi
         exec ${gtk4App}/bin/cua-gtk4
       '';
     };
@@ -668,11 +688,16 @@ pkgs.testers.nixosTest {
             "driver get_text did not return an accessibility node for the background app:\n"
             + result
         )
-        # For Qt apps, assert the typed text actually landed (now supported via
-        # synthetic-focus workaround for Qt5, and natively for Qt6).
-        if "${app}" in ["qt", "qt6"]:
+        # For Qt and GTK4 apps, assert the typed text actually landed.
+        #   - Qt5: synthetic-focus workaround exposes the widget tree.
+        #   - Qt6: exposes the editable natively over AT-SPI.
+        #   - GTK4: launched with GTK_A11Y=atspi so it exports its accessible tree
+        #     (GtkEntry with EditableText) over AT-SPI; the driver's generic
+        #     EditableText+GrabFocus path writes into it, with a synthetic-focus
+        #     re-walk fallback in atspi::insert_text for the unfocused-window gate.
+        if "${app}" in ["qt", "qt6", "gtk4"]:
             assert "${typed}" in result, (
-                "Qt app should support focus-free write, but typed text not found in readback:\n"
+                "${app} app should support focus-free write, but typed text not found in readback:\n"
                 + result
             )
 

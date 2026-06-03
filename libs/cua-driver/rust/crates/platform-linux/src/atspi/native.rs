@@ -355,6 +355,80 @@ pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
     })
 }
 
+/// Pick the editable node to write into, by priority:
+///   1. the focused editable (if the toolkit exposes focus),
+///   2. an editable inside web/document content — for a browser this is the
+///      page's field, not the address bar (which sorts first in the tree but is
+///      chrome),
+///   3. the first editable anywhere (covers single-field apps like a GTK dialog
+///      entry, or a GTK4 GtkEntry).
+fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>]) -> Option<&'v Visited<'a>> {
+    visited
+        .iter()
+        .find(|v| v.has_editable && v.focused)
+        .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
+        .or_else(|| visited.iter().find(|v| v.has_editable))
+}
+
+/// Try to write `text` into the best editable node in `visited` via AT-SPI
+/// EditableText (GrabFocus first so the toolkit exposes the field on an
+/// unfocused window's focused widget). Returns `Ok(true)` if the write landed,
+/// `Ok(false)` if no editable was found / the EditableText write was rejected.
+async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool> {
+    let target = match pick_editable(visited) {
+        Some(t) => t,
+        None => return Ok(false),
+    };
+    dlog!(
+        "insert target: role={:?} in_web_doc={} focused={} has_component={}",
+        target.role, target.in_web_doc, target.focused, target.has_component
+    );
+
+    let proxies = target
+        .acc
+        .proxies()
+        .await
+        .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+
+    // Try to grab focus on the widget via AT-SPI Component.GrabFocus.
+    // This should give the widget internal keyboard focus without activating
+    // the window, allowing GTK4 (and similar toolkits) to expose EditableText
+    // on an unfocused window's focused widget.
+    if target.has_component {
+        if let Ok(comp) = proxies.component().await {
+            match call(comp.grab_focus()).await {
+                Some(Ok(true)) => dlog!("GrabFocus succeeded on {:?}", target.role),
+                Some(Ok(false)) => dlog!("GrabFocus returned false on {:?}", target.role),
+                Some(Err(e)) => dlog!("GrabFocus failed on {:?}: {}", target.role, e),
+                None => dlog!("GrabFocus timed out on {:?}", target.role),
+            }
+        } else {
+            dlog!("Component interface unavailable despite has_component=true");
+        }
+    } else {
+        dlog!("Target has no Component interface, skipping GrabFocus");
+    }
+
+    let et = proxies
+        .editable_text()
+        .await
+        .map_err(|e| anyhow!("EditableText unavailable: {e}"))?;
+
+    let off = match proxies.text().await {
+        Ok(tp) => tp.caret_offset().await.unwrap_or(0),
+        Err(_) => 0,
+    };
+    let len = text.chars().count() as i32;
+
+    if et.insert_text(off, text, len).await.unwrap_or(false) {
+        return Ok(true);
+    }
+    if et.set_text_contents(text).await.unwrap_or(false) {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
     runtime().block_on(async {
         let conn = AccessibilityConnection::new()
@@ -372,68 +446,53 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             visited.iter().filter(|v| v.role.contains("entry") || v.role.contains("text")).count(),
         );
 
-        // Target priority:
-        //   1. the focused editable (if the toolkit exposes focus),
-        //   2. an editable inside web/document content — for a browser this is
-        //      the page's field, not the address bar (which sorts first in the
-        //      tree but is chrome),
-        //   3. the first editable anywhere (covers single-field apps like a
-        //      GTK dialog entry).
-        let target = visited
-            .iter()
-            .find(|v| v.has_editable && v.focused)
-            .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-            .or_else(|| visited.iter().find(|v| v.has_editable));
-        let target = match target {
-            Some(t) => t,
-            None => return Ok(false),
-        };
-        dlog!(
-            "insert target: role={:?} in_web_doc={} focused={} has_component={}",
-            target.role, target.in_web_doc, target.focused, target.has_component
-        );
+        // Primary attempt: write into an editable exposed by the current tree.
+        if write_into_editable(&visited, text).await? {
+            return Ok(true);
+        }
 
-        let proxies = target
-            .acc
-            .proxies()
-            .await
-            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+        // Expose-via-synthetic-focus fallback (generic across toolkits).
+        //
+        // Some toolkits only populate/expose the focused-widget subtree over
+        // AT-SPI once the *window* receives input focus. In a headless session
+        // with a background window that never happens, so the walk above sees
+        // only the top window node and `pick_editable` finds nothing (or finds
+        // an editable that still rejects EditableText). This was first needed
+        // for Qt5; GTK4 exhibits the same gate when its AT-SPI backend is active
+        // but the window is unfocused.
+        //
+        // Send a synthetic FocusIn to the window (XSendEvent — this does NOT move
+        // the X11 active window, so the no-focus-steal contract is preserved),
+        // give the toolkit a moment to (re)build its accessible subtree, re-walk,
+        // and retry the EditableText write. Always send FocusOut afterwards to
+        // restore state, regardless of whether the write landed.
+        if pick_editable(&visited).is_none() {
+            if let Some(xid) = entry_find_window_xid(pid).await {
+                dlog!("no editable exposed; trying synthetic-focus expose on xid {xid}");
+                let _ = crate::input::send_focus_in(xid);
+                // Let the toolkit react to the focus event and rebuild its tree.
+                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
-        // Try to grab focus on the widget via AT-SPI Component.GrabFocus.
-        // This should give the widget internal keyboard focus without activating
-        // the window, allowing GTK4 (and similar toolkits) to expose EditableText
-        // on an unfocused window's focused widget.
-        if target.has_component {
-            if let Ok(comp) = proxies.component().await {
-                match call(comp.grab_focus()).await {
-                    Some(Ok(true)) => dlog!("GrabFocus succeeded on {:?}", target.role),
-                    Some(Ok(false)) => dlog!("GrabFocus returned false on {:?}", target.role),
-                    Some(Err(e)) => dlog!("GrabFocus failed on {:?}: {}", target.role, e),
-                    None => dlog!("GrabFocus timed out on {:?}", target.role),
+                let rewalked = collect_visited(&conn, pid).await?;
+                let landed = if let Some(ref rv) = rewalked {
+                    dlog!(
+                        "post-focus re-walk: {} node(s), {} editable",
+                        rv.len(),
+                        rv.iter().filter(|v| v.has_editable).count(),
+                    );
+                    write_into_editable(rv, text).await?
+                } else {
+                    false
+                };
+
+                let _ = crate::input::send_focus_out(xid);
+                if landed {
+                    dlog!("synthetic-focus expose: EditableText write landed");
+                    return Ok(true);
                 }
             } else {
-                dlog!("Component interface unavailable despite has_component=true");
+                dlog!("no editable exposed and no window XID found for synthetic-focus expose");
             }
-        } else {
-            dlog!("Target has no Component interface, skipping GrabFocus");
-        }
-
-        let et = proxies
-            .editable_text()
-            .await
-            .map_err(|e| anyhow!("EditableText unavailable: {e}"))?;
-
-        let off = match proxies.text().await {
-            Ok(tp) => tp.caret_offset().await.unwrap_or(0),
-            Err(_) => 0,
-        };
-        let len = text.chars().count() as i32;
-
-        if et.insert_text(off, text, len).await.unwrap_or(false) {
-            return Ok(true);
-        }
-        if et.set_text_contents(text).await.unwrap_or(false) {
-            return Ok(true);
         }
 
         // GTK3 fallback: the toolkit exposes entry/text nodes in the tree (so

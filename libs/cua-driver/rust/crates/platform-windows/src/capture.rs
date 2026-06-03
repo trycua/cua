@@ -461,7 +461,13 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let mem_dc = CreateCompatibleDC(screen_dc);
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
         let old_bitmap = SelectObject(mem_dc, bitmap);
-        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
+        // SRCCOPY | CAPTUREBLT (0x40000000): CAPTUREBLT includes LAYERED windows
+        // (WS_EX_LAYERED / UpdateLayeredWindow) in the blit. The agent-cursor
+        // overlay is exactly such a window, so plain SRCCOPY silently omits it —
+        // a full-display screenshot would show everything EXCEPT the cursor. With
+        // CAPTUREBLT the overlay (and any other layered UI) is captured.
+        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0,
+               windows::Win32::Graphics::Gdi::ROP_CODE(SRCCOPY.0 | 0x4000_0000))?;
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,

@@ -271,11 +271,78 @@ distinct *connections*. Subagents that share one `cua-driver mcp` (stdio)
 connection have their tool calls **serialized** by the transport — they take
 turns, not run in parallel. That's not a correctness problem (session + window
 isolation means they can't collide), just a throughput one. For genuinely
-parallel agents, give each its **own connection**: separate `cua-driver mcp`
-processes, or point each agent's MCP client at the daemon's HTTP endpoint
-(`CUA_DRIVER_RS_MCP_HTTP_PORT` → `POST http://127.0.0.1:<port>/mcp`). The daemon
-serves connections concurrently; per-connection ordering keeps each agent's own
-sequence (e.g. `3 → + → 1 → =`) correct.
+parallel agents, give each its **own connection** — see "Parallel agents over
+the HTTP/JSON-RPC transport" below.
+
+## Parallel agents over the HTTP/JSON-RPC transport
+
+When you need several agents (or one agent's fan-out) to act on the host *at the
+same time* rather than taking turns, run them over the daemon's HTTP transport
+instead of stdio. Each TCP connection is its own task in the daemon, so N
+connections run **truly concurrently**; requests on a single connection stay
+FIFO-ordered, so one agent's own sequence (`3 → + → 1 → =`) is still correct.
+Concurrency is safe because the element cache is keyed on `(pid, window_id)` and
+the cursor on `session`, so cross-connection actions don't collide.
+
+**The unit of parallelism is the session, and a session is sequential.** Map it
+one-to-one: **one agent = one `session` = one connection = one in-flight call at
+a time.** Parallelism comes from running *multiple sessions* concurrently, each
+on its own connection — **never** from fanning out concurrent calls *within* one
+session. Within a session you issue a call, await it, then issue the next. This
+isn't just etiquette — two per-session resources assume an ordered, one-at-a-time
+stream and break under intra-session concurrency:
+
+- **The agent cursor is per-session.** Two concurrent calls on the same session
+  fire two glide commands at the *same* cursor, which then races (last-writer-
+  wins, jumps around) instead of gliding target-to-target in order.
+- **Recording is per-session.** Concurrent calls record in nondeterministic
+  order, so `replay_trajectory` replays a garbled sequence.
+
+So: to fill four fields of one window, one session writes them sequentially. To
+fill four *windows* at once, use four sessions — each filling its window
+sequentially — running in parallel. (The data may still land if you cheat and
+fan out within a session, because the `(pid, window_id)` cache makes independent
+writes non-colliding — but the cursor and any recording are then wrong. Don't.)
+
+**Enable it — `serve`-daemon only.** The HTTP listener is spawned *only* by the
+`serve` daemon, and *only* when a port is configured. The plain stdio
+`cua-driver mcp` path never opens it, so pointing `curl` at a port while only an
+`mcp` server is running connects to nothing. Start a daemon with the port:
+
+```bash
+cua-driver serve --http-port 8799                            # flag (preferred)
+CUA_DRIVER_RS_MCP_HTTP_PORT=8799 cua-driver serve            # env var (flag wins if both)
+```
+
+Confirm it's live with `cua-driver status` — it prints `mcp-http: listening on
+http://127.0.0.1:8799/mcp` when up, or `disabled` otherwise (it re-probes the
+port, so a crashed daemon reads as disabled). When the listener is bound, the
+daemon also advertises the concrete URL in its MCP `instructions`, so a
+connecting client is told the live endpoint automatically. It binds loopback
+only. Each call is a `POST http://127.0.0.1:8799/mcp` with
+`Content-Type: application/json` and a JSON-RPC 2.0 `tools/call` body. The
+`arguments` object is exactly what the tool takes over MCP/CLI, plus the same
+`session` key for the per-session cursor + identity:
+
+```bash
+curl -s http://127.0.0.1:8799/mcp -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"tools/call",
+  "params":{"name":"set_value","arguments":{
+    "pid":15472,"window_id":10814686,"element_index":22,
+    "value":"Anna Esposito","session":"agent-A"}}}'
+```
+
+The reply is a standard JSON-RPC result: `result.content[0].text` is the tool's
+text output, `result.structuredContent` the typed payload (e.g. `launch_app`'s
+pid + `windows` array). **The `(pid, window_id)` element cache lives in the
+daemon process**, so the whole loop — `launch_app` → `get_window_state` → act →
+verify — must run over the *same* daemon; never resolve an `element_index` on
+one server and dispatch it on another. To fan out, give each **agent** its own
+connection + its own `session` and let it run its steps **sequentially**;
+parallelism is across agents (one per window / task), not within one — e.g. one
+background `curl`-driving process or HTTP client per session, each looping its
+own ordered calls. (Windows quoting tip: write the JSON body to a file and
+`curl --data-binary "@body.json"` to avoid PowerShell mangling inline JSON.)
 
 `list_apps` is for app-level discovery (answering "what's installed /
 running / frontmost?") — not part of the core action loop. Skip it

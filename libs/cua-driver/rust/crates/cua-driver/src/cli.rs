@@ -66,6 +66,13 @@ pub enum Command {
         /// flag was a no-op for `cua-driver mcp --claude-code-computer-use-compat`,
         /// which always routes through the proxy on an installed bundle.
         claude_code_compat: bool,
+        /// `--http-port <port>` — enable the MCP HTTP/JSON-RPC transport (the
+        /// parallel-agents surface) on `127.0.0.1:<port>`. `None` falls back to
+        /// the `CUA_DRIVER_RS_MCP_HTTP_PORT` env var; the flag wins when both
+        /// are present. Flowed into the listener by exporting the env var before
+        /// serve runs (see `main`), so `mcp_http::configured_port()` picks it up
+        /// at both run-loop spawn sites without threading a param through.
+        http_port: Option<u16>,
     },
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
@@ -127,6 +134,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--cursor-icon", "--cursor-id", "--cursor-palette",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
     "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
+    // `serve --http-port <port>` — first-class flag for the MCP HTTP transport
+    // (the parallel-agents surface). Overrides CUA_DRIVER_RS_MCP_HTTP_PORT.
+    "--http-port",
     // Experimental PiP preview — value flag for the optional geometry
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
@@ -198,13 +208,25 @@ pub fn parse_command() -> Command {
         println!("                          has no tool-surface effect today; the wiring is in place");
         println!("                          for any future compat-gated tool.");
         println!();
+        println!("serve options:");
+        println!("  --socket <path>         Override the daemon socket / named-pipe path.");
+        println!("  --http-port <port>      Enable the MCP HTTP/JSON-RPC transport on 127.0.0.1:<port>");
+        println!("                          (loopback only) so multiple agents can each open their OWN");
+        println!("                          connection and run truly in parallel — `POST /mcp` with a");
+        println!("                          JSON-RPC tools/call body. Without it (stdio `mcp`), one");
+        println!("                          connection's calls serialize. Overrides, and is overridden");
+        println!("                          by, CUA_DRIVER_RS_MCP_HTTP_PORT (flag wins). `cua-driver");
+        println!("                          status` reports the live endpoint. See SKILL.md for the");
+        println!("                          request shape + a worked example.");
+        println!();
         println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
         println!("  cursor (keyed by session id) that shows where the agent acts without moving the");
-        println!("  real pointer. It is removed when the session ends. A pure accessibility (AX)");
-        println!("  action snaps the cursor with a brief pulse on its first action instead of a long");
-        println!("  glide, so it can be easy to miss — do a pixel click or move_agent_cursor first");
-        println!("  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:");
+        println!("  real pointer. It is removed when the session ends. On its FIRST action a pure");
+        println!("  accessibility (AX) run seeds the cursor near the target and plays a short");
+        println!("  glide+pulse (not the long sweep it traces once already on-screen), so it can be");
+        println!("  easy to miss — do a pixel click or move_agent_cursor first for a fully gliding");
+        println!("  demo. These flags tune the overlay on `serve`/`mcp`:");
         println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
         println!("  --cursor-id <id>        Name the default cursor instance (default: 'default').");
         println!("  --cursor-icon <path>    Use a custom PNG cursor icon.");
@@ -229,6 +251,7 @@ pub fn parse_command() -> Command {
     let screenshot_out_file = flag_value(&args, "--screenshot-out-file");
     let mcp_client = flag_value(&args, "--client");
     let socket = flag_value(&args, "--socket");
+    let http_port = flag_value(&args, "--http-port").and_then(|v| v.parse::<u16>().ok());
 
     // Strip cursor-overlay flags (and their values) to expose the subcommand.
     let mut positionals: Vec<&str> = Vec::new();
@@ -290,6 +313,7 @@ pub fn parse_command() -> Command {
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
             claude_code_compat,
+            http_port,
         },
         Some("stop") => Command::Stop { socket },
         Some("status") => Command::Status { socket },

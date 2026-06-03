@@ -256,6 +256,22 @@ pub fn default_pid_file_path() -> String {
     }
 }
 
+/// Path of the tiny state file the MCP HTTP listener writes (its live
+/// `http://127.0.0.1:<port>/mcp` URL) on a successful bind. Lives beside the pid
+/// file so `cua-driver status` — a *separate* process that can't read the
+/// daemon's in-process state or env — can report the endpoint. Removed on
+/// graceful shutdown; `status` also re-probes the port, so a file left stale by
+/// a crash reads as "not listening".
+pub fn mcp_http_url_file_path() -> String {
+    let pid = default_pid_file_path();
+    std::path::Path::new(&pid)
+        .parent()
+        .map(|d| d.join("cua-driver-mcp-http.url"))
+        .unwrap_or_else(|| std::path::PathBuf::from("cua-driver-mcp-http.url"))
+        .to_string_lossy()
+        .into_owned()
+}
+
 // ── Protocol types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -767,6 +783,9 @@ pub async fn run_serve(
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
+    // Tear down the MCP HTTP endpoint advert (if the listener was up).
+    cua_driver_core::protocol::set_mcp_http_endpoint(None);
+    let _ = std::fs::remove_file(mcp_http_url_file_path());
 
     Ok(())
 }
@@ -1245,6 +1264,9 @@ pub async fn run_serve(
     if let Some(pid_path) = pid_file_path {
         let _ = std::fs::remove_file(pid_path);
     }
+    // Tear down the MCP HTTP endpoint advert (if the listener was up).
+    cua_driver_core::protocol::set_mcp_http_endpoint(None);
+    let _ = std::fs::remove_file(mcp_http_url_file_path());
     Ok(())
 }
 
@@ -1369,9 +1391,34 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
         } else {
             println!("  pid: unknown (no pid file)");
         }
+        // MCP HTTP transport (the parallel-agents surface). Report it from the
+        // daemon-written URL file, re-probed so a stale file reads as off.
+        match live_mcp_http_url() {
+            Some(url) => println!("  mcp-http: listening on {url} (parallel agents — one connection each)"),
+            None => println!("  mcp-http: disabled (stdio only — enable with `serve --http-port <port>` or CUA_DRIVER_RS_MCP_HTTP_PORT)"),
+        }
     } else {
         eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
+    }
+}
+
+/// Read the MCP HTTP URL the daemon wrote on bind, then **probe the port** so a
+/// stale file (left by a crash) doesn't read as live. Returns the URL only when
+/// the listener actually accepts a connection.
+fn live_mcp_http_url() -> Option<String> {
+    let url = std::fs::read_to_string(mcp_http_url_file_path()).ok()?;
+    let url = url.trim().to_owned();
+    if url.is_empty() {
+        return None;
+    }
+    // "http://127.0.0.1:8799/mcp" → authority "127.0.0.1:8799" to probe.
+    let authority = url.strip_prefix("http://").unwrap_or(&url);
+    let authority = authority.split('/').next().unwrap_or(authority);
+    let addr: std::net::SocketAddr = authority.parse().ok()?;
+    match std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400)) {
+        Ok(_) => Some(url),
+        Err(_) => None,
     }
 }
 

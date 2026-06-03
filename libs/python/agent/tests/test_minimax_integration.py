@@ -22,10 +22,10 @@ class TestMiniMaxLiveCompletion:
     """Integration tests with the MiniMax API."""
 
     def test_sync_completion(self):
-        """Test synchronous completion with MiniMax M2.5."""
+        """Test synchronous completion with MiniMax M3 (default)."""
         adapter = MiniMaxAdapter()
         response = adapter.completion(
-            model="minimax/MiniMax-M2.5",
+            model="minimax/MiniMax-M3",
             messages=[{"role": "user", "content": "Say hello in one word."}],
             temperature=0.7,
             max_tokens=10,
@@ -35,22 +35,12 @@ class TestMiniMaxLiveCompletion:
 
     @pytest.mark.asyncio
     async def test_async_completion(self):
-        """Test async completion with MiniMax M2.5."""
+        """Test async completion with MiniMax M3."""
         adapter = MiniMaxAdapter()
         response = await adapter.acompletion(
-            model="minimax/MiniMax-M2.5",
+            model="minimax/MiniMax-M3",
             messages=[{"role": "user", "content": "Say hello in one word."}],
             temperature=0.7,
-            max_tokens=10,
-        )
-        assert response is not None
-
-    def test_highspeed_model(self):
-        """Test completion with MiniMax M2.5 highspeed variant."""
-        adapter = MiniMaxAdapter()
-        response = adapter.completion(
-            model="minimax/MiniMax-M2.5-highspeed",
-            messages=[{"role": "user", "content": "Say hi."}],
             max_tokens=10,
         )
         assert response is not None

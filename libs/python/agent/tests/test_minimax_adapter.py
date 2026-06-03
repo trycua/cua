@@ -48,15 +48,11 @@ class TestModelNormalization:
 
     def test_strip_minimax_prefix(self):
         adapter = MiniMaxAdapter()
-        assert adapter._normalize_model("minimax/MiniMax-M2.5") == "MiniMax-M2.5"
+        assert adapter._normalize_model("minimax/MiniMax-M3") == "MiniMax-M3"
 
     def test_no_prefix(self):
         adapter = MiniMaxAdapter()
-        assert adapter._normalize_model("MiniMax-M2.5") == "MiniMax-M2.5"
-
-    def test_highspeed_model(self):
-        adapter = MiniMaxAdapter()
-        assert adapter._normalize_model("minimax/MiniMax-M2.5-highspeed") == "MiniMax-M2.5-highspeed"
+        assert adapter._normalize_model("MiniMax-M3") == "MiniMax-M3"
 
     def test_strip_m27_prefix(self):
         adapter = MiniMaxAdapter()
@@ -144,12 +140,12 @@ class TestBuildParams:
     def test_basic_params(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         kwargs = {
-            "model": "minimax/MiniMax-M2.5",
+            "model": "minimax/MiniMax-M3",
             "messages": [{"role": "user", "content": "Hello"}],
         }
         params = adapter._build_params(kwargs)
 
-        assert params["model"] == "openai/MiniMax-M2.5"
+        assert params["model"] == "openai/MiniMax-M3"
         assert params["api_base"] == MINIMAX_API_BASE
         assert params["api_key"] == "test-key"
         assert params["messages"] == [{"role": "user", "content": "Hello"}]
@@ -157,21 +153,21 @@ class TestBuildParams:
 
     def test_stream_param(self):
         adapter = MiniMaxAdapter(api_key="test-key")
-        kwargs = {"model": "minimax/MiniMax-M2.5", "messages": []}
+        kwargs = {"model": "minimax/MiniMax-M3", "messages": []}
         params = adapter._build_params(kwargs, stream=True)
         assert params["stream"] is True
 
     def test_forwards_tools(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         tools = [{"type": "function", "function": {"name": "test"}}]
-        kwargs = {"model": "minimax/MiniMax-M2.5", "messages": [], "tools": tools}
+        kwargs = {"model": "minimax/MiniMax-M3", "messages": [], "tools": tools}
         params = adapter._build_params(kwargs)
         assert params["tools"] == tools
 
     def test_forwards_tool_choice(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         kwargs = {
-            "model": "minimax/MiniMax-M2.5",
+            "model": "minimax/MiniMax-M3",
             "messages": [],
             "tool_choice": "auto",
         }
@@ -181,7 +177,7 @@ class TestBuildParams:
     def test_forwards_generation_params(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         kwargs = {
-            "model": "minimax/MiniMax-M2.5",
+            "model": "minimax/MiniMax-M3",
             "messages": [],
             "temperature": 0.5,
             "top_p": 0.9,
@@ -195,7 +191,7 @@ class TestBuildParams:
     def test_temperature_clamped_in_params(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         kwargs = {
-            "model": "minimax/MiniMax-M2.5",
+            "model": "minimax/MiniMax-M3",
             "messages": [],
             "temperature": 2.0,
         }
@@ -205,7 +201,7 @@ class TestBuildParams:
     def test_optional_params_forwarded(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         kwargs = {
-            "model": "minimax/MiniMax-M2.5",
+            "model": "minimax/MiniMax-M3",
             "messages": [],
             "optional_params": {"presence_penalty": 0.5},
         }
@@ -215,25 +211,25 @@ class TestBuildParams:
     def test_optional_params_protected_keys_excluded(self):
         adapter = MiniMaxAdapter(api_key="test-key")
         kwargs = {
-            "model": "minimax/MiniMax-M2.5",
+            "model": "minimax/MiniMax-M3",
             "messages": [],
             "optional_params": {"api_key": "bad-key", "model": "bad-model"},
         }
         params = adapter._build_params(kwargs)
         assert params["api_key"] == "test-key"
-        assert params["model"] == "openai/MiniMax-M2.5"
+        assert params["model"] == "openai/MiniMax-M3"
 
     def test_auth_header_set(self):
         adapter = MiniMaxAdapter(api_key="test-key")
-        kwargs = {"model": "minimax/MiniMax-M2.5", "messages": []}
+        kwargs = {"model": "minimax/MiniMax-M3", "messages": []}
         params = adapter._build_params(kwargs)
         assert params["extra_headers"]["Authorization"] == "Bearer test-key"
 
-    def test_highspeed_model_routing(self):
+    def test_m3_model_routing(self):
         adapter = MiniMaxAdapter(api_key="test-key")
-        kwargs = {"model": "minimax/MiniMax-M2.5-highspeed", "messages": []}
+        kwargs = {"model": "minimax/MiniMax-M3", "messages": []}
         params = adapter._build_params(kwargs)
-        assert params["model"] == "openai/MiniMax-M2.5-highspeed"
+        assert params["model"] == "openai/MiniMax-M3"
 
     def test_m27_model_routing(self):
         adapter = MiniMaxAdapter(api_key="test-key")
@@ -256,12 +252,12 @@ class TestCompletion:
         mock_completion.return_value = MagicMock()
         adapter = MiniMaxAdapter(api_key="test-key")
         adapter.completion(
-            model="minimax/MiniMax-M2.5",
+            model="minimax/MiniMax-M3",
             messages=[{"role": "user", "content": "Hi"}],
         )
         mock_completion.assert_called_once()
         call_kwargs = mock_completion.call_args
-        assert call_kwargs[1]["model"] == "openai/MiniMax-M2.5" or call_kwargs[0][0] if call_kwargs[0] else True
+        assert call_kwargs[1]["model"] == "openai/MiniMax-M3" or call_kwargs[0][0] if call_kwargs[0] else True
 
     @pytest.mark.asyncio
     @patch("agent.adapters.minimax_adapter.acompletion")
@@ -269,7 +265,7 @@ class TestCompletion:
         mock_acompletion.return_value = MagicMock()
         adapter = MiniMaxAdapter(api_key="test-key")
         await adapter.acompletion(
-            model="minimax/MiniMax-M2.5",
+            model="minimax/MiniMax-M3",
             messages=[{"role": "user", "content": "Hi"}],
         )
         mock_acompletion.assert_called_once()
@@ -285,7 +281,7 @@ class TestStreaming:
         adapter = MiniMaxAdapter(api_key="test-key")
 
         chunks = list(adapter.streaming(
-            model="minimax/MiniMax-M2.5",
+            model="minimax/MiniMax-M3",
             messages=[{"role": "user", "content": "Hi"}],
         ))
         assert len(chunks) == 2
@@ -306,7 +302,7 @@ class TestStreaming:
 
         chunks = []
         async for chunk in adapter.astreaming(
-            model="minimax/MiniMax-M2.5",
+            model="minimax/MiniMax-M3",
             messages=[{"role": "user", "content": "Hi"}],
         ):
             chunks.append(chunk)
@@ -317,20 +313,12 @@ class TestComputerAgentMiniMaxIntegration:
     """Tests for MiniMax integration with ComputerAgent."""
 
     @patch("agent.agent.litellm")
-    def test_agent_initialization_with_minimax(self, mock_litellm, disable_telemetry):
-        """Test that ComputerAgent can be initialized with a minimax model."""
+    def test_agent_initialization_with_minimax_m3(self, mock_litellm, disable_telemetry):
+        """Test that ComputerAgent can be initialized with the default M3 model."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="minimax/MiniMax-M2.5")
-        assert agent.model == "minimax/MiniMax-M2.5"
-
-    @patch("agent.agent.litellm")
-    def test_agent_initialization_with_minimax_highspeed(self, mock_litellm, disable_telemetry):
-        """Test that ComputerAgent can be initialized with minimax highspeed model."""
-        from agent import ComputerAgent
-
-        agent = ComputerAgent(model="minimax/MiniMax-M2.5-highspeed")
-        assert agent.model == "minimax/MiniMax-M2.5-highspeed"
+        agent = ComputerAgent(model="minimax/MiniMax-M3")
+        assert agent.model == "minimax/MiniMax-M3"
 
     @patch("agent.agent.litellm")
     def test_agent_initialization_with_minimax_m27(self, mock_litellm, disable_telemetry):
@@ -353,7 +341,7 @@ class TestComputerAgentMiniMaxIntegration:
         """Test that minimax is registered in litellm custom_provider_map."""
         from agent import ComputerAgent
 
-        ComputerAgent(model="minimax/MiniMax-M2.5")
+        ComputerAgent(model="minimax/MiniMax-M3")
 
         provider_map = mock_litellm.custom_provider_map
         providers = [p["provider"] for p in provider_map]
@@ -364,7 +352,7 @@ class TestComputerAgentMiniMaxIntegration:
         """Test that the minimax handler is a MiniMaxAdapter instance."""
         from agent import ComputerAgent
 
-        ComputerAgent(model="minimax/MiniMax-M2.5")
+        ComputerAgent(model="minimax/MiniMax-M3")
 
         provider_map = mock_litellm.custom_provider_map
         minimax_entry = next(p for p in provider_map if p["provider"] == "minimax")
@@ -376,7 +364,7 @@ class TestComputerAgentMiniMaxIntegration:
         from agent import ComputerAgent
         from agent.loops.generic_vlm import GenericVlmConfig
 
-        agent = ComputerAgent(model="minimax/MiniMax-M2.5")
+        agent = ComputerAgent(model="minimax/MiniMax-M3")
         assert isinstance(agent.agent_loop, GenericVlmConfig)
 
     @patch("agent.agent.litellm")
@@ -384,7 +372,7 @@ class TestComputerAgentMiniMaxIntegration:
         """Test that a MiniMax-initialized agent has a callable run method."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="minimax/MiniMax-M2.5")
+        agent = ComputerAgent(model="minimax/MiniMax-M3")
         assert hasattr(agent, "run")
         assert callable(agent.run)
 
@@ -393,7 +381,7 @@ class TestComputerAgentMiniMaxIntegration:
         """Test that api_key is forwarded when using minimax model."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="minimax/MiniMax-M2.5", api_key="my-minimax-key")
+        agent = ComputerAgent(model="minimax/MiniMax-M3", api_key="my-minimax-key")
         assert agent.api_key == "my-minimax-key"
 
     @patch("agent.agent.litellm")
@@ -401,6 +389,6 @@ class TestComputerAgentMiniMaxIntegration:
         """Test that ComputerAgent accepts tools with minimax model."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="minimax/MiniMax-M2.5", tools=[mock_computer])
+        agent = ComputerAgent(model="minimax/MiniMax-M3", tools=[mock_computer])
         assert agent is not None
         assert hasattr(agent, "tools")

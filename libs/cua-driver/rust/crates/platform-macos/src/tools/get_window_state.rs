@@ -1,16 +1,23 @@
 use async_trait::async_trait;
-use cua_driver_core::{protocol::{ToolResult, Content}, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::{Content, ToolResult},
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 use super::ToolState;
+use crate::ax::AXNode;
+use crate::windows::WindowBounds;
 
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
 
 impl GetWindowStateTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -54,14 +61,51 @@ fn def() -> &'static ToolDef {
     })
 }
 
+fn build_structured_elements(
+    nodes: &[AXNode],
+    bounds: &WindowBounds,
+    screenshot_width: u32,
+    screenshot_height: u32,
+) -> Vec<Value> {
+    if bounds.width <= 0.0 || bounds.height <= 0.0 {
+        return Vec::new();
+    }
+
+    let scale_x = screenshot_width as f64 / bounds.width;
+    let scale_y = screenshot_height as f64 / bounds.height;
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let idx = node.element_index?;
+            let [x, y, width, height] = node.screen_rect?;
+            Some(serde_json::json!({
+                "element_index": idx,
+                "x": ((x - bounds.x) * scale_x).round() as i64,
+                "y": ((y - bounds.y) * scale_y).round() as i64,
+                "width": (width * scale_x).round() as i64,
+                "height": (height * scale_y).round() as i64,
+            }))
+        })
+        .collect()
+}
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
+        let pid = match args.require_i32("pid") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let window_id = match args.require_u32("window_id") {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix.
@@ -77,12 +121,18 @@ impl Tool for GetWindowStateTool {
         let session_id = args.opt_str("_session_id");
         let (default_mode, effective_max_dim) = {
             let cfg = self.state.config.read().unwrap();
-            self.state.session_config.effective(session_id.as_deref(), &cfg)
+            self.state
+                .session_config
+                .effective(session_id.as_deref(), &cfg)
         };
         let capture_mode = args.opt_str("capture_mode").unwrap_or(default_mode);
 
         // Walk AX tree (unless vision-only mode). Accept "tree" as deprecated alias for "ax".
-        let capture_mode = if capture_mode == "tree" { "ax".to_owned() } else { capture_mode };
+        let capture_mode = if capture_mode == "tree" {
+            "ax".to_owned()
+        } else {
+            capture_mode
+        };
         let tree_result = if capture_mode != "vision" {
             let q = query.clone();
             // Wrap the blocking AX walk in a 30-second timeout. Heavy webview apps
@@ -139,7 +189,9 @@ impl Tool for GetWindowStateTool {
                     // Record resize ratio so ClickTool can scale coordinates back up.
                     if let Some(ow) = orig_w {
                         if w > 0 {
-                            self.state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                            self.state
+                                .resize_registry
+                                .set_ratio(pid, ow as f64 / w as f64);
                         }
                     } else {
                         self.state.resize_registry.clear_ratio(pid);
@@ -191,11 +243,21 @@ impl Tool for GetWindowStateTool {
         }
 
         if content.is_empty() {
-            return ToolResult::error("No content produced (neither AX tree nor screenshot succeeded)");
+            return ToolResult::error(
+                "No content produced (neither AX tree nor screenshot succeeded)",
+            );
         }
 
         let element_count = self.state.element_cache.element_count(pid, window_id);
-        let tree_md = tree_result.as_ref().map(|r| r.tree_markdown.clone()).unwrap_or_default();
+        let tree_md = tree_result
+            .as_ref()
+            .map(|r| r.tree_markdown.clone())
+            .unwrap_or_default();
+        let structured_elements = match (tree_result.as_ref(), screenshot_dims) {
+            (Some(result), Some((sw, sh))) => crate::windows::window_bounds_by_id(window_id)
+                .map(|bounds| build_structured_elements(&result.nodes, &bounds, sw, sh)),
+            _ => None,
+        };
         let mut structured = serde_json::json!({
             "window_id": window_id,
             "pid": pid,
@@ -206,9 +268,112 @@ impl Tool for GetWindowStateTool {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);
         }
+        if let Some(elements) = structured_elements {
+            structured["elements"] = serde_json::json!(elements);
+        }
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
-        ToolResult { content, is_error: None, structured_content: Some(structured) }
+        ToolResult {
+            content,
+            is_error: None,
+            structured_content: Some(structured),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(element_index: Option<usize>, screen_rect: Option<[f64; 4]>) -> AXNode {
+        AXNode {
+            element_index,
+            role: "AXButton".to_owned(),
+            title: None,
+            value: None,
+            description: None,
+            identifier: None,
+            help: None,
+            actions: Vec::new(),
+            screen_rect,
+            element_ptr: 0,
+        }
+    }
+
+    #[test]
+    fn build_structured_elements_converts_to_window_local_screenshot_pixels() {
+        let bounds = WindowBounds {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
+        let elements = build_structured_elements(
+            &[node(Some(7), Some([20.0, 24.0, 30.0, 10.0]))],
+            &bounds,
+            150,
+            100,
+        );
+
+        assert_eq!(
+            elements,
+            vec![serde_json::json!({
+                "element_index": 7,
+                "x": 15,
+                "y": 8,
+                "width": 45,
+                "height": 20,
+            })]
+        );
+    }
+
+    #[test]
+    fn build_structured_elements_skips_non_actionable_or_missing_geometry_nodes() {
+        let bounds = WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let elements = build_structured_elements(
+            &[
+                node(Some(0), None),
+                node(None, Some([10.0, 10.0, 5.0, 5.0])),
+                node(Some(1), Some([10.0, 10.0, 5.0, 5.0])),
+            ],
+            &bounds,
+            100,
+            100,
+        );
+
+        assert_eq!(
+            elements,
+            vec![serde_json::json!({
+                "element_index": 1,
+                "x": 10,
+                "y": 10,
+                "width": 5,
+                "height": 5,
+            })]
+        );
+    }
+
+    #[test]
+    fn build_structured_elements_returns_empty_for_non_positive_window_bounds() {
+        let bounds = WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 120.0,
+        };
+        let elements = build_structured_elements(
+            &[node(Some(7), Some([10.0, 10.0, 5.0, 5.0]))],
+            &bounds,
+            100,
+            100,
+        );
+
+        assert!(elements.is_empty());
     }
 }

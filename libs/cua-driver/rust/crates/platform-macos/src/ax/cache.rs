@@ -83,7 +83,9 @@ pub struct ElementCache {
 
 impl ElementCache {
     pub fn new() -> Self {
-        Self { core: ElementCacheCore::new() }
+        Self {
+            core: ElementCacheCore::new(),
+        }
     }
 
     /// Replace the snapshot for (pid, window_id) with the nodes from a fresh walk.
@@ -93,7 +95,8 @@ impl ElementCache {
             .filter(|n| n.element_index.is_some())
             .map(|n| n.element_ptr)
             .collect();
-        self.core.insert(CacheKey { pid, window_id }, CachedSnapshot { elements });
+        self.core
+            .insert(CacheKey { pid, window_id }, CachedSnapshot { elements });
     }
 
     /// Look up + `CFRetain` the element for `element_index` in (pid, window_id),
@@ -155,6 +158,7 @@ mod tests {
             identifier: None,
             help: None,
             actions: Vec::new(),
+            screen_rect: None,
             element_ptr: ptr,
         }
     }
@@ -176,11 +180,21 @@ mod tests {
         unsafe { CFRetain(ptr as CFTypeRef) };
         let cache = ElementCache::new();
         cache.update(1, 2, &[node_with_ptr(ptr)]);
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1, "cache owns one retain");
+        assert_eq!(
+            unsafe { CFGetRetainCount(ptr as CFTypeRef) },
+            base + 1,
+            "cache owns one retain"
+        );
 
         // Borrow the element out for an action.
-        let guard = cache.get_element_retained(1, 2, 0).expect("element is cached");
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 2, "guard adds a retain");
+        let guard = cache
+            .get_element_retained(1, 2, 0)
+            .expect("element is cached");
+        assert_eq!(
+            unsafe { CFGetRetainCount(ptr as CFTypeRef) },
+            base + 2,
+            "guard adds a retain"
+        );
 
         // Concurrent get_window_state replaces the snapshot → old one dropped →
         // CFRelease of the cache's retain. The guard's retain must remain.
@@ -193,7 +207,11 @@ mod tests {
         );
 
         drop(guard);
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base, "guard drop releases its retain");
+        assert_eq!(
+            unsafe { CFGetRetainCount(ptr as CFTypeRef) },
+            base,
+            "guard drop releases its retain"
+        );
     }
 
     /// A missing index returns None without retaining anything.

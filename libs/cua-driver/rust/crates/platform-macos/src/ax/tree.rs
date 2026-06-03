@@ -60,6 +60,8 @@ pub struct AXNode {
     pub identifier: Option<String>,
     pub help: Option<String>,
     pub actions: Vec<String>,
+    /// Element frame in screen points: [x, y, width, height].
+    pub screen_rect: Option<[f64; 4]>,
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
 }
@@ -98,7 +100,11 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
         if app_elem.is_null() {
-            return TreeWalkResult { tree_markdown: String::new(), nodes, truncated: false };
+            return TreeWalkResult {
+                tree_markdown: String::new(),
+                nodes,
+                truncated: false,
+            };
         }
 
         // Chromium/Electron apps (Arc, VS Code, Electron shells) ship their
@@ -110,7 +116,10 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         // read it. Native Cocoa apps reject the attribute, so they pay no
         // settle cost. This relies on the MAX_ELEMENTS node cap to keep the
         // now-materialized (potentially large) tree bounded.
-        let already_enabled = enabled_pids().lock().map(|s| s.contains(&pid)).unwrap_or(false);
+        let already_enabled = enabled_pids()
+            .lock()
+            .map(|s| s.contains(&pid))
+            .unwrap_or(false);
         if !already_enabled && enable_chromium_accessibility(app_elem) {
             crate::permissions::panel::pump_run_loop_briefly(CHROMIUM_SETTLE_SECONDS);
             if let Ok(mut set) = enabled_pids().lock() {
@@ -137,21 +146,33 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 
         // Filter: keep non-window children (menu bar) + the target window.
         let walk_these: Vec<AXUIElementRef> = if let Some(wid) = window_id {
-            top_level.iter().copied().filter(|&child| {
-                let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-                if role != "AXWindow" {
-                    return true; // always keep menu bar and other non-window items
-                }
-                // Match AX window element → CGWindowID via private SPI.
-                ax_get_window_id(child) == Some(wid)
-            }).collect()
+            top_level
+                .iter()
+                .copied()
+                .filter(|&child| {
+                    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
+                    if role != "AXWindow" {
+                        return true; // always keep menu bar and other non-window items
+                    }
+                    // Match AX window element → CGWindowID via private SPI.
+                    ax_get_window_id(child) == Some(wid)
+                })
+                .collect()
         } else {
             top_level.iter().copied().collect()
         };
 
         // Walk each top-level child at depth 0.
         for child in walk_these {
-            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter, &mut visited_count, &mut truncated);
+            walk_element(
+                child,
+                0,
+                &mut nodes,
+                &mut lines,
+                &mut index_counter,
+                &mut visited_count,
+                &mut truncated,
+            );
         }
 
         // Release all top-level elements (copy_children / copy_ax_windows both retain).
@@ -179,7 +200,11 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
         ));
     }
 
-    TreeWalkResult { tree_markdown, nodes, truncated: truncated_flag }
+    TreeWalkResult {
+        tree_markdown,
+        nodes,
+        truncated: truncated_flag,
+    }
 }
 
 unsafe fn walk_element(
@@ -191,7 +216,9 @@ unsafe fn walk_element(
     visited_count: &mut usize,
     truncated: &mut bool,
 ) {
-    if depth > MAX_DEPTH { return; }
+    if depth > MAX_DEPTH {
+        return;
+    }
     // Enforce total-node cap — mirrors Swift's maxElements guard.
     // Set the truncated flag only when we actually stop early.
     if *visited_count >= MAX_ELEMENTS {
@@ -200,15 +227,22 @@ unsafe fn walk_element(
     }
     *visited_count += 1;
 
-    let role = copy_string_attr(element, "AXRole")
-        .unwrap_or_else(|| "AXUnknown".into());
+    let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
 
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
         // Still recurse — children may be interesting.
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth, nodes, lines, counter, visited_count, truncated);
+            walk_element(
+                child,
+                depth,
+                nodes,
+                lines,
+                counter,
+                visited_count,
+                truncated,
+            );
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -222,7 +256,8 @@ unsafe fn walk_element(
     let title = copy_string_attr(element, "AXTitle");
     let value = copy_string_attr(element, "AXValue");
     // AXPlaceholderValue as fallback for empty text fields.
-    let value = value.filter(|v| !v.trim().is_empty())
+    let value = value
+        .filter(|v| !v.trim().is_empty())
         .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
     let description = copy_string_attr(element, "AXDescription");
     let identifier = copy_string_attr(element, "AXIdentifier");
@@ -233,15 +268,22 @@ unsafe fn walk_element(
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
     let visible_value = value.as_deref().unwrap_or("").trim().to_owned();
 
-    let has_content = !visible_title.is_empty()
-        || !visible_description.is_empty()
-        || !visible_value.is_empty();
+    let has_content =
+        !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
     let is_actionable = !actions.is_empty();
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
+            walk_element(
+                child,
+                depth + 1,
+                nodes,
+                lines,
+                counter,
+                visited_count,
+                truncated,
+            );
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -251,30 +293,57 @@ unsafe fn walk_element(
     let node = if is_actionable {
         let idx = *counter;
         *counter += 1;
+        let screen_rect = element_screen_rect(element);
         // Retain so the element stays alive in the cache after `copy_children`
         // releases the per-child ref at the end of the caller's loop.
         CFRetain(element as CFTypeRef);
         AXNode {
             element_index: Some(idx),
             role: role.clone(),
-            title: if visible_title.is_empty() { None } else { Some(visible_title.clone()) },
-            value: if visible_value.is_empty() { None } else { Some(visible_value.clone()) },
-            description: if visible_description.is_empty() { None } else { Some(visible_description.clone()) },
+            title: if visible_title.is_empty() {
+                None
+            } else {
+                Some(visible_title.clone())
+            },
+            value: if visible_value.is_empty() {
+                None
+            } else {
+                Some(visible_value.clone())
+            },
+            description: if visible_description.is_empty() {
+                None
+            } else {
+                Some(visible_description.clone())
+            },
             identifier: identifier.clone(),
             help: help.clone(),
             actions: actions.clone(),
+            screen_rect,
             element_ptr,
         }
     } else {
         AXNode {
             element_index: None,
             role: role.clone(),
-            title: if visible_title.is_empty() { None } else { Some(visible_title.clone()) },
-            value: if visible_value.is_empty() { None } else { Some(visible_value.clone()) },
-            description: if visible_description.is_empty() { None } else { Some(visible_description.clone()) },
+            title: if visible_title.is_empty() {
+                None
+            } else {
+                Some(visible_title.clone())
+            },
+            value: if visible_value.is_empty() {
+                None
+            } else {
+                Some(visible_value.clone())
+            },
+            description: if visible_description.is_empty() {
+                None
+            } else {
+                Some(visible_description.clone())
+            },
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
+            screen_rect: None,
             element_ptr,
         }
     };
@@ -285,7 +354,15 @@ unsafe fn walk_element(
 
     let children = copy_children(element);
     for child in children {
-        walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
+        walk_element(
+            child,
+            depth + 1,
+            nodes,
+            lines,
+            counter,
+            visited_count,
+            truncated,
+        );
         CFRelease(child as CFTypeRef);
     }
 }
@@ -324,7 +401,9 @@ fn format_node_line(node: &AXNode) -> String {
             attrs.push(format!("help=\"{}\"", h));
         }
         if !node.actions.is_empty() {
-            let action_str = node.actions.iter()
+            let action_str = node
+                .actions
+                .iter()
                 .map(|a| a.strip_prefix("AX").unwrap_or(a).to_lowercase())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -376,8 +455,12 @@ fn filter_tree(markdown: &str, query: &str) -> String {
         if line.to_lowercase().contains(&needle) {
             for ancestor_depth in 0..depth {
                 let ancestor = current_ancestor[ancestor_depth];
-                if ancestor.is_empty() { continue; }
-                if last_emitted_at[ancestor_depth] == Some(ancestor) { continue; }
+                if ancestor.is_empty() {
+                    continue;
+                }
+                if last_emitted_at[ancestor_depth] == Some(ancestor) {
+                    continue;
+                }
                 last_emitted_at[ancestor_depth] = Some(ancestor);
                 output.push(ancestor);
             }
@@ -397,7 +480,11 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 fn leading_indent_depth(line: &str) -> usize {
     let mut count = 0;
     for ch in line.chars() {
-        if ch == ' ' { count += 1; } else { break; }
+        if ch == ' ' {
+            count += 1;
+        } else {
+            break;
+        }
     }
     count / 2
 }

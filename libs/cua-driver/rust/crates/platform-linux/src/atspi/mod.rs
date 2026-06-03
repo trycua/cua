@@ -109,7 +109,7 @@ except Exception as e:
     sys.exit(1)
 "#, pid = pid, safe_text = safe_text);
 
-    let out = Command::new("python3").arg("-c").arg(&script).output()?;
+    let out = std::process::Command::new("python3").arg("-c").arg(&script).output()?;
     if !out.status.success() {
         anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim().to_owned());
     }

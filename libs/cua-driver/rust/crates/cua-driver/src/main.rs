@@ -28,6 +28,7 @@ mod autostart;
 mod bundle;
 mod cli;
 mod doctor;
+mod mcp_http;
 mod proxy;
 mod serve;
 mod skills;
@@ -224,7 +225,7 @@ fn main() {
             cli::run_call(reg, &tool, json_args, screenshot_out_file, socket);
             return;
         }
-        cli::Command::Serve { socket, no_permissions_gate } => {
+        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
@@ -259,7 +260,27 @@ fn main() {
                 None => pip_preview::PipConfig::from_args(),
             };
             maybe_init_pip();
-            let reg = Arc::new(build_macos_registry());
+
+            // Agent-cursor overlay. The DAEMON is the process that actually
+            // performs clicks / AX presses, so the overlay NSWindow + render
+            // loop must run HERE — not only in the in-process `mcp` arm. In the
+            // daemon-proxy setup (`mcp` relaunches `open -n -g … serve` and
+            // proxies to it), the proxy never renders and, before this, neither
+            // did the daemon — so every cursor command was a silent no-op and
+            // the agent cursor never appeared. Init the channel before spawning
+            // the serve thread so `run_on_main_thread()` always finds it ready
+            // (mirrors the Mcp arm).
+            let cursor_cfg = cursor_overlay::CursorConfig::from_args();
+            if cursor_cfg.enabled {
+                platform_macos::cursor::overlay::init(cursor_cfg.clone());
+            }
+
+            // Honour the compat flag forwarded by the MCP proxy
+            // (launch_daemon_and_wait passes `serve
+            // --claude-code-computer-use-compat`). The Serve arm is the daemon
+            // the proxy talks to, so without this the proxy path always served
+            // the full screenshot tool regardless of the client's request.
+            let reg = Arc::new(build_macos_registry_with_compat(claude_code_compat));
             reg.init_self_weak();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
@@ -320,6 +341,15 @@ fn main() {
             // stays up as long as the daemon does.
             if pip_cfg.enabled {
                 platform_macos::pip::run_appkit_main_loop();
+            } else if cursor_cfg.enabled {
+                // Render the agent-cursor overlay: park the main thread in the
+                // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
+                // self-guards on `has_graphic_access()` and returns immediately
+                // when the daemon has no Window Server session — fall through to
+                // join so the daemon still serves headless. The serve thread runs
+                // on its background thread regardless.
+                platform_macos::cursor::overlay::run_on_main_thread();
+                let _ = serve_handle.join();
             } else {
                 let _ = serve_handle.join();
             }
@@ -401,7 +431,7 @@ fn main() {
             // attribution and forwards stdio MCP through its socket.
             // Issue #1525 / mirror of Swift PR #1479.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
                     eprintln!("cua-driver-rs: {e}");
                     std::process::exit(1);
                 }
@@ -540,14 +570,17 @@ fn main() -> anyhow::Result<()> {
             }).join().ok();
             return Ok(());
         }
-        cli::Command::Serve { socket, no_permissions_gate } => {
+        cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
             // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored.
+            // CLI uniformity and ignored. The Claude-Code compat screenshot
+            // surface is likewise macOS-only (register_tools_with_compat),
+            // so the flag is accepted-and-ignored here for CLI uniformity.
             let _ = no_permissions_gate;
+            let _ = claude_code_compat;
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let reg = Arc::new(build_registry(cursor_cfg));
@@ -641,7 +674,7 @@ fn main() -> anyhow::Result<()> {
             // Code over SSH lands in Session 0 and every desktop
             // tool returns empty. See `cli::should_use_daemon_proxy`.
             if cli::should_use_daemon_proxy(no_daemon_relaunch) {
-                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket) {
+                if let Err(e) = cli::run_mcp_via_daemon_proxy(socket, claude_code_compat) {
                     eprintln!("cua-driver-rs: {e}");
                     std::process::exit(1);
                 }

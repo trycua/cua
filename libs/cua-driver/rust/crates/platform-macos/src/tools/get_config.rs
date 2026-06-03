@@ -41,8 +41,14 @@ impl Tool for GetConfigTool {
             let cfg = self.state.config.read().unwrap();
             self.state.session_config.effective(session_id.as_deref(), &cfg)
         };
-        let cursor_enabled = self.state.cursor_registry.all_states()
-            .first()
+        // Report the CALLING session's own cursor enabled-state, not a
+        // nondeterministic HashMap.first(). Resolve the same key the click /
+        // cursor tools use (cursor_id > _session_id > "default"); fall back to
+        // the seeded "default" cursor when this session hasn't materialised its
+        // own cursor yet, and finally to `true` (the overlay default).
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+        let cursor_enabled = self.state.cursor_registry.get(&cursor_key)
+            .or_else(|| self.state.cursor_registry.get("default"))
             .map(|s| s.config.enabled)
             .unwrap_or(true);
         // PiP values aren't in DriverConfig — they're file-only since the

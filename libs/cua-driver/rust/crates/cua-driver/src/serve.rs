@@ -36,6 +36,47 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
+/// Resolve + apply the session identity for a tool call at the daemon boundary.
+///
+/// A session is a **caller-declared** identity (the public `session` arg), not a
+/// property of the MCP connection. We mirror an explicit `session` into the
+/// reserved `_session_id` key that every session-aware tool already reads
+/// (cursor key, per-session config override, recording owner). When no `session`
+/// was declared we fall back to the per-connection minted id for `_session_id`
+/// ONLY — that preserves connection-EOF cleanup of recording / config as before.
+/// The cursor is deliberately NOT driven by that fallback: `resolve_cursor_key`
+/// reads the explicit `session`/`cursor_id` arg only, so a cursor appears
+/// exactly when a run declares its session (explicit-required).
+///
+/// Also refreshes the idle-TTL clock for an explicit session (the minted
+/// fallback is reaped by EOF, not TTL). Returns the effective `_session_id` for
+/// the resurrection guard.
+fn apply_session_identity(
+    args: &mut serde_json::Value,
+    minted: &Option<String>,
+) -> Option<String> {
+    let explicit = args
+        .as_object()
+        .and_then(|o| o.get("session"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_owned());
+    if let Some(obj) = args.as_object_mut() {
+        if !obj.contains_key("_session_id") {
+            if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
+                obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
+            }
+        }
+    }
+    if let Some(sess) = &explicit {
+        cua_driver_core::session::touch_session(sess);
+    }
+    args.as_object()
+        .and_then(|o| o.get("_session_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned())
+}
+
 /// Resolve the recording idle TTL, honoring the env override.
 fn recording_idle_ttl_secs() -> u64 {
     std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
@@ -95,6 +136,66 @@ fn spawn_recording_idle_backstop(
                 }
             }
         }
+    });
+}
+
+/// Default idle-TTL for a caller-declared session (seconds). A session that
+/// isn't touched (no tool call carrying its `session`) for this long is reclaimed
+/// by [`spawn_session_idle_sweep`] — its cursor removed, recording stopped,
+/// config cleared. Overridable via `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`.
+const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
+
+fn session_idle_ttl_secs() -> u64 {
+    std::env::var("CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(SESSION_IDLE_TTL_SECS_DEFAULT)
+}
+
+/// Spawn the detached idle-TTL sweep for caller-declared sessions.
+///
+/// A session is no longer tied to a connection's lifetime (it's a caller-declared
+/// identity that can span connections, transports, and apps), so a run that ends
+/// — or crashes — without calling `end_session` is reclaimed here. Each tick ends
+/// every session whose last activity is older than the TTL; `session::evict_idle`
+/// fans `fire_session_end` out to the cursor/recording/config cleanup hooks. A
+/// session that keeps issuing tool calls bumps its activity every turn and never
+/// reaches the idle window. Idempotent and cheap.
+fn spawn_session_idle_sweep() {
+    let ttl = std::time::Duration::from_secs(session_idle_ttl_secs());
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            let ended = cua_driver_core::session::evict_idle(ttl);
+            if !ended.is_empty() {
+                tracing::info!(count = ended.len(), "idle-TTL reclaimed sessions: {ended:?}");
+            }
+        }
+    });
+}
+
+/// Register a `session_end` hook that stops a recording the ending session owns.
+///
+/// The per-platform cursor-remove + config-clear hooks already run on
+/// `fire_session_end`; this adds recording teardown to the SAME signal, so
+/// `end_session`, the idle-TTL sweep, and the control-connection EOF reaper all
+/// stop a session's recording uniformly (matching `end_session`'s contract).
+/// `stop_owner(Some(sid))` is a no-op unless `sid` owns the live recording, and
+/// runs on a detached thread so finalizing the mp4 never blocks the synchronous
+/// `fire_session_end` caller (the sweep task or an async tool invoke). The EOF
+/// arm keeps its own inline `spawn_blocking` stop for ordered finalize-then-reply;
+/// a second stop here is an idempotent no-op.
+fn register_recording_session_end_hook(
+    recording: std::sync::Arc<cua_driver_core::recording::RecordingSession>,
+) {
+    cua_driver_core::session::register_session_end_hook(move |sid| {
+        let recording = recording.clone();
+        let sid = sid.to_owned();
+        std::thread::spawn(move || {
+            let _ = recording.stop_owner(Some(&sid));
+        });
     });
 }
 
@@ -375,6 +476,11 @@ pub async fn run_serve(
     // so an actively-used session is never reaped.
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+    spawn_session_idle_sweep();
+    if let Some(port) = crate::mcp_http::configured_port() {
+        crate::mcp_http::spawn(registry.clone(), port);
+    }
+    register_recording_session_end_hook(registry.recording.clone());
 
     loop {
         tokio::select! {
@@ -484,44 +590,21 @@ pub async fn run_serve(
                                 let mut args = req.args.unwrap_or(serde_json::Value::Object(
                                     serde_json::Map::new()
                                 ));
-                                // Inject the proxy-minted session identity into
-                                // the tool args under the reserved `_session_id`
-                                // key so session-aware tools can read it via
-                                // ArgsExt (the same path cursor_id uses). Only
-                                // when the client sent a session_id AND the args
-                                // is an object that doesn't already carry the
-                                // key (so an explicit client value wins, and a
-                                // non-object arg is left untouched). The daemon
-                                // never validates args against input_schema, so
-                                // this extra key is safe; recording strips all
-                                // `_`-prefixed keys before persisting a turn.
-                                if let Some(sid) = &req.session_id {
-                                    if let Some(obj) = args.as_object_mut() {
-                                        if !obj.contains_key("_session_id") {
-                                            obj.insert(
-                                                "_session_id".to_owned(),
-                                                serde_json::Value::String(sid.clone()),
-                                            );
-                                        }
-                                    }
-                                }
-                                // Resurrection guard: a call carrying a session
-                                // id whose session has already ended (control
-                                // connection EOF → fire_session_end) must NOT
-                                // run. The render-side overlay tombstone blocks
-                                // the visible ghost cursor, but the metadata
-                                // CursorRegistry and config-override map are
-                                // get-or-create — an in-flight per-call request
-                                // that lands AFTER session_end (a slow AX click,
-                                // a racing set_config) would re-create
-                                // session-owned state that is never reaped
-                                // again. Skip the invoke and return a benign ok
-                                // so no registry/override/recording state is
-                                // created or mutated. ONLY gate when a session
-                                // id is present AND ended — a live session and
-                                // anonymous/one-shot calls (no session id) pass
-                                // through unchanged.
-                                if let Some(sid) = &req.session_id {
+                                // Apply the caller-declared session identity
+                                // (explicit `session` → `_session_id`; minted id
+                                // as the recording/config fallback only). See
+                                // `apply_session_identity` for the full rationale
+                                // and the cursor's explicit-required contract.
+                                let effective_session =
+                                    apply_session_identity(&mut args, &req.session_id);
+                                // Resurrection guard: a call whose effective
+                                // session has already ended (end_session / idle
+                                // TTL / control-connection EOF) must NOT run — it
+                                // would re-create session-owned state (cursor,
+                                // config override, recording) the reaper already
+                                // passed. Skip + benign ok. Live and anonymous
+                                // calls pass through unchanged.
+                                if let Some(sid) = &effective_session {
                                     if cua_driver_core::session::is_session_ended(sid) {
                                         let resp = DaemonResponse::ok(serde_json::json!({
                                             "content": [{
@@ -907,6 +990,11 @@ pub async fn run_serve(
     // full rationale; the leak (record_video via ffmpeg) is platform-independent.
     let last_activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_secs()));
     spawn_recording_idle_backstop(registry.clone(), last_activity.clone());
+    spawn_session_idle_sweep();
+    if let Some(port) = crate::mcp_http::configured_port() {
+        crate::mcp_http::spawn(registry.clone(), port);
+    }
+    register_recording_session_end_hook(registry.recording.clone());
 
     loop {
         // Create a new pipe server instance to accept the next client.
@@ -1015,30 +1103,12 @@ pub async fn run_serve(
                                     "type_text".to_owned()
                                 } else { raw_name.clone() };
                                 let mut args = req.args.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                                // Inject the proxy-minted session identity under
-                                // the reserved `_session_id` key (see the unix
-                                // branch above for the full rationale). Only when
-                                // a session_id was sent and the args object
-                                // doesn't already carry the key.
-                                if let Some(sid) = &req.session_id {
-                                    if let Some(obj) = args.as_object_mut() {
-                                        if !obj.contains_key("_session_id") {
-                                            obj.insert(
-                                                "_session_id".to_owned(),
-                                                serde_json::Value::String(sid.clone()),
-                                            );
-                                        }
-                                    }
-                                }
-                                // Resurrection guard (see the unix branch above
-                                // for the full rationale): a call carrying an
-                                // already-ended session id must NOT run — it
-                                // would re-create session-owned metadata
-                                // (CursorRegistry / config override) that the
-                                // reaper has already passed. Skip + benign ok.
-                                // Only when a session id is present AND ended;
-                                // live and anonymous calls pass through.
-                                if let Some(sid) = &req.session_id {
+                                // Apply the caller-declared session identity
+                                // (see the unix branch + apply_session_identity).
+                                let effective_session =
+                                    apply_session_identity(&mut args, &req.session_id);
+                                // Resurrection guard on the effective session.
+                                if let Some(sid) = &effective_session {
                                     if cua_driver_core::session::is_session_ended(sid) {
                                         let resp = DaemonResponse::ok(serde_json::json!({
                                             "content": [{
@@ -1475,5 +1545,47 @@ mod gate_tests {
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
+    }
+}
+
+#[cfg(test)]
+mod session_boundary_tests {
+    use super::apply_session_identity;
+    use serde_json::json;
+
+    #[test]
+    fn explicit_session_becomes_session_id_and_is_returned() {
+        let mut args = json!({ "x": 1, "session": "research-1" });
+        let eff = apply_session_identity(&mut args, &None);
+        assert_eq!(eff.as_deref(), Some("research-1"));
+        assert_eq!(args["_session_id"], "research-1");
+    }
+
+    #[test]
+    fn no_session_falls_back_to_minted_for_session_id_only() {
+        // The minted per-connection id drives `_session_id` (recording / config
+        // lifecycle) but there is NO explicit `session`, so the cursor resolver
+        // — which reads `session`/`cursor_id`, not `_session_id` — sees nothing.
+        let mut args = json!({ "x": 1 });
+        let eff = apply_session_identity(&mut args, &Some("mcp-123".to_owned()));
+        assert_eq!(args["_session_id"], "mcp-123");
+        assert_eq!(eff.as_deref(), Some("mcp-123"));
+        assert!(args.get("session").is_none());
+    }
+
+    #[test]
+    fn anonymous_when_no_session_and_no_minted() {
+        let mut args = json!({ "x": 1 });
+        let eff = apply_session_identity(&mut args, &None);
+        assert!(eff.is_none());
+        assert!(args.get("_session_id").is_none());
+    }
+
+    #[test]
+    fn caller_set_session_id_is_not_overwritten_by_minted() {
+        let mut args = json!({ "_session_id": "caller-set" });
+        let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
+        assert_eq!(args["_session_id"], "caller-set");
+        assert_eq!(eff.as_deref(), Some("caller-set"));
     }
 }

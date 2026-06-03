@@ -206,6 +206,28 @@ fn sel_register(name: &CStr) -> *mut c_void {
     }
 }
 
+/// Whether `cls` actually implements `sel`, via `class_respondsToSelector`.
+///
+/// macOS 14 (Sonoma) compatibility guard: `SLSEventAuthenticationMessage`
+/// exists on macOS 14, but `messageWithEventRecord:pid:version:` was only
+/// added in macOS 15 (Sequoia). `sel_registerName` always succeeds (it just
+/// interns the string), so a `!sel.is_null()` check is not enough — we must
+/// confirm the class responds before calling `objc_msgSend`, or the runtime
+/// raises `NSInvalidArgumentException: unrecognized selector`. See #1503.
+fn class_responds_to_selector(cls: *mut c_void, sel: *mut c_void) -> bool {
+    if cls.is_null() || sel.is_null() {
+        return false;
+    }
+    type RespondsToFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> bool;
+    static SYM: OnceLock<Option<RespondsToFn>> = OnceLock::new();
+    let f = *SYM
+        .get_or_init(|| find_sym(b"class_respondsToSelector\0").map(|p| unsafe { as_fn(p) }));
+    match f {
+        Some(f) => unsafe { f(cls, sel) },
+        None => false,
+    }
+}
+
 // ── SLSEventRecord extraction ──────────────────────────────────────────────
 
 /// Extract the embedded `SLSEventRecord *` from a `CGEvent`.
@@ -244,11 +266,19 @@ pub fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool
 
     if attach_auth_message {
         // Build and attach SLSEventAuthenticationMessage.
+        //
+        // macOS 14 (Sonoma) compatibility: the class exists on macOS 14 but
+        // `messageWithEventRecord:pid:version:` was added in macOS 15. Guard
+        // with `class_respondsToSelector` (a `!sel.is_null()` check is not
+        // enough — `sel_registerName` interns any name); when the selector is
+        // absent we skip the auth envelope and fall through to the plain
+        // `SLEventPostToPid` below. Chromium-class targets may not receive the
+        // event on macOS 14, but the daemon no longer crashes. See #1503.
         let cls = objc_class(c"SLSEventAuthenticationMessage");
         let sel = sel_register(c"messageWithEventRecord:pid:version:");
         let factory = factory_msg_send_fn();
 
-        if !cls.is_null() && !sel.is_null() {
+        if class_responds_to_selector(cls, sel) {
             if let Some(factory_fn) = factory {
                 let record = unsafe { extract_event_record(event_ptr) };
                 if !record.is_null() {

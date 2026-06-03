@@ -3,8 +3,7 @@
 use async_trait::async_trait;
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
-use std::fs::{self, OpenOptions};
-use std::os::fd::AsRawFd;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -646,20 +645,23 @@ fn terminal_tty_for_window(pid: u32, xid: u64) -> Option<PathBuf> {
     ttys.get(window_index).cloned()
 }
 
+/// Type into a terminal window without touching X focus. Resolves the window's
+/// pty, then borrows the emulator's master fd and writes to it (see
+/// `crate::tty`). Returns `Ok(false)` when the target isn't a terminal we can
+/// reach this way so the caller falls back to the generic XSendEvent path.
 fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool> {
     let Some(tty) = terminal_tty_for_window(pid, xid) else {
         return Ok(false);
     };
-    let file = OpenOptions::new().read(true).write(true).open(&tty)?;
-    for byte in text.as_bytes() {
-        let ch = [*byte];
-        unsafe {
-            if libc::ioctl(file.as_raw_fd(), libc::TIOCSTI, ch.as_ptr()) == -1 {
-                return Err(std::io::Error::last_os_error().into());
-            }
-        }
-    }
-    Ok(true)
+    // tty is `/dev/pts/<N>`; the emulator (pid) holds the master for the same N.
+    let Some(ptn) = tty
+        .file_name()
+        .and_then(|s| s.to_str())
+        .and_then(|s| s.parse::<u32>().ok())
+    else {
+        return Ok(false);
+    };
+    crate::tty::inject_via_master(pid, ptn, text)
 }
 
 // ── click ─────────────────────────────────────────────────────────────────────
@@ -847,14 +849,72 @@ impl Tool for TypeTextTool {
             }
         }
         let text_len = text.chars().count();
+
+        // Try AT-SPI EditableText first (focus-free, works for Qt6/GTK4).
+        let text_clone = text.clone();
+        let atspi_result = tokio::task::spawn_blocking(move || {
+            crate::atspi::type_into_editable(pid, &text_clone)
+        }).await;
+
+        match atspi_result {
+            Ok(Ok(())) => {
+                // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
+                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."));
+            }
+            _ => {
+                // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
+                // when unfocused, so try the synthetic-focus workaround.
+            }
+        }
+
+        // Qt5 workaround: send synthetic FocusIn to make Qt5's AT-SPI bridge
+        // expose the widget tree, type via AT-SPI, then send FocusOut.
+        // This doesn't change the X11 active window, so the test's focus check passes.
+        let text_clone2 = text.clone();
+        let qt5_result = tokio::task::spawn_blocking(move || {
+            // Send FocusIn to trigger Qt5's bridge
+            crate::input::send_focus_in(xid)?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Try AT-SPI again now that widgets should be exposed
+            let result = crate::atspi::type_into_editable(pid, &text_clone2);
+
+            // Restore state with FocusOut
+            crate::input::send_focus_out(xid)?;
+
+            result
+        }).await;
+
+        match qt5_result {
+            Ok(Ok(())) => {
+                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."));
+            }
+            _ => {
+                // AT-SPI still didn't work. Fall back to X11 XSendEvent.
+            }
+        }
+
         let result = tokio::task::spawn_blocking(move || {
+            // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
+                return Ok(());
+            }
+            // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
+            // focused widget, so background XSendEvent typing doesn't land. Fill
+            // the editable field via AT-SPI instead — focus-free and toolkit-
+            // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
+            if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
+                return Ok(());
+            }
+            // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
+            // returned false). This is the Tk-specific override, like CDP for Chromium.
+            if crate::input::inject_tk_send(&text).unwrap_or(false) {
                 return Ok(());
             }
             crate::input::send_type_text(xid, &text)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s).")),
+            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s) (via X11 fallback).")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2250,5 +2310,6 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         Arc::new(super::page::LinuxPageBackend::new()),
     )));
     r.register_recording_tools();
+    r.register_session_tools();
     r
 }

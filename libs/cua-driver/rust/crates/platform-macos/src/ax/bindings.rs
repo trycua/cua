@@ -287,6 +287,33 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_true.as_CFTypeRef())
 }
 
+/// Signal to a Chromium/Electron application root that a real assistive client
+/// is present so it materializes its full web-content accessibility tree.
+///
+/// Returns `true` when an attribute write was accepted — meaning the app was
+/// flipped from "tree off" to "tree building" and the caller should let the
+/// tree settle before walking. Returns `false` when the app does not support
+/// either attribute (native Cocoa apps such as Finder / Calculator / TextEdit),
+/// in which case no settle delay is warranted.
+///
+/// `AXManualAccessibility` is the modern opt-in with no screen-reader side
+/// effects; `AXEnhancedUserInterface` is the legacy fallback some Electron
+/// builds expose instead (the modern attribute returns
+/// `kAXErrorAttributeUnsupported` on those builds).
+pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> bool {
+    let manual = set_bool_attr_true(app_element, "AXManualAccessibility");
+    if manual == kAXErrorSuccess {
+        return true;
+    }
+    if manual != kAXErrorAttributeUnsupported {
+        // A transient error (e.g. timeout / app busy) rather than a hard
+        // "this app has no such attribute" — don't bother with the legacy
+        // fallback, and don't claim enablement happened.
+        return false;
+    }
+    set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess
+}
+
 /// Get the CGWindowID of an AX window element via the private `_AXUIElementGetWindow` SPI.
 /// Returns `None` if the element is not a composited window.
 pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {

@@ -154,6 +154,29 @@ cua-driver call set_agent_cursor_motion '{"glide_duration_ms":300}'
 
 See `set_agent_cursor_motion` in the [MCP tools reference](/cua-driver/reference/mcp-tools) for every knob.
 
+## Concurrency & multiple agents
+
+### Two agents (or subagents) take turns instead of running in parallel. Why?
+
+The daemon is concurrent — it handles each connection on its own task, and proves it: two raw socket connections can drive two cursors simultaneously. The bottleneck is the **stdio MCP transport**: an MCP client (e.g. Claude Code) spawns **one** `cua-driver mcp` process per server config and shares it across all subagents, and a single stdio pipe carries one in-flight request at a time. So tool calls serialize at the transport, upstream of cua-driver. Sessions give concurrent runs distinct **cursors**; they don't give them distinct **connections**, and parallelism needs distinct connections.
+
+Claude Code only parallelizes tool calls it deems concurrency-safe (`readOnlyHint:true`). cua-driver's read-only tools (including `move_cursor`) already parallelize; mutating tools (`click`, `type_text`) serialize by design — parallelizing an ordered sequence like `3 → + → 1 → =` would race.
+
+### How do I run multiple agents truly in parallel?
+
+Give each agent its **own** connection. Two options:
+
+1. **Separate `cua-driver mcp` processes** — e.g. two Claude Code instances. Each spawns its own proxy → its own daemon connection → the (concurrent) daemon runs them in parallel.
+2. **The HTTP transport** — start the daemon with `CUA_DRIVER_RS_MCP_HTTP_PORT=<port>` and it also serves MCP over HTTP at `POST http://127.0.0.1:<port>/mcp` (loopback only). Point each agent's MCP client at that URL; each opens its own HTTP connection and they run concurrently (measured 3.6× on 10 parallel calls). Per-connection ordering keeps each agent's sequence correct; the per-`(pid, window_id)` cache + per-session cursor make concurrent cross-connection actions safe.
+
+```bash
+# daemon with the HTTP MCP endpoint enabled
+CUA_DRIVER_RS_MCP_HTTP_PORT=8787 cua-driver serve
+# sanity check
+curl -s -XPOST http://127.0.0.1:8787/mcp \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"start_session","arguments":{"session":"agent-1"}}}'
+```
+
 ## Permissions
 
 ### `check_permissions` says `NOT granted` but I granted both.
@@ -179,6 +202,20 @@ This is the same TCC-attribution issue as the previous question, applied to the 
 ### I keep seeing the permissions dialog on every launch.
 
 macOS is attributing the process to a different bundle id than the one you granted. Run `cua-driver diagnose` and share the output when filing an issue. It reports cdhash, team id, and which bundle TCC matched against.
+
+### After a rebuild, the driver reports `NOT granted` but System Settings still shows CuaDriver toggled ON.
+
+This is a stale TCC grant. TCC pins each Accessibility / Screen-Recording grant to the app's **designated requirement at grant time**. If you first granted while `CuaDriver.app` was *ad-hoc* signed, the requirement is a bare `cdhash H"…"`, which changes on every rebuild — so the grant row stays `allowed` but its requirement no longer matches the new binary, and re-toggling the switch doesn't help (the row already records a decision, so the prompt never re-fires).
+
+Release builds are CI-signed with a stable identity, so this only affects the local dev loop (`install-local.sh`). That installer now signs with a **stable self-signed certificate** and, when it detects the signing identity changed since the last install, runs `tccutil reset` for you so the next grant re-pins cleanly. After you re-grant once on the certificate-signed build, the grant survives every future rebuild.
+
+To clear it by hand:
+
+```bash
+tccutil reset Accessibility com.trycua.driver
+tccutil reset ScreenCapture  com.trycua.driver
+cua-driver permissions grant   # re-grant once; now pinned to the stable cert
+```
 
 ## Config and telemetry
 

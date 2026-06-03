@@ -232,6 +232,16 @@ impl CursorRegistry {
     pub fn all_states(&self) -> Vec<CursorInstanceState> {
         self.inner.lock().unwrap().values().cloned().collect()
     }
+
+    /// Drop a session's cursor metadata entry (fired from the `session_end`
+    /// hook). The `"default"` key backs the anonymous / one-shot path and is
+    /// guarded against removal; an empty or absent key is a harmless no-op.
+    pub fn remove(&self, cursor_id: &str) {
+        if cursor_id.is_empty() || cursor_id == "default" {
+            return;
+        }
+        self.inner.lock().unwrap().remove(cursor_id);
+    }
 }
 
 impl Default for CursorRegistry {

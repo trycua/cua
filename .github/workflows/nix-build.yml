@@ -55,6 +55,59 @@ jobs:
             visual: true
             result_link: result-linux-background-terminal-gif
             artifact_name: cua-driver-linux-background-terminal-gif
+          - name: Linux background GUI test (gtk)
+            check_attr: cua-driver-linux-background-gui-gtk
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-gtk
+            artifact_name: cua-driver-linux-background-gui-gtk
+          - name: Linux background GUI test (qt)
+            check_attr: cua-driver-linux-background-gui-qt
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt
+            artifact_name: cua-driver-linux-background-gui-qt
+          - name: Linux background GUI test (chromium)
+            check_attr: cua-driver-linux-background-gui-chromium
+            timeout_minutes: 25
+            visual: true
+            result_link: result-linux-background-gui-chromium
+            artifact_name: cua-driver-linux-background-gui-chromium
+          - name: Linux background GUI test (electron)
+            check_attr: cua-driver-linux-background-gui-electron
+            timeout_minutes: 25
+            visual: true
+            result_link: result-linux-background-gui-electron
+            artifact_name: cua-driver-linux-background-gui-electron
+          - name: Linux background GUI test (gtk4)
+            check_attr: cua-driver-linux-background-gui-gtk4
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-gtk4
+            artifact_name: cua-driver-linux-background-gui-gtk4
+          - name: Linux background GUI test (qt6)
+            check_attr: cua-driver-linux-background-gui-qt6
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt6
+            artifact_name: cua-driver-linux-background-gui-qt6
+          - name: Linux background GUI test (tk)
+            check_attr: cua-driver-linux-background-gui-tk
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-tk
+            artifact_name: cua-driver-linux-background-gui-tk
+          # Firefox is temporarily disabled: under the emulated CI VM (no KVM) it
+          # does not surface its window within the launch timeout, so the job
+          # times out before any AT-SPI subtest runs. The browser/AT-SPI read
+          # path is already covered by the chromium job. Re-enable once launch is
+          # made reliable (longer timeout + pre-seeded first-run-free profile).
+          # - name: Linux background GUI test (firefox)
+          #   check_attr: cua-driver-linux-background-gui-firefox
+          #   timeout_minutes: 25
+          #   visual: false
+          #   result_link: result-linux-background-gui-firefox
+          #   artifact_name: ""
 
     steps:
       - name: Checkout
@@ -150,6 +203,13 @@ jobs:
             const artifactNames = [
               'cua-driver-linux-cursor-click-gif',
               'cua-driver-linux-background-terminal-gif',
+              'cua-driver-linux-background-gui-gtk',
+              'cua-driver-linux-background-gui-gtk4',
+              'cua-driver-linux-background-gui-qt',
+              'cua-driver-linux-background-gui-qt6',
+              'cua-driver-linux-background-gui-chromium',
+              'cua-driver-linux-background-gui-electron',
+              'cua-driver-linux-background-gui-tk',
             ];
 
             let body = `${marker}\n## Linux visual regression artifacts\n\n`;

@@ -61,10 +61,15 @@ impl Tool for TypeTextCharsTool {
         // Pre-focus element if requested.
         if !type_chars_only {
             if let (Some(idx), Some(wid)) = (element_index, window_id) {
-                if let Some(element_ptr) = self.state.element_cache.get_element_ptr(pid, wid, idx) {
+                // Retain so a concurrent get_window_state can't free the element
+                // during the focus call (use-after-free → daemon crash). The
+                // guard outlives the awaited spawn_blocking below.
+                if let Some(element_guard) = self.state.element_cache.get_element_retained(pid, wid, idx) {
+                    let element_ptr = element_guard.as_ptr();
                     let _ = tokio::task::spawn_blocking(move || {
                         crate::input::ax_actions::focus_element(element_ptr)
                     }).await;
+                    drop(element_guard);
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             }

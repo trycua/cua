@@ -131,7 +131,7 @@ Optional `electron_debugging_port`: opens a Chrome DevTools Protocol (CDP) serve
 
 Optional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.
 
-Optional `creates_new_application_instance`: when true, forces a new app instance even if one is already running (passes -n to open).
+Optional `creates_new_application_instance`: when true, forces a new app instance even if one is already running (passes -n to open). Reach for this in **concurrent multi-agent/multi-session** work — it returns a fresh pid + window so each session drives its own isolated window. Without it, single-instance apps (Calculator, many utilities) hand every caller the same window, so two sessions clobber each other.
 
 Optional `additional_arguments`: extra argv strings appended after --args.
 
@@ -141,7 +141,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 
 - `additional_arguments` (array of string, optional): Extra arguments appended after --args when launching.
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
-- `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n).
+- `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one (which makes the sessions clobber each other on single-instance apps).
 - `electron_debugging_port` (integer, optional): Open a Chrome DevTools Protocol server on this port (appends --remote-debugging-port=N).
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
@@ -517,11 +517,45 @@ Update cua-driver-rs configuration. Changes to capture_mode and max_image_dimens
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
 
-**Per-session agent cursors (macOS).** The agent cursor is owned per MCP session. On the daemon-proxy path every `cua-driver mcp` client mints a session identity, and that identity is the cursor key when the caller passes no explicit `cursor_id` — so two concurrent sessions each drive their own overlay cursor (distinct auto-assigned colour) drawn simultaneously, instead of clobbering one shared cursor last-writer-wins. The key is resolved with the precedence **explicit `cursor_id` &gt; session identity &gt; `"default"`**: an explicit `cursor_id` stays an orthogonal, user-facing handle, so a wrapper can deliberately share or override a cursor across sessions by passing the same `cursor_id`. When a session ends (`session_end`), that session's cursor is removed from the overlay automatically — including on **ungraceful proxy death** (`kill -9`, crash), because the daemon detects the proxy's control-connection EOF and fires `session_end` without any cooperation from the dying proxy. A late, in-flight cursor command that arrives after removal cannot resurrect the cursor (a render-side tombstone keyed on the session id). The anonymous / one-shot `cua-driver call` path (no session identity, no `cursor_id`) maps to the seeded `"default"` cursor, which is never removed — backward compatible. (Windows/Linux keep the single shared cursor today.)
+**Sessions and per-session agent cursors (macOS).** A **session** is a
+caller-declared identity for one agent run — not a property of the MCP
+connection. Declare it with `start_session` (or just pass a `session` id on your
+actions); the same id drives the same agent cursor, per-session config, and
+recording over MCP, the CLI, or the raw socket, and follows the run across any
+number of apps/windows. The cursor's colour is auto-derived from the id, so
+concurrent runs are visually distinct and drawn simultaneously. **The cursor is
+opt-in:** a run shows a cursor only when it declares a `session` — anonymous
+calls (no `session`) execute without one. `cursor_id` is a legacy alias for
+`session`. A session is reclaimed by `end_session` or an idle-TTL (default 300s,
+override `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`); a late in-flight command after
+teardown cannot resurrect the cursor (render-side tombstone keyed on the id). For
+concurrent runs/subagents, give each its own `session` (and pass
+`creates_new_application_instance:true` to `launch_app` so they don't share a
+window). Per-session config + recording fall back to connection-scoped cleanup
+when no `session` is declared. (Windows/Linux have no overlay cursor today; the
+session identity still scopes their per-session config + recording.)
+
+### start_session
+
+Declare a session — a named, color-coded identity for the current agent run. Pass a stable `session` id; the agent cursor, per-session config, and recording all key on it, and it follows the run across apps/windows. The cursor appears on the session's first action. Idempotent (re-calling refreshes the idle-TTL). End it with `end_session` or let the idle-TTL reclaim it.
+
+**Arguments:**
+
+- `session` (string, required): Stable session id for this run (e.g. `"research-run-1"`).
+
+### end_session
+
+End a session declared with `start_session`: removes its agent cursor, stops any recording it owns, and clears its per-session config. Call when a run finishes so its cursor doesn't linger. Idempotent.
+
+**Arguments:**
+
+- `session` (string, required): The session id to end.
 
 ### set_agent_cursor_enabled
 
-Show or hide the agent cursor overlay for a cursor instance. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).
+Show or hide the agent cursor overlay for a cursor instance. The overlay is **ON by default** and each MCP session automatically owns its own cursor — you do not need to call this to make the cursor appear; use it only to hide (`enabled:false`) or re-show (`enabled:true`) it. With no `cursor_id`, this targets the calling session's own cursor (see the per-session note above).
+
+> **Visibility caveat (AX runs).** On a pure accessibility-action run (clicking by `element_index`), the session cursor seeds on-screen and pulses on its very first action rather than playing a long glide, so it is easy to miss in a screen recording. For a clearly *gliding* cursor in a demo, issue a pixel `click({pid,x,y})` or a `move_agent_cursor` first to put the cursor on-screen; subsequent AX clicks then glide normally.
 
 **Arguments:**
 

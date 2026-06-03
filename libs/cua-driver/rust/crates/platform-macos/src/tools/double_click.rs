@@ -34,6 +34,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid"],
             "properties": {
+                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer" },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
@@ -62,12 +63,15 @@ impl Tool for DoubleClickTool {
 
         // ── AX element path ──────────────────────────────────────────────────
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            let element_ptr = match self.state.element_cache.get_element_ptr(pid, wid, idx) {
-                Some(p) => p,
+            // Retain out of the cache so a concurrent get_window_state can't
+            // free the element mid-action (use-after-free → daemon crash).
+            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                Some(e) => e,
                 None    => return ToolResult::error(format!(
                     "Element index {idx} not found. Call get_window_state first."
                 )),
             };
+            let element_ptr = element_guard.as_ptr();
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".

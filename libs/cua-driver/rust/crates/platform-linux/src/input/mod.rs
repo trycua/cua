@@ -1,56 +1,61 @@
 //! Background input injection for Linux via X11 XSendEvent.
 //!
 //! XSendEvent sends synthetic events directly to a window without changing
-//! input focus. This is the Linux equivalent of PostMessage on Windows.
+//! input focus — the Linux equivalent of PostMessage on Windows, and the
+//! mechanism behind the cross-platform "no focus steal" contract.
 //!
-//! Note: Some apps check the `send_event` flag and ignore synthetic events
-//! (e.g., some games, some security-sensitive apps). For those, the XTest
-//! extension (XTestFakeKeyEvent) is the alternative, but it DOES send to
-//! the focused window.
+//! Note: a few apps check the `send_event` flag and ignore synthetic events.
+//! Terminal emulators are the notable case (xterm's `allowSendEvents` is off by
+//! default); those are handled out of band by writing to the pty master — see
+//! `crate::tty`. We deliberately do NOT fall back to the XTest extension for
+//! them, because XTest delivers to the *focused* window and would break the
+//! no-focus-steal contract.
 
 use anyhow::Result;
 use std::thread::sleep;
 use std::time::Duration;
-use x11rb::connection::{Connection, RequestConnection};
+use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
-use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
 
-fn xtest_available(conn: &RustConnection) -> bool {
-    conn.extension_information(x11rb::protocol::xtest::X11_EXTENSION_NAME)
-        .ok()
-        .flatten()
-        .is_some()
-}
+/// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
+/// This can trigger toolkit-level focus handlers (e.g., Qt5's AT-SPI bridge) without
+/// moving the window manager's active window. Use with send_focus_out to restore state.
+pub fn send_focus_in(xid: u64) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let window = xid as u32;
 
-fn xtest_key_press(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
-    conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)?;
+    let focus_in = FocusInEvent {
+        response_type: FOCUS_IN_EVENT,
+        detail: NotifyDetail::NONLINEAR,
+        sequence: 0,
+        event: window,
+        mode: NotifyMode::NORMAL,
+    };
+
+    conn.send_event(false, window, EventMask::FOCUS_CHANGE, &focus_in)?;
     conn.flush()?;
     Ok(())
 }
 
-fn xtest_key_release(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
-    conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, x11rb::CURRENT_TIME, root, 0, 0, 0)?;
+/// Send a synthetic FocusOut event to restore focus state after send_focus_in.
+pub fn send_focus_out(xid: u64) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let window = xid as u32;
+
+    let focus_out = FocusOutEvent {
+        response_type: FOCUS_OUT_EVENT,
+        detail: NotifyDetail::NONLINEAR,
+        sequence: 0,
+        event: window,
+        mode: NotifyMode::NORMAL,
+    };
+
+    conn.send_event(false, window, EventMask::FOCUS_CHANGE, &focus_out)?;
     conn.flush()?;
-    Ok(())
-}
-
-fn xtest_settle(conn: &RustConnection) -> Result<()> {
-    // Force a round-trip so the server processes the synthetic release before
-    // this short-lived connection is dropped or the next tool call starts.
-    conn.get_input_focus()?.reply()?;
-    Ok(())
-}
-
-fn xtest_key_tap(conn: &RustConnection, root: Window, keycode: u8) -> Result<()> {
-    xtest_key_press(conn, root, keycode)?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
-    xtest_key_release(conn, root, keycode)?;
-    xtest_settle(conn)?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
     Ok(())
 }
 
@@ -184,48 +189,7 @@ pub fn send_drag(
 
 /// Type a string by sending KeyPress/KeyRelease events for each character.
 pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
-    let window = xid as u32;
-    let root = conn.setup().roots[0].root;
-
-    for ch in text.chars() {
-        let keycode = char_to_keycode(&conn, ch).unwrap_or(0);
-        if keycode == 0 { continue; }
-
-        let press = KeyPressEvent {
-            response_type: KEY_PRESS_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0, root_y: 0,
-            event_x: 0, event_y: 0,
-            state: KeyButMask::from(0u16),
-            same_screen: true,
-        };
-
-        let release = KeyReleaseEvent {
-            response_type: KEY_RELEASE_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0, root_y: 0,
-            event_x: 0, event_y: 0,
-            state: KeyButMask::from(0u16),
-            same_screen: true,
-        };
-
-        conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-        conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
-        conn.flush()?;
-    }
-    Ok(())
+    send_type_text_with_delay(xid, text, 0)
 }
 
 /// Type a string with an additional `inter_char_ms` delay between each character.
@@ -233,10 +197,16 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let (conn, _) = RustConnection::connect(None)?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
 
     for ch in text.chars() {
-        let keycode = char_to_keycode(&conn, ch).unwrap_or(0);
-        if keycode == 0 { continue; }
+        // Resolve the keycode and whether Shift must be held — without it,
+        // uppercase and shifted symbols would otherwise type their unshifted
+        // form (e.g. "A" arriving as "a").
+        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, ch as u32) else {
+            continue;
+        };
+        let state = if needs_shift { KeyButMask::SHIFT } else { KeyButMask::from(0u16) };
 
         let press = KeyPressEvent {
             response_type: KEY_PRESS_EVENT,
@@ -245,7 +215,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             time: x11rb::CURRENT_TIME,
             root, event: window, child: x11rb::NONE,
             root_x: 0, root_y: 0, event_x: 0, event_y: 0,
-            state: KeyButMask::from(0u16),
+            state,
             same_screen: true,
         };
         let release = KeyReleaseEvent {
@@ -255,7 +225,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             time: x11rb::CURRENT_TIME,
             root, event: window, child: x11rb::NONE,
             root_x: 0, root_y: 0, event_x: 0, event_y: 0,
-            state: KeyButMask::from(0u16),
+            state,
             same_screen: true,
         };
 
@@ -314,22 +284,24 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn char_to_keycode(conn: &RustConnection, ch: char) -> Option<u8> {
-    // Use XStringToKeysym equivalent: look up by character keysym.
-    // Keysym for ASCII is just the ASCII code.
-    let keysym: u32 = ch as u32;
-    conn.get_keyboard_mapping(8, 248).ok()?
-        .reply().ok()
-        .map(|km| {
-            let keysyms_per = km.keysyms_per_keycode as usize;
-            for (i, syms) in km.keysyms.chunks(keysyms_per).enumerate() {
-                if syms.iter().any(|&s| s == keysym) {
-                    return Some((8 + i) as u8);
-                }
-            }
-            None
-        })
-        .flatten()
+/// Find the keycode that emits `keysym`, plus whether Shift must be held (the
+/// keysym sits in the shifted column of the keyboard map). Prefers the
+/// unshifted column when a keysym appears in both. Keysym for ASCII / Latin-1
+/// is just the codepoint.
+fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Option<(u8, bool)> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per == 0 {
+        return None;
+    }
+    for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
+        if syms.first() == Some(&keysym) {
+            return Some(((8 + i) as u8, false));
+        }
+        if per > 1 && syms.get(1) == Some(&keysym) {
+            return Some(((8 + i) as u8, true));
+        }
+    }
+    None
 }
 
 fn key_name_to_keycode(conn: &RustConnection, key: &str) -> Result<u8> {
@@ -381,4 +353,57 @@ fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {
         }
     }
     KeyButMask::from(state)
+}
+
+/// Inject text into a Tk window via Tk's `send` command — the Tk-specific
+/// override for focus-free writes (Tk has no AT-SPI bridge). Requires the target
+/// app to have registered itself with a known name via `tk appname <name>`.
+/// Returns Ok(true) if text was sent, Ok(false) if the target isn't reachable
+/// (not a Tk app or `wish` unavailable), Err on a send failure.
+pub fn inject_tk_send(text: &str) -> Result<bool> {
+    use std::io::Write;
+
+    // Escape the text for safe Tcl interpolation (braces for literal strings).
+    // Tcl's `send` command: `send <target-app-name> <tcl-command>`.
+    // We target "cua-tk-target" (the name the test app registers with) and
+    // insert at the entry widget's current cursor position.
+    let tcl_text = text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}");
+    let tcl_script = format!(
+        r#"if {{[catch {{send cua-tk-target {{.entry insert insert {{{}}}}}}} err]}} {{
+    puts stderr "tk send failed: $err"
+    exit 1
+}}
+exit 0"#,
+        tcl_text
+    );
+
+    // Try to spawn wish (Tk's shell). If it's not available, this isn't a
+    // Tk-based environment and we should fall back to XSendEvent.
+    let mut child = match std::process::Command::new("wish")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn() {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(tcl_script.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        // If send fails (e.g., target not registered), treat as "not a Tk app"
+        // and let the caller fall back to XSendEvent.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("application named") || stderr.contains("no registered") {
+            Ok(false)
+        } else {
+            anyhow::bail!("wish send failed: {}", stderr)
+        }
+    }
 }

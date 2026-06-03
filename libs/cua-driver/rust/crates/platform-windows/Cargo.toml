@@ -14,6 +14,10 @@ async-trait = "0.1"
 cua-driver-core = { path = "../cua-driver-core" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
+# IndexMap gives the keyed cursor render collection deterministic
+# insertion-ordered iteration = stable per-session cursor z-order frame to
+# frame (mirrors platform-macos's per-session overlay).
+indexmap = "2"
 # tiny-skia for cross-platform cursor rendering (used in overlay.rs on all targets)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 

@@ -11,14 +11,14 @@ use async_trait::async_trait;
 /// the host appears in the z-order. `GA_ROOT` normalises both inputs to the
 /// host so the overlay sits at z+1 of whatever is actually painted on screen.
 ///
-/// No-op when the overlay is disabled; the command is just dropped by the
-/// render thread in that case.
-fn pin_overlay_above(hwnd: u64) {
+/// No-op when the overlay is disabled or `key` is empty (anonymous, cursor-less
+/// run); the command is just dropped by the render thread in that case.
+fn pin_overlay_above(key: &str, hwnd: u64) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
     let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
     let wid = if !root.0.is_null() { root.0 as u64 } else { hwnd };
-    crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(wid));
+    crate::overlay::send_command(key.to_owned(), cursor_overlay::OverlayCommand::PinAbove(wid));
 }
 
 /// Convert (px, py) — "window-local screenshot pixels, top-left origin
@@ -83,15 +83,20 @@ fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
 /// render thread's arrival oneshot — that's how we keep the click action
 /// from firing before the cursor has visually landed (the old heuristic
 /// `tokio::sleep(80..600 ms)` was racing the spring-physics glide).
-async fn overlay_glide_to(sx: f64, sy: f64) {
-    if !crate::overlay::is_enabled() { return; }
-    let pos = crate::overlay::current_position();
+///
+/// `key` is the session's cursor key (see [`resolve_cursor_key`]). An empty key
+/// (anonymous, no declared session) is cursor-less: every overlay op
+/// short-circuits, so the action runs with no visible cursor.
+async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
+    if key.is_empty() { return; }
+    if !crate::overlay::is_enabled(key) { return; }
+    let pos = crate::overlay::current_position(key);
     if pos.0 < 0.0 && pos.1 < 0.0 {
         // Snap to target on first use; no animation to wait for.
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        crate::overlay::send_command(key.to_owned(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
         return;
     }
-    crate::overlay::animate_cursor_to(sx, sy).await;
+    crate::overlay::animate_cursor_to(key.to_owned(), sx, sy).await;
 }
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
@@ -100,6 +105,32 @@ use std::sync::{Arc, RwLock};
 use crate::uia::ElementCache;
 use cursor_overlay::CursorRegistry;
 use windows::core::Interface as _;
+
+/// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
+/// by declaring a `session`; without one, every cursor op short-circuits on
+/// this empty key (see `overlay::send_command` / `overlay_glide_to`).
+pub(crate) const NO_CURSOR: &str = "";
+
+/// Resolve the cursor key for a tool invocation, or [`NO_CURSOR`] (`""`) for an
+/// anonymous call.
+///
+/// A cursor is tied to a **caller-declared session**, never to the MCP
+/// connection. Precedence: an explicit `session` arg, then its legacy alias
+/// `cursor_id`. We deliberately do NOT fall back to the connection-injected
+/// `_session_id` or to a seeded `"default"` cursor — `""` means "no session
+/// declared → no cursor", while the underlying action (click/type/…) still
+/// executes. Mirrors `platform_macos::tools::cursor_tools::resolve_cursor_key`
+/// so the two platforms key cursors identically.
+pub(crate) fn resolve_cursor_key(args: &Value) -> String {
+    for key in ["session", "cursor_id"] {
+        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
+            if !v.is_empty() {
+                return v.to_owned();
+            }
+        }
+    }
+    NO_CURSOR.to_owned()
+}
 
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
 
@@ -1785,6 +1816,7 @@ impl Tool for ClickTool {
         use cua_driver_core::tool_args::ArgsExt;
         use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
         use crate::uia::cache::SnapshotKind;
+        let cursor_key = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let hwnd_opt = args.opt_u64("window_id");
         let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
@@ -1869,9 +1901,9 @@ impl Tool for ClickTool {
                         )),
                     }
                 };
-                pin_overlay_above(hwnd);
-                overlay_glide_to(tx as f64, ty as f64).await;
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                pin_overlay_above(&cursor_key, hwnd);
+                overlay_glide_to(&cursor_key, tx as f64, ty as f64).await;
+                crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
                     x: tx as f64, y: ty as f64,
                 });
                 let btn_fg = button.clone();
@@ -1898,10 +1930,10 @@ impl Tool for ClickTool {
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
             // Step 2: pin overlay to target window, then animate to screen coords.
-            pin_overlay_above(hwnd);
-            overlay_glide_to(cx as f64, cy as f64).await;
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             // Step 3: click pulse + actual click.
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
                 x: cx as f64, y: cy as f64,
             });
             let btn = button.clone();
@@ -2067,9 +2099,9 @@ impl Tool for ClickTool {
             // mapping (DWM-frame top-left + 1-px inset, NOT ClientToScreen).
             let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
             let (sx, sy) = (sx_i as f64, sy_i as f64);
-            pin_overlay_above(hwnd);
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, sx, sy).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             let btn = button.clone();
             // Vision-mode (x, y) dispatch is **layered**, mirroring the
             // trope-cua reference impl
@@ -2307,6 +2339,7 @@ impl Tool for TypeTextTool {
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
+        let cursor_key = resolve_cursor_key(&args);
         // Strip trailing agent-protocol closing tags before delivery —
         // catches the case where an LLM hallucinated its own tool-
         // invocation tags into the text param (see text_sanitize docs).
@@ -2364,7 +2397,7 @@ impl Tool for TypeTextTool {
         // Pin the agent-cursor overlay above the target window so the synthetic
         // cursor stays sandwiched at z+1 of the type target for the full
         // duration of the keystrokes (both XAML/UIA and PostMessage paths).
-        pin_overlay_above(hwnd);
+        pin_overlay_above(&cursor_key, hwnd);
 
         // Glide the agent cursor onto the field being typed into, so the viewer
         // can see *where* the agent is typing — same visual feedback as a click.
@@ -2372,8 +2405,8 @@ impl Tool for TypeTextTool {
         // the focused-element path has no resolvable position to point at.
         if let Some(idx) = elem_idx {
             if let Some((cx, cy)) = self.state.element_cache.get_element_center(pid, hwnd, idx as usize) {
-                overlay_glide_to(cx as f64, cy as f64).await;
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+                crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
                     x: cx as f64, y: cy as f64,
                 });
             }
@@ -2825,6 +2858,7 @@ impl Tool for SetValueTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         // Swift's "Missing required integer fields pid, window_id, and element_index."
         let mut missing_ints: Vec<&str> = Vec::new();
+        let cursor_key = resolve_cursor_key(&args);
         let raw_pid = args.get("pid").and_then(|v| v.as_i64());
         if raw_pid.is_none()                    { missing_ints.push("pid"); }
         if args.get("window_id").and_then(|v| v.as_u64()).is_none()  { missing_ints.push("window_id"); }
@@ -2847,9 +2881,9 @@ impl Tool for SetValueTool {
         // the viewer can see *where* the agent is acting. No-op when the
         // overlay is disabled or the element has no cached center.
         if let Some((cx, cy)) = self.state.element_cache.get_element_center(pid, hwnd, idx) {
-            pin_overlay_above(hwnd);
-            overlay_glide_to(cx as f64, cy as f64).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
                 x: cx as f64, y: cy as f64,
             });
         }
@@ -3154,6 +3188,7 @@ impl Tool for DoubleClickTool {
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let dispatch = DispatchMode::from_args(&args);
+        let cursor_key = resolve_cursor_key(&args);
         // Swift validates "both x and y or neither" and "no element_index without window_id".
         let has_xy        = x.is_some() && y.is_some();
         let partial_xy    = x.is_some() != y.is_some();
@@ -3190,9 +3225,9 @@ impl Tool for DoubleClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
-            pin_overlay_above(hwnd);
-            overlay_glide_to(cx as f64, cy as f64).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
             // dispatch:"background" — reject if PostMessage would be silently dropped.
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
@@ -3244,9 +3279,9 @@ impl Tool for DoubleClickTool {
             // `bitmap_to_screen` doc for why ClientToScreen is wrong).
             let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
             let (sx, sy) = (sx_i as f64, sy_i as f64);
-            pin_overlay_above(hwnd);
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, sx, sy).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             // dispatch:"background" — reject if PostMessage would be silently dropped.
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
@@ -3345,6 +3380,7 @@ impl Tool for RightClickTool {
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let dispatch = DispatchMode::from_args(&args);
+        let cursor_key = resolve_cursor_key(&args);
         // Port Swift's full validation set.
         let has_xy     = x.is_some() && y.is_some();
         let partial_xy = x.is_some() != y.is_some();
@@ -3381,9 +3417,9 @@ impl Tool for RightClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
-            pin_overlay_above(hwnd);
-            overlay_glide_to(cx as f64, cy as f64).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
@@ -3434,9 +3470,9 @@ impl Tool for RightClickTool {
             // `bitmap_to_screen` doc).
             let (sx_i, sy_i) = bitmap_to_screen(hwnd, px as i32, py as i32);
             let (sx, sy) = (sx_i as f64, sy_i as f64);
-            pin_overlay_above(hwnd);
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            pin_overlay_above(&cursor_key, hwnd);
+            overlay_glide_to(&cursor_key, sx, sy).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
@@ -3520,6 +3556,7 @@ impl Tool for DragTool {
         let dispatch = DispatchMode::from_args(&args);
 
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_key = resolve_cursor_key(&args);
         // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
@@ -3614,7 +3651,7 @@ impl Tool for DragTool {
         // cursor stays sandwiched at z+1 of the dragged window for the full
         // path. Drag stays within a single HWND, so one pin at the start is
         // sufficient — the 80 ms z-order tick keeps it asserted thereafter.
-        pin_overlay_above(hwnd);
+        pin_overlay_above(&cursor_key, hwnd);
 
         // Animate the agent cursor to the drag-start, fire a press pulse,
         // run the actual drag synthesis, then glide to the drag-end and
@@ -3623,8 +3660,8 @@ impl Tool for DragTool {
         // the drag itself (the timing coordination would be invasive);
         // pre- and post-glides plus the press/release pulses are enough
         // signal for a user watching the agent operate.
-        overlay_glide_to(sx_from as f64, sy_from as f64).await;
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+        overlay_glide_to(&cursor_key, sx_from as f64, sy_from as f64).await;
+        crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
             x: sx_from as f64, y: sy_from as f64,
         });
 
@@ -3642,8 +3679,8 @@ impl Tool for DragTool {
         // pulse the release. Skipped on error so the cursor doesn't lie
         // about a successful endpoint.
         if matches!(&result, Ok(Ok(()))) {
-            overlay_glide_to(sx_to as f64, sy_to as f64).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+            overlay_glide_to(&cursor_key, sx_to as f64, sy_to as f64).await;
+            crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse {
                 x: sx_to as f64, y: sy_to as f64,
             });
         }
@@ -3748,16 +3785,20 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        let cursor_id_owned = args.str_or("cursor_id", "default");
-        let cursor_id = cursor_id_owned.as_str();
-        self.state.cursor_registry.update_position(cursor_id, x, y);
+        // Cursor key precedence: caller-declared `session` > legacy `cursor_id`
+        // > NO_CURSOR. An anonymous run (no session) has no cursor to move.
+        let cursor_key = resolve_cursor_key(&args);
+        if !cursor_key.is_empty() {
+            self.state.cursor_registry.update_position(&cursor_key, x, y);
+        }
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
         // the cursor settles to the natural macOS-style pose.
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
+        crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::MoveTo {
             x, y, end_heading_radians: std::f64::consts::FRAC_PI_4,
         });
-        ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
+        let shown = if cursor_key.is_empty() { "default" } else { cursor_key.as_str() };
+        ToolResult::text(format!("Agent cursor '{shown}' moved to ({x:.1}, {y:.1})."))
     }
 }
 
@@ -3797,11 +3838,11 @@ impl Tool for SetAgentCursorEnabledTool {
             Some(v) => v,
             None    => return ToolResult::error("Missing required boolean field `enabled`."),
         };
-        use cua_driver_core::tool_args::ArgsExt;
-        let cursor_id_owned = args.str_or("cursor_id", "default");
-        let cursor_id = cursor_id_owned.as_str();
-        self.state.cursor_registry.set_enabled(cursor_id, enabled);
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
+        let cursor_key = resolve_cursor_key(&args);
+        if !cursor_key.is_empty() {
+            self.state.cursor_registry.set_enabled(&cursor_key, enabled);
+        }
+        crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::SetEnabled(enabled));
         // Match Swift text format 1:1: `"✅ Agent cursor enabled."`
         // (or `"✅ Agent cursor disabled."`).
         ToolResult::text(if enabled {
@@ -3867,7 +3908,8 @@ impl Tool for SetAgentCursorMotionTool {
         fn num(v: Option<&Value>) -> Option<f64> {
             v.and_then(|x| x.as_f64().or_else(|| x.as_i64().map(|i| i as f64)))
         }
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        // Cursor key: caller-declared `session` > legacy `cursor_id` > NO_CURSOR.
+        let cursor_id = resolve_cursor_key(&args);
         // 1. Per-instance appearance fields (Rust-only).
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.get("cursor_icon").and_then(|v| v.as_str()) { cfg.cursor_icon = Some(v.to_owned()); }
@@ -3878,7 +3920,7 @@ impl Tool for SetAgentCursorMotionTool {
         });
         // 2. Apply motion knobs to the live render state — was silently
         // dropped before; this is the Swift parity behavior.
-        let current = crate::overlay::current_motion();
+        let current = crate::overlay::current_motion(&cursor_id);
         let updated = current.with_overrides(
             num(args.get("start_handle")),
             num(args.get("end_handle")),
@@ -3890,7 +3932,7 @@ impl Tool for SetAgentCursorMotionTool {
             num(args.get("idle_hide_ms")),
             None, // press_duration_ms — not in Swift tool surface
         );
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::SetMotion(updated.clone()));
+        crate::overlay::send_command(cursor_id.clone(), cursor_overlay::OverlayCommand::SetMotion(updated.clone()));
         // Match Swift text format 1:1.
         let summary = format!(
             "cursor motion: startHandle={sh} endHandle={eh} arcSize={asz} arcFlow={af} \
@@ -3938,9 +3980,12 @@ impl Tool for GetAgentCursorStateTool {
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let enabled = crate::overlay::is_enabled();
-        let motion  = crate::overlay::current_motion();
+    async fn invoke(&self, args: Value) -> ToolResult {
+        // Report THIS session's cursor (caller-declared `session` > `cursor_id`
+        // > "default"), mirroring macOS get_agent_cursor_state scoping.
+        let cursor_key = resolve_cursor_key(&args);
+        let enabled = crate::overlay::is_enabled(&cursor_key);
+        let motion  = crate::overlay::current_motion(&cursor_key);
         // Swift text format 1:1: single-line camelCase key=value pairs.
         let summary = format!(
             "cursor: enabled={enabled} startHandle={sh} endHandle={eh} arcSize={asz} \
@@ -4025,7 +4070,8 @@ impl Tool for SetAgentCursorStyleTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let cursor_id = args.get("cursor_id").and_then(|v| v.as_str()).unwrap_or("default").to_owned();
+        // Cursor key: caller-declared `session` > legacy `cursor_id` > NO_CURSOR.
+        let cursor_id = resolve_cursor_key(&args);
 
         // image_path
         let image_path = args.get("image_path").and_then(|v| v.as_str());
@@ -4084,12 +4130,12 @@ impl Tool for SetAgentCursorStyleTool {
 
         // Dispatch to overlay
         if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command(cmd);
+            crate::overlay::send_command(cursor_id.clone(), cmd);
         }
         let gradient_provided = args.get("gradient_colors").is_some();
         let bloom_provided = args.get("bloom_color").is_some();
         if gradient_provided || bloom_provided {
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::SetGradient {
+            crate::overlay::send_command(cursor_id.clone(), cursor_overlay::OverlayCommand::SetGradient {
                 gradient_colors,
                 bloom_color: bloom_color.flatten(),
             });
@@ -4322,15 +4368,15 @@ impl Tool for GetConfigTool {
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
+    async fn invoke(&self, args: Value) -> ToolResult {
         let cfg = self.state.config.read().unwrap();
         // Mirror the macOS agent's parity addition (commit adb9ecca):
         // nested `agent_cursor.enabled` block so Swift-shaped get_config
         // consumers can read the cursor's enabled state from one place.
-        let cursor_enabled = self.state.cursor_registry.all_states()
-            .first()
-            .map(|s| s.config.enabled)
-            .unwrap_or(true);
+        // Scope to the CALLING session's cursor (session > cursor_id > default)
+        // and read it from the overlay deterministically — `all_states().first()`
+        // was a nondeterministic HashMap read across sessions (macOS BUG 3).
+        let cursor_enabled = crate::overlay::is_enabled(&resolve_cursor_key(&args));
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
@@ -5195,6 +5241,26 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
     crate::recording_hooks::set_element_cache(state.element_cache.clone());
+
+    // Drop a session's owned cursor on `session_end` (explicit end_session, the
+    // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS
+    // the cursor key (caller-declared `session`), so this prunes the metadata
+    // registry AND stops the overlay painting that session's cursor. Both paths
+    // guard "default" so the anonymous / one-shot cursor survives. Registering
+    // once per process (build_registry runs once in the daemon) is guarded so a
+    // repeated build in tests can't accumulate duplicate hooks. Mirrors the
+    // macOS `register_all` session_end hook (platform-macos/src/tools/mod.rs).
+    {
+        static HOOK_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        if HOOK_ONCE.set(()).is_ok() {
+            let cursor_registry = state.cursor_registry.clone();
+            cua_driver_core::session::register_session_end_hook(move |session_id| {
+                cursor_registry.remove(session_id);
+                crate::overlay::remove_cursor(session_id.to_owned());
+            });
+        }
+    }
+
     let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
@@ -5254,7 +5320,54 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));
     r.register_recording_tools();
+    r.register_session_tools();
     r
+}
+
+#[cfg(test)]
+mod cursor_key_resolution_tests {
+    use super::{resolve_cursor_key, NO_CURSOR};
+    use serde_json::json;
+
+    #[test]
+    fn anonymous_resolves_to_no_cursor() {
+        // No session/cursor_id → NO_CURSOR (""): the action still runs but no
+        // cursor is shown. The connection-injected `_session_id` is NOT a cursor
+        // source — it stays the recording/config lifecycle key.
+        assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
+        assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), NO_CURSOR);
+        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), NO_CURSOR);
+    }
+
+    #[test]
+    fn explicit_session_owns_a_cursor() {
+        assert_eq!(resolve_cursor_key(&json!({ "session": "research-run" })), "research-run");
+    }
+
+    #[test]
+    fn cursor_id_is_a_legacy_alias_and_session_wins() {
+        assert_eq!(resolve_cursor_key(&json!({ "cursor_id": "user-handle" })), "user-handle");
+        assert_eq!(resolve_cursor_key(&json!({ "session": "s1", "cursor_id": "c1" })), "s1");
+    }
+
+    #[test]
+    fn empty_strings_fall_through_to_no_cursor() {
+        // An empty `session` falls through to `cursor_id`; both empty → NO_CURSOR.
+        assert_eq!(resolve_cursor_key(&json!({ "session": "", "cursor_id": "c1" })), "c1");
+        assert_eq!(resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })), NO_CURSOR);
+    }
+
+    #[test]
+    fn two_parallel_sessions_resolve_distinct_keys() {
+        // The regression this whole port fixes: two concurrent runs each declare
+        // their own `session`, so they resolve DISTINCT cursor keys and own
+        // separate overlay cursors instead of clobbering one shared cursor.
+        let a = resolve_cursor_key(&json!({ "pid": 10, "element_index": 1, "session": "calc-2plus1" }));
+        let b = resolve_cursor_key(&json!({ "pid": 20, "element_index": 1, "session": "calc-5plus6" }));
+        assert_eq!(a, "calc-2plus1");
+        assert_eq!(b, "calc-5plus6");
+        assert_ne!(a, b);
+    }
 }
 
 #[cfg(test)]

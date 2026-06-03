@@ -432,8 +432,105 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         if et.insert_text(off, text, len).await.unwrap_or(false) {
             return Ok(true);
         }
-        Ok(et.set_text_contents(text).await.unwrap_or(false))
+        if et.set_text_contents(text).await.unwrap_or(false) {
+            return Ok(true);
+        }
+
+        // GTK3 fallback: the toolkit exposes entry/text nodes in the tree (so
+        // get_text reads work) but gates EditableText on focus/activation. Try
+        // finding an entry/text role with Component bounds and use X11 click+type.
+        dlog!("AT-SPI EditableText unavailable; checking for entry/text with Component for X11 fallback");
+
+        let entry_candidate = visited
+            .iter()
+            .find(|v| {
+                let r = v.role.to_ascii_lowercase();
+                (r.contains("entry") || r.contains("text")) && v.has_component
+            });
+
+        if let Some(entry) = entry_candidate {
+            dlog!(
+                "GTK3 fallback: found entry role={:?} with Component; attempting X11 click+type",
+                entry.role
+            );
+
+            // Get the entry widget's screen bounds via Component.GetExtents.
+            if let Ok(proxies) = entry.acc.proxies().await {
+                if let Ok(comp) = proxies.component().await {
+                    if let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Screen)).await {
+                        // Click the center of the entry to establish widget focus (not window focus).
+                        let cx = x + (w.max(0) / 2);
+                        let cy = y + (h.max(0) / 2);
+                        dlog!("GTK3 fallback: entry bounds ({x},{y} {w}x{h}), clicking center ({cx},{cy})");
+
+                        // Get the window XID for this app so we can send X11 events to it.
+                        let Some(xid) = entry_find_window_xid(pid).await else {
+                            dlog!("GTK3 fallback: could not find window XID");
+                            return Ok(false);
+                        };
+
+                        // Translate screen coords to window-local coords for XSendEvent.
+                        let Some((wx, wy)) = screen_to_window_coords(xid, cx, cy) else {
+                            dlog!("GTK3 fallback: screen-to-window coord translation failed");
+                            return Ok(false);
+                        };
+
+                        dlog!("GTK3 fallback: window XID {xid}, local coords ({wx},{wy})");
+
+                        // Click the entry to focus the widget (widget focus, not window focus).
+                        if let Err(e) = crate::input::send_click(xid as u64, wx, wy, 1, 1) {
+                            dlog!("GTK3 fallback: click failed: {e}");
+                            return Ok(false);
+                        };
+
+                        // Small delay for the click to register and the widget to update focus.
+                        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+                        // Now type via X11 XSendEvent — the entry widget has internal focus
+                        // so it should accept the keystrokes even though the window is unfocused.
+                        if let Err(e) = crate::input::send_type_text(xid as u64, text) {
+                            dlog!("GTK3 fallback: send_type_text failed: {e}");
+                            return Ok(false);
+                        }
+
+                        dlog!("GTK3 fallback: X11 click+type succeeded");
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
     })
+}
+
+/// Find the window XID for a PID by listing its X11 windows.
+async fn entry_find_window_xid(pid: u32) -> Option<u64> {
+    use crate::x11::list_windows;
+
+    // List X11 windows for that PID and return the first one.
+    let windows = list_windows(Some(pid));
+    let xid = windows.first()?.xid;
+    Some(xid)
+}
+
+/// Translate screen coordinates to window-local coordinates.
+fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let window = xid as u32;
+
+    // Get window geometry to find its screen position.
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+
+    // Translate to root coordinates (screen coords of window's origin).
+    let trans = conn.translate_coordinates(window, geom.root, 0, 0).ok()?.reply().ok()?;
+
+    // Window-local = screen - window_origin.
+    Some((screen_x - trans.dst_x as i32, screen_y - trans.dst_y as i32))
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<String> {

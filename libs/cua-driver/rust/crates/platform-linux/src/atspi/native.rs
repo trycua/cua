@@ -464,52 +464,12 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         );
 
         // Primary attempt: write into an editable exposed by the current tree.
+        // GrabFocus (inside write_into_editable) gives the widget internal
+        // keyboard focus without activating the window, so toolkits that expose
+        // EditableText on an unfocused window (Qt6, and GTK4 with GTK_A11Y=atspi)
+        // accept the write here.
         if write_into_editable(&visited, text).await? {
             return Ok(true);
-        }
-
-        // Expose-via-synthetic-focus fallback (generic across toolkits).
-        //
-        // Some toolkits only populate/expose the focused-widget subtree over
-        // AT-SPI once the *window* receives input focus. In a headless session
-        // with a background window that never happens, so the walk above sees
-        // only the top window node and `pick_editable` finds nothing (or finds
-        // an editable that still rejects EditableText). This was first needed
-        // for Qt5; GTK4 exhibits the same gate when its AT-SPI backend is active
-        // but the window is unfocused.
-        //
-        // Send a synthetic FocusIn to the window (XSendEvent — this does NOT move
-        // the X11 active window, so the no-focus-steal contract is preserved),
-        // give the toolkit a moment to (re)build its accessible subtree, re-walk,
-        // and retry the EditableText write. Always send FocusOut afterwards to
-        // restore state, regardless of whether the write landed.
-        if pick_editable(&visited).is_none() {
-            if let Some(xid) = entry_find_window_xid(pid).await {
-                dlog!("no editable exposed; trying synthetic-focus expose on xid {xid}");
-                let _ = crate::input::send_focus_in(xid);
-                // Let the toolkit react to the focus event and rebuild its tree.
-                tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-
-                let rewalked = collect_visited(&conn, pid).await?;
-                let landed = if let Some(ref rv) = rewalked {
-                    dlog!(
-                        "post-focus re-walk: {} node(s), {} editable",
-                        rv.len(),
-                        rv.iter().filter(|v| v.has_editable).count(),
-                    );
-                    write_into_editable(rv, text).await?
-                } else {
-                    false
-                };
-
-                let _ = crate::input::send_focus_out(xid);
-                if landed {
-                    dlog!("synthetic-focus expose: EditableText write landed");
-                    return Ok(true);
-                }
-            } else {
-                dlog!("no editable exposed and no window XID found for synthetic-focus expose");
-            }
         }
 
         // GTK3 fallback: the toolkit exposes entry/text nodes in the tree (so

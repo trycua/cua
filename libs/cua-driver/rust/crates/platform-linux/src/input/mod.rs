@@ -368,9 +368,28 @@ pub fn inject_tk_send(text: &str) -> Result<bool> {
     // We target "cua-tk-target" (the name the test app registers with) and
     // insert at the entry widget's current cursor position.
     let tcl_text = text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}");
+
+    // Tk's `send` is synchronous: it blocks the sender until the *target's* Tcl
+    // event loop services the request and replies. If the target is wedged, or
+    // the X server refuses `send` (SECURITY ext / xauth mismatch), it can block
+    // forever. Guard against that two ways:
+    //   1. A Tcl-level `after` timer that force-exits wish if the send hasn't
+    //      completed in time. We issue the write with `send -async` so the local
+    //      event loop stays live to fire the timer, then `vwait` on a flag.
+    //   2. A Rust-level wall-clock kill below, so even a totally wedged wish
+    //      (e.g. blocked before reaching the event loop) can't hang the driver.
     let tcl_script = format!(
-        r#"if {{[catch {{send cua-tk-target {{.entry insert insert {{{}}}}}}} err]}} {{
+        r#"set ::done 0
+set ::rc 0
+after 5000 {{ set ::rc 2; set ::done 1 }}
+if {{[catch {{send -async cua-tk-target {{.entry insert insert {{{}}}}}}} err]}} {{
     puts stderr "tk send failed: $err"
+    exit 1
+}}
+after 500 {{ set ::done 1 }}
+vwait ::done
+if {{$::rc == 2}} {{
+    puts stderr "tk send timed out"
     exit 1
 }}
 exit 0"#,
@@ -389,21 +408,44 @@ exit 0"#,
         };
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(tcl_script.as_bytes())?;
+        // Ignore write errors: if wish already exited we observe it via wait().
+        let _ = stdin.write_all(tcl_script.as_bytes());
+        // stdin drops here → EOF, so wish runs the script to completion.
     }
 
-    let output = child.wait_with_output()?;
-
-    if output.status.success() {
-        Ok(true)
-    } else {
-        // If send fails (e.g., target not registered), treat as "not a Tk app"
-        // and let the caller fall back to XSendEvent.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("application named") || stderr.contains("no registered") {
-            Ok(false)
-        } else {
-            anyhow::bail!("wish send failed: {}", stderr)
+    // Wall-clock backstop: poll for exit and hard-kill if wish overruns the
+    // deadline. Guarantees the driver task can never hang on a blocked Tk send,
+    // regardless of whether the Tcl-level timer fired.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                let mut stderr = String::new();
+                if let Some(mut err) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = err.read_to_string(&mut stderr);
+                }
+                if status.success() {
+                    return Ok(true);
+                }
+                // Target not registered or send timed out → not a usable Tk
+                // target; let the caller fall back to XSendEvent.
+                if stderr.contains("application named")
+                    || stderr.contains("no registered")
+                    || stderr.contains("timed out")
+                {
+                    return Ok(false);
+                }
+                anyhow::bail!("wish send failed: {}", stderr);
+            }
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
     }
 }

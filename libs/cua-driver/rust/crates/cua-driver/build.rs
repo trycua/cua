@@ -7,9 +7,15 @@
 // emitting crate is the final binary crate — for transitive deps Cargo
 // silently drops them. So we re-emit the same rpaths from here.
 //
-// No-op on Windows / Linux — those builds don't pull in a Swift runtime.
+// On Windows, embed the DPI-awareness manifest so the process receives
+// logical (not physical) screen coordinates at 125%/150%/200% scaling.
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        embed_resource::compile("cua-driver.rc", embed_resource::NONE);
+    }
+
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }

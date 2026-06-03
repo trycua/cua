@@ -853,17 +853,17 @@ impl Tool for TypeTextTool {
         // Try AT-SPI EditableText first (focus-free, works for Qt6/GTK4).
         let text_clone = text.clone();
         let atspi_result = tokio::task::spawn_blocking(move || {
-            crate::atspi::type_into_editable(pid, &text_clone)
+            crate::atspi::insert_text(pid, &text_clone)
         }).await;
 
         match atspi_result {
-            Ok(Ok(())) => {
+            Ok(Ok(true)) => {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
                 return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."));
             }
             _ => {
-                // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
-                // when unfocused, so try the synthetic-focus workaround.
+                // AT-SPI exposed no editable (Ok(false)) or failed. Qt5 doesn't
+                // expose widgets when unfocused, so try the synthetic-focus workaround.
             }
         }
 
@@ -877,7 +877,7 @@ impl Tool for TypeTextTool {
             std::thread::sleep(std::time::Duration::from_millis(100));
 
             // Try AT-SPI again now that widgets should be exposed
-            let result = crate::atspi::type_into_editable(pid, &text_clone2);
+            let result = crate::atspi::insert_text(pid, &text_clone2);
 
             // Restore state with FocusOut
             crate::input::send_focus_out(xid)?;
@@ -886,7 +886,7 @@ impl Tool for TypeTextTool {
         }).await;
 
         match qt5_result {
-            Ok(Ok(())) => {
+            Ok(Ok(true)) => {
                 return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."));
             }
             _ => {

@@ -642,6 +642,13 @@ pkgs.testers.nixosTest {
             "driver get_text did not return an accessibility node for the background app:\n"
             + result
         )
+        # For Qt apps, assert the typed text actually landed (now supported via
+        # synthetic-focus workaround for Qt5, and natively for Qt6).
+        if "${app}" in ["qt", "qt6"]:
+            assert "${typed}" in result, (
+                "Qt app should support focus-free write, but typed text not found in readback:\n"
+                + result
+            )
 
     with subtest("Focus stayed on the control terminal"):
         control = machine.succeed("head -1 /tmp/control-xid.txt").strip()

@@ -21,6 +21,44 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
 
+/// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
+/// This can trigger toolkit-level focus handlers (e.g., Qt5's AT-SPI bridge) without
+/// moving the window manager's active window. Use with send_focus_out to restore state.
+pub fn send_focus_in(xid: u64) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let window = xid as u32;
+
+    let focus_in = FocusInEvent {
+        response_type: FOCUS_IN_EVENT,
+        detail: NotifyDetail::NONLINEAR,
+        sequence: 0,
+        event: window,
+        mode: NotifyMode::NORMAL,
+    };
+
+    conn.send_event(false, window, EventMask::FOCUS_CHANGE, &focus_in)?;
+    conn.flush()?;
+    Ok(())
+}
+
+/// Send a synthetic FocusOut event to restore focus state after send_focus_in.
+pub fn send_focus_out(xid: u64) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let window = xid as u32;
+
+    let focus_out = FocusOutEvent {
+        response_type: FOCUS_OUT_EVENT,
+        detail: NotifyDetail::NONLINEAR,
+        sequence: 0,
+        event: window,
+        mode: NotifyMode::NORMAL,
+    };
+
+    conn.send_event(false, window, EventMask::FOCUS_CHANGE, &focus_out)?;
+    conn.flush()?;
+    Ok(())
+}
+
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
     let (conn, _) = RustConnection::connect(None)?;

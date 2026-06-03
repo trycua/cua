@@ -902,8 +902,13 @@ impl Tool for TypeTextTool {
             // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
             // focused widget, so background XSendEvent typing doesn't land. Fill
             // the editable field via AT-SPI instead — focus-free and toolkit-
-            // agnostic. Fall back to XSendEvent when no a11y field is exposed.
+            // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
             if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
+                return Ok(());
+            }
+            // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
+            // returned false). This is the Tk-specific override, like CDP for Chromium.
+            if crate::input::inject_tk_send(&text).unwrap_or(false) {
                 return Ok(());
             }
             crate::input::send_type_text(xid, &text)

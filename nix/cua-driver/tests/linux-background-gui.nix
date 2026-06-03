@@ -130,15 +130,19 @@ let
     $CC app.c -o $out/bin/cua-gtk4 $(pkg-config --cflags --libs gtk4)
   '';
 
-  # Tk (tkinter) app — Tk has no AT-SPI bridge, so this is the negative-control
-  # data point: the driver can't reach an editable, and get_text falls back to
-  # the X11 window node. Proves graceful degradation for non-accessible toolkits.
+  # Tk (tkinter) app — Tk has no AT-SPI bridge, so focus-free writes use Tk's
+  # `send` command instead: the app registers itself with a known name, and the
+  # driver injects text by invoking `wish` to send Tcl commands over X11 IPC.
+  # This is the Tk-specific override (like CDP for Chromium), proving that
+  # non-accessible toolkits can still support background input with bespoke paths.
   tkEnv = pkgs.python3.withPackages (ps: [ ps.tkinter ]);
   tkScript = pkgs.writeText "cua-tk.py" ''
     import tkinter as tk
     root = tk.Tk()
     root.title("cua-initial")
-    entry = tk.Entry(root, width=40)
+    # Register the app with a known name so `send` commands can reach it.
+    tk._default_root.tk.call('tk', 'appname', 'cua-tk-target')
+    entry = tk.Entry(root, width=40, name='entry')
     entry.pack(padx=20, pady=20)
     entry.focus_set()
     root.geometry("400x120+700+150")
@@ -363,8 +367,9 @@ let
       '';
     };
     tk = {
-      packages = [ tkEnv ];
+      packages = [ tkEnv pkgs.tk ];
       memoryMB = 2048;
+      tksend = true;
       launch = pkgs.writeShellScript "cua-launch-tk.sh" ''
         exec ${tkEnv}/bin/python3 ${tkScript}
       '';
@@ -421,6 +426,27 @@ let
         cdp_control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
         cdp_active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
         assert cdp_control == cdp_active, "focus moved during CDP write: got " + cdp_active
+  '';
+
+  # Tk send focus-free write subtest — only for Tk apps. Asserts the driver's
+  # Tk-specific override (using Tk's `send` command) writes into the background
+  # window while the control terminal keeps focus. Tk has no AT-SPI bridge, so
+  # this is the approved override path for focus-free Tk input.
+  tkGetScript = pkgs.writeText "tk-get-value.tcl" ''
+    puts [send cua-tk-target {.entry get}]
+  '';
+  tkSubtest = lib.optionalString (selected.tksend or false) ''
+    with subtest("Tk send focus-free write into the background window (Tk override)"):
+        # The driver already typed via inject_tk_send in the main test. Now read
+        # the entry widget's value back via Tk send to prove the write landed.
+        machine.copy_from_host("${tkGetScript}", "/tmp/tk-get-value.tcl")
+        tk_readback = machine.succeed("${a11yEnv} ${pkgs.tk}/bin/wish /tmp/tk-get-value.tcl 2>&1").strip()
+        machine.log("Tk send readback: " + repr(tk_readback))
+        assert "${typed}" in tk_readback, f"Expected '${typed}' in Tk entry, got: {tk_readback}"
+        # The override must remain focus-free: control terminal still active.
+        tk_control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
+        tk_active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
+        assert tk_control == tk_active, "focus moved during Tk write: got " + tk_active
   '';
 
   mcpTest = pkgs.writeText "mcp-background-gui-test.py" ''
@@ -656,6 +682,7 @@ pkgs.testers.nixosTest {
         assert control == active, "expected active window " + control + ", got " + active
 
     ${cdpSubtest}
+    ${tkSubtest}
     with subtest("Confirm: focusing the window exposes the editable (diagnostic)"):
         # Direct confirmation of the focus-gate finding. Activate the target so it
         # becomes the focused window, then re-run the driver: with focus the

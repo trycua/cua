@@ -189,16 +189,20 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
 
     // Make the window fully click-through using the Shape extension (empty input region).
     // This is the X11 equivalent of WS_EX_TRANSPARENT on Windows.
-    let empty_region_pixmap = conn.generate_id().unwrap();
-    conn.create_pixmap(1, empty_region_pixmap, root, 1, 1).ok();
-    conn.shape_mask(
+    //
+    // NOTE: do NOT use ShapeMask with source=None here — per the SHAPE spec a
+    // None source *removes* the shape, resetting the input region to the full
+    // window, which makes the overlay swallow every button event (mouse-lock).
+    // Setting the INPUT region to an empty rectangle list is the correct way to
+    // get true pointer passthrough while the window stays visible.
+    conn.shape_rectangles(
         x11rb::protocol::shape::SO::SET,
         x11rb::protocol::shape::SK::INPUT,
+        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
         win,
         0, 0,
-        x11rb::NONE,
+        &[],
     ).ok();
-    conn.free_pixmap(empty_region_pixmap).ok();
 
     conn.map_window(win).ok();
     conn.flush().ok();

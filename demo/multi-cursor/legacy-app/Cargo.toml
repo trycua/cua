@@ -1,0 +1,16 @@
+[package]
+name = "legacy-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "legacy-app"
+path = "src/main.rs"
+
+[dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+] }

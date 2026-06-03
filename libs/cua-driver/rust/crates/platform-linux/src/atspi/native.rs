@@ -413,7 +413,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             }
         }
 
-        // GTK3/GTK4 fallback: the toolkit exposes entry/text nodes in the tree (so
+        // GTK3 fallback: the toolkit exposes entry/text nodes in the tree (so
         // get_text reads work) but gates EditableText on focus/activation. Try
         // finding an entry/text role with Component bounds and use X11 click+type.
         dlog!("AT-SPI EditableText unavailable; checking for entry/text with Component for X11 fallback");
@@ -427,7 +427,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 
         if let Some(entry) = entry_candidate {
             dlog!(
-                "GTK fallback: found entry role={:?} with Component; attempting X11 click+type",
+                "GTK3 fallback: found entry role={:?} with Component; attempting X11 click+type",
                 entry.role
             );
 
@@ -438,25 +438,25 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                         // Click the center of the entry to establish widget focus (not window focus).
                         let cx = x + (w.max(0) / 2);
                         let cy = y + (h.max(0) / 2);
-                        dlog!("GTK fallback: entry bounds ({x},{y} {w}x{h}), clicking center ({cx},{cy})");
+                        dlog!("GTK3 fallback: entry bounds ({x},{y} {w}x{h}), clicking center ({cx},{cy})");
 
                         // Get the window XID for this app so we can send X11 events to it.
                         let Some(xid) = entry_find_window_xid(pid).await else {
-                            dlog!("GTK fallback: could not find window XID");
+                            dlog!("GTK3 fallback: could not find window XID");
                             return Ok(false);
                         };
 
                         // Translate screen coords to window-local coords for XSendEvent.
                         let Some((wx, wy)) = screen_to_window_coords(xid, cx, cy) else {
-                            dlog!("GTK fallback: screen-to-window coord translation failed");
+                            dlog!("GTK3 fallback: screen-to-window coord translation failed");
                             return Ok(false);
                         };
 
-                        dlog!("GTK fallback: window XID {xid}, local coords ({wx},{wy})");
+                        dlog!("GTK3 fallback: window XID {xid}, local coords ({wx},{wy})");
 
                         // Click the entry to focus the widget (widget focus, not window focus).
                         if let Err(e) = crate::input::send_click(xid as u64, wx, wy, 1, 1) {
-                            dlog!("GTK fallback: click failed: {e}");
+                            dlog!("GTK3 fallback: click failed: {e}");
                             return Ok(false);
                         }
 
@@ -466,11 +466,11 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                         // Now type via X11 XSendEvent — the entry widget has internal focus
                         // so it should accept the keystrokes even though the window is unfocused.
                         if let Err(e) = crate::input::send_type_text(xid as u64, text) {
-                            dlog!("GTK fallback: send_type_text failed: {e}");
+                            dlog!("GTK3 fallback: send_type_text failed: {e}");
                             return Ok(false);
                         }
 
-                        dlog!("GTK fallback: X11 click+type succeeded");
+                        dlog!("GTK3 fallback: X11 click+type succeeded");
                         return Ok(true);
                     }
                 }
@@ -480,7 +480,6 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         Ok(false)
     })
 }
-
 
 /// Find the window XID for a PID by listing its X11 windows.
 async fn entry_find_window_xid(pid: u32) -> Option<u64> {

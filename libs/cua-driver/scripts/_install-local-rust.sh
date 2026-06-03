@@ -260,6 +260,53 @@ ln -sfn "$VERSIONED_DIR" "$CURRENT_LINK"
 echo "${GREEN}current -> $VERSIONED_DIR${NORMAL}"
 echo ""
 
+# --- macOS: stable local code-signing identity (so TCC grants survive rebuilds) ---
+#
+# Ad-hoc signing (`codesign --sign -`) keys the TCC grant
+# (Accessibility / Screen Recording) on the binary's *cdhash*, which changes
+# on EVERY rebuild — so the grant silently invalidates on each install-local
+# and the daemon re-prompts ("I already granted!"). Signing with a certificate
+# keys the grant on the cert identity instead, which is stable across rebuilds.
+# We create a self-signed code-signing cert once (idempotent, in the login
+# keychain) and reuse it. Local dev only; releases are CI-signed.
+#
+# Echoes the `codesign --sign` argument: the cert CN when available, or "-"
+# (ad-hoc) when it can't be created — no codesign/openssl, CI, locked keychain.
+CUA_LOCAL_SIGN_CN="CuaDriver Local Signing (cua-driver-rs)"
+ensure_local_signing_identity() {
+    { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } || { printf -- '-'; return; }
+    # Reuse if already present (find-certificate finds it regardless of trust;
+    # `find-identity -v` would miss an untrusted self-signed cert).
+    if security find-certificate -c "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; then
+        printf '%s' "$CUA_LOCAL_SIGN_CN"; return
+    fi
+    command -v openssl >/dev/null 2>&1 || { printf -- '-'; return; }
+    local kc="$HOME/Library/Keychains/login.keychain-db"
+    [ -f "$kc" ] || kc="$HOME/Library/Keychains/login.keychain"
+    [ -f "$kc" ] || { printf -- '-'; return; }
+    local tmp; tmp="$(mktemp -d)" || { printf -- '-'; return; }
+    printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=%s\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' \
+        "$CUA_LOCAL_SIGN_CN" > "$tmp/req.cnf"
+    # Transient password for the p12 handoff (deleted right after import).
+    # Apple's `security` rejects the empty-password p12 that openssl 3.x emits
+    # by default ("MAC verification failed"), so use a real password + `-legacy`
+    # PBE (Apple-compatible). Fall back to non-legacy for LibreSSL/older openssl
+    # which lacks `-legacy` but already writes a compatible p12.
+    local pw="cua-local-$$"
+    if openssl req -x509 -newkey rsa:2048 -keyout "$tmp/key.pem" -out "$tmp/cert.pem" \
+            -days 3650 -nodes -config "$tmp/req.cnf" >/dev/null 2>&1 \
+       && { openssl pkcs12 -export -legacy -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+                -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1 \
+            || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+                -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
+       && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
+        rm -rf "$tmp"
+        printf '%s' "$CUA_LOCAL_SIGN_CN"; return
+    fi
+    rm -rf "$tmp"
+    printf -- '-'
+}
+
 # --- macOS: wrap the binary in CuaDriver.app for a stable TCC identity ---
 #
 # TCC keys Accessibility / Screen-Recording grants on the bundle
@@ -296,14 +343,63 @@ if [ "$OS" = "Darwin" ]; then
     # as install.sh). Replace any prior bundle wholesale.
     rm -rf "$APP_DEST"
     ditto "$APP_STAGE" "$APP_DEST"
-    # Ad-hoc re-sign the whole bundle (--deep covers the inner binary).
-    # Required on macOS 26+ where Taskgated rejects a copied binary's
-    # stale signature, and gives the bundle a consistent cdhash for TCC.
+    # Re-sign the whole bundle (--deep covers the inner binary). Required on
+    # macOS 26+ where Taskgated rejects a copied binary's stale signature.
+    # Prefer the STABLE self-signed identity so TCC grants survive rebuilds;
+    # fall back to ad-hoc (which works but resets grants on the next rebuild).
     if command -v codesign >/dev/null 2>&1; then
-        codesign --force --deep --sign - "$APP_DEST" 2>/dev/null \
-            || echo "${YELLOW}warning: codesign of $APP_DEST failed; first run may hit a Gatekeeper/Taskgated prompt${NORMAL}" >&2
+        SIGN_ID="$(ensure_local_signing_identity)"
+        if [ "$SIGN_ID" != "-" ] \
+           && codesign --force --deep --sign "$SIGN_ID" "$APP_DEST" 2>/dev/null; then
+            echo "${GREEN}signed $APP_DEST with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
+        elif codesign --force --deep --sign - "$APP_DEST" 2>/dev/null; then
+            if [ "$SIGN_ID" != "-" ]; then
+                echo "${YELLOW}note: stable-identity signing failed; signed ad-hoc instead (Accessibility/Screen Recording will reset on the next rebuild)${NORMAL}" >&2
+            fi
+        else
+            echo "${YELLOW}warning: codesign of $APP_DEST failed; first run may hit a Gatekeeper/Taskgated prompt${NORMAL}" >&2
+        fi
     fi
     echo "${GREEN}installed $APP_DEST${NORMAL}"
+
+    # --- Clear a TCC grant pinned to a PREVIOUS signing identity -----------
+    #
+    # TCC pins each Accessibility / Screen-Recording grant to the app's
+    # designated requirement AT GRANT TIME. A user who granted while the app
+    # was ad-hoc signed has a grant whose csreq is a bare `cdhash H"..."`
+    # (changes every rebuild); a user who granted under a different cert has
+    # one pinned to that leaf. After we re-sign with the stable cert above,
+    # that old row survives with auth_value=allowed but a csreq that no longer
+    # matches THIS build — so the daemon reads "not granted" while System
+    # Settings still shows the toggle ON. That's a dead end: re-toggling
+    # doesn't help because the row already records a decision, so the grant
+    # prompt never re-fires. Detect a signing-identity change vs the last
+    # install and `tccutil reset` once, so the next `permissions grant`
+    # prompts cleanly and re-pins to the current (stable cert) identity —
+    # after which cert-pinned grants survive all future rebuilds.
+    #
+    # `tccutil reset` needs no sudo / Full Disk Access, and is a no-op when
+    # nothing was granted. We only reset when moving TO a cert identity (the
+    # case a clean re-grant durably fixes); an ad-hoc build churns its cdhash
+    # every rebuild regardless, so resetting it would just add friction.
+    if command -v tccutil >/dev/null 2>&1; then
+        IDENTITY_MARKER="$HOME_DIR/.tcc-signing-identity"
+        NEW_IDENTITY="$(codesign -d -r- "$APP_DEST" 2>&1 \
+            | sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]*\)".*/cert:\1/p' | head -1)"
+        [ -n "$NEW_IDENTITY" ] || NEW_IDENTITY="adhoc"
+        OLD_IDENTITY="$(cat "$IDENTITY_MARKER" 2>/dev/null || true)"
+        case "$NEW_IDENTITY" in
+            cert:*)
+                if [ "$NEW_IDENTITY" != "$OLD_IDENTITY" ]; then
+                    tccutil reset Accessibility com.trycua.driver >/dev/null 2>&1 || true
+                    tccutil reset ScreenCapture com.trycua.driver >/dev/null 2>&1 || true
+                    echo "${BOLD}cleared any stale Accessibility / Screen-Recording grant pinned to a previous build.${NORMAL}"
+                    echo "  Grant once more (System Settings → Privacy & Security) and it will${BOLD} stick across every future rebuild${NORMAL} — the grant now pins to a stable signing certificate, not the per-build cdhash."
+                fi
+                ;;
+        esac
+        printf '%s\n' "$NEW_IDENTITY" > "$IDENTITY_MARKER" 2>/dev/null || true
+    fi
 fi
 
 # --- Visible-bin symlink ------------------------------------------------

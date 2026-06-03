@@ -25,9 +25,12 @@
 //!
 //! Each platform's `ElementCache` is now a thin wrapper around an
 //! `ElementCacheCore<CacheKey, CachedSnapshot>`. Specialised
-//! accessors (`get_element_ptr`, `get_element_center` on Windows,
-//! `get_element_key` on Linux) call `with_snapshot` and project the
-//! field they care about.
+//! accessors (`get_element_retained` on macOS, `get_element_ptr` /
+//! `get_element_center` on Windows, `get_element_key` on Linux) call
+//! `with_snapshot` and project the field they care about. The macOS
+//! accessor retains the element under the lock so a concurrent
+//! `insert` (snapshot replace) can't free it mid-action — see
+//! `platform-macos/src/ax/cache.rs::RetainedElement`.
 
 use std::collections::HashMap;
 use std::hash::Hash;

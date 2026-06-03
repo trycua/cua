@@ -40,6 +40,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "key"],
             "properties": {
+                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer" },
                 "key": { "type": "string", "description": "Key name: return, tab, escape, up, down, etc." },
                 "modifiers": {
@@ -85,11 +86,15 @@ impl Tool for PressKeyTool {
         // Resolve the pre-focus element pointer (if requested) outside
         // the suppression closure — only the focus_element() write itself
         // needs to run under suppression, the cache lookup does not.
-        let pre_focus_ptr: Option<usize> = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            self.state.element_cache.get_element_ptr(pid, wid, idx)
+        // Retain out of the cache so a concurrent get_window_state can't free
+        // the element before the suppressed focus below dereferences it
+        // (use-after-free → daemon crash). Guard lives to method end.
+        let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
+            self.state.element_cache.get_element_retained(pid, wid, idx)
         } else {
             None
         };
+        let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Single-key presses can fire autocomplete (Return on a search

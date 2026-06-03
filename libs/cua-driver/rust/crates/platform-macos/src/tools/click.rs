@@ -66,6 +66,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid"],
             "properties": {
+                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index." },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state." },
@@ -119,13 +120,18 @@ impl Tool for ClickTool {
 
         if let (Some(idx), Some(wid)) = (element_index, window_id) {
             // ── AX element path ────────────────────────────────────────────
-            let element_ptr = match self.state.element_cache.get_element_ptr(pid, wid, idx) {
-                Some(p) => p,
+            // Retain the element out of the cache so it can't be freed by a
+            // concurrent get_window_state on the same (pid, window_id) while
+            // this click is mid-flight (use-after-free → daemon crash). The
+            // guard lives to the end of this method, past the AX action below.
+            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
+                Some(e) => e,
                 None => return ToolResult::error(format!(
                     "Element index {idx} not found in cache for pid={pid} window_id={wid}. \
                      Call get_window_state first."
                 )),
             };
+            let element_ptr = element_guard.as_ptr();
 
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.

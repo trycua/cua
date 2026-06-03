@@ -78,7 +78,8 @@ fn build_structured_elements(
         .iter()
         .filter_map(|node| {
             let idx = node.element_index?;
-            let [x, y, width, height] = node.screen_rect?;
+            let [x, y, width, height] =
+                intersect_screen_rect_with_bounds(node.screen_rect?, bounds)?;
             Some(serde_json::json!({
                 "element_index": idx,
                 "x": ((x - bounds.x) * scale_x).round() as i64,
@@ -88,6 +89,24 @@ fn build_structured_elements(
             }))
         })
         .collect()
+}
+
+fn intersect_screen_rect_with_bounds(
+    [x, y, width, height]: [f64; 4],
+    bounds: &WindowBounds,
+) -> Option<[f64; 4]> {
+    let left = x.max(bounds.x);
+    let top = y.max(bounds.y);
+    let right = (x + width).min(bounds.x + bounds.width);
+    let bottom = (y + height).min(bounds.y + bounds.height);
+    let clipped_width = right - left;
+    let clipped_height = bottom - top;
+
+    if clipped_width <= 0.0 || clipped_height <= 0.0 {
+        None
+    } else {
+        Some([left, top, clipped_width, clipped_height])
+    }
 }
 
 #[async_trait]
@@ -323,6 +342,36 @@ mod tests {
                 "x": 15,
                 "y": 8,
                 "width": 45,
+                "height": 20,
+            })]
+        );
+    }
+
+    #[test]
+    fn build_structured_elements_clips_to_window_bounds() {
+        let bounds = WindowBounds {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
+        let elements = build_structured_elements(
+            &[
+                node(Some(1), Some([0.0, 10.0, 30.0, 20.0])),
+                node(Some(2), Some([200.0, 20.0, 10.0, 10.0])),
+            ],
+            &bounds,
+            150,
+            100,
+        );
+
+        assert_eq!(
+            elements,
+            vec![serde_json::json!({
+                "element_index": 1,
+                "x": 0,
+                "y": 0,
+                "width": 30,
                 "height": 20,
             })]
         );

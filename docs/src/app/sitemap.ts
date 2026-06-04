@@ -14,7 +14,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
     return {
       url: `${baseUrl}${url}`,
-      lastModified: page.data.lastModified ? new Date(page.data.lastModified) : undefined,
+      lastModified: page.data.lastModified
+        ? new Date(page.data.lastModified)
+        : undefined,
       changeFrequency: 'weekly' as const,
       priority: url === '/docs' ? 1.0 : 0.8,
     };

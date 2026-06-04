@@ -4,7 +4,11 @@
   "description": "GNU Awk (gawk) is a powerful text processing and data extraction language designed for pattern scanning and transformation. It implements the AWK programming language with extensions for internationalization, networking, debugging, and shared library support. Commonly used for one-liners, scripting, and Unix/Linux data processing workflows.",
   "website": "https://www.gnu.org/software/gawk/",
   "icon_url": "https://www.gnu.org/graphics/gawk-logo.png",
-  "categories": ["Text Processing", "Programming Language", "Command-line Tool"],
+  "categories": [
+    "Text Processing",
+    "Programming Language",
+    "Command-line Tool"
+  ],
   "tags": [
     "text-processing",
     "scripting",
@@ -18,7 +22,11 @@
     "gnu",
     "open-source"
   ],
-  "os_support": ["linux", "windows", "macos"],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/gawk/gawk",

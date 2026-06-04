@@ -4,7 +4,11 @@
   "description": "Infrastructure automation software that enables DevOps teams to deliver, update, and manage software and infrastructure across hybrid environments with desired state automation, policy-driven enforcement, and configuration management.",
   "website": "https://www.puppet.com",
   "icon_url": "https://www.puppet.com/favicon.ico",
-  "categories": ["Configuration Management", "Infrastructure Automation", "DevOps"],
+  "categories": [
+    "Configuration Management",
+    "Infrastructure Automation",
+    "DevOps"
+  ],
   "tags": [
     "automation",
     "configuration-management",
@@ -14,7 +18,11 @@
     "compliance",
     "security"
   ],
-  "os_support": ["linux", "windows", "macos"],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/puppetlabs/puppet",

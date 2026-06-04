@@ -4,7 +4,9 @@
   "description": "Nmap is a free and open-source utility for network discovery and security auditing. It uses raw IP packets to identify available hosts, running services with versions, operating systems, and firewall types. Nmap is portable, flexible, and capable of scanning everything from single hosts to large networks and hundreds of thousands of machines.",
   "website": "https://nmap.org",
   "icon_url": "https://nmap.org/images/nmap-logo.png",
-  "categories": ["Network Security"],
+  "categories": [
+    "Network Security"
+  ],
   "tags": [
     "network-scanning",
     "security-auditing",
@@ -14,7 +16,11 @@
     "penetration-testing",
     "cli"
   ],
-  "os_support": ["linux", "windows", "macos"],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/nmap/nmap",

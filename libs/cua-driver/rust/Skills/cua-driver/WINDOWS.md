@@ -49,11 +49,11 @@ Every Windows input tool (`click`, `double_click`, `right_click`,
 optional `dispatch` field. The default is `"background"` — strict
 no-foreground:
 
-| `dispatch`               | Behavior on Windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispatch` | Behavior on Windows |
+|---|---|
 | `"background"` (DEFAULT) | **For pixel clicks**: cua-driver first does a UIA hit-test at the resolved screen position; if the deepest invokable element at that point exposes `InvokePattern`, it's invoked through the accessibility channel (same path as `element_index` mode — no foreground swap, no flash, works on UWP / WinUI3 / Win11 packaged apps). Only if the UIA hit-test misses does the PostMessage(WM_LBUTTONDOWN/UP) fallback run; if that's also known-to-drop for this event kind (Chromium DOM mouse + key-combos, GTK button widgets), the call returns a structured `background_unavailable` error. **No foreground swap, ever.** |
-| `"foreground"`           | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content or GTK button widgets reliably, and the only path for canvas / video / custom-drawn surfaces that have no UIA peer to hit-test against. Flashes the target visible unless `bring_to_front` was called first.                                                                                                                                                                                                                                                                                                             |
-| `"auto"`                 | Historical heuristic: silently falls back to SendInput on known-problematic targets. Opt-in for callers that prefer the old "things just work, sometimes at the cost of focus" behavior.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content or GTK button widgets reliably, and the only path for canvas / video / custom-drawn surfaces that have no UIA peer to hit-test against. Flashes the target visible unless `bring_to_front` was called first. |
+| `"auto"` | Historical heuristic: silently falls back to SendInput on known-problematic targets. Opt-in for callers that prefer the old "things just work, sometimes at the cost of focus" behavior. |
 
 ### Always try `dispatch:"background"` first
 
@@ -105,6 +105,7 @@ foreground swap succeeds even when the daemon isn't at UIAccess
 integrity (the same trick that powers `send_key_synthesized`).
 Returns `{previous_fg_hwnd, now_fg_hwnd, landed_on_target}`.
 
+
 Before running any shell command, ask: **"does this raise, activate,
 foreground, or steal focus from any app?"** If yes, don't run it.
 Every one of the commands below activates the target on Windows and
@@ -112,8 +113,8 @@ is therefore forbidden unless the user **explicitly** asked for
 frontmost state:
 
 - **`Start-Process <exe>` / `Start-Process <url>` / `Start-Process
--FilePath ...`** — defaults to launching with `SW_SHOWNORMAL` which
-  _activates_ the new window. Windows treats new processes as
+  -FilePath ...`** — defaults to launching with `SW_SHOWNORMAL` which
+  *activates* the new window. Windows treats new processes as
   user-initiated foreground apps. The CmdLine flag `-WindowStyle Hidden`
   helps but does not block activation for apps that call
   `SetForegroundWindow` themselves on startup (Edge, most browsers,
@@ -133,7 +134,7 @@ frontmost state:
   but still activates the new window before minimizing it (flash
   visible to the user). Forbidden for the same reason.
 - **`explorer.exe shell:AppsFolder\<AUMID>` / `explorer.exe ms-edge:
-<url>`** — these are the Windows-shell equivalents of `open -a` /
+  <url>`** — these are the Windows-shell equivalents of `open -a` /
   `open <url>` on macOS. They go through `IApplicationActivationManager`
   with the wrong activation kind and foreground the target. Use
   `launch_app({aumid})` or `launch_app({urls})` instead — those route
@@ -157,7 +158,7 @@ frontmost state:
   never touch the OS cursor.
 - **`SendInput(KEYBDINPUT)` with no target HWND** — same idea: goes
   to the focused window, not your target. Use `hotkey({pid, keys:
-[...]})` which uses `PostMessage(WM_KEYDOWN/UP)` to the named pid's
+  [...]})` which uses `PostMessage(WM_KEYDOWN/UP)` to the named pid's
   focused window.
 - **Keyboard shortcuts that semantically mean "focus here" —
   Chromium / Edge / Firefox `Ctrl+L` (focus address bar),
@@ -167,8 +168,8 @@ frontmost state:
   raises its window to be key. Even when delivered to a backgrounded
   pid via `hotkey`, the downstream app pulls focus. **For omnibox
   navigation specifically**, the correct path is `launch_app({path:
-"...msedge.exe", urls: ["https://…"]})` (or `{aumid:
-"Microsoft.MicrosoftEdge.Stable_…!App", urls: [...]}`) — no
+  "...msedge.exe", urls: ["https://…"]})` (or `{aumid:
+  "Microsoft.MicrosoftEdge.Stable_…!App", urls: [...]}`) — no
   omnibox dance, no `Ctrl+L`, no focus-steal. The browser opens the
   URL in a new window without activating it.
 - **Tab-switching shortcuts in browsers (`Ctrl+1..9`, `Ctrl+Tab`,
@@ -188,7 +189,6 @@ frontmost state:
   interacted with via `element_index` without activating or switching
   anything. Tabs are a UX grouping for humans; cua-driver-rs
   workflows should default to windows.
-
 - **Win+key shortcuts owned by the shell** — `Win+E` (Explorer),
   `Win+R` (Run), `Win+S` / `Win+Q` (Search), `Win+number` (taskbar
   pinned-app activation), `Win+Tab` (Task View), `Alt+Tab` (window
@@ -253,16 +253,15 @@ modifier state updated, and PostMessage can't do that.
 
 **Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
 on a Chromium target falls through to `send_click_synthesized` (SendInput
-
-- brief foreground swap) because Chromium's input thread filters by
-  queue-origin and PostMessage-delivered clicks don't fire DOM events. The
-  synchronous restore inside `send_click_synthesized` covers the
-  immediate swap; an additional polling guard (same shape as `launch_app`'s
-  `FocusRestoreGuard`) catches the **asynchronous** Chromium re-activation
-  that can happen as the renderer's input handler processes the click
-  (focus().activate() / WebContents::Activate() — 100-500 ms later). The
-  guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
-  Alt-Tabs are respected.
++ brief foreground swap) because Chromium's input thread filters by
+queue-origin and PostMessage-delivered clicks don't fire DOM events. The
+synchronous restore inside `send_click_synthesized` covers the
+immediate swap; an additional polling guard (same shape as `launch_app`'s
+`FocusRestoreGuard`) catches the **asynchronous** Chromium re-activation
+that can happen as the renderer's input handler processes the click
+(focus().activate() / WebContents::Activate() — 100-500 ms later). The
+guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
+Alt-Tabs are respected.
 
 ## Defaults — always prefer cua-driver over shell shims
 
@@ -305,18 +304,18 @@ Stdin is the only path immune to all PS quoting edge cases. Prefer it.
 If you find yourself reaching for the right column, something has
 gone wrong — re-read "The no-foreground contract" above.
 
-| Intent                             | Use                                                                                             | Don't use                                                                            |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Open / launch a Win32 app          | `launch_app({path: "C:\\Program Files\\…\\foo.exe"})` or `{name: "foo"}`                        | `Start-Process`, `cmd /c start`, `& "C:\\path\\foo.exe"`                             |
-| Open / launch a UWP / packaged app | `launch_app({aumid: "Microsoft.Foo_8wekyb3d8bbwe!App"})`                                        | `explorer.exe shell:AppsFolder\\<AUMID>`, Start Menu typing                          |
-| Open a URL in the default browser  | `launch_app({urls: ["https://example.com"]})`                                                   | `Start-Process "https://…"`, `explorer.exe ms-edge:…`, `cmd /c start "" "https://…"` |
-| Find a pid                         | `list_apps` or `launch_app`'s return                                                            | `Get-Process`, `tasklist`, Win+S typing                                              |
-| Enumerate an app's windows         | `list_windows({pid})` — or read the `windows` array `launch_app` already returns                | `Get-Process \| Where-Object { $_.MainWindowHandle }`                                |
-| Click / type / scroll / keys       | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                           | `SendInput`, `cliclick`-style C# add-types, AutoHotkey scripts                       |
-| Drag / drag-and-drop               | `drag({pid, from_x, from_y, to_x, to_y})`                                                       | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event                                     |
-| Screenshot                         | `screenshot` or the PNG in `get_window_state`                                                   | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot`             |
-| Quit an app                        | ask the user first, then `hotkey({pid, keys:["alt","f4"]})`                                     | `taskkill /F`, `Stop-Process -Force`, `Get-Process \| Stop-Process`                  |
-| Hand a file/URL to an app          | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", args:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations                              |
+| Intent | Use | Don't use |
+|---|---|---|
+| Open / launch a Win32 app | `launch_app({path: "C:\\Program Files\\…\\foo.exe"})` or `{name: "foo"}` | `Start-Process`, `cmd /c start`, `& "C:\\path\\foo.exe"` |
+| Open / launch a UWP / packaged app | `launch_app({aumid: "Microsoft.Foo_8wekyb3d8bbwe!App"})` | `explorer.exe shell:AppsFolder\\<AUMID>`, Start Menu typing |
+| Open a URL in the default browser | `launch_app({urls: ["https://example.com"]})` | `Start-Process "https://…"`, `explorer.exe ms-edge:…`, `cmd /c start "" "https://…"` |
+| Find a pid | `list_apps` or `launch_app`'s return | `Get-Process`, `tasklist`, Win+S typing |
+| Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `Get-Process \| Where-Object { $_.MainWindowHandle }` |
+| Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `SendInput`, `cliclick`-style C# add-types, AutoHotkey scripts |
+| Drag / drag-and-drop | `drag({pid, from_x, from_y, to_x, to_y})` | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event |
+| Screenshot | `screenshot` or the PNG in `get_window_state` | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot` |
+| Quit an app | ask the user first, then `hotkey({pid, keys:["alt","f4"]})` | `taskkill /F`, `Stop-Process -Force`, `Get-Process \| Stop-Process` |
+| Hand a file/URL to an app | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", args:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations |
 
 ### The narrow carve-out
 
@@ -374,7 +373,7 @@ run the self-check:
    translate to the cua-driver equivalent from the mapping table.
 2. **Does this command move the user's real cursor?** (`SendInput`,
    `SetCursorPos` from inline C#, AutoHotkey scripts, `nircmd
-sendmouse`.) If yes — stop; use `click({pid, x, y})` which routes
+   sendmouse`.) If yes — stop; use `click({pid, x, y})` which routes
    per-HWND via PostMessage / per-element via UIA Invoke and never
    warps the cursor.
 3. **Does this command bypass cua-driver entirely?** (PowerShell
@@ -501,14 +500,13 @@ Two click addressing modes, both gated by `pid`:
 ### `element_index` mode (preferred)
 
 ```json
-{ "pid": 6004, "window_id": 459672, "element_index": 22 }
+{"pid": 6004, "window_id": 459672, "element_index": 22}
 ```
 
 Looks up the cached UIA element from the last `get_window_state`,
 fires `IUIAutomationInvokePattern::Invoke()` on it directly.
 
 Properties:
-
 - **No mouse cursor moves.** The click is a UIA RPC, not an input
   event. The user's cursor stays where it is.
 - **No window activates.** UIA Invoke does not foreground the
@@ -526,7 +524,7 @@ Properties:
   non-actionable elements). The fallback works for plain Win32 but
   silently no-ops on UWP. The success message tells you which path
   ran: `"✅ Performed UIA Invoke on [N] ..."` vs `"✅ Performed
-PostMessage click on [N] ..."`.
+  PostMessage click on [N] ..."`.
 
 This is the right path for **any** "click button N" / "click menu
 item X" / "click checkbox Y" intent.
@@ -534,7 +532,7 @@ item X" / "click checkbox Y" intent.
 ### `(x, y)` mode (vision / pixel)
 
 ```json
-{ "pid": 6004, "window_id": 459672, "x": 446, "y": 671 }
+{"pid": 6004, "window_id": 459672, "x": 446, "y": 671}
 ```
 
 Window-client coordinates (origin at the top-left of the screenshot
@@ -554,7 +552,6 @@ the agent saw). The driver:
    native controls.
 
 Properties:
-
 - **No real cursor movement.** The agent overlay glides + pulses
   for visual confirmation; the OS cursor is untouched.
 - **No focus steal.** Both UIA Invoke and PostMessage are async per-
@@ -574,7 +571,6 @@ Apps with **no useful UIA tree** AND that **ignore `WM_LBUTTONDOWN`**
 on the HWND queue — primarily DirectX / OpenGL / Vulkan-rendered
 surfaces (games, custom renderers). The click chain falls all the
 way through and the click no-ops. For those, the only options are:
-
 - Bring the window to top first (focus steal — ask the user before
   doing this, and document why), then synthesize input
 - Use the app's keyboard interface via `hotkey` if available
@@ -661,23 +657,20 @@ key handling rules:
 Use `launch_app` with `urls`:
 
 ```json
-{ "urls": ["https://example.com"] }
+{"urls": ["https://example.com"]}
 ```
 
 This opens the URL in the user's default browser, in a **new
 window**, without activating it. For specific browsers:
 
 ```json
-{
-  "path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-  "args": ["--new-window", "https://example.com"]
-}
+{"path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "args": ["--new-window", "https://example.com"]}
 ```
 
 or via AUMID:
 
 ```json
-{ "aumid": "Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App", "args": ["https://example.com"] }
+{"aumid": "Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App", "args": ["https://example.com"]}
 ```
 
 **Do NOT use** `Start-Process "msedge.exe" "url"` — it activates
@@ -707,19 +700,19 @@ the new window.
 
 ### Forbidden keyboard shortcuts in browsers
 
-| Shortcut                  | What it does            | Why forbidden                            | Alternative                                                                                                              |
-| ------------------------- | ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `Ctrl+L` / `Alt+D` / `F6` | Focus address bar       | Activates window (focus-steal semantics) | `element_index` click on address-bar element                                                                             |
-| `Ctrl+T`                  | New tab                 | Activates window                         | `launch_app({urls: [<url>]})` — opens in new window instead                                                              |
-| `Ctrl+W`                  | Close tab               | Activates window before closing          | If the tab is in a backgrounded window, this is OK with hotkey to pid; otherwise close via UIA on the tab's close button |
-| `Ctrl+1..9` / `Ctrl+Tab`  | Switch tab              | Visible flip, page content re-renders    | Prefer windows-per-URL pattern (`launch_app({urls})`)                                                                    |
-| `Ctrl+Shift+T`            | Reopen closed tab       | Activates window                         | N/A — usually user intent, ask first                                                                                     |
-| `Ctrl+N`                  | New window              | New window comes to foreground           | `launch_app({urls: ["about:blank"]})`                                                                                    |
-| `Ctrl+Shift+N`            | New incognito           | Same as above + state mutation           | ask user first                                                                                                           |
-| `F11`                     | Fullscreen              | Visibly disruptive                       | Avoid                                                                                                                    |
-| `F5` / `Ctrl+R`           | Reload                  | OK if the agent owns this window         | safe to use via `hotkey`                                                                                                 |
-| `Ctrl+F`                  | Find in page            | Activates window + opens find bar        | If the agent owns this window, OK                                                                                        |
-| `Esc`                     | Close find bar / cancel | OK                                       | safe                                                                                                                     |
+| Shortcut | What it does | Why forbidden | Alternative |
+|---|---|---|---|
+| `Ctrl+L` / `Alt+D` / `F6` | Focus address bar | Activates window (focus-steal semantics) | `element_index` click on address-bar element |
+| `Ctrl+T` | New tab | Activates window | `launch_app({urls: [<url>]})` — opens in new window instead |
+| `Ctrl+W` | Close tab | Activates window before closing | If the tab is in a backgrounded window, this is OK with hotkey to pid; otherwise close via UIA on the tab's close button |
+| `Ctrl+1..9` / `Ctrl+Tab` | Switch tab | Visible flip, page content re-renders | Prefer windows-per-URL pattern (`launch_app({urls})`) |
+| `Ctrl+Shift+T` | Reopen closed tab | Activates window | N/A — usually user intent, ask first |
+| `Ctrl+N` | New window | New window comes to foreground | `launch_app({urls: ["about:blank"]})` |
+| `Ctrl+Shift+N` | New incognito | Same as above + state mutation | ask user first |
+| `F11` | Fullscreen | Visibly disruptive | Avoid |
+| `F5` / `Ctrl+R` | Reload | OK if the agent owns this window | safe to use via `hotkey` |
+| `Ctrl+F` | Find in page | Activates window + opens find bar | If the agent owns this window, OK |
+| `Esc` | Close find bar / cancel | OK | safe |
 
 ### Tabs vs windows
 
@@ -740,9 +733,9 @@ browser instance identified by `(pid, window_id)`:
 
 - **`get_text`** — `document.body.innerText` equivalent, sourced from
   the web `Document`'s UIA `TextPattern`.
-- **`query_dom`** — CSS-selector → UIA `ControlType` match. Supports
+- **`query_dom`** — CSS-selector → UIA `ControlType` match.  Supports
   simple tag selectors (`a`, `button`, `input`, `h1`-`h6`, `img`,
-  `li`, `p`, `span`, `select`), `tag#id`, `[role=…]`. **Does not**
+  `li`, `p`, `span`, `select`), `tag#id`, `[role=…]`.  **Does not**
   support `.class` or `[data-*]` (UIA has no class-list and no
   data-attribute exposure).
 - **`execute_javascript`** — runs arbitrary JS in the active tab.
@@ -756,12 +749,12 @@ browser instance identified by `(pid, window_id)`:
    URL to the user's expression wrapped in a `try/catch` IIFE,
    invokes the bookmark via UIA `InvokePattern`, and reads the
    result back from `document.title` (the wrapper writes
-   `CUA:<JSON>` or `CUA_ERR:<message>`). Zero config required —
+   `CUA:<JSON>` or `CUA_ERR:<message>`).  Zero config required —
    no `--remote-debugging-port` flag, no companion extension.
 
    **Requirements:**
    - The `cua-driver-eval` bookmark **must exist** on the Favorites
-     bar. Any URL is fine; the driver overwrites it on first use.
+     bar.  Any URL is fine; the driver overwrites it on first use.
      Automatic creation (drive the omnibox to `edge://favorites`,
      click "Add favorite", fill the dialog) is not yet wired up —
      create it manually.
@@ -779,7 +772,7 @@ browser instance identified by `(pid, window_id)`:
      browser policy / non-Chromium target) the call bails with a
      clear error and falls through to the CDP path.
    - The user's expression should be a single statement or block;
-     `return` inside the IIFE is honored. Bookmarks strip line
+     `return` inside the IIFE is honored.  Bookmarks strip line
      breaks, so multi-line expressions are joined with spaces.
 
    **Known limitation — Chromium's window activation on Invoke.**
@@ -793,7 +786,7 @@ browser instance identified by `(pid, window_id)`:
    user's foreground HWND beforehand and calling
    `SetForegroundWindow(prev)` once Chromium grabs foreground.
    The restore is gated on `GetWindowThreadProcessId(fg_now) ==
-browser_pid` so we never yank focus from a window the user
+   browser_pid` so we never yank focus from a window the user
    legitimately Alt-Tabbed to. Without UIAccess (the daemon's
    normal integrity) Windows' foreground lock may deny the
    restore — in that case the browser dwell time is bounded to
@@ -802,7 +795,7 @@ browser_pid` so we never yank focus from a window the user
    (no Invoke → no activation).
 
 2. **CDP fallback** — `Runtime.evaluate` via raw WebSocket against
-   `--remote-debugging-port=N`. Requires the browser launched with
+   `--remote-debugging-port=N`.  Requires the browser launched with
    that flag and `CUA_DRIVER_CDP_PORT=N` exported before the daemon
    starts.
 
@@ -822,15 +815,15 @@ the URL is pasted or `SetValue`-d via UIA, so the "omnibox
 The bookmark URL field doesn't apply the same scrub because
 bookmarklets are a documented Web-platform feature dating back to
 the late '90s — closing that path would break a long tail of
-existing user data. Empirically validated on Edge 148.0.3967.70
+existing user data.  Empirically validated on Edge 148.0.3967.70
 (see PR description for the commit landing this).
 
 #### Concurrency
 
-The bookmark-exec primitive holds a process-wide mutex. Calls
+The bookmark-exec primitive holds a process-wide mutex.  Calls
 serialise — concurrent invocations would race on the single
 `cua-driver-eval` URL field and one caller would invoke another's
-JS. If you need parallel JS execution against multiple browser
+JS.  If you need parallel JS execution against multiple browser
 instances, fall through to CDP (each browser instance gets its
 own port, no shared state).
 

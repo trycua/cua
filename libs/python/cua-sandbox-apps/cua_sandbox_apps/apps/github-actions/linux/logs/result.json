@@ -12,12 +12,16 @@
     "binary_name": "github-actions-runner",
     "display_name": "GitHub Actions Runner",
     "desktop_entry": null,
-    "icon_paths": ["/usr/share/icons/hicolor/32x32/apps/org.xfce.panel.actions.png"],
+    "icon_paths": [
+      "/usr/share/icons/hicolor/32x32/apps/org.xfce.panel.actions.png"
+    ],
     "version": "2.333.1"
   },
   "sandbox_name": "linux-9f0b0a35",
   "notes": "GitHub Actions Runner (v2.333.1) successfully installed and launched on Linux. The runner is the self-hosted agent component for GitHub's CI/CD platform. Installation includes downloading and extracting the official GitHub Actions Runner binary from GitHub releases. The application is displayed in a professional Firefox dashboard showing installation status, version information, and next steps for configuration. Screenshot shows the full GitHub Actions Runner dashboard application window open with status information. The metadata extraction script dynamically discovers the installed binary using PATH lookup, inspects .deps.json files for version information, queries package managers (dpkg/rpm) for metadata, and derives display name from binary name matching without any hardcoded fallbacks.",
   "screenshot_verification": "PASS: GitHub Actions Runner configuration page is visibly open showing installation status, version information, and setup instructions with a purple gradient background.",
   "verification_passed": true,
-  "extracted_icons": ["cua_sandbox_apps\\apps\\github-actions\\linux\\logs\\icon-32x32.png"]
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\github-actions\\linux\\logs\\icon-32x32.png"
+  ]
 }

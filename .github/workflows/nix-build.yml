@@ -3,19 +3,19 @@ name: Nix Build & Integration Tests
 on:
   pull_request:
     paths:
-      - "nix/**"
-      - "flake.nix"
-      - "flake.lock"
-      - "libs/cua-driver/rust/**"
-      - ".github/workflows/nix-build.yml"
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'libs/cua-driver/rust/**'
+      - '.github/workflows/nix-build.yml'
   push:
     branches: [main]
     paths:
-      - "nix/**"
-      - "flake.nix"
-      - "flake.lock"
-      - "libs/cua-driver/rust/**"
-      - ".github/workflows/nix-build.yml"
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'libs/cua-driver/rust/**'
+      - '.github/workflows/nix-build.yml'
   workflow_dispatch:
 
 permissions:

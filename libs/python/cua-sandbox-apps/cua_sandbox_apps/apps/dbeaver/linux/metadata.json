@@ -3,6 +3,8 @@
   "binary_name": "dbeaver",
   "display_name": "DBeaver",
   "desktop_entry": "",
-  "icon_paths": ["/home/cua/.local/opt/dbeaver/dbeaver.png"],
+  "icon_paths": [
+    "/home/cua/.local/opt/dbeaver/dbeaver.png"
+  ],
   "version": "26.0.2"
 }

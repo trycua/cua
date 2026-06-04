@@ -4,7 +4,11 @@
   "description": "A lightweight but powerful source code editor that runs on your desktop and is available for Windows, macOS and Linux. It comes with built-in support for JavaScript, TypeScript and Node.js, and has a rich ecosystem of extensions for other languages and runtimes. Enhanced with AI capabilities for agentic development workflows.",
   "website": "https://code.visualstudio.com",
   "icon_url": "https://code.visualstudio.com/favicon.ico",
-  "categories": ["IDE", "Code Editor", "Developer Tools"],
+  "categories": [
+    "IDE",
+    "Code Editor",
+    "Developer Tools"
+  ],
   "tags": [
     "open-source",
     "cross-platform",
@@ -17,7 +21,11 @@
     "javascript",
     "python"
   ],
-  "os_support": ["windows", "macos", "linux"],
+  "os_support": [
+    "windows",
+    "macos",
+    "linux"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/microsoft/vscode",

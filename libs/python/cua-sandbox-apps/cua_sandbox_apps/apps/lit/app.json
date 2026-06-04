@@ -4,7 +4,11 @@
   "description": "A simple and fast web component base class that provides a reactive template literal-based update mechanism. Lit makes it easy to build fast, lightweight web components that work in any web page with any framework.",
   "website": "https://lit.dev/",
   "icon_url": "https://lit.dev/images/logo.svg",
-  "categories": ["Web Development", "Frontend Framework", "Web Components"],
+  "categories": [
+    "Web Development",
+    "Frontend Framework",
+    "Web Components"
+  ],
   "tags": [
     "web-components",
     "typescript",
@@ -14,7 +18,11 @@
     "lightweight",
     "framework-agnostic"
   ],
-  "os_support": ["linux", "macos", "windows"],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/lit/lit",

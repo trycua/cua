@@ -24,11 +24,11 @@ async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
 
 ## What's included
 
-| Package       | Import                           | Purpose                               |
-| ------------- | -------------------------------- | ------------------------------------- |
-| `cua-sandbox` | `from cua import Sandbox, Image` | VM/container sandboxes                |
-| `cua-agent`   | `from cua import ComputerAgent`  | LLM-driven computer-use agent         |
-| `cua-cli`     | `cua` command                    | CLI for managing sandboxes and images |
+| Package | Import | Purpose |
+|---|---|---|
+| `cua-sandbox` | `from cua import Sandbox, Image` | VM/container sandboxes |
+| `cua-agent` | `from cua import ComputerAgent` | LLM-driven computer-use agent |
+| `cua-cli` | `cua` command | CLI for managing sandboxes and images |
 
 `cua-agent[cloud]` extras are included by default (OpenAI, Anthropic, Gemini API backends).
 

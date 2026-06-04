@@ -4,7 +4,11 @@
   "description": "An open-source system for automating deployment, scaling, and management of containerized applications. Groups containers that make up an application into logical units for easy management and discovery.",
   "website": "https://kubernetes.io",
   "icon_url": "https://kubernetes.io/images/favicon.png",
-  "categories": ["Container Orchestration", "DevOps", "Cloud Infrastructure"],
+  "categories": [
+    "Container Orchestration",
+    "DevOps",
+    "Cloud Infrastructure"
+  ],
   "tags": [
     "container",
     "orchestration",
@@ -19,7 +23,11 @@
     "service-discovery",
     "load-balancing"
   ],
-  "os_support": ["linux", "macos", "windows"],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/kubernetes/kubernetes",

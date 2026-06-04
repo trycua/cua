@@ -24,7 +24,7 @@ def _lines(tree: str) -> list[tuple[int, str]]:
     """Return (element_index, raw_line) pairs for every indexed line."""
     result: list[tuple[int, str]] = []
     for line in tree.split("\n"):
-        m = re.search(r'\[(\d+)\]', line)
+        m = re.search(r"\[(\d+)\]", line)
         if m:
             result.append((int(m.group(1)), line))
     return result

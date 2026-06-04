@@ -47,6 +47,7 @@ from driver_client import DriverClient, MCPCallError, default_binary_path  # noq
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
+
 def _run(
     args: list[str],
     timeout: int = 20,
@@ -129,8 +130,8 @@ REQUIRED_TOOLS = [
 
 # In Rust, not in Swift yet.  Tests for these will fail on the Swift binary.
 RUST_ONLY_TOOLS = [
-    "type_text_chars",       # per-character delay typing; Swift uses type_text
-    "get_accessibility_tree",# lightweight desktop AX snapshot (separate from get_window_state)
+    "type_text_chars",  # per-character delay typing; Swift uses type_text
+    "get_accessibility_tree",  # lightweight desktop AX snapshot (separate from get_window_state)
 ]
 
 # In Swift, not registered in Rust yet. (`page` is now cross-platform in Rust.)
@@ -138,6 +139,7 @@ SWIFT_ONLY_TOOLS: list[str] = []
 
 
 # ── parity mixin ───────────────────────────────────────────────────────────────
+
 
 class _ParityMixin:
     """All API surface tests.  Concrete subclasses set `cls.binary`."""
@@ -182,8 +184,14 @@ class _ParityMixin:
         r = _run([self.binary, "list-tools"])
         self.assertEqual(r.returncode, 0)
         for name in [
-            "click", "screenshot", "list_windows", "press_key",
-            "get_window_state", "type_text", "hotkey", "scroll",
+            "click",
+            "screenshot",
+            "list_windows",
+            "press_key",
+            "get_window_state",
+            "type_text",
+            "hotkey",
+            "scroll",
         ]:
             self.assertIn(name, r.stdout, f"list-tools missing: {name!r}")
 
@@ -213,7 +221,8 @@ class _ParityMixin:
             with self.subTest(tool=name):
                 r = _run([self.binary, "describe", name])
                 self.assertEqual(
-                    r.returncode, 0,
+                    r.returncode,
+                    0,
                     f"describe {name!r} exited {r.returncode}: {r.stderr}",
                 )
                 self.assertIn(name, r.stdout)
@@ -328,10 +337,7 @@ class _ParityMixin:
         try:
             data = json.loads(r.stdout)
         except json.JSONDecodeError:
-            self.fail(
-                f"call check_permissions did not output JSON.\n"
-                f"stdout: {r.stdout!r}"
-            )
+            self.fail(f"call check_permissions did not output JSON.\n" f"stdout: {r.stdout!r}")
         self.assertIn("accessibility", data)
         self.assertIn("screen_recording", data)
 
@@ -348,8 +354,11 @@ class _ParityMixin:
         data = json.loads(r.stdout)
         # Config must have at least one of the known top-level keys.
         known_keys = {
-            "schema_version", "capture_mode", "max_image_dimension",
-            "agent_cursor", "telemetry_enabled",
+            "schema_version",
+            "capture_mode",
+            "max_image_dimension",
+            "agent_cursor",
+            "telemetry_enabled",
         }
         self.assertTrue(
             known_keys.intersection(data.keys()),
@@ -404,8 +413,12 @@ class _ParityMixin:
 
         # get_window_state
         rs = _run(
-            [self.binary, "call", "get_window_state",
-             f'{{"pid": {pid}, "window_id": {window_id}}}'],
+            [
+                self.binary,
+                "call",
+                "get_window_state",
+                f'{{"pid": {pid}, "window_id": {window_id}}}',
+            ],
             timeout=30,
         )
         self.assertEqual(rs.returncode, 0, f"get_window_state stderr: {rs.stderr}")
@@ -424,7 +437,7 @@ class _ParityMixin:
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     def test_call_click_missing_required_args_exits_1(self) -> None:
-        r = _run([self.binary, "call", "click", '{}'])
+        r = _run([self.binary, "call", "click", "{}"])
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     def test_call_type_text_missing_pid_exits_1(self) -> None:
@@ -436,11 +449,11 @@ class _ParityMixin:
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     def test_call_scroll_missing_required_args_exits_1(self) -> None:
-        r = _run([self.binary, "call", "scroll", '{}'])
+        r = _run([self.binary, "call", "scroll", "{}"])
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     def test_call_drag_missing_required_args_exits_1(self) -> None:
-        r = _run([self.binary, "call", "drag", '{}'])
+        r = _run([self.binary, "call", "drag", "{}"])
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     def test_call_get_window_state_missing_pid_exits_1(self) -> None:
@@ -448,7 +461,7 @@ class _ParityMixin:
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     def test_call_launch_app_no_args_exits_1(self) -> None:
-        r = _run([self.binary, "call", "launch_app", '{}'])
+        r = _run([self.binary, "call", "launch_app", "{}"])
         self.assertEqual(r.returncode, 1, f"stdout: {r.stdout}")
 
     # ── CLI: implicit call (tool name as first positional) ────────────────────
@@ -850,10 +863,16 @@ class _ParityMixin:
         with self._mcp() as c:
             result = c.call_tool("get_config")
         sc = result.get("structuredContent", result)
-        known = {"schema_version", "capture_mode", "max_image_dimension",
-                 "agent_cursor", "telemetry_enabled"}
-        self.assertTrue(known.intersection(sc.keys()),
-                        f"get_config has no known keys: {list(sc.keys())}")
+        known = {
+            "schema_version",
+            "capture_mode",
+            "max_image_dimension",
+            "agent_cursor",
+            "telemetry_enabled",
+        }
+        self.assertTrue(
+            known.intersection(sc.keys()), f"get_config has no known keys: {list(sc.keys())}"
+        )
 
     def test_mcp_set_config_max_image_dimension(self) -> None:
         with self._mcp() as c:
@@ -878,6 +897,7 @@ class _ParityMixin:
 
     def test_mcp_set_recording_enable_disable(self) -> None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             with self._mcp() as c:
                 # Enable recording — output_dir is required.
@@ -949,9 +969,7 @@ class _ParityMixin:
         self._assert_tool_raises_mcp_error("launch_app", {})
 
     def test_mcp_set_value_missing_pid_raises_error(self) -> None:
-        self._assert_tool_raises_mcp_error(
-            "set_value", {"element_index": 0, "value": "x"}
-        )
+        self._assert_tool_raises_mcp_error("set_value", {"element_index": 0, "value": "x"})
 
     def test_mcp_replay_trajectory_bad_dir_raises_error(self) -> None:
         self._assert_tool_raises_mcp_error(
@@ -997,9 +1015,7 @@ class _ParityMixin:
             wins = c.call_tool("list_windows", {"pid": pid})["structuredContent"]["windows"]
             if not wins:
                 self.skipTest("Calculator has no windows")
-            state = c.call_tool("get_window_state", {
-                "pid": pid, "window_id": wins[0]["window_id"]
-            })
+            state = c.call_tool("get_window_state", {"pid": pid, "window_id": wins[0]["window_id"]})
         sc = state.get("structuredContent", state)
         for key in ("tree_markdown", "screenshot_width", "screenshot_height"):
             self.assertIn(key, sc, f"get_window_state structuredContent missing: {key!r}")
@@ -1042,9 +1058,7 @@ class _ParityMixin:
     # ── stdio MCP: zoom ───────────────────────────────────────────────────────
 
     def test_mcp_zoom_missing_pid_raises_error(self) -> None:
-        self._assert_tool_raises_mcp_error(
-            "zoom", {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
-        )
+        self._assert_tool_raises_mcp_error("zoom", {"x1": 0, "y1": 0, "x2": 100, "y2": 100})
 
     # ── stdio MCP: page ───────────────────────────────────────────────────────
 
@@ -1060,9 +1074,7 @@ class _ParityMixin:
         self.assertIn("page", names, "'page' tool is not registered")
 
     def test_mcp_page_missing_pid_raises_error(self) -> None:
-        self._assert_tool_raises_mcp_error(
-            "page", {"action": "get_text"}
-        )
+        self._assert_tool_raises_mcp_error("page", {"action": "get_text"})
 
     # ── stdio MCP: Rust-only tools (missing in Swift) ────────────────────────
 
@@ -1148,6 +1160,7 @@ class _ParityMixin:
 
 
 # ── concrete test classes (one per binary) ────────────────────────────────────
+
 
 class SwiftParityTests(_ParityMixin, unittest.TestCase):
     """Run the full parity suite against the Swift cua-driver binary."""

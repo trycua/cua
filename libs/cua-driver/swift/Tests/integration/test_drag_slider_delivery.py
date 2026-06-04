@@ -42,9 +42,7 @@ _FORM_URL = f"file://{_HTML_FORM}"
 
 _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_BUNDLE = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.app")
-_FOCUS_APP_EXE = os.path.join(
-    _FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp"
-)
+_FOCUS_APP_EXE = os.path.join(_FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp")
 _LOSS_FILE = "/tmp/focus_monitor_losses.txt"
 
 SAFARI_BUNDLE = "com.apple.Safari"
@@ -53,9 +51,7 @@ FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run(
-            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
-        )
+        subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
@@ -77,7 +73,8 @@ def _launch_focus_app() -> tuple[subprocess.Popen, int]:
         raise RuntimeError("FocusMonitorApp did not print FOCUS_PID in time")
     subprocess.run(
         ["osascript", "-e", 'tell application "FocusMonitorApp" to activate'],
-        check=False, timeout=3,
+        check=False,
+        timeout=3,
     )
     return proc, pid
 
@@ -92,12 +89,12 @@ def _read_focus_losses() -> int:
 
 def _safari_js(expr: str, timeout: float = 5.0) -> str:
     """Evaluate a JS expression in Safari's front document via osascript."""
-    script = (
-        f'tell application "Safari" to do JavaScript "{expr}" in front document'
-    )
+    script = f'tell application "Safari" to do JavaScript "{expr}" in front document'
     r = subprocess.run(
         ["osascript", "-e", script],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
     return r.stdout.strip()
 
@@ -186,9 +183,9 @@ class SafariRangeSliderDragDelivery(unittest.TestCase):
 
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert active == FOCUS_MONITOR_BUNDLE, (
-                f"Expected FocusMonitorApp frontmost at start, got {active}"
-            )
+            assert (
+                active == FOCUS_MONITOR_BUNDLE
+            ), f"Expected FocusMonitorApp frontmost at start, got {active}"
         losses = _read_focus_losses()
         assert losses == 0, f"Expected 0 focus losses at start, got {losses}"
 
@@ -220,8 +217,7 @@ class SafariRangeSliderDragDelivery(unittest.TestCase):
         """Drag the thumb from mid-track to past the right edge — value goes to 100."""
         before = _slider_value()
         self.assertEqual(
-            before, 50,
-            f"slider didn't reset to 50 (got {before}) — fixture or JS bridge off"
+            before, 50, f"slider didn't reset to 50 (got {before}) — fixture or JS bridge off"
         )
 
         with DriverClient(self.binary) as c:
@@ -234,28 +230,25 @@ class SafariRangeSliderDragDelivery(unittest.TestCase):
             scale = sc.get("screenshot_scale_factor", 2)
 
             # Window origin in screen points (top-left).
-            windows = c.call_tool(
-                "list_windows", {"pid": self._safari_pid}
-            )["structuredContent"]["windows"]
-            win = next(
-                w for w in windows
-                if w["window_id"] == window_id
-            )
+            windows = c.call_tool("list_windows", {"pid": self._safari_pid})["structuredContent"][
+                "windows"
+            ]
+            win = next(w for w in windows if w["window_id"] == window_id)
             win_x = win["bounds"]["x"]
             win_y = win["bounds"]["y"]
 
             rect = _slider_screen_rect()
             # Slider center in screen points.
             cx = rect["screenLeft"] + rect["left"] + rect["width"] / 2
-            cy = rect["screenTop"]  + rect["top"]  + rect["height"] / 2
+            cy = rect["screenTop"] + rect["top"] + rect["height"] / 2
             # End point: 50 px past the right edge of the slider, same y.
             ex = rect["screenLeft"] + rect["left"] + rect["width"] + 50
             ey = cy
             # Convert screen points → window-local image pixels.
             from_x = (cx - win_x) * scale
             from_y = (cy - win_y) * scale
-            to_x   = (ex - win_x) * scale
-            to_y   = (ey - win_y) * scale
+            to_x = (ex - win_x) * scale
+            to_y = (ey - win_y) * scale
 
             print(
                 f"\n  slider rect (screen pts): "
@@ -276,9 +269,7 @@ class SafariRangeSliderDragDelivery(unittest.TestCase):
                     "steps": 24,
                 },
             )
-            print(
-                f"  drag result: {result.get('content', [{}])[0].get('text', '')[:200]}"
-            )
+            print(f"  drag result: {result.get('content', [{}])[0].get('text', '')[:200]}")
 
         time.sleep(0.4)
         after = _slider_value()
@@ -286,8 +277,7 @@ class SafariRangeSliderDragDelivery(unittest.TestCase):
 
         # Drag landed AND clamped at the slider's max (100).
         self.assertGreaterEqual(
-            after, 80,
-            f"Drag did not move the slider far enough — value is {after} (was {before})"
+            after, 80, f"Drag did not move the slider far enough — value is {after} (was {before})"
         )
 
         # Focus invariant: FocusMonitorApp stayed frontmost throughout.
@@ -296,12 +286,12 @@ class SafariRangeSliderDragDelivery(unittest.TestCase):
         losses = _read_focus_losses()
         print(f"  losses: {self._losses_before}→{losses}, frontmost: {active}")
         self.assertEqual(
-            active, FOCUS_MONITOR_BUNDLE,
-            f"Focus stolen — frontmost is {active} (expected FocusMonitorApp)"
+            active,
+            FOCUS_MONITOR_BUNDLE,
+            f"Focus stolen — frontmost is {active} (expected FocusMonitorApp)",
         )
         self.assertEqual(
-            losses, self._losses_before,
-            f"Focus losses increased: {self._losses_before} → {losses}"
+            losses, self._losses_before, f"Focus losses increased: {self._losses_before} → {losses}"
         )
 
 

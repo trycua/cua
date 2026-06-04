@@ -4,6 +4,7 @@ These tests verify the coordinate-extraction logic in
 AnthropicHostedToolsConfig.predict_click directly, without requiring the full
 cua_agent import chain (which needs cua-computer, cua-core, etc.).
 """
+
 import pytest
 
 
@@ -41,6 +42,7 @@ def _make_items(x, y):
 
 # --- Regression tests: these all FAIL with the old code, PASS with the fix ---
 
+
 def test_zero_x_was_broken_before_fix():
     """Old code returns None for x=0; new code returns (0, y)."""
     items = _make_items(0, 100)
@@ -64,6 +66,7 @@ def test_zero_zero_was_broken_before_fix():
 
 # --- Positive tests: non-zero coordinates work in both old and new code ---
 
+
 def test_nonzero_coordinates_still_work():
     items = _make_items(512, 384)
     assert _extract_click_coords_fixed(items) == (512, 384)
@@ -76,16 +79,17 @@ def test_returns_none_when_no_computer_call():
 
 # --- Verify the actual fix is present in the source file ---
 
+
 def test_source_uses_is_not_none_check():
     """Confirm the fix is applied in the real anthropic.py source."""
     import pathlib
+
     src = (
-        pathlib.Path(__file__).parent.parent
-        / "cua_agent" / "loops" / "anthropic.py"
+        pathlib.Path(__file__).parent.parent / "cua_agent" / "loops" / "anthropic.py"
     ).read_text()
-    assert 'action.get("x") is not None and action.get("y") is not None' in src, (
-        "Fix not found in anthropic.py — the 'is not None' check is missing"
-    )
+    assert (
+        'action.get("x") is not None and action.get("y") is not None' in src
+    ), "Fix not found in anthropic.py — the 'is not None' check is missing"
     # Ensure the old buggy pattern is gone
     assert (
         'if action.get("x") and action.get("y"):' not in src

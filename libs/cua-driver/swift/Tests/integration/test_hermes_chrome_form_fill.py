@@ -61,7 +61,11 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from driver_client import DriverClient, default_binary_path, resolve_window_id  # noqa: E402
+from driver_client import (  # noqa: E402
+    DriverClient,
+    default_binary_path,
+    resolve_window_id,
+)
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -77,8 +81,8 @@ _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_EXE = os.path.join(
     _FOCUS_APP_DIR, "FocusMonitorApp.app", "Contents", "MacOS", "FocusMonitorApp"
 )
-_LOSS_FILE       = "/tmp/focus_monitor_losses.txt"
-_KEY_LOSS_FILE   = "/tmp/focus_monitor_key_losses.txt"
+_LOSS_FILE = "/tmp/focus_monitor_losses.txt"
+_KEY_LOSS_FILE = "/tmp/focus_monitor_key_losses.txt"
 _FIELD_LOSS_FILE = "/tmp/focus_monitor_field_losses.txt"
 
 _HERMES_BIN = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")
@@ -95,6 +99,7 @@ _MODEL = os.environ.get("HERMES_TEST_MODEL", "claude-haiku-4-5-20251001")
 # Chrome Apple Events JS helpers
 # ---------------------------------------------------------------------------
 
+
 def _enable_chrome_apple_events() -> None:
     """Quit Chrome, write allow_javascript_apple_events to all profiles.
 
@@ -105,14 +110,13 @@ def _enable_chrome_apple_events() -> None:
     """
     subprocess.run(
         ["osascript", "-e", 'quit app "Google Chrome"'],
-        check=False, timeout=10,
+        check=False,
+        timeout=10,
     )
     time.sleep(1.5)
 
     for prefs_path in glob.glob(
-        os.path.expanduser(
-            "~/Library/Application Support/Google/Chrome/*/Preferences"
-        )
+        os.path.expanduser("~/Library/Application Support/Google/Chrome/*/Preferences")
     ):
         profile = prefs_path.split("/")[-2]
         if "System" in profile or "Guest" in profile:
@@ -141,12 +145,10 @@ def _js_chrome(expr: str) -> str:
     # AppleScript: tell application "Google Chrome" to execute front window's
     # active tab javascript "<expr>"
     osa = (
-        "tell application \"Google Chrome\" to execute "
+        'tell application "Google Chrome" to execute '
         f"front window's active tab javascript {json.dumps(expr)}"
     )
-    r = subprocess.run(
-        ["osascript", "-e", osa], capture_output=True, text=True, timeout=15
-    )
+    r = subprocess.run(["osascript", "-e", osa], capture_output=True, text=True, timeout=15)
     return r.stdout.strip()
 
 
@@ -168,16 +170,16 @@ def _wait_for_chrome_form(timeout: float = 30.0) -> bool:
 
 # Map logical field names → HTML element IDs in form_all_inputs.html.
 _FIELD_TO_ID: dict[str, str] = {
-    "text":     "f-text",
-    "email":    "f-email",
+    "text": "f-text",
+    "email": "f-email",
     "password": "f-password",
-    "number":   "f-number",
-    "tel":      "f-tel",
+    "number": "f-number",
+    "tel": "f-tel",
     "textarea": "f-textarea",
-    "select":   "f-select",
-    "range":    "f-range",
-    "date":     "f-date",
-    "color":    "f-color",
+    "select": "f-select",
+    "range": "f-range",
+    "date": "f-date",
+    "color": "f-color",
 }
 
 
@@ -208,9 +210,13 @@ def _checkbox_checked() -> bool:
 # FocusMonitorApp helpers
 # ---------------------------------------------------------------------------
 
+
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
     proc = subprocess.Popen(
-        [_FOCUS_APP_EXE], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        [_FOCUS_APP_EXE],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
     )
     for _ in range(40):
         line = proc.stdout.readline().strip()
@@ -233,6 +239,7 @@ def _read_file_int(path: str) -> int:
 # Base test class
 # ---------------------------------------------------------------------------
 
+
 class _HermesChromFormBase(unittest.TestCase):
     """Shared setup/teardown and hermes runner for all Chrome per-input tests."""
 
@@ -248,9 +255,7 @@ class _HermesChromFormBase(unittest.TestCase):
                 "ANTHROPIC_API_KEY is not set — skipping hermes Chrome form-fill tests"
             )
         if not os.path.exists(_HERMES_BIN):
-            raise unittest.SkipTest(
-                f"hermes not found at {_HERMES_BIN} — install hermes first"
-            )
+            raise unittest.SkipTest(f"hermes not found at {_HERMES_BIN} — install hermes first")
 
         for f in (_LOSS_FILE, _KEY_LOSS_FILE, _FIELD_LOSS_FILE):
             try:
@@ -260,8 +265,9 @@ class _HermesChromFormBase(unittest.TestCase):
 
         # Rebuild FocusMonitorApp when Swift source is newer.
         src = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.swift")
-        if (not os.path.exists(_FOCUS_APP_EXE)
-                or os.path.getmtime(src) > os.path.getmtime(_FOCUS_APP_EXE)):
+        if not os.path.exists(_FOCUS_APP_EXE) or os.path.getmtime(src) > os.path.getmtime(
+            _FOCUS_APP_EXE
+        ):
             subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
         cls.binary = default_binary_path()
@@ -275,10 +281,13 @@ class _HermesChromFormBase(unittest.TestCase):
         # launch_app — no activation, no window raise, no focus steal.
         print(f"  Launching Chrome hidden with {_FORM_URL}")
         with DriverClient(cls.binary) as c:
-            result = c.call_tool("launch_app", {
-                "bundle_id": CHROME_BUNDLE,
-                "urls": [_FORM_URL],
-            })
+            result = c.call_tool(
+                "launch_app",
+                {
+                    "bundle_id": CHROME_BUNDLE,
+                    "urls": [_FORM_URL],
+                },
+            )
             sc = result.get("structuredContent", {})
             cls._chrome_pid = sc.get("pid", 0)
             if not cls._chrome_pid:
@@ -310,13 +319,15 @@ class _HermesChromFormBase(unittest.TestCase):
         # baseline in setUp(), so startup-phase transients are not counted
         # as test failures.
         prev = _read_file_int(_FIELD_LOSS_FILE)
-        for _ in range(20):   # up to 10 s
+        for _ in range(20):  # up to 10 s
             time.sleep(0.5)
             curr = _read_file_int(_FIELD_LOSS_FILE)
             if curr == prev:
                 break
             prev = curr
-        print(f"  FocusMonitorApp ready (field_losses baseline: {_read_file_int(_FIELD_LOSS_FILE)})")
+        print(
+            f"  FocusMonitorApp ready (field_losses baseline: {_read_file_int(_FIELD_LOSS_FILE)})"
+        )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -327,12 +338,13 @@ class _HermesChromFormBase(unittest.TestCase):
             cls._focus_proc.kill()
         subprocess.run(
             ["osascript", "-e", 'quit app "Google Chrome"'],
-            check=False, timeout=10,
+            check=False,
+            timeout=10,
         )
 
     def setUp(self) -> None:
-        self._losses_before       = _read_file_int(_LOSS_FILE)
-        self._key_losses_before   = _read_file_int(_KEY_LOSS_FILE)
+        self._losses_before = _read_file_int(_LOSS_FILE)
+        self._key_losses_before = _read_file_int(_KEY_LOSS_FILE)
         self._field_losses_before = _read_file_int(_FIELD_LOSS_FILE)
 
     def _run_hermes(self, prompt: str, timeout: int = 120, max_turns: int = 5) -> str:
@@ -344,16 +356,25 @@ class _HermesChromFormBase(unittest.TestCase):
 
         result = subprocess.run(
             [
-                _HERMES_BIN, "chat",
-                "--provider", "anthropic",
-                "-m", _MODEL,
-                "--toolsets", "computer_use",
+                _HERMES_BIN,
+                "chat",
+                "--provider",
+                "anthropic",
+                "-m",
+                _MODEL,
+                "--toolsets",
+                "computer_use",
                 "--yolo",
                 "-Q",
-                "--max-turns", str(max_turns),
-                "-q", prompt,
+                "--max-turns",
+                str(max_turns),
+                "-q",
+                prompt,
             ],
-            env=env, capture_output=True, text=True, timeout=timeout,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return (result.stdout + "\n" + result.stderr).strip()
 
@@ -371,8 +392,8 @@ class _HermesChromFormBase(unittest.TestCase):
         value for multi-action tests.
         """
         time.sleep(0.3)
-        app_delta   = _read_file_int(_LOSS_FILE)   - self._losses_before
-        key_delta   = _read_file_int(_KEY_LOSS_FILE) - self._key_losses_before
+        app_delta = _read_file_int(_LOSS_FILE) - self._losses_before
+        key_delta = _read_file_int(_KEY_LOSS_FILE) - self._key_losses_before
         field_delta = _read_file_int(_FIELD_LOSS_FILE) - self._field_losses_before
         msgs = []
         if app_delta:
@@ -385,7 +406,8 @@ class _HermesChromFormBase(unittest.TestCase):
                 f" (allowed: {allow_field_losses})"
             )
         self.assertEqual(
-            len(msgs), 0,
+            len(msgs),
+            0,
             f"Focus stolen in {self._testMethodName}: "
             + "; ".join(msgs)
             + " — background CGEvent delivery must not steal focus",
@@ -405,11 +427,14 @@ class _HermesChromFormBase(unittest.TestCase):
         try:
             wid = self._chrome_window_id()
             with DriverClient(self.binary) as c:
-                snap = c.call_tool("get_window_state", {
-                    "pid": self._chrome_pid,
-                    "window_id": wid,
-                    "query": query,
-                })
+                snap = c.call_tool(
+                    "get_window_state",
+                    {
+                        "pid": self._chrome_pid,
+                        "window_id": wid,
+                        "query": query,
+                    },
+                )
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             return len(tree.strip()) > 0
         except Exception:
@@ -419,6 +444,7 @@ class _HermesChromFormBase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # One test class per input type
 # ---------------------------------------------------------------------------
+
 
 class TestChromeTextInput(_HermesChromFormBase):
     """<input type=text> in Chrome — type_text CGEvent fallback path."""
@@ -431,8 +457,7 @@ class TestChromeTextInput(_HermesChromFormBase):
             "then type 'Hello Chrome' into it. Stop after typing."
         )
         val = _field("text")
-        self.assertEqual(val, "Hello Chrome",
-                         msg=f"text='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "Hello Chrome", msg=f"text='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -447,8 +472,7 @@ class TestChromeEmailInput(_HermesChromFormBase):
             "Stop after typing."
         )
         val = _field("email")
-        self.assertEqual(val, "agent@chrome.com",
-                         msg=f"email='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "agent@chrome.com", msg=f"email='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -463,8 +487,7 @@ class TestChromePasswordInput(_HermesChromFormBase):
             "Stop after typing."
         )
         val = _field("password")
-        self.assertEqual(val, "Secure123!",
-                         msg=f"password='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "Secure123!", msg=f"password='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -479,8 +502,7 @@ class TestChromeNumberInput(_HermesChromFormBase):
             "Stop after typing."
         )
         val = _field("number")
-        self.assertEqual(val, "99",
-                         msg=f"number='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "99", msg=f"number='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -495,8 +517,7 @@ class TestChromeTextarea(_HermesChromFormBase):
             "Stop after typing."
         )
         val = _field("textarea")
-        self.assertIn("chrome bg ok", val,
-                      msg=f"textarea='{val}'\nhermes: {out[-400:]}")
+        self.assertIn("chrome bg ok", val, msg=f"textarea='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -510,8 +531,7 @@ class TestChromeCheckbox(_HermesChromFormBase):
             "Click the checkbox labelled 'I agree to the terms' (id='f-checkbox'). "
             "Stop after clicking."
         )
-        self.assertTrue(_checkbox_checked(),
-                        msg=f"checkbox not checked\nhermes: {out[-400:]}")
+        self.assertTrue(_checkbox_checked(), msg=f"checkbox not checked\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -534,8 +554,7 @@ class TestChromeSelectDropdown(_HermesChromFormBase):
             timeout=180,
         )
         val = _field("select")
-        self.assertEqual(val, "blue",
-                         msg=f"select='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "blue", msg=f"select='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -556,8 +575,7 @@ class TestChromeSubmitButton(_HermesChromFormBase):
             '(function(){var e=document.getElementById("result");'
             'return (e && e.textContent.trim().length > 0) ? "true" : "false";})()'
         )
-        self.assertEqual(submitted, "true",
-                         msg=f"form not submitted\nhermes: {out[-400:]}")
+        self.assertEqual(submitted, "true", msg=f"form not submitted\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 
@@ -585,17 +603,17 @@ class TestChromeFullFormFlow(_HermesChromFormBase):
             timeout=360,
         )
         # Verify all three fields were written.
-        text_val  = _field("text")
+        text_val = _field("text")
         email_val = _field("email")
-        num_val   = _field("number")
+        num_val = _field("number")
         errors: list[str] = []
-        if text_val  != "E2E Test":      errors.append(f"text='{text_val}'")
-        if email_val != "e2e@test.com":  errors.append(f"email='{email_val}'")
-        if num_val   != "7":             errors.append(f"number='{num_val}'")
-        self.assertFalse(
-            errors,
-            f"Field mismatch: {'; '.join(errors)}\nhermes: {out[-600:]}"
-        )
+        if text_val != "E2E Test":
+            errors.append(f"text='{text_val}'")
+        if email_val != "e2e@test.com":
+            errors.append(f"email='{email_val}'")
+        if num_val != "7":
+            errors.append(f"number='{num_val}'")
+        self.assertFalse(errors, f"Field mismatch: {'; '.join(errors)}\nhermes: {out[-600:]}")
         self._assert_no_new_focus_loss(allow_field_losses=3)
 
 

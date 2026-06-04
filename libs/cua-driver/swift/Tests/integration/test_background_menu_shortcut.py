@@ -39,7 +39,8 @@ def _on_screen_doc_windows(driver, pid: int) -> list[dict]:
     result = driver.call_tool("list_windows", {"pid": pid})
     windows = result.get("structuredContent", {}).get("windows", [])
     return [
-        w for w in windows
+        w
+        for w in windows
         if w.get("is_on_screen")
         and (w.get("bounds", {}).get("width", 0) or 0) > 100
         and (w.get("bounds", {}).get("height", 0) or 0) > 100
@@ -47,6 +48,7 @@ def _on_screen_doc_windows(driver, pid: int) -> list[dict]:
 
 
 # ── module-scoped driver (avoids scope-mismatch with module fixtures) ─────────
+
 
 @pytest.fixture(scope="module")
 def module_driver(binary):
@@ -56,22 +58,25 @@ def module_driver(binary):
     module-scoped fixtures must use this dedicated module_driver instead.
     """
     from harness.driver import Driver
+
     with Driver(binary) as d:
         yield d
 
 
 # ── module fixtures ───────────────────────────────────────────────────────────
 
+
 def _pid_from_result(result: dict) -> int:
     """Extract pid from a launch_app result (structuredContent or text fallback)."""
     import re
+
     pid = result.get("structuredContent", {}).get("pid", 0)
     if pid:
         return pid
     # Fall back: parse "pid N" from the text content
     for item in result.get("content", []):
         text = item.get("text", "")
-        m = re.search(r'\bpid\s+(\d+)', text)
+        m = re.search(r"\bpid\s+(\d+)", text)
         if m:
             return int(m.group(1))
     return 0
@@ -98,13 +103,15 @@ def textedit_pid(module_driver):
 def textedit_wid(module_driver, textedit_pid):
     """Return the window_id of the largest TextEdit on-screen window."""
     wins = _on_screen_doc_windows(module_driver, textedit_pid)
-    best = max(wins, key=lambda w: (
-        w.get("bounds", {}).get("width", 0) * w.get("bounds", {}).get("height", 0)
-    ))
+    best = max(
+        wins,
+        key=lambda w: (w.get("bounds", {}).get("width", 0) * w.get("bounds", {}).get("height", 0)),
+    )
     return best["window_id"]
 
 
 # ── tests ─────────────────────────────────────────────────────────────────────
+
 
 def test_hotkey_without_window_id_does_not_activate(
     driver, focus_monitor, activate_focus_monitor, ux_guard, textedit_pid
@@ -114,17 +121,19 @@ def test_hotkey_without_window_id_does_not_activate(
     Uses the auth-envelope path which delivers directly to the target PID
     without calling activateForMenuShortcut — FocusMonitorApp keeps focus.
     """
-    driver.call_tool("hotkey", {
-        "pid": textedit_pid,
-        "keys": ["cmd", "z"],
-    })
+    driver.call_tool(
+        "hotkey",
+        {
+            "pid": textedit_pid,
+            "keys": ["cmd", "z"],
+        },
+    )
     time.sleep(0.5)
     # ux_guard.assert_clean() fires in teardown
 
 
 def test_hotkey_with_window_id_fires_nsmenu(
-    driver, focus_monitor, activate_focus_monitor, ux_guard,
-    textedit_pid, textedit_wid
+    driver, focus_monitor, activate_focus_monitor, ux_guard, textedit_pid, textedit_wid
 ):
     """hotkey WITH window_id fires NSMenu key equivalents with zero UX violations.
 
@@ -136,11 +145,14 @@ def test_hotkey_with_window_id_fires_nsmenu(
     """
     count_before = len(_on_screen_doc_windows(driver, textedit_pid))
 
-    driver.call_tool("hotkey", {
-        "pid": textedit_pid,
-        "keys": ["cmd", "n"],
-        "window_id": textedit_wid,
-    })
+    driver.call_tool(
+        "hotkey",
+        {
+            "pid": textedit_pid,
+            "keys": ["cmd", "n"],
+            "window_id": textedit_wid,
+        },
+    )
     time.sleep(1.5)
 
     count_after = len(_on_screen_doc_windows(driver, textedit_pid))
@@ -150,11 +162,11 @@ def test_hotkey_with_window_id_fires_nsmenu(
         wins = _on_screen_doc_windows(driver, textedit_pid)
         for w in wins[count_before:]:
             wid = w["window_id"]
-            driver.call_tool("hotkey", {
-                "pid": textedit_pid, "keys": ["cmd", "w"], "window_id": wid})
+            driver.call_tool(
+                "hotkey", {"pid": textedit_pid, "keys": ["cmd", "w"], "window_id": wid}
+            )
             time.sleep(0.4)
-            driver.call_tool("press_key", {
-                "pid": textedit_pid, "key": "delete", "window_id": wid})
+            driver.call_tool("press_key", {"pid": textedit_pid, "key": "delete", "window_id": wid})
             time.sleep(0.3)
 
     assert count_after > count_before, (

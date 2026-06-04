@@ -111,10 +111,14 @@ class ClickPixelAxHitTestTests(unittest.TestCase):
         # hit-test cache. Force `som` (tree + screenshot, the shipped
         # default) so this assertion doesn't flap based on whatever
         # capture_mode the previous session left on disk.
-        set_mode = self.client.call_tool("set_config", {"key": "capture_mode", "value": "som"})
+        set_mode = self.client.call_tool(
+            "set_config", {"key": "capture_mode", "value": "som"}
+        )
         self.assertIsNone(set_mode.get("isError"), msg=set_mode)
 
-        launch = self.client.call_tool("launch_app", {"bundle_id": "com.apple.calculator"})
+        launch = self.client.call_tool(
+            "launch_app", {"bundle_id": "com.apple.calculator"}
+        )
         self.assertIsNone(launch.get("isError"), msg=launch)
         pid = launch["structuredContent"]["pid"]
 
@@ -125,7 +129,9 @@ class ClickPixelAxHitTestTests(unittest.TestCase):
         # Populate the snapshot cache so element_index paths work if
         # the test ever needs them; harmless for the pixel assertion.
         window_id = resolve_window_id(self.client, pid)
-        snap = self.client.call_tool("get_window_state", {"pid": pid, "window_id": window_id})
+        snap = self.client.call_tool(
+            "get_window_state", {"pid": pid, "window_id": window_id}
+        )
         self.assertIsNone(snap.get("isError"), msg=snap)
         scale = snap["structuredContent"].get("screenshot_scale_factor") or 1.0
 

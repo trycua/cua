@@ -48,7 +48,9 @@ CALC_DEFAULT_H = 408
 
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
+        subprocess.run(
+            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
+        )
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
@@ -141,15 +143,15 @@ class DoubleClickDeliveryTests(unittest.TestCase):
 
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert (
-                active == FOCUS_MONITOR_BUNDLE
-            ), f"Expected FocusMonitorApp frontmost, got {active}"
+            assert active == FOCUS_MONITOR_BUNDLE, (
+                f"Expected FocusMonitorApp frontmost, got {active}"
+            )
         losses = _read_focus_losses()
         assert losses == 0, f"Expected 0 focus losses at start, got {losses}"
 
     @classmethod
     def tearDownClass(cls) -> None:
-        if hasattr(cls, "_focus_proc"):
+        if hasattr(cls, '_focus_proc'):
             cls._focus_proc.terminate()
             try:
                 cls._focus_proc.wait(timeout=3)
@@ -172,14 +174,11 @@ class DoubleClickDeliveryTests(unittest.TestCase):
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn = _find_calc_button(tree, "All Clear") or _find_calc_button(tree, "Clear")
             if btn is not None:
-                c.call_tool(
-                    "click",
-                    {
-                        "pid": self._calc_pid,
-                        "window_id": window_id,
-                        "element_index": btn,
-                    },
-                )
+                c.call_tool("click", {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "element_index": btn,
+                })
                 time.sleep(0.3)
         subprocess.run(
             ["osascript", "-e", 'tell application "FocusMonitorApp" to activate'],
@@ -195,8 +194,7 @@ class DoubleClickDeliveryTests(unittest.TestCase):
             active = frontmost_bundle_id(c)
         print(f"  losses: {self._losses_before}->{losses}, frontmost: {active}")
         self.assertEqual(
-            active,
-            FOCUS_MONITOR_BUNDLE,
+            active, FOCUS_MONITOR_BUNDLE,
             f"Focus stolen — frontmost is {active}",
         )
 
@@ -204,25 +202,18 @@ class DoubleClickDeliveryTests(unittest.TestCase):
         """double_click via element_index on Calculator '2' button — no focus steal."""
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid, "window_id": window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             two_button = _find_calc_button(tree, "2")
             self.assertIsNotNone(two_button, "Could not locate Calculator's '2' AXButton")
 
-            result = c.call_tool(
-                "double_click",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "element_index": two_button,
-                },
-            )
+            result = c.call_tool("double_click", {
+                "pid": self._calc_pid,
+                "window_id": window_id,
+                "element_index": two_button,
+            })
             self.assertIsNone(result.get("isError"), msg=result)
             text = result.get("content", [{}])[0].get("text", "")
             print(f"\n  double_click result: {text}")
@@ -234,13 +225,9 @@ class DoubleClickDeliveryTests(unittest.TestCase):
         """double_click via pixel coords — no focus steal."""
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid, "window_id": window_id,
+            })
             sc = snap.get("structuredContent", snap)
             w = sc.get("screenshot_width", CALC_DEFAULT_W)
             h = sc.get("screenshot_height", CALC_DEFAULT_H)
@@ -248,15 +235,12 @@ class DoubleClickDeliveryTests(unittest.TestCase):
             bx, by = CALC_TWO_BUTTON_XY
             x = int(bx * w / CALC_DEFAULT_W)
             y = int(by * h / CALC_DEFAULT_H)
-            result = c.call_tool(
-                "double_click",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "x": x,
-                    "y": y,
-                },
-            )
+            result = c.call_tool("double_click", {
+                "pid": self._calc_pid,
+                "window_id": window_id,
+                "x": x,
+                "y": y,
+            })
             self.assertIsNone(result.get("isError"), msg=result)
             text = result.get("content", [{}])[0].get("text", "")
             print(f"\n  double_click pixel result: {text}")

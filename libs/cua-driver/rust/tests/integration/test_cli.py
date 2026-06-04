@@ -133,19 +133,14 @@ class ServeDaemonTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.binary = default_binary_path()
-        import os
-        import tempfile
-
+        import tempfile, os
         cls._sock_file = tempfile.mktemp(suffix=".sock", prefix="cua-driver-test-")
 
     def _start_daemon(self):
-        import subprocess
-        import time
-
+        import subprocess, time
         proc = subprocess.Popen(
             [self.binary, "serve", "--socket", self._sock_file],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         # Wait for daemon to bind.
         for _ in range(30):
@@ -157,7 +152,6 @@ class ServeDaemonTests(unittest.TestCase):
 
     def test_status_exits_1_when_no_daemon(self) -> None:
         import tempfile
-
         sock = tempfile.mktemp(suffix=".sock", prefix="cua-noexist-")
         r = _run([self.binary, "status", "--socket", sock])
         self.assertEqual(r.returncode, 1)
@@ -165,7 +159,6 @@ class ServeDaemonTests(unittest.TestCase):
 
     def test_stop_exits_1_when_no_daemon(self) -> None:
         import tempfile
-
         sock = tempfile.mktemp(suffix=".sock", prefix="cua-noexist2-")
         r = _run([self.binary, "stop", "--socket", sock])
         self.assertEqual(r.returncode, 1)
@@ -185,9 +178,7 @@ class ServeDaemonTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"stop stderr: {r.stderr}")
 
             # Status should now show not running.
-            import time
-
-            time.sleep(0.2)
+            import time; time.sleep(0.2)
             r = _run([self.binary, "status", "--socket", self._sock_file])
             self.assertEqual(r.returncode, 1)
         finally:
@@ -229,20 +220,17 @@ class ServeDaemonTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"stderr: {r.stderr}")
             data = json.loads(r.stdout)
             self.assertIn(
-                "screenshot_png_b64",
-                data,
+                "screenshot_png_b64", data,
                 "daemon-forwarded screenshot dropped the image — "
                 "merge into structuredContent regressed",
             )
             b64 = data["screenshot_png_b64"]
             self.assertGreater(
-                len(b64),
-                100,
+                len(b64), 100,
                 "screenshot base64 data seems too short — likely empty payload",
             )
             self.assertIn(
-                "screenshot_mime_type",
-                data,
+                "screenshot_mime_type", data,
                 "merge into structuredContent missed the mime-type key",
             )
         finally:

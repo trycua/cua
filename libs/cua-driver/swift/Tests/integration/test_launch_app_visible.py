@@ -29,8 +29,7 @@ def _on_screen_windows(driver, pid: int) -> list[dict]:
     result = driver.call_tool("list_windows", {"pid": pid})
     windows = result.get("structuredContent", {}).get("windows", [])
     return [
-        w
-        for w in windows
+        w for w in windows
         if w.get("is_on_screen")
         and (w.get("bounds", {}).get("width", 0) or 0) > 50
         and (w.get("bounds", {}).get("height", 0) or 0) > 50
@@ -40,20 +39,18 @@ def _on_screen_windows(driver, pid: int) -> list[dict]:
 def _pid_from_result(result: dict) -> int:
     """Extract pid from a launch_app result (structuredContent or text fallback)."""
     import re
-
     pid = result.get("structuredContent", {}).get("pid", 0)
     if pid:
         return pid
     for item in result.get("content", []):
         text = item.get("text", "")
-        m = re.search(r"\bpid\s+(\d+)", text)
+        m = re.search(r'\bpid\s+(\d+)', text)
         if m:
             return int(m.group(1))
     return 0
 
 
 # ── module-scoped setup ───────────────────────────────────────────────────────
-
 
 @pytest.fixture(scope="module", autouse=True)
 def _kill_test_apps():
@@ -68,7 +65,6 @@ def _kill_test_apps():
 
 
 # ── tests ─────────────────────────────────────────────────────────────────────
-
 
 def test_textedit_cold_launch_opens_visible_window(driver, focus_monitor, ux_guard):
     """launch_app(TextEdit) must open an on-screen window with 0 focus losses."""

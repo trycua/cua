@@ -16,16 +16,16 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import threading
 import time
-import urllib.request
+import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+import urllib.request
 
 import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_TESTS_DIR = os.path.dirname(_HERE)  # Tests/
-_DRIVER_ROOT = os.path.dirname(_TESTS_DIR)  # libs/cua-driver/
+_TESTS_DIR = os.path.dirname(_HERE)                        # Tests/
+_DRIVER_ROOT = os.path.dirname(_TESTS_DIR)                 # libs/cua-driver/
 
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_HERE, "harness"))
@@ -59,7 +59,6 @@ _ELECTRON_APP_DIR = os.path.join(_ASSETS_DIR, "electron")
 
 # ── binary ────────────────────────────────────────────────────────────────────
 
-
 @pytest.fixture(scope="session")
 def binary() -> str:
     return default_binary_path()
@@ -67,18 +66,15 @@ def binary() -> str:
 
 # ── driver ────────────────────────────────────────────────────────────────────
 
-
 @pytest.fixture
 def driver(binary):
     """Yield a started Driver instance."""
     from harness.driver import Driver
-
     with Driver(binary) as d:
         yield d
 
 
 # ── focus monitor ─────────────────────────────────────────────────────────────
-
 
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
@@ -146,12 +142,9 @@ def activate_focus_monitor(focus_monitor):
     """Re-activate FocusMonitorApp before each test (by pid)."""
     _, pid = focus_monitor
     subprocess.run(
-        [
-            "osascript",
-            "-e",
-            f'tell application "System Events" to set frontmost of '
-            f"(first process whose unix id is {pid}) to true",
-        ],
+        ["osascript", "-e",
+         f'tell application "System Events" to set frontmost of '
+         f'(first process whose unix id is {pid}) to true'],
         check=False,
     )
     time.sleep(0.4)
@@ -159,13 +152,11 @@ def activate_focus_monitor(focus_monitor):
 
 # ── UX guard ──────────────────────────────────────────────────────────────────
 
-
 @pytest.fixture
 def ux_guard(focus_monitor):
     """Start UXMonitor before the test, call assert_clean() after."""
     _, sentinel_pid = focus_monitor
     from harness.monitor import UXMonitor
-
     mon = UXMonitor(sentinel_pid=sentinel_pid)
     mon.start()
     yield mon
@@ -175,7 +166,6 @@ def ux_guard(focus_monitor):
 
 # ── local HTML server ─────────────────────────────────────────────────────────
 
-
 class _SilentHandler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -184,7 +174,9 @@ class _SilentHandler(SimpleHTTPRequestHandler):
 @pytest.fixture(scope="session")
 def html_server():
     """Serve the assets/ directory over HTTP; return base URL."""
-    handler = lambda *args, **kwargs: _SilentHandler(*args, directory=_ASSETS_DIR, **kwargs)
+    handler = lambda *args, **kwargs: _SilentHandler(
+        *args, directory=_ASSETS_DIR, **kwargs
+    )
     server = HTTPServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -194,7 +186,6 @@ def html_server():
 
 
 # ── download helpers ──────────────────────────────────────────────────────────
-
 
 def _download_and_extract(url: str, dest_dir: str, marker_path: str) -> None:
     if os.path.exists(marker_path):
@@ -218,7 +209,6 @@ def _download_binary(url: str, dest_path: str) -> None:
 
 
 # ── Tauri app ─────────────────────────────────────────────────────────────────
-
 
 @pytest.fixture(scope="session")
 def tauri_app():
@@ -249,7 +239,6 @@ def tauri_app():
 
 # ── Electron app ──────────────────────────────────────────────────────────────
 
-
 @pytest.fixture(scope="session")
 def electron_app(html_server):
     """Download, launch, and yield (proc, pid, base_url) for the Electron test app."""
@@ -278,8 +267,7 @@ def electron_app(html_server):
 
     out = subprocess.run(
         ["pgrep", "-f", "desktop-test-app-electron"],
-        capture_output=True,
-        text=True,
+        capture_output=True, text=True,
     ).stdout.strip()
     pid = int(out.split("\n")[0]) if out else 0
 

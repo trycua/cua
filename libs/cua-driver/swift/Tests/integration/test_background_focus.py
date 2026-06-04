@@ -39,7 +39,9 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
 _HTML_PAGE = os.path.join(_THIS_DIR, "fixtures", "interactive.html")
 _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_BUNDLE = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.app")
-_FOCUS_APP_EXE = os.path.join(_FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp")
+_FOCUS_APP_EXE = os.path.join(
+    _FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp"
+)
 _LOSS_FILE = "/tmp/focus_monitor_losses.txt"
 
 SAFARI_BUNDLE = "com.apple.Safari"
@@ -50,7 +52,6 @@ FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _tool_text(result: dict) -> str:
     """Extract text from a tool call result's content array."""
     for item in result.get("content", []):
@@ -58,10 +59,11 @@ def _tool_text(result: dict) -> str:
             return item.get("text", "")
     return ""
 
-
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
+        subprocess.run(
+            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
+        )
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
@@ -98,15 +100,12 @@ def _open_safari_to_html(client: DriverClient) -> int:
     document load back to whatever was frontmost before the call.
     """
     file_url = f"file://{_HTML_PAGE}"
-    result = client.call_tool(
-        "launch_app",
-        {
-            "bundle_id": SAFARI_BUNDLE,
-            "urls": [file_url],
-        },
-    )
+    result = client.call_tool("launch_app", {
+        "bundle_id": SAFARI_BUNDLE,
+        "urls": [file_url],
+    })
     text = _tool_text(result)
-    m = re.search(r"pid[=:\s]+(\d+)", text, re.IGNORECASE)
+    m = re.search(r'pid[=:\s]+(\d+)', text, re.IGNORECASE)
     if not m:
         raise RuntimeError(f"launch_app did not return a pid: {text[:200]}")
     time.sleep(2.0)  # let page load
@@ -116,7 +115,9 @@ def _open_safari_to_html(client: DriverClient) -> int:
 def _get_page_text(client: DriverClient, pid: int) -> str:
     """Return the AX tree markdown for Safari."""
     window_id = resolve_window_id(client, pid)
-    result = client.call_tool("get_window_state", {"pid": pid, "window_id": window_id})
+    result = client.call_tool(
+        "get_window_state", {"pid": pid, "window_id": window_id}
+    )
     return result.get("structuredContent", result).get("tree_markdown", "")
 
 
@@ -124,7 +125,7 @@ def _find_element_index(tree_markdown: str, label: str) -> int | None:
     """Extract the first [N] element index from a line containing `label`."""
     for line in tree_markdown.split("\n"):
         if label in line:
-            m = re.search(r"\[(\d+)\]", line)
+            m = re.search(r'\[(\d+)\]', line)
             if m:
                 return int(m.group(1))
     return None
@@ -142,25 +143,25 @@ def _find_calc_button(tree_markdown: str, label: str) -> int | None:
     for line in tree_markdown.split("\n"):
         if "AXButton" not in line:
             continue
-        m = re.search(r"\[(\d+)\]", line)
+        m = re.search(r'\[(\d+)\]', line)
         if not m:
             continue
         idx = int(m.group(1))
         # Match (Label) pattern — exact match in parens
-        if f"({label})" in line:
+        if f'({label})' in line:
             return idx
         # Also match help text
         if f'help="{label}' in line:
             return idx
         # Also match id=Label
-        if f"id={label}" in line:
+        if f'id={label}' in line:
             return idx
     return None
 
 
 def _extract_click_count(tree_markdown: str) -> int | None:
     """Extract the number from 'clicks: N' in the AX tree."""
-    m = re.search(r"clicks:\s*(\d+)", tree_markdown)
+    m = re.search(r'clicks:\s*(\d+)', tree_markdown)
     return int(m.group(1)) if m else None
 
 
@@ -176,7 +177,6 @@ def _activate_focus_monitor() -> None:
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
-
 
 class BackgroundFocusTests(unittest.TestCase):
     """Click & type into backgrounded Safari without stealing focus."""
@@ -210,9 +210,9 @@ class BackgroundFocusTests(unittest.TestCase):
         # Confirm FocusMonitorApp is frontmost.
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert (
-                active == FOCUS_MONITOR_BUNDLE
-            ), f"Expected FocusMonitorApp frontmost, got {active}"
+            assert active == FOCUS_MONITOR_BUNDLE, (
+                f"Expected FocusMonitorApp frontmost, got {active}"
+            )
 
         # Baseline: 0 focus losses.
         losses = _read_focus_losses()
@@ -229,8 +229,7 @@ class BackgroundFocusTests(unittest.TestCase):
         # Close the Safari tab we opened (best-effort)
         subprocess.run(
             [
-                "osascript",
-                "-e",
+                "osascript", "-e",
                 'tell application "Safari" to close (every tab of window 1 '
                 'whose URL contains "interactive.html")',
             ],
@@ -253,8 +252,7 @@ class BackgroundFocusTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             active = frontmost_bundle_id(c)
         self.assertEqual(
-            active,
-            FOCUS_MONITOR_BUNDLE,
+            active, FOCUS_MONITOR_BUNDLE,
             f"FocusMonitorApp not frontmost at test start, got {active}",
         )
 
@@ -269,17 +267,15 @@ class BackgroundFocusTests(unittest.TestCase):
         losses = _read_focus_losses()
         with DriverClient(self.binary) as c:
             active = frontmost_bundle_id(c)
-        focus_restored = active == FOCUS_MONITOR_BUNDLE
+        focus_restored = (active == FOCUS_MONITOR_BUNDLE)
         loss_delta = losses - self._losses_before
-        print(
-            f"  [{label}] losses: {self._losses_before}->{losses} "
-            f"(delta={loss_delta}), frontmost: {active}, "
-            f"restored: {focus_restored}"
-        )
+        print(f"  [{label}] losses: {self._losses_before}->{losses} "
+              f"(delta={loss_delta}), frontmost: {active}, "
+              f"restored: {focus_restored}")
         self.assertEqual(
-            active,
-            FOCUS_MONITOR_BUNDLE,
-            f"[{label}] Focus not restored — " f"frontmost is {active}, not FocusMonitorApp",
+            active, FOCUS_MONITOR_BUNDLE,
+            f"[{label}] Focus not restored — "
+            f"frontmost is {active}, not FocusMonitorApp",
         )
 
     # -- AX element_index click (pure AX action, no cursor move) -----------
@@ -288,28 +284,22 @@ class BackgroundFocusTests(unittest.TestCase):
         """AX-click the 'Click Me' button in backgrounded Safari."""
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._safari_pid)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._safari_pid,
-                    "window_id": window_id,
-                    "query": "Click Me",
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._safari_pid,
+                "window_id": window_id,
+                "query": "Click Me",
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"\n  filtered tree:\n{tree}")
 
             idx = _find_element_index(tree, "Click Me")
             self.assertIsNotNone(idx, "Could not find 'Click Me' button in AX tree")
 
-            result = c.call_tool(
-                "click",
-                {
-                    "pid": self._safari_pid,
-                    "window_id": window_id,
-                    "element_index": idx,
-                },
-            )
+            result = c.call_tool("click", {
+                "pid": self._safari_pid,
+                "window_id": window_id,
+                "element_index": idx,
+            })
             print(f"  click result: {result}")
 
         time.sleep(0.5)
@@ -332,14 +322,11 @@ class BackgroundFocusTests(unittest.TestCase):
         """
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._safari_pid)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._safari_pid,
-                    "window_id": window_id,
-                    "query": "AXTextField",
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._safari_pid,
+                "window_id": window_id,
+                "query": "AXTextField",
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"\n  filtered tree:\n{tree}")
 
@@ -347,23 +334,19 @@ class BackgroundFocusTests(unittest.TestCase):
             idx = None
             for line in tree.split("\n"):
                 if "AXTextField" in line and "smart search field" not in line:
-                    m = re.search(r"\[(\d+)\]", line)
+                    m = re.search(r'\[(\d+)\]', line)
                     if m:
                         idx = int(m.group(1))
                         break
 
             if idx is None:
-                snap = c.call_tool(
-                    "get_window_state",
-                    {
-                        "pid": self._safari_pid,
-                        "window_id": window_id,
-                    },
-                )
+                snap = c.call_tool("get_window_state", {
+                    "pid": self._safari_pid, "window_id": window_id,
+                })
                 tree = snap.get("structuredContent", snap).get("tree_markdown", "")
                 for line in tree.split("\n"):
                     if "AXTextField" in line and "smart search field" not in line:
-                        m = re.search(r"\[(\d+)\]", line)
+                        m = re.search(r'\[(\d+)\]', line)
                         if m:
                             idx = int(m.group(1))
                             break
@@ -372,24 +355,18 @@ class BackgroundFocusTests(unittest.TestCase):
             print(f"  text field element_index: {idx}")
 
             # Focus the text field via AX click first
-            c.call_tool(
-                "click",
-                {
-                    "pid": self._safari_pid,
-                    "window_id": window_id,
-                    "element_index": idx,
-                },
-            )
+            c.call_tool("click", {
+                "pid": self._safari_pid,
+                "window_id": window_id,
+                "element_index": idx,
+            })
             time.sleep(0.3)
 
             # Type via keystroke synthesis
-            result = c.call_tool(
-                "type_text_chars",
-                {
-                    "pid": self._safari_pid,
-                    "text": "hello bg",
-                },
-            )
+            result = c.call_tool("type_text_chars", {
+                "pid": self._safari_pid,
+                "text": "hello bg",
+            })
             print(f"  type_text_chars result: {result}")
 
         # Check if the text appears in the AX tree
@@ -398,7 +375,7 @@ class BackgroundFocusTests(unittest.TestCase):
             time.sleep(0.5)
             with DriverClient(self.binary) as c:
                 tree = _get_page_text(c, self._safari_pid)
-            has_text = "hello bg" in tree
+            has_text = ("hello bg" in tree)
             if has_text:
                 break
             print(f"  attempt {attempt+1}: text not yet visible in tree")
@@ -419,14 +396,11 @@ class BackgroundFocusTests(unittest.TestCase):
         """
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._safari_pid)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._safari_pid,
-                    "window_id": window_id,
-                    "query": "Click Me",
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._safari_pid,
+                "window_id": window_id,
+                "query": "Click Me",
+            })
             sc = snap.get("structuredContent", snap)
             width = sc.get("screenshot_width", 0)
             height = sc.get("screenshot_height", 0)
@@ -436,15 +410,12 @@ class BackgroundFocusTests(unittest.TestCase):
             y = int(height * 0.35)
             print(f"  pixel click at ({x}, {y})")
 
-            result = c.call_tool(
-                "click",
-                {
-                    "pid": self._safari_pid,
-                    "window_id": window_id,
-                    "x": x,
-                    "y": y,
-                },
-            )
+            result = c.call_tool("click", {
+                "pid": self._safari_pid,
+                "window_id": window_id,
+                "x": x,
+                "y": y,
+            })
             print(f"  click result: {result}")
 
         time.sleep(0.5)
@@ -455,13 +426,9 @@ class BackgroundFocusTests(unittest.TestCase):
     def test_04_press_key_tab(self) -> None:
         """Send Tab key to backgrounded Safari without stealing focus."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool(
-                "press_key",
-                {
-                    "pid": self._safari_pid,
-                    "key": "tab",
-                },
-            )
+            result = c.call_tool("press_key", {
+                "pid": self._safari_pid, "key": "tab",
+            })
             print(f"\n  press_key result: {result}")
 
         time.sleep(0.3)
@@ -509,9 +476,9 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
 
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert (
-                active == FOCUS_MONITOR_BUNDLE
-            ), f"Expected FocusMonitorApp frontmost, got {active}"
+            assert active == FOCUS_MONITOR_BUNDLE, (
+                f"Expected FocusMonitorApp frontmost, got {active}"
+            )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -539,14 +506,12 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             active = frontmost_bundle_id(c)
         loss_delta = losses - self._losses_before
-        print(
-            f"  [{label}] losses: {self._losses_before}->{losses} "
-            f"(delta={loss_delta}), frontmost: {active}"
-        )
+        print(f"  [{label}] losses: {self._losses_before}->{losses} "
+              f"(delta={loss_delta}), frontmost: {active}")
         self.assertEqual(
-            active,
-            FOCUS_MONITOR_BUNDLE,
-            f"[{label}] Focus not restored — " f"frontmost is {active}, not FocusMonitorApp",
+            active, FOCUS_MONITOR_BUNDLE,
+            f"[{label}] Focus not restored — "
+            f"frontmost is {active}, not FocusMonitorApp",
         )
 
     def test_01_ax_click_2_plus_2(self) -> None:
@@ -574,25 +539,19 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
 
             # Press 2 + 2 =
             for idx in [btn_2, btn_add, btn_2, btn_eq]:
-                c.call_tool(
-                    "click",
-                    {
-                        "pid": self._calc_pid,
-                        "window_id": window_id,
-                        "element_index": idx,
-                    },
-                )
+                c.call_tool("click", {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "element_index": idx,
+                })
                 time.sleep(0.3)
 
             # Read result
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "query": "AXStaticText",
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid,
+                "window_id": window_id,
+                "query": "AXStaticText",
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"  result tree:\n{tree}")
 
@@ -604,26 +563,19 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
             # Clear calculator first via AX (C button)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid, "window_id": window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn_c = _find_calc_button(tree, "Clear")
             if btn_c is None:
                 btn_c = _find_calc_button(tree, "All clear")
             if btn_c is not None:
-                c.call_tool(
-                    "click",
-                    {
-                        "pid": self._calc_pid,
-                        "window_id": window_id,
-                        "element_index": btn_c,
-                    },
-                )
+                c.call_tool("click", {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "element_index": btn_c,
+                })
                 time.sleep(0.3)
 
             # Re-activate focus monitor after the AX clear (may have stolen focus)
@@ -631,13 +583,9 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
             self._losses_before = _read_focus_losses()
 
             # Get fresh snapshot
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid, "window_id": window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             sc = snap.get("structuredContent", snap)
             width = sc.get("screenshot_width", 0)
@@ -648,24 +596,18 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
             self.assertIsNotNone(btn_5, "'5' button not found")
 
             # Use AX to click 5, verify it works
-            c.call_tool(
-                "click",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "element_index": btn_5,
-                },
-            )
+            c.call_tool("click", {
+                "pid": self._calc_pid,
+                "window_id": window_id,
+                "element_index": btn_5,
+            })
             time.sleep(0.3)
 
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "query": "AXStaticText",
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid,
+                "window_id": window_id,
+                "query": "AXStaticText",
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"  after AX click 5:\n{tree}")
             self.assertIn("5", tree, "AX click on '5' didn't register")
@@ -677,36 +619,25 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
             # Clear first
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid, "window_id": window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn_c = _find_calc_button(tree, "All Clear")
             if btn_c is None:
                 btn_c = _find_calc_button(tree, "Clear")
             if btn_c is not None:
-                c.call_tool(
-                    "click",
-                    {
-                        "pid": self._calc_pid,
-                        "window_id": window_id,
-                        "element_index": btn_c,
-                    },
-                )
+                c.call_tool("click", {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "element_index": btn_c,
+                })
                 time.sleep(0.3)
 
             # Find buttons for 3+4=
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid, "window_id": window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn_3 = _find_calc_button(tree, "3")
             btn_add = _find_calc_button(tree, "Add")
@@ -720,24 +651,18 @@ class CalculatorBackgroundClickTests(unittest.TestCase):
             self.assertIsNotNone(btn_eq, "'Equals' button not found")
 
             for idx in [btn_3, btn_add, btn_4, btn_eq]:
-                c.call_tool(
-                    "click",
-                    {
-                        "pid": self._calc_pid,
-                        "window_id": window_id,
-                        "element_index": idx,
-                    },
-                )
-                time.sleep(0.3)
-
-            snap = c.call_tool(
-                "get_window_state",
-                {
+                c.call_tool("click", {
                     "pid": self._calc_pid,
                     "window_id": window_id,
-                    "query": "AXStaticText",
-                },
-            )
+                    "element_index": idx,
+                })
+                time.sleep(0.3)
+
+            snap = c.call_tool("get_window_state", {
+                "pid": self._calc_pid,
+                "window_id": window_id,
+                "query": "AXStaticText",
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"  result tree:\n{tree}")
 

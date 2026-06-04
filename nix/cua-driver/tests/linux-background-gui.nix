@@ -52,6 +52,73 @@ let
   # up once it has been copied into the test derivation's $out.
   outputGif = "/tmp/cua-driver-linux-background-gui-${app}.gif";
 
+  # Per-app still screenshot + AT-SPI overlay PNGs. The raw PNG is a full-screen
+  # capture whose pixel coordinates align 1:1 with the AT-SPI screen-coordinate
+  # bounds (no translation), so the overlay can draw element boxes directly.
+  rawPng = "/tmp/cua-driver-linux-background-gui-${app}.png";
+  atspiPng = "/tmp/cua-driver-linux-background-gui-${app}-atspi.png";
+
+  # Reads /tmp/cua-elements.json and draws each element's screen-coordinate box
+  # + label onto a copy of the raw PNG via a single ImageMagick `convert`. If
+  # the element list is empty (or anything goes wrong) it just copies the raw
+  # PNG through, so an overlay hiccup never fails the job.
+  # stdlib-python overlay: reads the raw PNG + /tmp/cua-elements.json and shells
+  # out to ImageMagick `convert` to draw a red box + label per element, in a
+  # single invocation. Tolerant: on an empty list or ANY error it copies the raw
+  # PNG through, so the *-atspi.png artifact is always produced.
+  atspiOverlayPy = pkgs.writeText "cua-atspi-overlay.py" ''
+    import json, os, shutil, subprocess, sys
+
+    CONVERT = "${pkgs.imagemagick}/bin/convert"
+
+    def main():
+        raw, out = sys.argv[1], sys.argv[2]
+        elems_path = sys.argv[3] if len(sys.argv) > 3 else "/tmp/cua-elements.json"
+        if not (os.path.exists(raw) and os.path.getsize(raw) > 0):
+            return
+        try:
+            with open(elems_path) as f:
+                elems = json.load(f)
+        except Exception:
+            elems = []
+        if not isinstance(elems, list):
+            elems = []
+        argv = [CONVERT, raw]
+        drew = False
+        for e in elems:
+            try:
+                x = int(e["x"]); y = int(e["y"])
+                w = int(e["width"]); h = int(e["height"])
+                idx = e.get("element_index")
+            except Exception:
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            label = "%s (%d,%d %dx%d)" % (idx, x, y, w, h)
+            argv += ["-stroke", "red", "-fill", "none",
+                     "-draw", "rectangle %d,%d %d,%d" % (x, y, x + w, y + h)]
+            argv += ["-stroke", "none", "-fill", "red", "-pointsize", "12",
+                     "-annotate", "+%d+%d" % (x + 2, max(y + 12, 12)), label]
+            drew = True
+        if not drew:
+            shutil.copyfile(raw, out)
+            print("ATSPI_OVERLAY: no elements, copied raw -> " + out, flush=True)
+            return
+        argv.append(out)
+        try:
+            subprocess.run(argv, check=True)
+            print("ATSPI_OVERLAY: drew overlay -> " + out, flush=True)
+        except Exception as ex:
+            print("ATSPI_OVERLAY_ERROR: " + repr(ex), flush=True)
+            shutil.copyfile(raw, out)
+
+    if __name__ == "__main__":
+        try:
+            main()
+        except Exception as ex:
+            print("ATSPI_OVERLAY_FATAL: " + repr(ex), flush=True)
+  '';
+
   # Plain python3 (stdlib only) to drive the MCP JSON-RPC handshake in the test.
   # The driver now speaks AT-SPI natively over D-Bus (no pyatspi / GI typelibs),
   # so no accessibility Python packages are needed anywhere.
@@ -704,6 +771,46 @@ let
             print("READBACK_BEGIN", flush=True)
             print(readback, flush=True)
             print("READBACK_END", flush=True)
+
+            # READ-ONLY: pull the AT-SPI element bounds via get_window_state so
+            # we can draw an overlay PNG as a CI artifact. Tolerant — any
+            # failure here just yields an empty element list; it never affects
+            # the read-only assertions above.
+            elements = []
+            try:
+                send(proc, "tools/call", {
+                    "name": "get_window_state",
+                    "arguments": {
+                        "pid": target_pid,
+                        "window_id": target_xid,
+                    },
+                }, req_id=4)
+                ws = recv(proc)
+                result_obj = ws.get("result", {}) if isinstance(ws, dict) else {}
+                # The structured `elements` array lives in structuredContent;
+                # fall back to scanning any text content that carries JSON.
+                structured = result_obj.get("structuredContent") or {}
+                if isinstance(structured, dict) and isinstance(structured.get("elements"), list):
+                    elements = structured["elements"]
+                else:
+                    for c in result_obj.get("content", []):
+                        if c.get("type") == "text":
+                            try:
+                                obj = json.loads(c.get("text", ""))
+                            except Exception:
+                                continue
+                            if isinstance(obj, dict) and isinstance(obj.get("elements"), list):
+                                elements = obj["elements"]
+                                break
+            except Exception as e:
+                print("GET_WINDOW_STATE_ERROR: " + repr(e), flush=True)
+                elements = []
+            if not isinstance(elements, list):
+                elements = []
+            with open("/tmp/cua-elements.json", "w") as f:
+                json.dump(elements, f)
+            print("ELEMENTS_JSON: " + json.dumps(elements), flush=True)
+            print("ELEMENTS_COUNT: " + str(len(elements)), flush=True)
         finally:
             proc.stdin.close(); proc.terminate(); proc.wait(timeout=5)
 
@@ -752,6 +859,26 @@ let
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
         machine.execute("test -s ${outputGif}")
         machine.copy_from_machine("${outputGif}", "")
+
+        # Annotated screenshots (CI artifacts), produced BEFORE any assertion can
+        # fail and wrapped in execute() so a capture/drawing hiccup never fails
+        # the read-only job:
+        #   ${rawPng}            full-screen still (screen coords == AT-SPI bounds)
+        #   ${atspiPng}          raw + AT-SPI element boxes/labels overlay
+        # The downstream `som-annotate` job consumes the raw PNG to emit *-som.png.
+        machine.execute("${a11yEnv} ${pkgs.imagemagick}/bin/import -window root ${rawPng}")
+        machine.copy_from_host("${atspiOverlayPy}", "/tmp/cua-atspi-overlay.py")
+        st_ov, out_ov = machine.execute(
+            "${a11yEnv} ${pkgs.python3}/bin/python3 /tmp/cua-atspi-overlay.py "
+            "${rawPng} ${atspiPng} /tmp/cua-elements.json 2>&1"
+        )
+        machine.log(out_ov)
+        # Always emit both PNGs; fall back to copying the raw PNG if the overlay
+        # step produced nothing.
+        machine.execute("test -s ${atspiPng} || cp ${rawPng} ${atspiPng}")
+        machine.copy_from_machine("${rawPng}", "")
+        machine.copy_from_machine("${atspiPng}", "")
+
         # Lenient assertion: get_text returned a NON-error accessibility response.
         # Do NOT require any specific role (entry/text/...) — any content is fine.
         assert "GET_TEXT_OK" in result, (

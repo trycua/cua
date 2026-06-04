@@ -239,15 +239,15 @@ jobs:
         if: always() && matrix.visual
         run: |
           mkdir -p artifacts
-          find -L "${{ matrix.result_link }}/" -name '*.gif' -type f -exec cp {} artifacts/ \; 2>/dev/null || true
-          ls -la artifacts/ 2>/dev/null || echo "No GIF artifacts found"
+          find -L "${{ matrix.result_link }}/" \( -name '*.gif' -o -name '*.png' \) -type f -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -la artifacts/ 2>/dev/null || echo "No visual artifacts found"
 
       - name: Upload GIF artifacts
         if: always() && matrix.visual
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: artifacts/*.gif
+          path: artifacts/*
           if-no-files-found: warn
 
       - name: Sign and upload to Nix cache
@@ -294,10 +294,14 @@ jobs:
               'cua-driver-linux-background-gui-electron-zettlr',
               'cua-driver-linux-background-gui-electron-joplin',
               'cua-driver-linux-background-gui-electron-logseq',
+              'cua-driver-linux-som-overlays',
             ];
 
             let body = `${marker}\n## Linux visual regression artifacts\n\n`;
-            body += 'Matrix jobs now run independently. Download GIF artifacts from this workflow run:\n';
+            body += 'Matrix jobs now run independently. Download visual artifacts from this workflow run.\n';
+            body += 'Each background-GUI job uploads a `.gif` of the interaction plus two annotated PNGs ';
+            body += '(`<app>.png` raw, `<app>-atspi.png` with AT-SPI element boxes); ';
+            body += 'the `cua-driver-linux-som-overlays` artifact adds `<app>-som.png` cua Set-of-Marks overlays:\n';
             for (const artifactName of artifactNames) {
               body += `- \`${artifactName}\`\n`;
             }
@@ -328,3 +332,93 @@ jobs:
                 body,
               });
             }
+
+  # ── Set-of-Marks overlays ───────────────────────────────────────────────────
+  # Downstream aggregate job: consumes the raw `<app>.png` screenshots uploaded
+  # by the background-GUI matrix and emits `<app>-som.png` cua Set-of-Marks
+  # overlays. Deliberately OFF the hot path — `needs: [nix-checks]` + `if:
+  # always()` so it runs after the matrix regardless of pass/fail and never
+  # blocks it. NOTE: `pip install -e libs/python/som` pulls torch + ultralytics +
+  # easyocr (~GBs) and downloads model weights at first parse, so this job is
+  # the slow/expensive one; it is intentionally isolated from the build matrix.
+  som-annotate:
+    name: Annotate screenshots with cua Set-of-Marks
+    if: always()
+    needs: [nix-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download all run artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cua-som
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e libs/python/som
+
+      - name: Generate Set-of-Marks overlays
+        run: |
+          mkdir -p som-overlays
+          python - <<'PY'
+          import base64, glob, os, sys, traceback
+
+          # Collect raw background-GUI screenshots: <app>.png produced by the
+          # skeleton matrix. Exclude the AT-SPI overlays (-atspi) and any prior
+          # SoM outputs (-som). Artifacts land under downloaded-artifacts/<name>/.
+          candidates = []
+          for p in glob.glob("downloaded-artifacts/**/*-background-gui-*.png", recursive=True):
+              stem = os.path.basename(p)
+              if stem.endswith("-atspi.png") or stem.endswith("-som.png"):
+                  continue
+              candidates.append(p)
+          candidates = sorted(set(candidates))
+          print(f"Found {len(candidates)} raw screenshot(s) to annotate:", flush=True)
+          for p in candidates:
+              print(f"  {p}", flush=True)
+
+          if not candidates:
+              print("No raw screenshots found; nothing to annotate.", flush=True)
+              sys.exit(0)
+
+          from som import OmniParser
+          parser = OmniParser()
+
+          ok = 0
+          for p in candidates:
+              try:
+                  with open(p, "rb") as f:
+                      data = f.read()
+                  result = parser.parse(data)
+                  b64 = result.annotated_image_base64
+                  # Strip a possible data URL prefix before decoding.
+                  if "," in b64 and b64.strip().startswith("data:"):
+                      b64 = b64.split(",", 1)[1]
+                  out_name = os.path.splitext(os.path.basename(p))[0] + "-som.png"
+                  out_path = os.path.join("som-overlays", out_name)
+                  with open(out_path, "wb") as f:
+                      f.write(base64.b64decode(b64))
+                  print(f"OK  {p} -> {out_path}", flush=True)
+                  ok += 1
+              except Exception:
+                  print(f"FAIL {p}", flush=True)
+                  traceback.print_exc()
+          print(f"Annotated {ok}/{len(candidates)} screenshot(s).", flush=True)
+          PY
+          ls -la som-overlays/ 2>/dev/null || echo "No SoM overlays produced"
+
+      - name: Upload Set-of-Marks overlays
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-driver-linux-som-overlays
+          path: som-overlays/*-som.png
+          if-no-files-found: warn

@@ -73,7 +73,8 @@ const resolvedFetchUrl =
       try {
         const { execFileSync } = require('child_process');
         const status = execFileSync(
-          'curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--', twa.maskableIconUrl],
+          'curl',
+          ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--', twa.maskableIconUrl],
           { timeout: 10000 }
         )
           .toString()
@@ -81,7 +82,8 @@ const resolvedFetchUrl =
         if (status === '404') {
           const svgUrl = twa.maskableIconUrl.replace(/\.png$/, '.svg');
           const svgStatus = execFileSync(
-            'curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--', svgUrl],
+            'curl',
+            ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--', svgUrl],
             { timeout: 10000 }
           )
             .toString()

@@ -5,26 +5,9 @@
   "website": "https://godotengine.org",
   "download_url": "https://godotengine.org/download",
   "icon_url": "https://raw.githubusercontent.com/godotengine/godot/master/logo_outlined.svg",
-  "categories": [
-    "Game Engine",
-    "Game Development"
-  ],
-  "tags": [
-    "2D",
-    "3D",
-    "Open Source",
-    "Cross-Platform",
-    "GDScript",
-    "C#",
-    "C++"
-  ],
-  "os_support": [
-    "android",
-    "ios",
-    "linux",
-    "macos",
-    "windows"
-  ],
+  "categories": ["Game Engine", "Game Development"],
+  "tags": ["2D", "3D", "Open Source", "Cross-Platform", "GDScript", "C#", "C++"],
+  "os_support": ["android", "ios", "linux", "macos", "windows"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/godotengine/godot",

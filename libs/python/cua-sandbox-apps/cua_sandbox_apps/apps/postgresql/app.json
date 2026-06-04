@@ -4,9 +4,7 @@
   "description": "PostgreSQL is an advanced, open-source object-relational database management system (ORDBMS) with over 35 years of active development. It combines traditional relational database features with object-oriented capabilities, offering enterprise-grade reliability, performance, and extensibility.",
   "website": "https://www.postgresql.org",
   "icon_url": "https://www.postgresql.org/favicon.ico",
-  "categories": [
-    "Database"
-  ],
+  "categories": ["Database"],
   "tags": [
     "relational-database",
     "sql",
@@ -18,11 +16,7 @@
     "json",
     "full-text-search"
   ],
-  "os_support": [
-    "linux",
-    "windows",
-    "macos"
-  ],
+  "os_support": ["linux", "windows", "macos"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/postgres/postgres",

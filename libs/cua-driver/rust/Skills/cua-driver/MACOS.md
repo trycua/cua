@@ -23,15 +23,15 @@ is therefore forbidden unless the user **explicitly** asked for
 frontmost state:
 
 - **Every form of the `open` CLI — `open -a <App>`, `open -b
-  <bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
-  <url>` — always activates.** macOS routes all forms through
+<bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
+<url>` — always activates.** macOS routes all forms through
   LaunchServices, which unhides and foregrounds the target
   regardless of whether you passed an app name, a bundle id, a
   document, a URL, or the bundle path itself. The activation
   happens even when the only intent was "start the process."
   **Never use `open` for any app launch.** This includes launching
   a just-built .app from a local build dir (e.g. `open
-  build/Build/Products/Debug/MyApp.app`) — resolve the
+build/Build/Products/Debug/MyApp.app`) — resolve the
   `CFBundleIdentifier` from `Info.plist` and use `launch_app`
   with that id. See "The narrow carve-out" below for why
   `launch_app` is safe even when the app internally calls
@@ -64,7 +64,7 @@ frontmost state:
   delivered to a backgrounded pid via `hotkey`, the downstream app
   pulls focus. **For omnibox navigation specifically**, the correct
   path is `launch_app({bundle_id: "com.google.Chrome", urls:
-  ["https://…"]})` — no omnibox dance, no `⌘L`, no focus-steal. Do
+["https://…"]})` — no omnibox dance, no `⌘L`, no focus-steal. Do
   NOT try `set_value` on the omnibox: Chrome's commit logic requires
   a "user-typed" signal that neither an AX value write nor
   `CGEvent.postToPid` keystrokes supply from a backgrounded pid —
@@ -102,9 +102,9 @@ frontmost is true'`). Mutating it is not.
 **Corollary — the AXMenuBar rule.** `AXMenuBarItem` + AXPick
 dispatches at the AX layer regardless of which app is frontmost,
 but macOS's on-screen menu bar always belongs to the frontmost
-app. If you drive a *backgrounded* app's menu bar, the AX call
+app. If you drive a _backgrounded_ app's menu bar, the AX call
 succeeds but the viewer sees the dispatch rendered over the
-*frontmost* app's menu bar — confusing in any observed session and
+_frontmost_ app's menu bar — confusing in any observed session and
 routinely a silent no-op too, because action menu items go
 `DISABLED` when their owning app isn't the key window. **So: only
 use menu-bar navigation when the target is already frontmost.** For
@@ -126,16 +126,16 @@ is safe even for apps that normally foreground on media-load
 
 ## Intent → tool mapping (macOS-specific)
 
-| Intent | Use | Don't use |
-|---|---|---|
-| Open / launch an app | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})` | `open -a`, `osascript 'tell app … to launch/activate/open'` |
-| Find a pid | `list_apps` or `launch_app`'s return | `pgrep`, `ps`, `osascript frontmost` |
-| Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `osascript 'every window of app …'` |
-| Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `osascript`, `cliclick`, raw `CGEvent`, `open <url>` |
-| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag` |
-| Screenshot | `screenshot` or the PNG in `get_window_state` | `screencapture` |
-| Quit an app | ask the user first, then `hotkey({pid, keys:["cmd","q"]})` | `kill`, `killall`, `pkill` |
-| Hand a file/URL to an app | `launch_app({bundle_id, urls:[<path>]})` | `open -a <App> <path>`, `open <url>` |
+| Intent                                | Use                                                                                    | Don't use                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Open / launch an app                  | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})`                     | `open -a`, `osascript 'tell app … to launch/activate/open'` |
+| Find a pid                            | `list_apps` or `launch_app`'s return                                                   | `pgrep`, `ps`, `osascript frontmost`                        |
+| Enumerate an app's windows            | `list_windows({pid})` — or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
+| Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
+| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
+| Screenshot                            | `screenshot` or the PNG in `get_window_state`                                          | `screencapture`                                             |
+| Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
+| Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
 
 ### The narrow carve-out
 
@@ -193,6 +193,7 @@ the cases above, and you avoid the "type → AX-check succeeds → think
 the action landed → discover the lie three calls later" loop.
 
 Rule of thumb:
+
 - **`som`** — verifying an action landed (default).
 - **`ax`** — cheap element lookup before a click (you don't need the
   pixels, you need the `[N]` index).
@@ -363,11 +364,11 @@ functional and one perceptual:
 - **Functional:** menu items that touch document/playback/editor
   state go `DISABLED` when their owning app isn't the key window
   (Preview rotate, IINA speed change, most editor commands). AXPick
-  + AXPress will dispatch successfully from the driver's side but
-  no-op at the target — you get a silent false-pass.
+  - AXPress will dispatch successfully from the driver's side but
+    no-op at the target — you get a silent false-pass.
 - **Perceptual (matters for demos, screen recordings, and anything
   the user watches live):** macOS's screen-rendered menu bar
-  always belongs to the *frontmost* app. AXPick on a backgrounded
+  always belongs to the _frontmost_ app. AXPick on a backgrounded
   app's `AXMenuBarItem` dispatches to that app's per-process menu at
   the AX layer, but any visible menu render happens over the
   frontmost app's menu bar — the viewer sees an IINA submenu
@@ -377,9 +378,9 @@ functional and one perceptual:
   integrity bug even though it's not a correctness bug.
 
 **Good decision rule:** if the target is not already frontmost, do
-not use `AXMenuBarItem` at all. For *reading* in-window state,
+not use `AXMenuBarItem` at all. For _reading_ in-window state,
 snapshot the window AX tree — most apps expose the same state via
-an in-window `AXStaticText`, title bar, or toolbar. For *dispatching*
+an in-window `AXStaticText`, title bar, or toolbar. For _dispatching_
 actions, use in-window `element_index` (buttons, toolbar items) or
 pixel clicks on in-window controls — both dispatch via AppKit's
 window-under-pointer hit-test and are **not** frontmost-gated.
@@ -392,7 +393,7 @@ the canonical path for menus.
 Menu contents are a two-snapshot flow. Closed AXMenu subtrees are
 deliberately skipped during snapshot — otherwise every app's File /
 Edit / View hierarchy plus every Recent Items macOS has ever seen
-would inflate the tree 10-100x. But once a menu is *open*, its
+would inflate the tree 10-100x. But once a menu is _open_, its
 AXMenuItem children do receive `element_index` values so you can
 click them normally.
 
@@ -463,12 +464,12 @@ Apple Events" to be enabled — see `WEB_APPS.md` for the setup path.
   article text, or any raw text the AX tree truncates or omits.
 
 - `page({pid, window_id, action: "query_dom", css_selector: "a[href]",
-  attributes: ["href"]})` — runs `querySelectorAll` and returns each
+attributes: ["href"]})` — runs `querySelectorAll` and returns each
   match's tag, text, and requested attributes as a JSON array. Use for
   table rows, link hrefs, data attributes, structured page data.
 
 - `page({pid, window_id, action: "execute_javascript", javascript:
-  "..."})` — raw JS. Wrap in an IIFE with try-catch. Don't use this for
+"..."})` — raw JS. Wrap in an IIFE with try-catch. Don't use this for
   elements already indexed by `get_window_state` — `click` and
   `set_value` are more reliable there.
 
@@ -485,23 +486,23 @@ page data in the same turn.
 
 **Decision rule — AX vs JS:**
 
-| Need | Use |
-|---|---|
-| Click / type into an element | `get_window_state` → `click` / `set_value` (AX, works backgrounded) |
-| Read text the AX tree drops | `page(get_text)` or `get_window_state(javascript=)` |
-| Scrape structured data (tables, hrefs) | `page(query_dom)` |
-| Trigger JS events / mutations | `page(execute_javascript)` |
+| Need                                   | Use                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| Click / type into an element           | `get_window_state` → `click` / `set_value` (AX, works backgrounded) |
+| Read text the AX tree drops            | `page(get_text)` or `get_window_state(javascript=)`                 |
+| Scrape structured data (tables, hrefs) | `page(query_dom)`                                                   |
+| Trigger JS events / mutations          | `page(execute_javascript)`                                          |
 
 Supported backends:
 
-| App type | How | Context |
-|---|---|---|
-| Chrome / Brave / Edge | Apple Events `execute javascript` | Full DOM ✅ |
-| Safari | Apple Events `do JavaScript` | Full DOM ✅ |
-| Electron (VS Code, Cursor…) | SIGUSR1 → V8 inspector → CDP | Main process only: `process`, `Buffer` — no `document`, no `require` in sandboxed apps |
-| Electron (with `--remote-debugging-port`) | CDP page target | Full DOM ✅ |
+| App type                                  | How                               | Context                                                                                |
+| ----------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------- |
+| Chrome / Brave / Edge                     | Apple Events `execute javascript` | Full DOM ✅                                                                            |
+| Safari                                    | Apple Events `do JavaScript`      | Full DOM ✅                                                                            |
+| Electron (VS Code, Cursor…)               | SIGUSR1 → V8 inspector → CDP      | Main process only: `process`, `Buffer` — no `document`, no `require` in sandboxed apps |
+| Electron (with `--remote-debugging-port`) | CDP page target                   | Full DOM ✅                                                                            |
 
-**Electron sandbox note:** SIGUSR1 connects to the Node.js *main* process.
+**Electron sandbox note:** SIGUSR1 connects to the Node.js _main_ process.
 Sandboxed Electron apps (VS Code, Cursor) strip `require` and Electron
 APIs there. Useful for: `process.env`, `process.versions`, `process.cwd()`,
 `process.pid`. For full DOM/renderer access, launch the app with
@@ -513,11 +514,11 @@ Arc returns no values; Firefox has no JS-via-AppleEvents support — see
 
 ## macOS common error patterns
 
-| Error text | Meaning | Fix |
-|---|---|---|
+| Error text                                                    | Meaning                                                                                                           | Fix                                                                                                                                                                     |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section |
-| `Accessibility permission not granted` | TCC not granted | Stop; tell user to grant in System Settings |
-| `Screen Recording permission not granted` | TCC not granted for capture | Affects `screenshot` and `get_window_state` (which always captures). Grant in System Settings — the driver can't operate without it |
+| `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                             |
+| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Affects `screenshot` and `get_window_state` (which always captures). Grant in System Settings — the driver can't operate without it                                     |
 
 ## Example end-to-end task (macOS)
 
@@ -533,6 +534,6 @@ Arc returns no values; Firefox has no JS-via-AppleEvents support — see
    populated AX subtree (sidebar, list view, files).
 3. Done.
 
-If the user instead asks to navigate *within* an already-open Finder
+If the user instead asks to navigate _within_ an already-open Finder
 window, use the menu-bar flow from "Navigating native menu bars"
 above (click Go → pick a menu item → re-snapshot → click it).

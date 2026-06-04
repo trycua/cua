@@ -5,14 +5,14 @@ share fixtures via `../shared/scenarios.json` and (where relevant)
 `../shared/web/index.html` so AutomationIds, AX identifiers, and DOM
 ids never drift between the apps and the integration tests.
 
-| Path                          | Host OS         | What it tests                                                   |
-|-------------------------------|-----------------|-----------------------------------------------------------------|
-| `cross-platform/electron`     | any             | Electron + CDP — exercises cua-driver's `page` tool             |
-| `macos/appkit`                | macOS 13+       | AppKit / Cocoa hosting — NSButton, NSScrollView, NSMenu, etc.   |
-| `macos/swiftui`               | macOS 13+       | SwiftUI hosting — `.popover()`, declarative state               |
-| `windows/wpf`                 | Windows         | WPF / UIA — popups, layered windows, modal MessageBox, hwndhost |
-| `windows/winui3`              | Windows         | WinUI3 unpackaged — DComp popups, XAML Popup primitive          |
-| `windows/webview2`            | Windows         | Microsoft.Edge.WebView2 hosting the same DOM as Electron        |
+| Path                      | Host OS   | What it tests                                                   |
+| ------------------------- | --------- | --------------------------------------------------------------- |
+| `cross-platform/electron` | any       | Electron + CDP — exercises cua-driver's `page` tool             |
+| `macos/appkit`            | macOS 13+ | AppKit / Cocoa hosting — NSButton, NSScrollView, NSMenu, etc.   |
+| `macos/swiftui`           | macOS 13+ | SwiftUI hosting — `.popover()`, declarative state               |
+| `windows/wpf`             | Windows   | WPF / UIA — popups, layered windows, modal MessageBox, hwndhost |
+| `windows/winui3`          | Windows   | WinUI3 unpackaged — DComp popups, XAML Popup primitive          |
+| `windows/webview2`        | Windows   | Microsoft.Edge.WebView2 hosting the same DOM as Electron        |
 
 Built outputs land in `../../rust/test-apps/harness-{appkit,swiftui,wpf,winui3,webview,electron}/`
 via `../build/macos.sh` or `..\build\windows.ps1`. The Rust integration

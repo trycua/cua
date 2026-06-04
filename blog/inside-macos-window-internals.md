@@ -5,6 +5,7 @@ _Published on April 23, 2026 by Francesco Bonacci_
 ![Cua Driver — background any computer-use agent](https://github.com/user-attachments/assets/5e5acd7e-ac02-4f50-be76-0c997152d635)
 
 **TL;DR:**
+
 - `cua-driver` is an open-source macOS driver that lets any agent (Claude Code, Codex, your own harness) drive any Mac app in the background.
 - The user's cursor doesn't move, focus doesn't change, and macOS doesn't drag them across Spaces - this is called [background computer-use](https://x.com/embirico/status/2044833942856196378).
 - Built on SkyLight's `SLEventPostToPid`, a private AX SPI for sparse accessibility trees, and yabai's focus-without-raise pattern.
@@ -157,4 +158,4 @@ cua-driver launch_app '{"bundle_id":"com.apple.calculator"}'
 cua-driver click '{"pid":1234,"window_id":5678,"element_index":14}'
 ```
 
-Source and issues at [github.com/trycua/cua](https://github.com/trycua/cua). I'd especially love to hear how you end up using this. ***The weirdest use cases are the ones we haven't thought of yet.***
+Source and issues at [github.com/trycua/cua](https://github.com/trycua/cua). I'd especially love to hear how you end up using this. **_The weirdest use cases are the ones we haven't thought of yet._**

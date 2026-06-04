@@ -3,6 +3,7 @@
 Every tool call returns a ✅ checkmark + concise summary. No structured JSON output.
 
 ## screenshot
+
 ```
 ✅ Screenshot — 1920x1080 png
 
@@ -14,6 +15,7 @@ On-screen windows:
 ```
 
 ## get_window_state
+
 ```
 ✅ Blender — 11 elements, turn 3 + screenshot
 ⚠️  Small AX tree (11 elements) — this app likely uses custom rendering
@@ -27,11 +29,13 @@ On-screen windows:
 ```
 
 ## click
+
 ```
 ✅ Posted click to pid 6808.
 ```
 
 ## zoom
+
 ```
 ✅ Zoomed region captured at native resolution. To click a target in
 this image, use `click(pid, x, y, from_zoom=true)` where x,y are pixel

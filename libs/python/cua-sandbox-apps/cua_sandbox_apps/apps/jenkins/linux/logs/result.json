@@ -12,9 +12,7 @@
     "binary_name": "jenkins",
     "display_name": "Jenkins",
     "desktop_entry": null,
-    "icon_paths": [
-      "/tmp/tmp.DV9H59SEdP/jenkins_icon.svg"
-    ],
+    "icon_paths": ["/tmp/tmp.DV9H59SEdP/jenkins_icon.svg"],
     "version": "2.541.3"
   },
   "sandbox_name": "linux-92149267",
@@ -22,7 +20,5 @@
   "notes": "Successfully installed Jenkins 2.541.3 from official WAR package. Installation includes OpenJDK 17, Jenkins WAR file at /opt/jenkins/jenkins.war, systemd service configuration, and wrapper script at /usr/local/bin/jenkins. Jenkins runs on port 8080 and is fully operational, showing the initial setup/unlock page on startup. Icon successfully extracted from WAR archive.",
   "screenshot_verification": "PASS: Jenkins login screen is visibly open in Mozilla Firefox showing the \"Unlock Jenkins\" setup page with an Administrator password input field.",
   "verification_passed": true,
-  "extracted_icons": [
-    "cua_sandbox_apps\\apps\\jenkins\\linux\\logs\\icon-unknownxunknown.svg"
-  ]
+  "extracted_icons": ["cua_sandbox_apps\\apps\\jenkins\\linux\\logs\\icon-unknownxunknown.svg"]
 }

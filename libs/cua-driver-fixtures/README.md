@@ -7,12 +7,12 @@ their existing `Tests/integration/fixtures/` and `assets/` trees.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `interactive.html` | 31-line minimal click + type-mirror harness. Stable IDs: `#counter`, `#clicker`, `#textbox`, `#typed`. Used by `test_background_focus.py` (both ports) — opened via `file://`. |
-| `form_all_inputs.html` | Every HTML5 input type (text, password, email, number, tel, textarea, select, checkbox, radio, range, date, color). Submit handler stores result in `window._submitted`; live read via `getFieldValues()`. Used by `test_drag_slider_delivery.py`, `test_hermes_form_fill*.py`. |
-| `test_page.html` | Richer Safari/Chrome/Electron harness — button counter, text input, checkbox, dropdown, textarea, link, canvas. Served via local `html_server` HTTP fixture. Used by `test_chrome.py`, `test_safari.py`, `test_electron.py` (both ports). |
-| `gesture_panels.html` | **New** — extends the same ID-convention style as `test_page.html` with panels for the four gestures not currently covered by the v2 harness: hotkey + modifier-state propagation, pixel-coord pinpoint accuracy, drag-and-drop event sequence, scroll position. See **Why** below. |
+| File                   | Purpose                                                                                                                                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `interactive.html`     | 31-line minimal click + type-mirror harness. Stable IDs: `#counter`, `#clicker`, `#textbox`, `#typed`. Used by `test_background_focus.py` (both ports) — opened via `file://`.                                                                                                      |
+| `form_all_inputs.html` | Every HTML5 input type (text, password, email, number, tel, textarea, select, checkbox, radio, range, date, color). Submit handler stores result in `window._submitted`; live read via `getFieldValues()`. Used by `test_drag_slider_delivery.py`, `test_hermes_form_fill*.py`.     |
+| `test_page.html`       | Richer Safari/Chrome/Electron harness — button counter, text input, checkbox, dropdown, textarea, link, canvas. Served via local `html_server` HTTP fixture. Used by `test_chrome.py`, `test_safari.py`, `test_electron.py` (both ports).                                           |
+| `gesture_panels.html`  | **New** — extends the same ID-convention style as `test_page.html` with panels for the four gestures not currently covered by the v2 harness: hotkey + modifier-state propagation, pixel-coord pinpoint accuracy, drag-and-drop event sequence, scroll position. See **Why** below. |
 
 All four files are vanilla HTML — no external deps, no build step. Open
 directly in any browser:
@@ -94,7 +94,7 @@ Windows, the integration tests should be aware of:
 - **`hotkey` SendInput injection requires the daemon at UIAccess
   integrity.** Otherwise `SetForegroundWindow` is rejected and the
   injected events land on the wrong window — `SendInput inserted only 0
-  of 4 events`. Workaround: run `cua-driver` via the
+of 4 events`. Workaround: run `cua-driver` via the
   `cua-driver-uia.exe` worker (PR #1593) which carries the manifest.
 
 These are environmental requirements for any DOM-level verification of

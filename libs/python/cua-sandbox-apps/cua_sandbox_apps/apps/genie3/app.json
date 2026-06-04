@@ -4,11 +4,7 @@
   "description": "GEne Network Inference with Ensemble of trees - An R package for inferring gene regulatory networks from expression data using ensemble of decision trees",
   "website": "https://bioconductor.org/packages/release/bioc/html/GENIE3.html",
   "icon_url": "https://avatars.githubusercontent.com/u/3940817?v=4",
-  "categories": [
-    "Systems Biology",
-    "Bioinformatics",
-    "Network Analysis"
-  ],
+  "categories": ["Systems Biology", "Bioinformatics", "Network Analysis"],
   "tags": [
     "gene-networks",
     "regulatory-networks",
@@ -17,11 +13,7 @@
     "ensemble-trees",
     "network-inference"
   ],
-  "os_support": [
-    "linux",
-    "macos",
-    "windows"
-  ],
+  "os_support": ["linux", "macos", "windows"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/aertslab/GENIE3",

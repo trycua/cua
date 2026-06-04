@@ -5,6 +5,7 @@ _Published on May 27, 2026 by Francesco Bonacci_
 ![Cua Driver — background any computer-use agent](https://github.com/user-attachments/assets/0b0651b2-2c8c-4930-b0bb-3fd968f38800)
 
 **TL;DR:**
+
 - Cua Driver now supports Windows background computer-use for Claude Code, Codex, Hermes, and any MCP or CLI agent loop.
 - Windows was harder than macOS because one driver has to work across Win32, WPF, WinUI, UWP/WinRT, Electron, Chromium, legacy controls, and custom-rendered canvases.
 - The driver gives agents three things at once: window pixels, UIA/MSAA accessibility trees, and an action layer for clicks, typing, scrolling, values, and verification.

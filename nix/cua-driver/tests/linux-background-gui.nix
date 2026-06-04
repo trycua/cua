@@ -768,17 +768,21 @@ let
   # the toolkit class/name match first, then falls back to the launched PID's
   # window, then the newest visible window — so real apps that don't expose the
   # expected class still surface a window for the read-only drive.
-  windowFindCmd = ''
-    DISPLAY=:99 sh -c '
-      xid=$(xdotool search --sync --onlyvisible ${selected.windowMatch} 2>/dev/null | head -1)
-      if [ -z "$xid" ]; then
-        xid=$(xdotool search --all --pid $(cat /tmp/target-pid.txt) 2>/dev/null | head -1)
-      fi
-      if [ -z "$xid" ]; then
-        xid=$(xdotool search --onlyvisible "" 2>/dev/null | tail -1)
-      fi
-      test -n "$xid" && printf "%s" "$xid" >/tmp/target-xid.txt && test -s /tmp/target-xid.txt
-    '
+  # A store-path script (not an inline multi-line string): it is interpolated
+  # into the Python testScript as a single `machine.wait_until_succeeds("...")`
+  # argument. A multi-line shell snippet with embedded quotes/newlines would
+  # break that Python string literal (it did — every GUI job failed the
+  # testScript type-check). As a script path it is one safe token.
+  windowFindCmd = pkgs.writeShellScript "cua-window-find.sh" ''
+    export DISPLAY=:99
+    xid=$(${pkgs.xdotool}/bin/xdotool search --sync --onlyvisible ${selected.windowMatch} 2>/dev/null | head -1)
+    if [ -z "$xid" ]; then
+      xid=$(${pkgs.xdotool}/bin/xdotool search --all --pid "$(cat /tmp/target-pid.txt)" 2>/dev/null | head -1)
+    fi
+    if [ -z "$xid" ]; then
+      xid=$(${pkgs.xdotool}/bin/xdotool search --onlyvisible "" 2>/dev/null | tail -1)
+    fi
+    test -n "$xid" && printf "%s" "$xid" >/tmp/target-xid.txt && test -s /tmp/target-xid.txt
   '';
 
   # ── Skeleton (read-only) drive + assertions ─────────────────────────────────

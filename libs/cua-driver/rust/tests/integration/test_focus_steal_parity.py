@@ -217,7 +217,9 @@ class _FocusStealMixin:
         time.sleep(0.5)
         self.assertEqual(_frontmost_bundle_id(), self.PRIOR_BUNDLE)
 
-        result = self._launch({"bundle_id": "com.apple.Safari", "urls": ["about:blank"]})
+        result = self._launch(
+            {"bundle_id": "com.apple.Safari", "urls": ["about:blank"]}
+        )
         # NOTE: the Swift binary on macOS Sonoma+ fails this launch with
         # "The application 'Safari' could not be launched because it was
         # not found" — that's a Cryptex-app + URL-handoff regression on

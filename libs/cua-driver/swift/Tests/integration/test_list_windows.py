@@ -26,7 +26,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from driver_client import DriverClient, default_binary_path, reset_calculator
 
-
 CALCULATOR_BUNDLE = "com.apple.calculator"
 
 
@@ -37,9 +36,7 @@ class ListWindowsTests(unittest.TestCase):
         # Launch Calculator so we have at least one guaranteed window to
         # anchor the assertions on. launch_app is idempotent; it'll
         # return the pid whether or not Calculator was already running.
-        result = self.client.call_tool(
-            "launch_app", {"bundle_id": CALCULATOR_BUNDLE}
-        )
+        result = self.client.call_tool("launch_app", {"bundle_id": CALCULATOR_BUNDLE})
         self.calc_pid = result["structuredContent"]["pid"]
         time.sleep(0.5)
 
@@ -47,22 +44,24 @@ class ListWindowsTests(unittest.TestCase):
         self.client.__exit__(None, None, None)
 
     def _call_list_windows(self, **args):
-        return self.client.call_tool("list_windows", args)[
-            "structuredContent"
-        ]
+        return self.client.call_tool("list_windows", args)["structuredContent"]
 
     def test_default_returns_layer_zero_windows_with_new_field_names(self):
         body = self._call_list_windows()
         windows = body["windows"]
-        self.assertGreater(
-            len(windows), 0, "expected at least Calculator's window"
-        )
+        self.assertGreater(len(windows), 0, "expected at least Calculator's window")
 
         # Field contract — window_id / app_name / title are the user-facing
         # renames from WindowInfo.id / owner / name.
         required = {
-            "window_id", "pid", "app_name", "title", "bounds",
-            "layer", "z_index", "is_on_screen",
+            "window_id",
+            "pid",
+            "app_name",
+            "title",
+            "bounds",
+            "layer",
+            "z_index",
+            "is_on_screen",
         }
         for w in windows:
             self.assertTrue(
@@ -80,9 +79,7 @@ class ListWindowsTests(unittest.TestCase):
     def test_pid_filter_narrows_to_one_pid(self):
         body = self._call_list_windows(pid=self.calc_pid)
         windows = body["windows"]
-        self.assertGreater(
-            len(windows), 0, "Calculator should have at least one window"
-        )
+        self.assertGreater(len(windows), 0, "Calculator should have at least one window")
         self.assertTrue(
             all(w["pid"] == self.calc_pid for w in windows),
             "pid filter leaked other pids into the result",
@@ -94,9 +91,7 @@ class ListWindowsTests(unittest.TestCase):
 
     def test_on_screen_only_drops_off_screen_entries(self):
         everything = self._call_list_windows()["windows"]
-        only_visible = self._call_list_windows(on_screen_only=True)[
-            "windows"
-        ]
+        only_visible = self._call_list_windows(on_screen_only=True)["windows"]
 
         # The visible subset should never exceed the full set.
         self.assertLessEqual(len(only_visible), len(everything))

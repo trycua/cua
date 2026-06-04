@@ -118,6 +118,7 @@ warn_unused_ignores = false
 [tool.isort]
 profile = "black"
 py_version = 312
+known_first_party = ["cua"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

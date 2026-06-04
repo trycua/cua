@@ -390,7 +390,7 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
                     key = f"docs_db/docs.lance/{fpath.relative_to(lance_dir)}"
                     s3.upload_file(str(fpath), bucket, key)
                     uploaded += 1
-            print(f"  Uploaded docs LanceDB directory")
+            print("  Uploaded docs LanceDB directory")
 
     # --- code databases ---
     code_db_dir = Path(CODE_DB_PATH)
@@ -411,7 +411,7 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
                     key = f"code_db/code_index.lancedb/{fpath.relative_to(code_lance)}"
                     s3.upload_file(str(fpath), bucket, key)
                     uploaded += 1
-            print(f"  Uploaded code LanceDB directory")
+            print("  Uploaded code LanceDB directory")
 
     print(f"S3 sync complete: {uploaded} files uploaded to s3://{bucket}/")
     return {"bucket": bucket, "files_uploaded": uploaded}

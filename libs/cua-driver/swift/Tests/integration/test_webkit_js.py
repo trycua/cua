@@ -27,12 +27,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from driver_client import DriverClient, default_binary_path
 
 CONDUCTOR_BUNDLE = "com.conductor.app"
-CONDUCTOR_PATH   = "/Applications/Conductor.app"
+CONDUCTOR_PATH = "/Applications/Conductor.app"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _tool_text(result: dict) -> str:
     for item in result.get("content", []):
@@ -48,13 +49,14 @@ def _conductor_installed() -> bool:
 def _kill_conductor() -> None:
     subprocess.run(
         ["osascript", "-e", 'tell application "Conductor" to quit'],
-        check=False, timeout=5,
+        check=False,
+        timeout=5,
     )
     time.sleep(1)
 
 
 def _find_pid(text: str) -> int | None:
-    m = re.search(r'pid[=:\s]+(\d+)', text, re.IGNORECASE)
+    m = re.search(r"pid[=:\s]+(\d+)", text, re.IGNORECASE)
     return int(m.group(1)) if m else None
 
 
@@ -63,20 +65,21 @@ def _main_window(client: DriverClient, pid: int) -> int | None:
     text = _tool_text(client.call_tool("list_windows", {"pid": pid}))
     for line in text.splitlines():
         if "on_screen=True" in line or "is_on_screen=True" in line:
-            m = re.search(r'\[window_id:\s*(\d+)\]', line)
+            m = re.search(r"\[window_id:\s*(\d+)\]", line)
             if m:
                 return int(m.group(1))
     # Fall back to any titled window
     m = re.search(r'"[^"]+"\s+\[window_id:\s*(\d+)\]', text)
     if m:
         return int(m.group(1))
-    m = re.search(r'\[window_id:\s*(\d+)\]', text)
+    m = re.search(r"\[window_id:\s*(\d+)\]", text)
     return int(m.group(1)) if m else None
 
 
 # ---------------------------------------------------------------------------
 # Conductor / Tauri AX fallback tests
 # ---------------------------------------------------------------------------
+
 
 @unittest.skipUnless(_conductor_installed(), "Conductor not installed")
 class WebKitJSTests(unittest.TestCase):
@@ -124,12 +127,15 @@ class WebKitJSTests(unittest.TestCase):
     def test_13_execute_javascript_returns_clear_error_for_wkwebview(self) -> None:
         """execute_javascript on a WKWebView app returns a clear error."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._pid,
-                "window_id": self._window_id,
-                "action": "execute_javascript",
-                "javascript": "document.title",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._pid,
+                    "window_id": self._window_id,
+                    "action": "execute_javascript",
+                    "javascript": "document.title",
+                },
+            )
         self.assertTrue(result.get("isError"), "Expected isError=True for WKWebView JS")
         text = _tool_text(result)
         self.assertIn("WKWebView", text)
@@ -142,11 +148,14 @@ class WebKitJSTests(unittest.TestCase):
     def test_11_ax_get_text_works_without_inspector(self) -> None:
         """get_text returns page text via AX tree (no inspector needed)."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._pid,
-                "window_id": self._window_id,
-                "action": "get_text",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._pid,
+                    "window_id": self._window_id,
+                    "action": "get_text",
+                },
+            )
         self.assertFalse(result.get("isError"), _tool_text(result))
         text = _tool_text(result)
         self.assertTrue(len(text.strip()) > 0, "get_text returned empty content")
@@ -158,19 +167,22 @@ class WebKitJSTests(unittest.TestCase):
     def test_12_ax_query_dom_buttons(self) -> None:
         """query_dom for button elements returns AX tree results."""
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": self._pid,
-                "window_id": self._window_id,
-                "action": "query_dom",
-                "css_selector": "button",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": self._pid,
+                    "window_id": self._window_id,
+                    "action": "query_dom",
+                    "css_selector": "button",
+                },
+            )
         text = _tool_text(result)
         self.assertNotIn("Traceback", text)
         # Either found buttons (role key) or returned empty — both are valid
         if not result.get("isError"):
             self.assertTrue(
                 "AXButton" in text or "role" in text or "[]" in text,
-                f"Unexpected query_dom output: {text[:200]}"
+                f"Unexpected query_dom output: {text[:200]}",
             )
 
     # -----------------------------------------------------------------------
@@ -186,7 +198,7 @@ class WebKitJSTests(unittest.TestCase):
         chrome_pid = None
         for line in text.splitlines():
             if "com.google.Chrome" in line:
-                m = re.search(r'pid[=:\s]+(\d+)', line, re.IGNORECASE)
+                m = re.search(r"pid[=:\s]+(\d+)", line, re.IGNORECASE)
                 if m:
                     chrome_pid = int(m.group(1))
                     break
@@ -197,22 +209,24 @@ class WebKitJSTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             windows_text = _tool_text(c.call_tool("list_windows", {"pid": chrome_pid}))
 
-        m = re.search(r'\[window_id:\s*(\d+)\]', windows_text)
+        m = re.search(r"\[window_id:\s*(\d+)\]", windows_text)
         if not m:
             self.skipTest("No Chrome window found")
         window_id = int(m.group(1))
 
         with DriverClient(self.binary) as c:
-            result = c.call_tool("page", {
-                "pid": chrome_pid,
-                "window_id": window_id,
-                "action": "execute_javascript",
-                "javascript": "1+1",
-            })
+            result = c.call_tool(
+                "page",
+                {
+                    "pid": chrome_pid,
+                    "window_id": window_id,
+                    "action": "execute_javascript",
+                    "javascript": "1+1",
+                },
+            )
         text = _tool_text(result)
         self.assertNotIn(
-            "WKWebView", text,
-            f"Chrome was incorrectly detected as WKWebView app: {text[:200]}"
+            "WKWebView", text, f"Chrome was incorrectly detected as WKWebView app: {text[:200]}"
         )
 
 

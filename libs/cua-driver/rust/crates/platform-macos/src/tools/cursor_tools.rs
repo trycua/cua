@@ -36,7 +36,9 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
             }
         }
     }
-    NO_CURSOR.to_owned()
+    // Backwards compatibility: when no session is provided, use "default"
+    // instead of NO_CURSOR so overlay still works for legacy clients
+    "default".to_owned()
 }
 
 // ── SetAgentCursorEnabled ─────────────────────────────────────────────────────

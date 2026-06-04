@@ -138,10 +138,10 @@ pub(crate) const NO_CURSOR: &str = "";
 ///
 /// A cursor is tied to a **caller-declared session**, never to the MCP
 /// connection. Precedence: an explicit `session` arg, then its legacy alias
-/// `cursor_id`. We deliberately do NOT fall back to the connection-injected
-/// `_session_id` or to a seeded `"default"` cursor — `""` means "no session
-/// declared → no cursor", while the underlying action (click/type/…) still
-/// executes. Mirrors `platform_macos::tools::cursor_tools::resolve_cursor_key`
+/// `cursor_id`. For backwards compatibility, when no session is provided, we
+/// default to "default" instead of NO_CURSOR so the overlay continues to work
+/// for legacy clients that don't pass session parameters.
+/// Mirrors `platform_macos::tools::cursor_tools::resolve_cursor_key`
 /// so the two platforms key cursors identically.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     for key in ["session", "cursor_id"] {
@@ -151,7 +151,9 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
             }
         }
     }
-    NO_CURSOR.to_owned()
+    // Backwards compatibility: when no session is provided, use "default"
+    // instead of NO_CURSOR so overlay still works for legacy clients
+    "default".to_owned()
 }
 
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────

@@ -1171,10 +1171,8 @@ async def agent_response_endpoint(
                 #
                 # See: https://github.com/trycua/cua/issues/1605
                 import unicodedata
-                if (
-                    len(key) == 1
-                    and unicodedata.category(key) not in ("Cc", "Cs", "Cn")
-                ):
+
+                if len(key) == 1 and unicodedata.category(key) not in ("Cc", "Cs", "Cn"):
                     await self._auto.type_text(key)
                 else:
                     await self._auto.press_key(key)

@@ -33,7 +33,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from driver_client import DriverClient, default_binary_path, reset_calculator
 
-
 CALCULATOR_BUNDLE = "com.apple.calculator"
 
 
@@ -52,12 +51,8 @@ class HiddenAppCaptureTests(unittest.TestCase):
 
     def test_hidden_window_appears_in_list_windows(self) -> None:
         """launch_app → window appears in list_windows even if off-screen."""
-        result = self.client.call_tool(
-            "launch_app", {"bundle_id": CALCULATOR_BUNDLE}
-        )
-        self.assertFalse(
-            result.get("isError"), f"launch_app failed: {result}"
-        )
+        result = self.client.call_tool("launch_app", {"bundle_id": CALCULATOR_BUNDLE})
+        self.assertFalse(result.get("isError"), f"launch_app failed: {result}")
         pid = result["structuredContent"]["pid"]
         self.assertIsInstance(pid, int)
         self.assertGreater(pid, 0)
@@ -66,9 +61,7 @@ class HiddenAppCaptureTests(unittest.TestCase):
         time.sleep(1.0)
 
         # list_windows (no filter) must include Calculator's window.
-        all_windows = self.client.call_tool("list_windows", {})[
-            "structuredContent"
-        ]["windows"]
+        all_windows = self.client.call_tool("list_windows", {})["structuredContent"]["windows"]
         calc_windows = [w for w in all_windows if w["pid"] == pid]
         self.assertGreater(
             len(calc_windows),
@@ -84,20 +77,16 @@ class HiddenAppCaptureTests(unittest.TestCase):
 
     def test_screenshot_succeeds_for_hidden_window(self) -> None:
         """screenshot tool captures the backing store even when is_on_screen=false."""
-        result = self.client.call_tool(
-            "launch_app", {"bundle_id": CALCULATOR_BUNDLE}
-        )
+        result = self.client.call_tool("launch_app", {"bundle_id": CALCULATOR_BUNDLE})
         self.assertFalse(result.get("isError"), f"launch_app failed: {result}")
         pid = result["structuredContent"]["pid"]
         time.sleep(1.0)
 
         # Grab a window_id for Calculator.
-        windows_result = self.client.call_tool("list_windows", {"pid": pid})[
-            "structuredContent"
-        ]["windows"]
-        self.assertGreater(
-            len(windows_result), 0, "No windows found for Calculator"
-        )
+        windows_result = self.client.call_tool("list_windows", {"pid": pid})["structuredContent"][
+            "windows"
+        ]
+        self.assertGreater(len(windows_result), 0, "No windows found for Calculator")
         window_id = windows_result[0]["window_id"]
 
         # screenshot must succeed regardless of is_on_screen.

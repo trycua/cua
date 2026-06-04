@@ -9,23 +9,24 @@ Run: python3 -m pytest test_chrome.py -v
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 import time
-import os
 
 import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from harness.driver import Driver
 from harness import tree as Tree
+from harness.driver import Driver
 
 
 def _parse_clicks(tree_text: str) -> int:
-    m = re.search(r'clicks:\s*(\d+)', tree_text)
+    m = re.search(r"clicks:\s*(\d+)", tree_text)
     return int(m.group(1)) if m else 0
+
 
 CHROME_BUNDLE = "com.google.Chrome"
 FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
@@ -70,8 +71,11 @@ def chrome_pid(binary, html_server, focus_monitor):
     # Hand focus to FocusMonitorApp by pid to avoid activating stale instances
     _, fm_pid = focus_monitor
     subprocess.run(
-        ["osascript", "-e",
-         f'tell application "System Events" to set frontmost of (first process whose unix id is {fm_pid}) to true'],
+        [
+            "osascript",
+            "-e",
+            f'tell application "System Events" to set frontmost of (first process whose unix id is {fm_pid}) to true',
+        ],
         check=False,
     )
     time.sleep(0.5)
@@ -86,8 +90,11 @@ def chrome_pid(binary, html_server, focus_monitor):
 def _reactivate_focus(focus_monitor):
     _, pid = focus_monitor
     subprocess.run(
-        ["osascript", "-e",
-         f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true'],
+        [
+            "osascript",
+            "-e",
+            f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true',
+        ],
         check=False,
     )
     time.sleep(0.4)
@@ -95,13 +102,16 @@ def _reactivate_focus(focus_monitor):
 
 # ── tests ─────────────────────────────────────────────────────────────────────
 
+
 class TestChromeButton:
     def test_click_increments_counter(self, driver, chrome_pid, ux_guard):
         wid = driver.find_window(chrome_pid)
 
         full = driver.get_window_state(chrome_pid, wid)
         idx = full.find_element("Click Me")
-        assert idx is not None, f"'Click Me' not found in tree (first 800 chars):\n{full.tree[:800]}"
+        assert (
+            idx is not None
+        ), f"'Click Me' not found in tree (first 800 chars):\n{full.tree[:800]}"
         count_before = _parse_clicks(full.tree)
 
         driver.click(chrome_pid, wid, element_index=idx)
@@ -110,7 +120,9 @@ class TestChromeButton:
         after = driver.get_window_state(chrome_pid, wid)
         count_after = _parse_clicks(after.tree)
         print(f"\n  click counter: {count_before} → {count_after}")
-        assert count_after == count_before + 1, f"Counter did not increment: {count_before} → {count_after}"
+        assert (
+            count_after == count_before + 1
+        ), f"Counter did not increment: {count_before} → {count_after}"
 
     def test_click_increments_twice(self, driver, chrome_pid, ux_guard):
         wid = driver.find_window(chrome_pid)
@@ -127,7 +139,9 @@ class TestChromeButton:
         after = driver.get_window_state(chrome_pid, wid)
         count_after = _parse_clicks(after.tree)
         print(f"\n  click counter: {count_before} → {count_after}")
-        assert count_after == count_before + 2, f"Counter should have incremented by 2: {count_before} → {count_after}"
+        assert (
+            count_after == count_before + 2
+        ), f"Counter should have incremented by 2: {count_before} → {count_after}"
 
 
 class TestChromeTextInput:
@@ -160,6 +174,7 @@ class TestChromeCanvas:
         assert mid.screenshot_b64, "No screenshot"
 
         from harness.cv import decode, diff_ratio
+
         before_img = decode(mid.screenshot_b64)
 
         x = mid.screenshot_width // 2

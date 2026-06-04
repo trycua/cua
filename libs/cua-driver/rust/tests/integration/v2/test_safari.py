@@ -13,32 +13,30 @@ asserts that focus never returned to Safari during the interaction.
 
 from __future__ import annotations
 
-import os
-import re
 import subprocess
 import sys
 import time
+import os
 
+import re
 import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from harness import tree as Tree
 from harness.driver import Driver
+from harness import tree as Tree
 
 
 def _parse_clicks(tree_text: str) -> int:
     """Extract the 'clicks: N' counter value from the AX tree."""
-    m = re.search(r"clicks:\s*(\d+)", tree_text)
+    m = re.search(r'clicks:\s*(\d+)', tree_text)
     return int(m.group(1)) if m else 0
-
 
 SAFARI_BUNDLE = "com.apple.Safari"
 FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 
 
 # ── module-level Safari setup ─────────────────────────────────────────────────
-
 
 @pytest.fixture(scope="module")
 def safari_pid(binary, html_server, focus_monitor):
@@ -70,11 +68,8 @@ def _reactivate_focus(focus_monitor):
     """Restore FocusMonitorApp as frontmost before each test (by pid)."""
     _, pid = focus_monitor
     subprocess.run(
-        [
-            "osascript",
-            "-e",
-            f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true',
-        ],
+        ["osascript", "-e",
+         f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true'],
         check=False,
     )
     time.sleep(0.4)
@@ -82,14 +77,12 @@ def _reactivate_focus(focus_monitor):
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-
 def _get_state(d: Driver, pid: int, safari_pid_fixture) -> "harness.driver.WindowState":
     wid = d.find_window(pid)
     return d.get_window_state(pid, wid)
 
 
 # ── tests ─────────────────────────────────────────────────────────────────────
-
 
 class TestSafariButton:
     """AX-click the 'Click Me' button without stealing focus."""
@@ -109,9 +102,9 @@ class TestSafariButton:
         after = driver.get_window_state(safari_pid, wid)
         count_after = _parse_clicks(after.tree)
         print(f"\n  click counter: {count_before} → {count_after}")
-        assert (
-            count_after == count_before + 1
-        ), f"Counter did not increment: {count_before} → {count_after}"
+        assert count_after == count_before + 1, (
+            f"Counter did not increment: {count_before} → {count_after}"
+        )
 
     def test_click_increments_twice(self, driver, safari_pid, ux_guard):
         wid = driver.find_window(safari_pid)
@@ -130,9 +123,9 @@ class TestSafariButton:
         after = driver.get_window_state(safari_pid, wid)
         count_after = _parse_clicks(after.tree)
         print(f"\n  click counter: {count_before} → {count_after}")
-        assert (
-            count_after == count_before + 2
-        ), f"Counter should have incremented by 2: {count_before} → {count_after}"
+        assert count_after == count_before + 2, (
+            f"Counter should have incremented by 2: {count_before} → {count_after}"
+        )
 
 
 class TestSafariTextInput:
@@ -157,7 +150,9 @@ class TestSafariTextInput:
         time.sleep(0.6)
 
         after = driver.get_window_state(safari_pid, wid)
-        assert after.has_text("hello safari"), f"Typed text not visible in AX tree:\n{after.tree}"
+        assert after.has_text("hello safari"), (
+            f"Typed text not visible in AX tree:\n{after.tree}"
+        )
 
     def test_type_text_with_type_text_tool(self, driver, safari_pid, ux_guard):
         """Use type_text (not type_text_chars) and verify result."""
@@ -177,7 +172,9 @@ class TestSafariTextInput:
         time.sleep(0.6)
 
         after = driver.get_window_state(safari_pid, wid)
-        assert after.has_text("type_text test"), f"type_text result not in AX tree:\n{after.tree}"
+        assert after.has_text("type_text test"), (
+            f"type_text result not in AX tree:\n{after.tree}"
+        )
 
 
 class TestSafariCheckbox:
@@ -197,7 +194,9 @@ class TestSafariCheckbox:
         time.sleep(0.4)
 
         after = driver.get_window_state(safari_pid, wid)
-        assert after.has_text("checked"), f"Checkbox did not toggle to checked:\n{after.tree}"
+        assert after.has_text("checked"), (
+            f"Checkbox did not toggle to checked:\n{after.tree}"
+        )
 
 
 class TestSafariSelect:
@@ -224,21 +223,16 @@ class TestSafariSelect:
             driver.click(safari_pid, wid, element_index=opt_b)
         else:
             # Fallback: set value directly
-            driver.call_tool(
-                "set_value",
-                {
-                    "pid": safari_pid,
-                    "window_id": wid,
-                    "element_index": idx,
-                    "value": "b",
-                },
-            )
+            driver.call_tool("set_value", {
+                "pid": safari_pid, "window_id": wid,
+                "element_index": idx, "value": "b",
+            })
         time.sleep(0.4)
 
         after = driver.get_window_state(safari_pid, wid)
-        assert after.has_text("Option B") or after.has_text(
-            "selected: Option B"
-        ), f"Dropdown did not select Option B:\n{after.tree}"
+        assert after.has_text("Option B") or after.has_text("selected: Option B"), (
+            f"Dropdown did not select Option B:\n{after.tree}"
+        )
 
 
 class TestSafariTextarea:
@@ -268,22 +262,19 @@ class TestSafariTextarea:
         time.sleep(0.8)  # longer settle for WKWebView textarea focus
 
         # Step 3: type — keystrokes go to the focused element
-        driver.call_tool(
-            "type_text_chars",
-            {
-                "pid": safari_pid,
-                "text": "multi line",
-                "delay_ms": 50,
-            },
-        )
+        driver.call_tool("type_text_chars", {
+            "pid": safari_pid,
+            "text": "multi line",
+            "delay_ms": 50,
+        })
         time.sleep(0.6)
 
         after = driver.get_window_state(safari_pid, wid)
         val = Tree.ax_value(after.tree, ta_idx)
         print(f"\n  textarea AX value: {val!r}")
-        assert after.has_text(
-            "multi line"
-        ), f"Textarea text not in AX tree; val={val!r};\n{after.tree[:800]}"
+        assert after.has_text("multi line"), (
+            f"Textarea text not in AX tree; val={val!r};\n{after.tree[:800]}"
+        )
 
 
 class TestSafariCanvas:
@@ -304,7 +295,6 @@ class TestSafariCanvas:
         print(f"\n  screenshot: {before.screenshot_width}x{before.screenshot_height}")
 
         from harness.cv import decode, diff_ratio
-
         before_img = decode(before.screenshot_b64)
 
         # Canvas is the last section on the page. With ~80px browser chrome

@@ -75,9 +75,7 @@ async def test_linux_cloud_vm():
             len(screenshot),
             time.monotonic() - t2,
         )
-        assert (
-            screenshot[:4] == b"\x89PNG"
-        ), f"Screenshot not PNG: first 4 bytes = {screenshot[:4]!r}"
+        assert screenshot[:4] == b"\x89PNG", f"Screenshot not PNG: first 4 bytes = {screenshot[:4]!r}"
 
     total_time = time.monotonic() - t0
     logger.info("Test passed in %.1fs (provision=%.1fs)", total_time, provision_time)

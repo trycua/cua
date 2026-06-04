@@ -79,7 +79,9 @@ class DriverClient:
             payload["params"] = params
         self._write(payload)
 
-    def _call(self, method: str, params: Optional[dict] = None, timeout: float = 20.0) -> dict:
+    def _call(
+        self, method: str, params: Optional[dict] = None, timeout: float = 20.0
+    ) -> dict:
         self._next_id += 1
         request_id = self._next_id
         payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
@@ -189,7 +191,8 @@ def resolve_window_id(
 
     if require_on_current_space:
         preferred = [
-            w for w in windows if w.get("is_on_screen") and w.get("on_current_space") is not False
+            w for w in windows
+            if w.get("is_on_screen") and w.get("on_current_space") is not False
         ]
         if preferred:
             preferred.sort(key=lambda w: w.get("z_index", 0), reverse=True)

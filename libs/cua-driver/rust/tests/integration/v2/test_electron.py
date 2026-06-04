@@ -11,24 +11,23 @@ Run: python3 -m pytest test_electron.py -v
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import time
+import os
 
 import pytest
 
 try:
     import requests as _requests
-
     _REQUESTS_AVAILABLE = True
 except ImportError:
     _REQUESTS_AVAILABLE = False
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from harness import tree as Tree
 from harness.driver import Driver
+from harness import tree as Tree
 
 _ELECTRON_API = "http://localhost:6769"
 
@@ -56,18 +55,14 @@ def _http_reset(base_url: str = _ELECTRON_API) -> None:
 def _reactivate_focus(focus_monitor):
     _, pid = focus_monitor
     subprocess.run(
-        [
-            "osascript",
-            "-e",
-            f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true',
-        ],
+        ["osascript", "-e",
+         f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true'],
         check=False,
     )
     time.sleep(0.4)
 
 
 # ── tests ─────────────────────────────────────────────────────────────────────
-
 
 class TestElectronButton:
     def test_click_increments_counter(self, driver, electron_app, ux_guard):
@@ -108,14 +103,11 @@ class TestElectronTextInput:
         try:
             driver.click(pid, wid, element_index=idx)
             time.sleep(0.4)
-            driver.call_tool(
-                "type_text_chars",
-                {
-                    "pid": pid,
-                    "text": "hello electron",
-                    "delay_ms": 30,
-                },
-            )
+            driver.call_tool("type_text_chars", {
+                "pid": pid,
+                "text": "hello electron",
+                "delay_ms": 30,
+            })
         except Exception as e:
             events = _http_events(base_url)
             key_events = [ev for ev in events if ev.get("type") in ("keydown", "keypress", "input")]
@@ -143,9 +135,7 @@ class TestElectronTextInput:
         if after is None or not after.tree:
             pytest.skip("AX tree unavailable after typing (Electron AX rebuild timeout)")
 
-        print(
-            f"\n  after tree length: {len(after.tree)}, has text: {after.has_text('hello electron')}"
-        )
+        print(f"\n  after tree length: {len(after.tree)}, has text: {after.has_text('hello electron')}")
         assert after.has_text("hello electron"), f"Text not in AX tree:\n{after.tree[:500]}"
 
 
@@ -172,7 +162,6 @@ class TestElectronCanvas:
         assert mid.screenshot_b64, "No screenshot after 5 retries"
 
         from harness.cv import decode, diff_ratio
-
         before_img = decode(mid.screenshot_b64)
 
         x = mid.screenshot_width // 2

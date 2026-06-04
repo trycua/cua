@@ -39,8 +39,8 @@ _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_EXE = os.path.join(
     _FOCUS_APP_DIR, "FocusMonitorApp.app", "Contents", "MacOS", "FocusMonitorApp"
 )
-_LOSS_FILE = "/tmp/focus_monitor_losses.txt"
-_KEY_LOSS_FILE = "/tmp/focus_monitor_key_losses.txt"
+_LOSS_FILE       = "/tmp/focus_monitor_losses.txt"
+_KEY_LOSS_FILE   = "/tmp/focus_monitor_key_losses.txt"
 _FIELD_LOSS_FILE = "/tmp/focus_monitor_field_losses.txt"
 
 _HERMES_BIN = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")
@@ -55,13 +55,9 @@ _ENDPOINT = os.environ.get("HERMES_QWEN_ENDPOINT", "http://127.0.0.1:8080/v1")
 # Helpers (identical to test_hermes_form_fill.py)
 # ---------------------------------------------------------------------------
 
-
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
     proc = subprocess.Popen(
-        [_FOCUS_APP_EXE],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
+        [_FOCUS_APP_EXE], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
     )
     for _ in range(40):
         line = proc.stdout.readline().strip()
@@ -107,7 +103,6 @@ def _field(name: str) -> str:
 # Base test class
 # ---------------------------------------------------------------------------
 
-
 class _QwenFormBase(unittest.TestCase):
     """Shared setup/teardown for Qwen-backed hermes form-fill tests."""
 
@@ -117,9 +112,7 @@ class _QwenFormBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         # Verify the local server is reachable before spending time on setup.
-        import urllib.error
-        import urllib.request
-
+        import urllib.request, urllib.error
         try:
             urllib.request.urlopen(_ENDPOINT.rstrip("/") + "/models", timeout=3)
         except urllib.error.URLError as e:
@@ -133,9 +126,8 @@ class _QwenFormBase(unittest.TestCase):
                 os.remove(f)
 
         src = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.swift")
-        if not os.path.exists(_FOCUS_APP_EXE) or os.path.getmtime(src) > os.path.getmtime(
-            _FOCUS_APP_EXE
-        ):
+        if (not os.path.exists(_FOCUS_APP_EXE)
+                or os.path.getmtime(src) > os.path.getmtime(_FOCUS_APP_EXE)):
             subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
         subprocess.run(["pkill", "-x", "Safari"], check=False)
@@ -154,8 +146,8 @@ class _QwenFormBase(unittest.TestCase):
         subprocess.run(["pkill", "-x", "Safari"], check=False)
 
     def setUp(self) -> None:
-        self._losses_before = _read_file_int(_LOSS_FILE)
-        self._key_losses_before = _read_file_int(_KEY_LOSS_FILE)
+        self._losses_before       = _read_file_int(_LOSS_FILE)
+        self._key_losses_before   = _read_file_int(_KEY_LOSS_FILE)
         self._field_losses_before = _read_file_int(_FIELD_LOSS_FILE)
 
     def _run_hermes(self, prompt: str, timeout: int = 180, max_turns: int = 6) -> str:
@@ -167,45 +159,33 @@ class _QwenFormBase(unittest.TestCase):
         # (provider: custom, base_url: http://127.0.0.1:8080/v1, model: Qwen3.6…)
         result = subprocess.run(
             [
-                _HERMES_BIN,
-                "chat",
-                "--toolsets",
-                "computer_use",
+                _HERMES_BIN, "chat",
+                "--toolsets", "computer_use",
                 "--yolo",
                 "-Q",
-                "--max-turns",
-                str(max_turns),
-                "-q",
-                prompt,
+                "--max-turns", str(max_turns),
+                "-q", prompt,
             ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            env=env, capture_output=True, text=True, timeout=timeout,
         )
         return (result.stdout + "\n" + result.stderr).strip()
 
     def _assert_no_new_focus_loss(self) -> None:
         time.sleep(0.3)
-        app_delta = _read_file_int(_LOSS_FILE) - self._losses_before
-        key_delta = _read_file_int(_KEY_LOSS_FILE) - self._key_losses_before
+        app_delta   = _read_file_int(_LOSS_FILE)   - self._losses_before
+        key_delta   = _read_file_int(_KEY_LOSS_FILE) - self._key_losses_before
         field_delta = _read_file_int(_FIELD_LOSS_FILE) - self._field_losses_before
         msgs = []
-        if app_delta:
-            msgs.append(f"app lost focus {app_delta}x")
-        if key_delta:
-            msgs.append(f"window lost key status {key_delta}x")
-        if field_delta:
-            msgs.append(f"text-input lost first-responder {field_delta}x")
-        self.assertEqual(
-            len(msgs), 0, f"Focus stolen in {self._testMethodName}: " + "; ".join(msgs)
-        )
+        if app_delta:   msgs.append(f"app lost focus {app_delta}x")
+        if key_delta:   msgs.append(f"window lost key status {key_delta}x")
+        if field_delta: msgs.append(f"text-input lost first-responder {field_delta}x")
+        self.assertEqual(len(msgs), 0,
+            f"Focus stolen in {self._testMethodName}: " + "; ".join(msgs))
 
 
 # ---------------------------------------------------------------------------
 # Tests — start with text input only; add more once text passes
 # ---------------------------------------------------------------------------
-
 
 class TestQwenTextInput(_QwenFormBase):
     """<input type=text> — verifies multimodal tool results work with mlx-vlm."""
@@ -218,7 +198,8 @@ class TestQwenTextInput(_QwenFormBase):
             "then type 'Hello World' into it. Stop after typing."
         )
         val = _field("text")
-        self.assertEqual(val, "Hello World", msg=f"text='{val}'\nhermes: {out[-600:]}")
+        self.assertEqual(val, "Hello World",
+                         msg=f"text='{val}'\nhermes: {out[-600:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -233,7 +214,8 @@ class TestQwenEmailInput(_QwenFormBase):
             "Stop after typing."
         )
         val = _field("email")
-        self.assertEqual(val, "agent@example.com", msg=f"email='{val}'\nhermes: {out[-600:]}")
+        self.assertEqual(val, "agent@example.com",
+                         msg=f"email='{val}'\nhermes: {out[-600:]}")
         self._assert_no_new_focus_loss()
 
 

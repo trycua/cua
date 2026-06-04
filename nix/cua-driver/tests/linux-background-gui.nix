@@ -74,6 +74,9 @@ let
     import json, os, shutil, subprocess, sys
 
     CONVERT = "${pkgs.imagemagick}/bin/convert"
+    # -annotate renders TEXT and needs an explicit font: the minimal test VM has
+    # no fontconfig-discoverable fonts, so convert exits 1 without this.
+    FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf"
 
     def main():
         raw, out = sys.argv[1], sys.argv[2]
@@ -105,7 +108,8 @@ let
             label = "%s (%d,%d %dx%d)" % (idx, x, y, w, h)
             argv += ["-stroke", "red", "-fill", "none",
                      "-draw", "rectangle %d,%d %d,%d" % (x, y, x + w, y + h)]
-            argv += ["-stroke", "none", "-fill", "red", "-pointsize", "12",
+            argv += ["-stroke", "none", "-fill", "red", "-font", FONT,
+                     "-pointsize", "12",
                      "-annotate", "+%d+%d" % (x + 2, max(y + 12, 12)), label]
             drew = True
         if not drew:
@@ -114,7 +118,9 @@ let
             return
         argv.append(out)
         try:
-            subprocess.run(argv, check=True)
+            r = subprocess.run(argv, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError("convert rc=%d stderr=%s" % (r.returncode, r.stderr[-500:]))
             print("ATSPI_OVERLAY: drew overlay -> " + out, flush=True)
         except Exception as ex:
             print("ATSPI_OVERLAY_ERROR: " + repr(ex), flush=True)

@@ -11,23 +11,24 @@ Run: python3 -m pytest test_tauri.py -v
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
-import os
 
 import pytest
 
 try:
     import requests as _requests
+
     _REQUESTS_AVAILABLE = True
 except ImportError:
     _REQUESTS_AVAILABLE = False
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from harness.driver import Driver
 from harness import tree as Tree
+from harness.driver import Driver
 
 _TAURI_API = "http://localhost:6769"
 
@@ -55,14 +56,18 @@ def _http_reset(base_url: str = _TAURI_API) -> None:
 def _reactivate_focus(focus_monitor):
     _, pid = focus_monitor
     subprocess.run(
-        ["osascript", "-e",
-         f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true'],
+        [
+            "osascript",
+            "-e",
+            f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true',
+        ],
         check=False,
     )
     time.sleep(0.4)
 
 
 # ── tests ─────────────────────────────────────────────────────────────────────
+
 
 class TestTauriButton:
     def test_button_click(self, driver, tauri_app, ux_guard):
@@ -128,9 +133,9 @@ class TestTauriTextInput:
         key_events = [e for e in events if e.get("type") in ("key_down", "keydown", "input")]
         print(f"  key events: {len(key_events)}")
 
-        assert text_in_tree or len(key_events) >= len("tauri test"), (
-            f"Text not found in AX tree and insufficient key events:\n{after.tree}"
-        )
+        assert text_in_tree or len(key_events) >= len(
+            "tauri test"
+        ), f"Text not found in AX tree and insufficient key events:\n{after.tree}"
 
 
 class TestTauriNoFocusSteal:

@@ -28,7 +28,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _INTEG_DIR = os.path.dirname(_HERE)
 sys.path.insert(0, _INTEG_DIR)
 
-from driver_client import DriverClient, default_binary_path, MCPCallError  # noqa: E402
+from driver_client import DriverClient, MCPCallError, default_binary_path  # noqa: E402
 
 
 @dataclass
@@ -42,9 +42,10 @@ class WindowState:
     def find_element(self, label: str) -> Optional[int]:
         """Return the first element index whose line contains `label`."""
         import re
+
         for line in self.tree.split("\n"):
             if label in line:
-                m = re.search(r'\[(\d+)\]', line)
+                m = re.search(r"\[(\d+)\]", line)
                 if m:
                     return int(m.group(1))
         return None
@@ -52,12 +53,13 @@ class WindowState:
     def find_button(self, label: str) -> Optional[int]:
         """Return the first AXButton element index matching `label`."""
         import re
+
         for line in self.tree.split("\n"):
             if "AXButton" not in line:
                 continue
             if label not in line:
                 continue
-            m = re.search(r'\[(\d+)\]', line)
+            m = re.search(r"\[(\d+)\]", line)
             if m:
                 return int(m.group(1))
         return None
@@ -65,13 +67,14 @@ class WindowState:
     def find_text_field(self, skip_url_bar: bool = True) -> Optional[int]:
         """Return the first AXTextField index (skipping browser URL bars)."""
         import re
+
         _URL_BAR_HINTS = ("smart search field", "address and search bar", "location")
         for line in self.tree.split("\n"):
             if "AXTextField" not in line:
                 continue
             if skip_url_bar and any(h in line.lower() for h in _URL_BAR_HINTS):
                 continue
-            m = re.search(r'\[(\d+)\]', line)
+            m = re.search(r"\[(\d+)\]", line)
             if m:
                 return int(m.group(1))
         return None
@@ -79,6 +82,7 @@ class WindowState:
     def ax_value(self, element_index: int) -> Optional[str]:
         """Return the value= attribute of the element at `element_index`."""
         import re
+
         prefix = f"[{element_index}]"
         for line in self.tree.split("\n"):
             if prefix not in line:
@@ -143,8 +147,10 @@ class Driver:
 
         # Filter to on-screen windows with meaningful size.
         candidates = [
-            w for w in windows
-            if w.get("is_on_screen") and w.get("on_current_space") is not False
+            w
+            for w in windows
+            if w.get("is_on_screen")
+            and w.get("on_current_space") is not False
             and _area(w) >= min_area
         ]
         if not candidates:
@@ -161,9 +167,7 @@ class Driver:
         # Probe each candidate for AX tree content; return the first one that
         # has a non-empty tree.  This is needed for Chrome, whose AX tree is
         # attached to toolbar/helper windows rather than the large content window.
-        probe_order = [primary_wid] + [
-            w["window_id"] for w in candidates[1:]
-        ]
+        probe_order = [primary_wid] + [w["window_id"] for w in candidates[1:]]
         # Also include off-screen windows as a last resort (Chrome toolbar
         # windows are often flagged off-screen even while Chrome is running).
         for w in sorted(windows, key=_area, reverse=True):
@@ -204,7 +208,8 @@ class Driver:
         # Format: "<header line>\n\n<tree>" where the tree starts with "- AX..."
         if not tree and text_content:
             import re
-            m = re.search(r'\n\n(- .+)', text_content, re.DOTALL)
+
+            m = re.search(r"\n\n(- .+)", text_content, re.DOTALL)
             if m:
                 tree = m.group(1)
         width = sc.get("screenshot_width", 0)
@@ -272,14 +277,17 @@ class Driver:
         delta_x: float = 0.0,
         delta_y: float = -3.0,
     ) -> dict:
-        return self._c().call_tool("scroll", {
-            "pid": pid,
-            "window_id": window_id,
-            "x": x,
-            "y": y,
-            "delta_x": delta_x,
-            "delta_y": delta_y,
-        })
+        return self._c().call_tool(
+            "scroll",
+            {
+                "pid": pid,
+                "window_id": window_id,
+                "x": x,
+                "y": y,
+                "delta_x": delta_x,
+                "delta_y": delta_y,
+            },
+        )
 
     def launch_app(self, bundle_id: str) -> dict:
         return self._c().call_tool("launch_app", {"bundle_id": bundle_id})

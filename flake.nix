@@ -113,27 +113,18 @@
                   "gtk3-scite"
                   "gtk3-abiword"
                   # GTK4
-                  "gtk4-text-editor"
                   "gtk4-characters"
-                  "gtk4-console"
-                  "gtk4-contacts"
-                  "gtk4-calendar"
                   # Qt5
                   "qt5-manuskript"
                   "qt5-klog"
-                  "qt5-wsjtx"
-                  "qt5-qsstv"
                   "qt5-openambit"
                   # Qt6
                   "qt6-kate"
                   "qt6-kcalc"
                   "qt6-okular"
-                  "qt6-ghostwriter"
                   "qt6-qownnotes"
                   # Electron
-                  "electron-marktext"
                   "electron-zettlr"
-                  "electron-vscodium"
                   "electron-joplin"
                   "electron-logseq"
                 ]

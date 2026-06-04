@@ -239,7 +239,7 @@ jobs:
         if: always() && matrix.visual
         run: |
           mkdir -p artifacts
-          find -L "${{ matrix.result_link }}/" \( -name '*.gif' -o -name '*.png' \) -type f -exec cp {} artifacts/ \; 2>/dev/null || true
+          find -L "${{ matrix.result_link }}/" \( -name '*.gif' -o -name '*.png' -o -name '*.json' \) -type f -exec cp {} artifacts/ \; 2>/dev/null || true
           ls -la artifacts/ 2>/dev/null || echo "No visual artifacts found"
 
       - name: Upload GIF artifacts

@@ -57,6 +57,10 @@ let
   # bounds (no translation), so the overlay can draw element boxes directly.
   rawPng = "/tmp/cua-driver-linux-background-gui-${app}.png";
   atspiPng = "/tmp/cua-driver-linux-background-gui-${app}-atspi.png";
+  # Per-app copy of the AT-SPI element bounds JSON ({element_index, role, name,
+  # x, y, width, height} in screen coords) — emitted as a CI artifact so the
+  # coordinates are inspectable alongside the annotated screenshots.
+  elementsJson = "/tmp/cua-driver-linux-background-gui-${app}-elements.json";
 
   # Reads /tmp/cua-elements.json and draws each element's screen-coordinate box
   # + label onto a copy of the raw PNG via a single ImageMagick `convert`. If
@@ -903,6 +907,12 @@ let
             machine.copy_from_machine("${atspiPng}", "")
         else:
             machine.log("WARN: ${atspiPng} missing; skipping atspi overlay copy")
+        # Emit the element-bounds JSON (the coordinates) as an artifact too.
+        machine.execute("cp /tmp/cua-elements.json ${elementsJson} 2>/dev/null; true")
+        if machine.execute("test -s ${elementsJson}")[0] == 0:
+            machine.copy_from_machine("${elementsJson}", "")
+        else:
+            machine.log("WARN: ${elementsJson} missing; skipping elements JSON copy")
 
         # Lenient assertion: get_text returned a NON-error accessibility response.
         # Do NOT require any specific role (entry/text/...) — any content is fine.

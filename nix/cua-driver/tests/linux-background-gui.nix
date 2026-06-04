@@ -92,7 +92,11 @@ let
                 idx = e.get("element_index")
             except Exception:
                 continue
-            if w <= 0 or h <= 0:
+            # Skip AT-SPI's "no extents" sentinel (i32::MIN) and degenerate
+            # 1x1 boxes from unrealized widgets (items inside closed menus) —
+            # ImageMagick errors out on those coordinates. The driver filters
+            # these too; this is belt-and-braces for older driver builds.
+            if x < 0 or y < 0 or x > 16384 or y > 16384 or w <= 1 or h <= 1:
                 continue
             label = "%s (%d,%d %dx%d)" % (idx, x, y, w, h)
             argv += ["-stroke", "red", "-fill", "none",
@@ -857,8 +861,12 @@ let
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
-        machine.execute("test -s ${outputGif}")
-        machine.copy_from_machine("${outputGif}", "")
+        # Best-effort: a missing GIF (recorder/convert hiccup under load) must
+        # not fail the read-only job — copy only when the file exists.
+        if machine.execute("test -s ${outputGif}")[0] == 0:
+            machine.copy_from_machine("${outputGif}", "")
+        else:
+            machine.log("WARN: ${outputGif} missing; skipping GIF copy")
 
         # Annotated screenshots (CI artifacts), produced BEFORE any assertion can
         # fail and wrapped in execute() so a capture/drawing hiccup never fails
@@ -874,10 +882,17 @@ let
         )
         machine.log(out_ov)
         # Always emit both PNGs; fall back to copying the raw PNG if the overlay
-        # step produced nothing.
-        machine.execute("test -s ${atspiPng} || cp ${rawPng} ${atspiPng}")
-        machine.copy_from_machine("${rawPng}", "")
-        machine.copy_from_machine("${atspiPng}", "")
+        # step produced nothing. Copies are best-effort — a capture hiccup must
+        # not fail the read-only job.
+        machine.execute("test -s ${atspiPng} || cp ${rawPng} ${atspiPng} 2>/dev/null")
+        if machine.execute("test -s ${rawPng}")[0] == 0:
+            machine.copy_from_machine("${rawPng}", "")
+        else:
+            machine.log("WARN: ${rawPng} missing; skipping raw screenshot copy")
+        if machine.execute("test -s ${atspiPng}")[0] == 0:
+            machine.copy_from_machine("${atspiPng}", "")
+        else:
+            machine.log("WARN: ${atspiPng} missing; skipping atspi overlay copy")
 
         # Lenient assertion: get_text returned a NON-error accessibility response.
         # Do NOT require any specific role (entry/text/...) — any content is fine.
@@ -905,8 +920,12 @@ let
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
-        machine.execute("test -s ${outputGif}")
-        machine.copy_from_machine("${outputGif}", "")
+        # Best-effort GIF copy (see skeleton path): a recorder hiccup must not
+        # fail the job before the real assertions run.
+        if machine.execute("test -s ${outputGif}")[0] == 0:
+            machine.copy_from_machine("${outputGif}", "")
+        else:
+            machine.log("WARN: ${outputGif} missing; skipping GIF copy")
         assert "background GUI test typed" in result, result
 
     with subtest("Input landed: driver's native AT-SPI reads the window back"):

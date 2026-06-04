@@ -704,7 +704,15 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
                 _ => continue,
             };
             if let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Screen)).await {
-                out.push((idx, x, y, w.max(0) as u32, h.max(0) as u32));
+                // Unrealized widgets (e.g. items inside closed menus/popovers)
+                // report GetExtents as the i32::MIN sentinel and/or a degenerate
+                // 0x0 / 1x1 size. Emitting those poisons downstream consumers
+                // (overlay renderers, click targeting), so keep only elements
+                // with plausible on-screen geometry.
+                if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
+                    continue;
+                }
+                out.push((idx, x, y, w as u32, h as u32));
             }
         }
         Ok(out)

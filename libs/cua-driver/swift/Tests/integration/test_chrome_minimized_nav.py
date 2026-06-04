@@ -38,7 +38,9 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
 _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_BUNDLE = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.app")
-_FOCUS_APP_EXE = os.path.join(_FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp")
+_FOCUS_APP_EXE = os.path.join(
+    _FOCUS_APP_BUNDLE, "Contents", "MacOS", "FocusMonitorApp"
+)
 _LOSS_FILE = "/tmp/focus_monitor_losses.txt"
 
 CHROME_BUNDLE = "com.google.Chrome"
@@ -49,10 +51,11 @@ FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
+        subprocess.run(
+            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
+        )
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
@@ -82,7 +85,7 @@ def _read_focus_losses() -> int:
 def _find_element_index(tree: str, label: str) -> int | None:
     for line in tree.split("\n"):
         if label in line:
-            m = re.search(r"\[(\d+)\]", line)
+            m = re.search(r'\[(\d+)\]', line)
             if m:
                 return int(m.group(1))
     return None
@@ -91,7 +94,9 @@ def _find_element_index(tree: str, label: str) -> int | None:
 def _chrome_is_minimized(client: DriverClient, pid: int) -> bool:
     """Check if Chrome's main window is minimized by looking for AXMinimized."""
     window_id = resolve_window_id(client, pid, require_on_current_space=False)
-    snap = client.call_tool("get_window_state", {"pid": pid, "window_id": window_id})
+    snap = client.call_tool(
+        "get_window_state", {"pid": pid, "window_id": window_id}
+    )
     tree = snap.get("structuredContent", snap).get("tree_markdown", "")
     # A minimized window typically won't have on-screen content,
     # but we can check the has_screenshot field — if no on-screen
@@ -111,7 +116,6 @@ def _activate_focus_monitor() -> None:
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
-
 
 class ChromeMinimizedNavTests(unittest.TestCase):
     """Interact with a minimized Chrome without deminiaturizing or stealing focus."""
@@ -137,26 +141,20 @@ class ChromeMinimizedNavTests(unittest.TestCase):
             if chrome:
                 cls._chrome_pid = chrome[0]["pid"]
             else:
-                result = c.call_tool(
-                    "launch_app",
-                    {
-                        "bundle_id": CHROME_BUNDLE,
-                        "urls": ["about:blank"],
-                    },
-                )
+                result = c.call_tool("launch_app", {
+                    "bundle_id": CHROME_BUNDLE,
+                    "urls": ["about:blank"],
+                })
                 cls._chrome_pid = result["structuredContent"]["pid"]
                 time.sleep(2.0)
         print(f"\n  Chrome pid: {cls._chrome_pid}")
 
         # Ensure Chrome has an about:blank window via launch_app (no focus steal).
         with DriverClient(cls.binary) as c:
-            c.call_tool(
-                "launch_app",
-                {
-                    "bundle_id": CHROME_BUNDLE,
-                    "urls": ["about:blank"],
-                },
-            )
+            c.call_tool("launch_app", {
+                "bundle_id": CHROME_BUNDLE,
+                "urls": ["about:blank"],
+            })
         time.sleep(2.0)
 
         # Snapshot AX tree BEFORE minimizing to cache the omnibox index.
@@ -165,13 +163,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
         # resolve cached indices.
         with DriverClient(cls.binary) as c:
             cls._chrome_window_id = resolve_window_id(c, cls._chrome_pid)
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": cls._chrome_pid,
-                    "window_id": cls._chrome_window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": cls._chrome_pid,
+                "window_id": cls._chrome_window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             cls._omnibox_idx = _find_element_index(tree, "Address and search bar")
             if cls._omnibox_idx is None:
@@ -181,13 +176,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
 
         # Minimize Chrome via Cmd+M.
         with DriverClient(cls.binary) as c:
-            c.call_tool(
-                "hotkey",
-                {
-                    "pid": cls._chrome_pid,
-                    "keys": ["cmd", "m"],
-                },
-            )
+            c.call_tool("hotkey", {
+                "pid": cls._chrome_pid,
+                "keys": ["cmd", "m"],
+            })
         time.sleep(1.5)
         print("  Chrome minimized via Cmd+M")
 
@@ -198,9 +190,9 @@ class ChromeMinimizedNavTests(unittest.TestCase):
 
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert (
-                active == FOCUS_MONITOR_BUNDLE
-            ), f"Expected FocusMonitorApp frontmost, got {active}"
+            assert active == FOCUS_MONITOR_BUNDLE, (
+                f"Expected FocusMonitorApp frontmost, got {active}"
+            )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -211,7 +203,8 @@ class ChromeMinimizedNavTests(unittest.TestCase):
             cls._focus_proc.kill()
         # Close the Chrome window we opened.
         subprocess.run(
-            ["osascript", "-e", 'tell application "Google Chrome" to close window 1'],
+            ["osascript", "-e",
+             'tell application "Google Chrome" to close window 1'],
             check=False,
         )
         try:
@@ -223,13 +216,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
         # Minimize Chrome via hotkey — cua-driver delivers Cmd+M to the pid
         # via CGEvent.postToPid without stealing focus.
         with DriverClient(self.binary) as c:
-            c.call_tool(
-                "hotkey",
-                {
-                    "pid": self._chrome_pid,
-                    "keys": ["cmd", "m"],
-                },
-            )
+            c.call_tool("hotkey", {
+                "pid": self._chrome_pid,
+                "keys": ["cmd", "m"],
+            })
         time.sleep(1.5)
         _activate_focus_monitor()
         self._losses_before = _read_focus_losses()
@@ -241,13 +231,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             active = frontmost_bundle_id(c)
         loss_delta = losses - self._losses_before
-        print(
-            f"  [{label}] losses: {self._losses_before}->{losses} "
-            f"(delta={loss_delta}), frontmost: {active}"
-        )
+        print(f"  [{label}] losses: {self._losses_before}->{losses} "
+              f"(delta={loss_delta}), frontmost: {active}")
         self.assertEqual(
-            active,
-            FOCUS_MONITOR_BUNDLE,
+            active, FOCUS_MONITOR_BUNDLE,
             f"[{label}] Focus stolen — frontmost is {active}",
         )
 
@@ -255,13 +242,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
         """Chrome window is still minimized — verified by checking
         if get_window_state returns has_screenshot=false (no on-screen window)."""
         with DriverClient(self.binary) as c:
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+            })
             sc = snap.get("structuredContent", snap)
             has_shot = sc.get("has_screenshot", False)
         is_minimized = not has_shot
@@ -276,13 +260,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
     def test_01_get_window_state_safe(self) -> None:
         """AX snapshot of minimized Chrome should not deminiaturize."""
         with DriverClient(self.binary) as c:
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+            })
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"\n  tree length: {len(tree)} chars")
 
@@ -300,21 +281,15 @@ class ChromeMinimizedNavTests(unittest.TestCase):
 
         with DriverClient(self.binary) as c:
             # Refresh element cache.
-            c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                },
-            )
-            result = c.call_tool(
-                "click",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                    "element_index": idx,
-                },
-            )
+            c.call_tool("get_window_state", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+            })
+            result = c.call_tool("click", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+                "element_index": idx,
+            })
             text = ""
             for item in result.get("content", []):
                 if item.get("type") == "text":
@@ -335,22 +310,16 @@ class ChromeMinimizedNavTests(unittest.TestCase):
             self.skipTest("Omnibox not found in pre-minimize AX tree")
 
         with DriverClient(self.binary) as c:
-            c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                },
-            )
-            result = c.call_tool(
-                "set_value",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                    "element_index": idx,
-                    "value": "https://example.com",
-                },
-            )
+            c.call_tool("get_window_state", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+            })
+            result = c.call_tool("set_value", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+                "element_index": idx,
+                "value": "https://example.com",
+            })
             text = ""
             for item in result.get("content", []):
                 if item.get("type") == "text":
@@ -366,13 +335,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
     def test_04_type_without_omnibox_focus(self) -> None:
         """Type keys to minimized Chrome without focusing omnibox — should stay minimized."""
         with DriverClient(self.binary) as c:
-            c.call_tool(
-                "type_text_chars",
-                {
-                    "pid": self._chrome_pid,
-                    "text": "hello",
-                },
-            )
+            c.call_tool("type_text_chars", {
+                "pid": self._chrome_pid,
+                "text": "hello",
+            })
 
         time.sleep(0.5)
         self._assert_chrome_still_minimized("04_type_no_omnibox")
@@ -389,13 +355,10 @@ class ChromeMinimizedNavTests(unittest.TestCase):
         with DriverClient(self.binary) as c:
             # get_window_state uses FocusWithoutRaise internally for
             # AX enablement. Just verify the snapshot path is safe.
-            snap = c.call_tool(
-                "get_window_state",
-                {
-                    "pid": self._chrome_pid,
-                    "window_id": self._chrome_window_id,
-                },
-            )
+            snap = c.call_tool("get_window_state", {
+                "pid": self._chrome_pid,
+                "window_id": self._chrome_window_id,
+            })
             count = snap.get("structuredContent", snap).get("element_count", 0)
             print(f"\n  element_count: {count}")
 

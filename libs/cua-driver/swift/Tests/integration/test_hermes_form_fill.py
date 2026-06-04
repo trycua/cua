@@ -52,8 +52,8 @@ _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_EXE = os.path.join(
     _FOCUS_APP_DIR, "FocusMonitorApp.app", "Contents", "MacOS", "FocusMonitorApp"
 )
-_LOSS_FILE = "/tmp/focus_monitor_losses.txt"
-_KEY_LOSS_FILE = "/tmp/focus_monitor_key_losses.txt"
+_LOSS_FILE      = "/tmp/focus_monitor_losses.txt"
+_KEY_LOSS_FILE  = "/tmp/focus_monitor_key_losses.txt"
 _FIELD_LOSS_FILE = "/tmp/focus_monitor_field_losses.txt"
 
 _HERMES_BIN = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")
@@ -71,7 +71,6 @@ _MODEL = os.environ.get("HERMES_TEST_MODEL", "claude-haiku-4-5-20251001")
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
         subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
@@ -79,10 +78,7 @@ def _build_focus_app() -> None:
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
     proc = subprocess.Popen(
-        [_FOCUS_APP_EXE],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
+        [_FOCUS_APP_EXE], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
     )
     for _ in range(40):
         line = proc.stdout.readline().strip()
@@ -149,7 +145,6 @@ def _checkbox_checked() -> bool:
 # Base test class
 # ---------------------------------------------------------------------------
 
-
 class _HermesFormBase(unittest.TestCase):
     """Shared setup/teardown and the hermes runner for all per-input tests."""
 
@@ -169,9 +164,8 @@ class _HermesFormBase(unittest.TestCase):
 
         # Force rebuild FocusMonitorApp when Swift source is newer.
         src = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.swift")
-        if not os.path.exists(_FOCUS_APP_EXE) or os.path.getmtime(src) > os.path.getmtime(
-            _FOCUS_APP_EXE
-        ):
+        if (not os.path.exists(_FOCUS_APP_EXE)
+                or os.path.getmtime(src) > os.path.getmtime(_FOCUS_APP_EXE)):
             subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
         subprocess.run(["pkill", "-x", "Safari"], check=False)
@@ -195,8 +189,8 @@ class _HermesFormBase(unittest.TestCase):
         subprocess.run(["pkill", "-x", "Safari"], check=False)
 
     def setUp(self) -> None:
-        self._losses_before = _read_focus_losses()
-        self._key_losses_before = _read_key_losses()
+        self._losses_before       = _read_focus_losses()
+        self._key_losses_before   = _read_key_losses()
         self._field_losses_before = _read_field_losses()
 
     def _run_hermes(self, prompt: str, timeout: int = 120, max_turns: int = 5) -> str:
@@ -208,34 +202,25 @@ class _HermesFormBase(unittest.TestCase):
 
         result = subprocess.run(
             [
-                _HERMES_BIN,
-                "chat",
-                "--provider",
-                "anthropic",
-                "-m",
-                _MODEL,
-                "--toolsets",
-                "computer_use",
-                "--yolo",  # auto-approve every computer_use action
-                "-Q",  # quiet: only final response + session line
-                "--max-turns",
-                str(max_turns),
-                "-q",
-                prompt,
+                _HERMES_BIN, "chat",
+                "--provider", "anthropic",
+                "-m", _MODEL,
+                "--toolsets", "computer_use",
+                "--yolo",        # auto-approve every computer_use action
+                "-Q",            # quiet: only final response + session line
+                "--max-turns", str(max_turns),
+                "-q", prompt,
             ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            env=env, capture_output=True, text=True, timeout=timeout,
         )
         return (result.stdout + "\n" + result.stderr).strip()
 
     def _assert_no_new_focus_loss(self) -> None:
         """Assert no new app-level OR key-level focus losses occurred."""
         time.sleep(0.3)  # let any async activation settle
-        app_delta = _read_focus_losses() - self._losses_before
-        key_delta = _read_key_losses() - self._key_losses_before
-        field_delta = _read_field_losses() - self._field_losses_before
+        app_delta   = _read_focus_losses()  - self._losses_before
+        key_delta   = _read_key_losses()    - self._key_losses_before
+        field_delta = _read_field_losses()  - self._field_losses_before
         msgs = []
         if app_delta:
             msgs.append(f"app lost focus {app_delta}x")
@@ -244,8 +229,7 @@ class _HermesFormBase(unittest.TestCase):
         if field_delta:
             msgs.append(f"text-input lost first-responder {field_delta}x")
         self.assertEqual(
-            len(msgs),
-            0,
+            len(msgs), 0,
             f"Focus stolen in {self._testMethodName}: "
             + "; ".join(msgs)
             + " — background events must not steal focus",
@@ -255,7 +239,6 @@ class _HermesFormBase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # One test class per input type
 # ---------------------------------------------------------------------------
-
 
 class TestTextInput(_HermesFormBase):
     """<input type=text> — fill with a short string."""
@@ -268,7 +251,8 @@ class TestTextInput(_HermesFormBase):
             "then type 'Hello World' into it. Stop after typing."
         )
         val = _field("text")
-        self.assertEqual(val, "Hello World", msg=f"text='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "Hello World",
+                         msg=f"text='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -283,7 +267,8 @@ class TestPasswordInput(_HermesFormBase):
             "Stop after typing."
         )
         val = _field("password")
-        self.assertEqual(val, "Pass1234!", msg=f"password='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "Pass1234!",
+                         msg=f"password='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -298,7 +283,8 @@ class TestEmailInput(_HermesFormBase):
             "Stop after typing."
         )
         val = _field("email")
-        self.assertEqual(val, "agent@example.com", msg=f"email='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "agent@example.com",
+                         msg=f"email='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -313,7 +299,8 @@ class TestNumberInput(_HermesFormBase):
             "Stop after typing."
         )
         val = _field("number")
-        self.assertEqual(val, "42", msg=f"number='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "42",
+                         msg=f"number='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -328,7 +315,8 @@ class TestTextarea(_HermesFormBase):
             "Stop after typing."
         )
         val = _field("textarea")
-        self.assertIn("bg works", val, msg=f"textarea='{val}'\nhermes: {out[-400:]}")
+        self.assertIn("bg works", val,
+                      msg=f"textarea='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -342,7 +330,8 @@ class TestCheckbox(_HermesFormBase):
             "Then AX-click the checkbox labelled 'I agree to the terms' (id='f-checkbox'). "
             "Stop after clicking."
         )
-        self.assertTrue(_checkbox_checked(), msg=f"checkbox not checked\nhermes: {out[-400:]}")
+        self.assertTrue(_checkbox_checked(),
+                        msg=f"checkbox not checked\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -366,7 +355,8 @@ class TestSelectDropdown(_HermesFormBase):
             timeout=180,
         )
         val = _field("select")
-        self.assertEqual(val, "blue", msg=f"select='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "blue",
+                         msg=f"select='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -381,7 +371,8 @@ class TestRadioButton(_HermesFormBase):
             "Stop after clicking."
         )
         val = _field("radio")
-        self.assertEqual(val, "banana", msg=f"radio='{val}'\nhermes: {out[-400:]}")
+        self.assertEqual(val, "banana",
+                         msg=f"radio='{val}'\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 
@@ -396,7 +387,8 @@ class TestSubmitButton(_HermesFormBase):
             "Click it using its element index. Stop after clicking."
         )
         submitted = _js("(window._submitted !== undefined).toString()")
-        self.assertEqual(submitted, "true", msg=f"form not submitted\nhermes: {out[-400:]}")
+        self.assertEqual(submitted, "true",
+                         msg=f"form not submitted\nhermes: {out[-400:]}")
         self._assert_no_new_focus_loss()
 
 

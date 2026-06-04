@@ -38,6 +38,7 @@ import base64
 
 import httpx
 import pytest
+
 from cua import Image, Sandbox, skip_if_unsupported
 
 # ── helpers ──────────────────────────────────────────────────────────────────

@@ -690,8 +690,14 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
         let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
-        let mut out = Vec::with_capacity(action_nodes.len());
-        for (idx, node) in action_nodes.iter().enumerate() {
+        // Each element costs ~3 D-Bus round-trips (proxies + component +
+        // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
+        // minutes and time out callers, so cap the walk; pre-order means the
+        // first nodes are the window chrome / toolbars that are actually
+        // visible, which is what bounds consumers (overlays, targeting) need.
+        const MAX_BOUNDS_NODES: usize = 150;
+        let mut out = Vec::with_capacity(action_nodes.len().min(MAX_BOUNDS_NODES));
+        for (idx, node) in action_nodes.iter().enumerate().take(MAX_BOUNDS_NODES) {
             if !node.has_component {
                 continue;
             }

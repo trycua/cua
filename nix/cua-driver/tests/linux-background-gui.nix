@@ -789,7 +789,10 @@ let
                         "window_id": target_xid,
                     },
                 }, req_id=4)
-                ws = recv(proc)
+                # Bounds collection does one D-Bus GetExtents round-trip per
+                # action node; big trees (geany walked 787 nodes) need well over
+                # the default 45s, so give this call a longer window.
+                ws = recv(proc, timeout=150)
                 result_obj = ws.get("result", {}) if isinstance(ws, dict) else {}
                 # The structured `elements` array lives in structuredContent;
                 # fall back to scanning any text content that carries JSON.
@@ -854,7 +857,9 @@ let
             "sh -lc '${recordGifScript} :99 /tmp/gui-frames ${outputGif} "
             "/tmp/stop-gui-recorder /tmp/record-gui.log 10 0.2 >/dev/null 2>&1 & echo $! >/tmp/record-gui.pid'"
         )
-        status, result = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-skeleton.py 2>&1")
+        # 300s: get_text retries + the bounded get_window_state bounds walk
+        # (recv timeout 150s) must both fit.
+        status, result = machine.execute("${a11yEnv} timeout 300 python3 /tmp/mcp-background-gui-skeleton.py 2>&1")
         machine.log(result)
         # Stop the recorder and copy the GIF out *now*, before any assertion can
         # fail, so every matrix job uploads a GIF of the interaction.
@@ -874,10 +879,12 @@ let
         #   ${rawPng}            full-screen still (screen coords == AT-SPI bounds)
         #   ${atspiPng}          raw + AT-SPI element boxes/labels overlay
         # The downstream `som-annotate` job consumes the raw PNG to emit *-som.png.
-        machine.execute("${a11yEnv} ${pkgs.imagemagick}/bin/import -window root ${rawPng}")
+        # `import` can block indefinitely if another client wedges the X server
+        # grab (it hung a job to the GH 15-min cap once) — bound it hard.
+        machine.execute("${a11yEnv} timeout 30 ${pkgs.imagemagick}/bin/import -window root ${rawPng}")
         machine.copy_from_host("${atspiOverlayPy}", "/tmp/cua-atspi-overlay.py")
         st_ov, out_ov = machine.execute(
-            "${a11yEnv} ${pkgs.python3}/bin/python3 /tmp/cua-atspi-overlay.py "
+            "${a11yEnv} timeout 60 ${pkgs.python3}/bin/python3 /tmp/cua-atspi-overlay.py "
             "${rawPng} ${atspiPng} /tmp/cua-elements.json 2>&1"
         )
         machine.log(out_ov)

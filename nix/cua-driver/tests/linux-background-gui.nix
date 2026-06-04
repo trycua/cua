@@ -335,43 +335,19 @@ let
     };
 
     # ── GTK4 real apps (READ-ONLY SKELETON) ─────────────────────────────────
-    gtk4-text-editor = mkSkeleton {
-      packages = [ pkgs.gnome-text-editor ];
-      envExports = gtk4EnvExports;
-      cmd = "${pkgs.gnome-text-editor}/bin/gnome-text-editor --new-window";
-      windowMatch = "--class org.gnome.TextEditor";
-    };
+    # Only gnome-characters reliably surfaces a window headless; the other GNOME
+    # GTK4 apps (text-editor/console/contacts/calendar) never mapped a window
+    # within 120s in CI (missing portals/EDS/VTE runtime), so they were dropped.
     gtk4-characters = mkSkeleton {
       packages = [ pkgs.gnome-characters ];
       envExports = gtk4EnvExports;
       cmd = "${pkgs.gnome-characters}/bin/gnome-characters";
       windowMatch = "--class org.gnome.Characters";
     };
-    gtk4-console = mkSkeleton {
-      packages = [ pkgs.gnome-console ];
-      envExports = gtk4EnvExports;
-      cmd = "${pkgs.gnome-console}/bin/kgx";
-      windowMatch = "--class org.gnome.Console";
-    };
-    gtk4-contacts = mkSkeleton {
-      packages = [ pkgs.gnome-contacts ];
-      envExports = gtk4EnvExports;
-      cmd = "${pkgs.gnome-contacts}/bin/gnome-contacts";
-      windowMatch = "--class org.gnome.Contacts";
-    };
-    gtk4-calendar = mkSkeleton {
-      packages = [ pkgs.gnome-calendar ];
-      envExports = gtk4EnvExports;
-      cmd = "${pkgs.gnome-calendar}/bin/gnome-calendar";
-      windowMatch = "--class org.gnome.Calendar";
-    };
 
     # ── Qt5 real apps (READ-ONLY SKELETON) ──────────────────────────────────
-    # manuskript is PyQt5; klog/wsjtx/qsstv/openambit are Qt5 (qtbase 5.15.x).
-    # The latter four are ham-radio / hardware apps and may pop first-run or
-    # hardware dialogs; the lenient window matcher + PID/newest-window fallback
-    # tolerate that. No lighter Qt5 *editor* was available in the pin (juffed and
-    # notepadqq are absent/removed), so these were retained.
+    # manuskript is PyQt5; klog/openambit are Qt5 (qtbase 5.15.x). wsjtx (no
+    # window headless) and qsstv (steals focus on launch) were dropped.
     qt5-manuskript = mkSkeleton {
       packages = [ pkgs.manuskript ];
       envExports = qt5EnvExports;
@@ -384,18 +360,6 @@ let
       cmd = "${pkgs.klog}/bin/klog";
       windowMatch = "--class klog";
     };
-    qt5-wsjtx = mkSkeleton {
-      packages = [ pkgs.wsjtx ];
-      envExports = qt5EnvExports;
-      cmd = "${pkgs.wsjtx}/bin/wsjtx";
-      windowMatch = "--class wsjtx";
-    };
-    qt5-qsstv = mkSkeleton {
-      packages = [ pkgs.qsstv ];
-      envExports = qt5EnvExports;
-      cmd = "${pkgs.qsstv}/bin/qsstv";
-      windowMatch = "--class qsstv";
-    };
     qt5-openambit = mkSkeleton {
       packages = [ pkgs.openambit ];
       envExports = qt5EnvExports;
@@ -404,9 +368,8 @@ let
     };
 
     # ── Qt6 real apps (READ-ONLY SKELETON) ──────────────────────────────────
-    # All from the kdePackages (Qt6) scope, plus ghostwriter (Qt6) and qownnotes
-    # (Qt6). kwrite is not packaged separately in this pin, so qownnotes (a Qt6
-    # note editor) takes its slot.
+    # All from the kdePackages (Qt6) scope, plus qownnotes (Qt6). ghostwriter
+    # was dropped (no window surfaced headless within 120s).
     qt6-kate = mkSkeleton {
       packages = [ pkgs.kdePackages.kate ];
       envExports = qt6EnvExports;
@@ -425,12 +388,6 @@ let
       cmd = "${pkgs.kdePackages.okular}/bin/okular";
       windowMatch = "--class okular";
     };
-    qt6-ghostwriter = mkSkeleton {
-      packages = [ pkgs.kdePackages.ghostwriter ];
-      envExports = qt6EnvExports;
-      cmd = "${pkgs.kdePackages.ghostwriter}/bin/ghostwriter";
-      windowMatch = "--class ghostwriter";
-    };
     qt6-qownnotes = mkSkeleton {
       packages = [ pkgs.qownnotes ];
       envExports = qt6EnvExports;
@@ -441,23 +398,13 @@ let
     # ── Electron real apps (READ-ONLY SKELETON) ─────────────────────────────
     # Heavy Chromium embeds; given more memory and a longer CI timeout. Read-only
     # skeleton (CDP write is exercised by the chromium full entry instead).
-    electron-marktext = mkSkeleton {
-      packages = [ pkgs.marktext ];
-      memoryMB = 4096;
-      cmd = "${pkgs.marktext}/bin/marktext ${electronCommonFlags}";
-      windowMatch = "--class marktext";
-    };
+    # marktext (steals focus on launch) and vscodium (no window headless within
+    # 120s) were dropped.
     electron-zettlr = mkSkeleton {
       packages = [ pkgs.zettlr ];
       memoryMB = 4096;
       cmd = "${pkgs.zettlr}/bin/zettlr ${electronCommonFlags}";
       windowMatch = "--class zettlr";
-    };
-    electron-vscodium = mkSkeleton {
-      packages = [ pkgs.vscodium ];
-      memoryMB = 6144;
-      cmd = "${pkgs.vscodium}/bin/codium ${electronCommonFlags} --disable-workspace-trust --skip-welcome --disable-telemetry --new-window";
-      windowMatch = "--class codium";
     };
     electron-joplin = mkSkeleton {
       packages = [ pkgs.joplin-desktop ];

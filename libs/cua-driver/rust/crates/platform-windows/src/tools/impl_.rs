@@ -3723,9 +3723,10 @@ impl Tool for GetScreenSizeTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         use windows::Win32::UI::HiDpi::GetDpiForSystem;
-        // SM_CXSCREEN/SM_CYSCREEN return values in the DPI of the current
-        // process; for a DPI-unaware process they're in *logical* points,
-        // matching Swift's NSScreen.frame.  Scale = system DPI / 96.
+        // With permonitorv2 DPI awareness (set in cua-driver.manifest),
+        // SM_CXSCREEN/SM_CYSCREEN already return logical points (DPI-scaled).
+        // Report these as-is, along with the scale factor for reference.
+        // Matches Swift's NSScreen.frame behavior on macOS.
         let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
         let dpi = unsafe { GetDpiForSystem() };
         let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };

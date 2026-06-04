@@ -5497,13 +5497,15 @@ mod cursor_key_resolution_tests {
     use serde_json::json;
 
     #[test]
-    fn anonymous_resolves_to_no_cursor() {
-        // No session/cursor_id → NO_CURSOR (""): the action still runs but no
-        // cursor is shown. The connection-injected `_session_id` is NOT a cursor
-        // source — it stays the recording/config lifecycle key.
-        assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
-        assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), NO_CURSOR);
-        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), NO_CURSOR);
+    fn anonymous_resolves_to_default_for_backwards_compat() {
+        // No session/cursor_id → "default": for backwards compatibility with
+        // legacy clients that don't pass session, we default to "default" so
+        // the cursor overlay continues to work. The connection-injected
+        // `_session_id` is NOT a cursor source — it stays the recording/config
+        // lifecycle key.
+        assert_eq!(resolve_cursor_key(&json!({})), "default");
+        assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), "default");
+        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), "default");
     }
 
     #[test]
@@ -5518,10 +5520,10 @@ mod cursor_key_resolution_tests {
     }
 
     #[test]
-    fn empty_strings_fall_through_to_no_cursor() {
-        // An empty `session` falls through to `cursor_id`; both empty → NO_CURSOR.
+    fn empty_strings_fall_through_to_default() {
+        // An empty `session` falls through to `cursor_id`; both empty → "default".
         assert_eq!(resolve_cursor_key(&json!({ "session": "", "cursor_id": "c1" })), "c1");
-        assert_eq!(resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })), NO_CURSOR);
+        assert_eq!(resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })), "default");
     }
 
     #[test]

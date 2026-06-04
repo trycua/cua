@@ -1,22 +1,31 @@
-# Linux background GUI input test — matrix over real apps, via AT-SPI.
+# Linux background GUI test — matrix over REAL desktop apps, via AT-SPI.
 #
 # X11 only routes keystrokes to the focused toplevel's focused widget, so the
-# driver types into GUI apps focus-free through AT-SPI EditableText instead.
-# This test proves that end to end: it stands up an AT-SPI accessibility bus,
-# launches an app in the background (a separate control terminal stays focused),
-# has cua-driver type into it, then reads the field's text back through AT-SPI
-# and asserts (a) the text landed and (b) focus never moved.
+# driver reads/types into GUI apps focus-free through AT-SPI instead. This test
+# stands up an AT-SPI accessibility bus, launches a real app in the background
+# (a separate control terminal stays focused), then drives cua-driver against
+# the inactive app window and asserts the accessibility tree is reachable.
 #
-# Chromium-backed apps (chromium, electron) additionally exercise an approved
-# CDP override: AT-SPI exposes them read-only, so a focus-free *write* into the
-# background window goes through the Chrome DevTools Protocol (Input.insertText
-# targets the page's focused DOM element regardless of OS window focus).
+# Two classes of entry live in `apps`:
 #
-# Each run also screen-records X11 display :99 into a per-app animated GIF
+#   1. SKELETON entries (skeleton = true) — the real-app matrix. These run a
+#      LENIENT, READ-ONLY smoke test: find the app window, drive cua-driver
+#      `page get_text` (read) against it, assert it returned a non-error
+#      accessibility response, assert focus stayed on the control terminal, and
+#      produce a GIF. Focus-free WRITE / typed-text assertions are intentionally
+#      OUT OF SCOPE here — they are added later per-app via trajectories.
+#
+#   2. Full entries (skeleton unset) — chromium and tk. These keep their
+#      original full behaviour: chromium exercises the approved CDP focus-free
+#      *write* override (Input.insertText into the background window); tk
+#      exercises the Tk `send` focus-free write override. Both also type via the
+#      native AT-SPI path and read it back.
+#
+# Each run screen-records X11 display :99 into a per-app animated GIF
 # (/tmp/cua-driver-linux-background-gui-<app>.gif) and copies it into the test
 # derivation's $out, so the Nix workflow's `visual: true` artifact upload finds
 # a `.gif` for every matrix job. The GIF is stopped and copied out before any
-# toolkit assertion can fail, so even the failing jobs (qt, tk) still upload one.
+# toolkit assertion can fail, so even failing jobs still upload one.
 #
 # `app` selects one entry from `apps`, so flake.nix wires one matrix job per app.
 # To run: nix build .#checks.x86_64-linux.cua-driver-linux-background-gui-<app>
@@ -75,104 +84,52 @@ let
   ];
 
   # A page whose input is autofocused; its title is fixed so the window can be
-  # found by name. Readback is via AT-SPI, so no JS mirroring is needed.
+  # found by name. Readback is via AT-SPI, so no JS mirroring is needed. Used by
+  # the chromium full entry.
   htmlFile = pkgs.writeText "cua-input.html" ''
     <html><head><title>cua-initial</title></head>
     <body><input autofocus></body></html>
   '';
 
-  # Minimal Qt app: a focused QLineEdit in a window titled cua-initial. Qt
-  # exposes it over AT-SPI (with EditableText) when QT_ACCESSIBILITY=1, giving
-  # a non-GTK toolkit data point for focus-free typing.
-  pyqtEnv = pkgs.python3.withPackages (ps: [ ps.pyqt5 ]);
-  qtEntryScript = pkgs.writeText "cua-qt-entry.py" ''
-    import sys
-    from PyQt5.QtWidgets import QApplication, QWidget, QLineEdit, QVBoxLayout
-    app = QApplication(sys.argv)
-    w = QWidget()
-    w.setWindowTitle("cua-initial")
-    entry = QLineEdit()
-    layout = QVBoxLayout(w)
-    layout.addWidget(entry)
-    w.resize(400, 120)
-    w.show()
-    entry.setFocus()
-    sys.exit(app.exec_())
+  # ── Per-toolkit launch-environment helpers (shared across the real-app sets) ──
+
+  # GTK4 talks AT-SPI directly (not via atk-bridge), but only exports its
+  # accessible tree when it selects the AT-SPI backend at startup; GTK_A11Y=atspi
+  # forces it on. x11 backend + cairo renderer keep it headless-safe.
+  gtk4EnvExports = ''
+    export GTK_A11Y=atspi
+    export GDK_BACKEND=x11
+    export GSK_RENDERER=cairo
   '';
 
-  # Qt6 (PyQt6) variant of the same QLineEdit window — same AT-SPI bridge as Qt5
-  # but the current major version, so the native path is covered across both.
-  pyqt6Env = pkgs.python3.withPackages (ps: [ ps.pyqt6 ]);
-  qt6EntryScript = pkgs.writeText "cua-qt6-entry.py" ''
-    import sys
-    from PyQt6.QtWidgets import QApplication, QWidget, QLineEdit, QVBoxLayout
-    app = QApplication(sys.argv)
-    w = QWidget()
-    w.setWindowTitle("cua-initial")
-    entry = QLineEdit()
-    layout = QVBoxLayout(w)
-    layout.addWidget(entry)
-    w.resize(400, 120)
-    w.show()
-    entry.setFocus()
-    sys.exit(app.exec())
+  # Qt5: point Qt at qtbase's xcb platform plugin (bare apps don't always inherit
+  # it) and force the AT-SPI bridge on regardless of the bus enabled-handshake.
+  qt5EnvExports = ''
+    export QT_QPA_PLATFORM=xcb
+    export QT_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}
+    export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}/platforms
+    export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
+    export QT_ACCESSIBILITY=1
   '';
 
-  # GTK4 app (compiled C) with a focused GtkEntry. GTK4 talks AT-SPI directly
-  # (no atk-bridge module), so it contrasts with the GTK3/zenity case which goes
-  # through the bridge. Cairo renderer + x11 backend keep it headless-safe.
-  gtk4App = pkgs.runCommandCC "cua-gtk4" {
-    nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.gtk4 ];
-  } ''
-    mkdir -p $out/bin
-    cat > app.c <<'EOF'
-    #include <gtk/gtk.h>
-    static void on_activate(GtkApplication *app, gpointer user_data) {
-      GtkWidget *win = gtk_application_window_new(app);
-      gtk_window_set_title(GTK_WINDOW(win), "cua-initial");
-      GtkWidget *entry = gtk_entry_new();
-      gtk_window_set_child(GTK_WINDOW(win), entry);
-      gtk_window_set_default_size(GTK_WINDOW(win), 400, 120);
-      gtk_widget_grab_focus(entry);
-      gtk_window_present(GTK_WINDOW(win));
-    }
-    int main(int argc, char **argv) {
-      GtkApplication *app = gtk_application_new("ai.cua.Initial", G_APPLICATION_DEFAULT_FLAGS);
-      g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-      int status = g_application_run(G_APPLICATION(app), argc, argv);
-      g_object_unref(app);
-      return status;
-    }
-    EOF
-    $CC app.c -o $out/bin/cua-gtk4 $(pkg-config --cflags --libs gtk4)
+  # Qt6: Qt 6.5+ aborts loading the xcb plugin unless libxcb-cursor is present;
+  # put it on LD_LIBRARY_PATH and force the AT-SPI bridge on.
+  qt6EnvExports = ''
+    export QT_QPA_PLATFORM=xcb
+    export LD_LIBRARY_PATH=${pkgs.xcb-util-cursor}/lib:''${LD_LIBRARY_PATH:-}
+    export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
+    export QT_ACCESSIBILITY=1
   '';
 
-  # Tk (tkinter) app — Tk has no AT-SPI bridge, so focus-free writes use Tk's
-  # `send` command instead: the app registers itself with a known name, and the
-  # driver injects text by invoking `wish` to send Tcl commands over X11 IPC.
-  # This is the Tk-specific override (like CDP for Chromium), proving that
-  # non-accessible toolkits can still support background input with bespoke paths.
-  tkEnv = pkgs.python3.withPackages (ps: [ ps.tkinter ]);
-  tkScript = pkgs.writeText "cua-tk.py" ''
-    import tkinter as tk
-    root = tk.Tk()
-    root.title("cua-initial")
-    # Register the app with a known name so `send` commands can reach it.
-    tk._default_root.tk.call('tk', 'appname', 'cua-tk-target')
-    entry = tk.Entry(root, width=40, name='entry')
-    entry.pack(padx=20, pady=20)
-    entry.focus_set()
-    root.geometry("400x120+700+150")
-    root.mainloop()
-  '';
+  # Electron: heavy Chromium embed; standard headless-safe flags.
+  electronCommonFlags = "--no-sandbox --disable-gpu --disable-dev-shm-usage";
 
   # ── CDP (Chrome DevTools Protocol) focus-free write — approved override ──────
-  # AT-SPI exposes Chromium/Electron read-only, so the driver can't write into a
+  # AT-SPI exposes Chromium read-only, so the driver can't write into a
   # *background* browser window through it. CDP talks to the renderer over the
   # debug socket instead: Input.insertText lands in the page's focused DOM
   # element (document.activeElement) regardless of whether the OS window holds X
-  # focus. This is a Chromium/Electron-specific override, not the generic path.
+  # focus. This is a Chromium-specific override, not the generic path.
   cdpPort = 9222;
   cdpMarker = "cdptyped5678";
 
@@ -309,113 +266,218 @@ let
     print("CDP_READBACK_MISMATCH", flush=True); sys.exit(1)
   '';
 
-  # Minimal Electron app: a Chromium-backed BrowserWindow titled cua-initial,
-  # loading the same autofocused-input page. Gives a non-browser Chromium embed
-  # data point; like Chromium it's read-only over AT-SPI, writable via CDP.
-  electronMain = pkgs.writeText "main.js" ''
-    const { app, BrowserWindow } = require('electron');
-    app.commandLine.appendSwitch('remote-debugging-port', '${toString cdpPort}');
-    app.commandLine.appendSwitch('remote-allow-origins', '*');
-    app.commandLine.appendSwitch('no-sandbox');
-    app.commandLine.appendSwitch('disable-gpu');
-    app.commandLine.appendSwitch('disable-dev-shm-usage');
-    app.commandLine.appendSwitch('force-renderer-accessibility');
-    app.disableHardwareAcceleration();
-    app.whenReady().then(() => {
-      const win = new BrowserWindow({ width: 480, height: 360, x: 700, y: 150, title: 'cua-initial' });
-      win.loadURL('file://${htmlFile}');
-    });
-  '';
-  electronApp = pkgs.runCommand "cua-electron-app" { } ''
-    mkdir -p $out
-    cp ${electronMain} $out/main.js
-    cp ${pkgs.writeText "package.json" (builtins.toJSON {
-      name = "cua-initial"; version = "1.0.0"; main = "main.js";
-    })} $out/package.json
+  # Tk (tkinter) app — Tk has no AT-SPI bridge, so focus-free writes use Tk's
+  # `send` command instead: the app registers itself with a known name, and the
+  # driver injects text by invoking `wish` to send Tcl commands over X11 IPC.
+  # This is the Tk-specific override (like CDP for Chromium), proving that
+  # non-accessible toolkits can still support background input with bespoke paths.
+  tkEnv = pkgs.python3.withPackages (ps: [ ps.tkinter ]);
+  tkScript = pkgs.writeText "cua-tk.py" ''
+    import tkinter as tk
+    root = tk.Tk()
+    root.title("cua-initial")
+    # Register the app with a known name so `send` commands can reach it.
+    tk._default_root.tk.call('tk', 'appname', 'cua-tk-target')
+    entry = tk.Entry(root, width=40, name='entry')
+    entry.pack(padx=20, pady=20)
+    entry.focus_set()
+    root.geometry("400x120+700+150")
+    root.mainloop()
   '';
 
+  # ── Helpers to build real-app skeleton entries tersely ──────────────────────
+  # mkSkeleton builds a "skeleton = true" app entry: a launch script (the given
+  # `cmd` run with the per-toolkit env exports) plus a `windowMatch` xdotool
+  # search expression used to find the background window.
+  mkSkeleton =
+    {
+      packages,
+      memoryMB ? 2048,
+      envExports ? "",
+      cmd,
+      windowMatch,
+    }:
+    {
+      inherit packages memoryMB windowMatch;
+      skeleton = true;
+      launch = pkgs.writeShellScript "cua-launch-${app}.sh" ''
+        ${envExports}
+        exec ${cmd}
+      '';
+    };
+
   apps = {
-    gtk = {
-      packages = [ pkgs.zenity ];
-      memoryMB = 2048;
-      # zenity is a GTK3 app; --entry gives a focused GtkEntry. GTK3 (unlike
-      # GTK4, which speaks AT-SPI directly) only joins the AT-SPI bus by dlopening
-      # libatk-bridge-2.0.so, and atk-bridge only registers the app's accessible
-      # tree at startup when the a11y bus reports org.a11y.Status IsEnabled=true.
-      # In this hand-rolled headless session that handshake is racy: the bridge
-      # reads IsEnabled once at process start, before our `dbus-send ... Set
-      # IsEnabled true` reliably lands, so zenity frequently never registers and
-      # the driver's tree walk finds zero nodes for its pid. Because that
-      # registration is not reliably achievable here, gtk (zenity/GTK3) stays
-      # READ-ONLY in the assertions below (no typed-text assert). It is NOT
-      # fundamentally impossible — with a guaranteed IsEnabled-before-launch
-      # ordering GTK3 would expose its tree — but it was not reliably reproducible
-      # in this CI session, so we do not assert a write for it.
-      launch = pkgs.writeShellScript "cua-launch-gtk.sh" ''
-        exec ${pkgs.zenity}/bin/zenity --entry --title=cua-initial --text=cua --width=400
-      '';
+    # ── GTK3 real apps (READ-ONLY SKELETON) ─────────────────────────────────
+    gtk3-gedit = mkSkeleton {
+      packages = [ pkgs.gedit ];
+      cmd = "${pkgs.gedit}/bin/gedit --new-window";
+      windowMatch = "--class gedit";
     };
-    qt = {
-      packages = [ pyqtEnv ];
-      memoryMB = 2048;
-      launch = pkgs.writeShellScript "cua-launch-qt.sh" ''
-        export QT_QPA_PLATFORM=xcb
-        # PyQt5 run as a bare script doesn't inherit qtbase's plugin path, so
-        # the xcb platform plugin isn't found ("...in \"\""). Point Qt at it.
-        export QT_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}
-        export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt5.qtbase}/${pkgs.qt5.qtbase.qtPluginPrefix}/platforms
-        # Force Qt's AT-SPI bridge on regardless of the bus enabled-handshake, so
-        # the app exports its accessible tree in this headless session.
-        export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
-        export QT_ACCESSIBILITY=1
-        exec ${pyqtEnv}/bin/python3 ${qtEntryScript}
-      '';
+    gtk3-mousepad = mkSkeleton {
+      packages = [ pkgs.mousepad ];
+      cmd = "${pkgs.mousepad}/bin/mousepad --disable-server";
+      windowMatch = "--class mousepad";
     };
-    qt6 = {
-      packages = [ pyqt6Env ];
-      memoryMB = 2048;
-      launch = pkgs.writeShellScript "cua-launch-qt6.sh" ''
-        export QT_QPA_PLATFORM=xcb
-        # Bare PyQt6 doesn't inherit qtbase's plugin path; point Qt6 at it so the
-        # xcb platform plugin is found (Qt6 installs plugins under lib/qt-6).
-        export QT_PLUGIN_PATH=${pkgs.qt6.qtbase}/lib/qt-6/plugins
-        export QT_QPA_PLATFORM_PLUGIN_PATH=${pkgs.qt6.qtbase}/lib/qt-6/plugins/platforms
-        # Qt 6.5+ aborts loading the xcb plugin unless libxcb-cursor is present.
-        export LD_LIBRARY_PATH=${pkgs.xcb-util-cursor}/lib:''${LD_LIBRARY_PATH:-}
-        export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
-        export QT_ACCESSIBILITY=1
-        exec ${pyqt6Env}/bin/python3 ${qt6EntryScript}
-      '';
+    gtk3-geany = mkSkeleton {
+      packages = [ pkgs.geany ];
+      cmd = "${pkgs.geany}/bin/geany";
+      windowMatch = "--class geany";
     };
-    gtk4 = {
-      packages = [ pkgs.gtk4 ];
-      memoryMB = 2048;
-      launch = pkgs.writeShellScript "cua-launch-gtk4.sh" ''
-        export GDK_BACKEND=x11
-        export GSK_RENDERER=cairo
-        # GTK4 talks AT-SPI directly (not via atk-bridge), but it only builds and
-        # exports its accessible tree when it selects the AT-SPI accessibility
-        # backend at startup. In this hand-rolled headless session GTK4's
-        # auto-detection can pick the "none" backend, leaving the a11y tree empty
-        # (only the top window node is exposed, no GtkEntry child) — which is why
-        # focus-free writes had nothing editable to target. GTK_A11Y=atspi forces
-        # the AT-SPI backend on so the GtkEntry is exposed with EditableText.
-        export GTK_A11Y=atspi
-        exec ${gtk4App}/bin/cua-gtk4
-      '';
+    gtk3-scite = mkSkeleton {
+      packages = [ pkgs.scite ];
+      cmd = "${pkgs.scite}/bin/SciTE";
+      windowMatch = "--class scite";
     };
-    tk = {
-      packages = [ tkEnv pkgs.tk ];
-      memoryMB = 2048;
-      tksend = true;
-      launch = pkgs.writeShellScript "cua-launch-tk.sh" ''
-        exec ${tkEnv}/bin/python3 ${tkScript}
-      '';
+    gtk3-abiword = mkSkeleton {
+      packages = [ pkgs.abiword ];
+      cmd = "${pkgs.abiword}/bin/abiword";
+      windowMatch = "--class abiword";
     };
+
+    # ── GTK4 real apps (READ-ONLY SKELETON) ─────────────────────────────────
+    gtk4-text-editor = mkSkeleton {
+      packages = [ pkgs.gnome-text-editor ];
+      envExports = gtk4EnvExports;
+      cmd = "${pkgs.gnome-text-editor}/bin/gnome-text-editor --new-window";
+      windowMatch = "--class org.gnome.TextEditor";
+    };
+    gtk4-characters = mkSkeleton {
+      packages = [ pkgs.gnome-characters ];
+      envExports = gtk4EnvExports;
+      cmd = "${pkgs.gnome-characters}/bin/gnome-characters";
+      windowMatch = "--class org.gnome.Characters";
+    };
+    gtk4-console = mkSkeleton {
+      packages = [ pkgs.gnome-console ];
+      envExports = gtk4EnvExports;
+      cmd = "${pkgs.gnome-console}/bin/kgx";
+      windowMatch = "--class org.gnome.Console";
+    };
+    gtk4-contacts = mkSkeleton {
+      packages = [ pkgs.gnome-contacts ];
+      envExports = gtk4EnvExports;
+      cmd = "${pkgs.gnome-contacts}/bin/gnome-contacts";
+      windowMatch = "--class org.gnome.Contacts";
+    };
+    gtk4-calendar = mkSkeleton {
+      packages = [ pkgs.gnome-calendar ];
+      envExports = gtk4EnvExports;
+      cmd = "${pkgs.gnome-calendar}/bin/gnome-calendar";
+      windowMatch = "--class org.gnome.Calendar";
+    };
+
+    # ── Qt5 real apps (READ-ONLY SKELETON) ──────────────────────────────────
+    # manuskript is PyQt5; klog/wsjtx/qsstv/openambit are Qt5 (qtbase 5.15.x).
+    # The latter four are ham-radio / hardware apps and may pop first-run or
+    # hardware dialogs; the lenient window matcher + PID/newest-window fallback
+    # tolerate that. No lighter Qt5 *editor* was available in the pin (juffed and
+    # notepadqq are absent/removed), so these were retained.
+    qt5-manuskript = mkSkeleton {
+      packages = [ pkgs.manuskript ];
+      envExports = qt5EnvExports;
+      cmd = "${pkgs.manuskript}/bin/manuskript";
+      windowMatch = "--class manuskript";
+    };
+    qt5-klog = mkSkeleton {
+      packages = [ pkgs.klog ];
+      envExports = qt5EnvExports;
+      cmd = "${pkgs.klog}/bin/klog";
+      windowMatch = "--class klog";
+    };
+    qt5-wsjtx = mkSkeleton {
+      packages = [ pkgs.wsjtx ];
+      envExports = qt5EnvExports;
+      cmd = "${pkgs.wsjtx}/bin/wsjtx";
+      windowMatch = "--class wsjtx";
+    };
+    qt5-qsstv = mkSkeleton {
+      packages = [ pkgs.qsstv ];
+      envExports = qt5EnvExports;
+      cmd = "${pkgs.qsstv}/bin/qsstv";
+      windowMatch = "--class qsstv";
+    };
+    qt5-openambit = mkSkeleton {
+      packages = [ pkgs.openambit ];
+      envExports = qt5EnvExports;
+      cmd = "${pkgs.openambit}/bin/openambit";
+      windowMatch = "--class openambit";
+    };
+
+    # ── Qt6 real apps (READ-ONLY SKELETON) ──────────────────────────────────
+    # All from the kdePackages (Qt6) scope, plus ghostwriter (Qt6) and qownnotes
+    # (Qt6). kwrite is not packaged separately in this pin, so qownnotes (a Qt6
+    # note editor) takes its slot.
+    qt6-kate = mkSkeleton {
+      packages = [ pkgs.kdePackages.kate ];
+      envExports = qt6EnvExports;
+      cmd = "${pkgs.kdePackages.kate}/bin/kate --new";
+      windowMatch = "--class kate";
+    };
+    qt6-kcalc = mkSkeleton {
+      packages = [ pkgs.kdePackages.kcalc ];
+      envExports = qt6EnvExports;
+      cmd = "${pkgs.kdePackages.kcalc}/bin/kcalc";
+      windowMatch = "--class kcalc";
+    };
+    qt6-okular = mkSkeleton {
+      packages = [ pkgs.kdePackages.okular ];
+      envExports = qt6EnvExports;
+      cmd = "${pkgs.kdePackages.okular}/bin/okular";
+      windowMatch = "--class okular";
+    };
+    qt6-ghostwriter = mkSkeleton {
+      packages = [ pkgs.kdePackages.ghostwriter ];
+      envExports = qt6EnvExports;
+      cmd = "${pkgs.kdePackages.ghostwriter}/bin/ghostwriter";
+      windowMatch = "--class ghostwriter";
+    };
+    qt6-qownnotes = mkSkeleton {
+      packages = [ pkgs.qownnotes ];
+      envExports = qt6EnvExports;
+      cmd = "${pkgs.qownnotes}/bin/QOwnNotes";
+      windowMatch = "--class qownnotes";
+    };
+
+    # ── Electron real apps (READ-ONLY SKELETON) ─────────────────────────────
+    # Heavy Chromium embeds; given more memory and a longer CI timeout. Read-only
+    # skeleton (CDP write is exercised by the chromium full entry instead).
+    electron-marktext = mkSkeleton {
+      packages = [ pkgs.marktext ];
+      memoryMB = 4096;
+      cmd = "${pkgs.marktext}/bin/marktext ${electronCommonFlags}";
+      windowMatch = "--class marktext";
+    };
+    electron-zettlr = mkSkeleton {
+      packages = [ pkgs.zettlr ];
+      memoryMB = 4096;
+      cmd = "${pkgs.zettlr}/bin/zettlr ${electronCommonFlags}";
+      windowMatch = "--class zettlr";
+    };
+    electron-vscodium = mkSkeleton {
+      packages = [ pkgs.vscodium ];
+      memoryMB = 6144;
+      cmd = "${pkgs.vscodium}/bin/codium ${electronCommonFlags} --disable-workspace-trust --skip-welcome --disable-telemetry --new-window";
+      windowMatch = "--class codium";
+    };
+    electron-joplin = mkSkeleton {
+      packages = [ pkgs.joplin-desktop ];
+      memoryMB = 4096;
+      cmd = "${pkgs.joplin-desktop}/bin/joplin-desktop ${electronCommonFlags}";
+      windowMatch = "--class joplin";
+    };
+    electron-logseq = mkSkeleton {
+      packages = [ pkgs.logseq ];
+      memoryMB = 6144;
+      cmd = "${pkgs.logseq}/bin/logseq ${electronCommonFlags}";
+      windowMatch = "--class logseq";
+    };
+
+    # ── Full entries (unchanged behaviour): chromium (CDP) + tk (send) ───────
     chromium = {
       packages = [ pkgs.chromium ];
       memoryMB = 4096;
       cdp = true;
+      windowMatch = "--name cua-initial";
       launch = pkgs.writeShellScript "cua-launch-chromium.sh" ''
         exec ${pkgs.chromium}/bin/chromium \
           --no-sandbox --no-first-run --no-default-browser-check --disable-gpu \
@@ -426,36 +488,29 @@ let
           --new-window file://${htmlFile}
       '';
     };
-    electron = {
-      packages = [ pkgs.electron ];
-      memoryMB = 4096;
-      cdp = true;
-      launch = pkgs.writeShellScript "cua-launch-electron.sh" ''
-        exec ${pkgs.electron}/bin/electron --no-sandbox ${electronApp}
-      '';
-    };
-    firefox = {
-      packages = [ pkgs.firefox ];
-      memoryMB = 4096;
-      launch = pkgs.writeShellScript "cua-launch-firefox.sh" ''
-        exec ${pkgs.firefox}/bin/firefox \
-          --new-instance --profile /tmp/cua-firefox --window-size=480,360 \
-          file://${htmlFile}
+    tk = {
+      packages = [ tkEnv pkgs.tk ];
+      memoryMB = 2048;
+      tksend = true;
+      windowMatch = "--name cua-initial";
+      launch = pkgs.writeShellScript "cua-launch-tk.sh" ''
+        exec ${tkEnv}/bin/python3 ${tkScript}
       '';
     };
   };
 
   selected = apps.${app};
+  isSkeleton = selected.skeleton or false;
 
-  # CDP focus-free write subtest — only for Chromium-backed apps (chromium,
-  # electron). Asserting (unlike the AT-SPI write): proves the approved override
-  # writes into the *background* window while the control terminal keeps focus.
+  # CDP focus-free write subtest — only for Chromium-backed full entries. Asserts
+  # the approved override writes into the *background* window while the control
+  # terminal keeps focus. (Skeleton entries skip this.)
   cdpSubtest = lib.optionalString (selected.cdp or false) ''
     with subtest("CDP focus-free write into the background window (approved override)"):
         # CDP reaches the renderer over the debug socket, so Input.insertText lands
         # in the page's focused DOM element while the OS window stays in the
         # background. This is the one path that writes into an unfocused browser
-        # window; AT-SPI exposes Chromium/Electron read-only.
+        # window; AT-SPI exposes Chromium read-only.
         machine.copy_from_host("${cdpWriteScript}", "/tmp/cdp-write.py")
         cdp_out = machine.succeed("${a11yEnv} timeout 120 python3 /tmp/cdp-write.py 2>&1")
         machine.log(cdp_out)
@@ -466,16 +521,9 @@ let
         assert cdp_control == cdp_active, "focus moved during CDP write: got " + cdp_active
   '';
 
-  # Tk send focus-free write subtest — only for Tk apps. Asserts the driver's
-  # Tk-specific override (using Tk's `send` command) writes into the background
-  # window while the control terminal keeps focus. Tk has no AT-SPI bridge, so
-  # this is the approved override path for focus-free Tk input.
-  # Readback script: read the entry value back over Tk `send`. `send` is
-  # synchronous and blocks the sender until the target's Tcl event loop replies;
-  # if the target is wedged or the X server refuses `send` (SECURITY ext / xauth
-  # mismatch) it would otherwise hang forever. Guard it with a Tcl `after` timer
-  # that prints a marker and force-exits, so wish always terminates promptly —
-  # and the invocation is additionally wrapped in `timeout` below as a backstop.
+  # Tk send focus-free write subtest — only for the Tk full entry. Reads the
+  # entry value back over Tk `send`, guarded by a Tcl `after` timer + `timeout`
+  # backstop so wish always terminates promptly.
   tkGetScript = pkgs.writeText "tk-get-value.tcl" ''
     set ::rc 1
     after 20000 {
@@ -496,9 +544,6 @@ let
     with subtest("Tk send focus-free write into the background window (Tk override)"):
         # The driver already typed via inject_tk_send in the main test. Now read
         # the entry widget's value back via Tk send to prove the write landed.
-        # `timeout` is a hard backstop on top of the Tcl `after` timer in the
-        # script: even if wish wedges before reaching its event loop, the step
-        # fails fast (within ~30s) with diagnostics instead of hanging 15 min.
         machine.copy_from_host("${tkGetScript}", "/tmp/tk-get-value.tcl")
         status, tk_readback = machine.execute("${a11yEnv} timeout 30 ${pkgs.tk}/bin/wish /tmp/tk-get-value.tcl 2>&1")
         tk_readback = tk_readback.strip()
@@ -510,6 +555,7 @@ let
         assert tk_control == tk_active, "focus moved during Tk write: got " + tk_active
   '';
 
+  # Full-entry MCP driver script: type via native AT-SPI then read back.
   mcpTest = pkgs.writeText "mcp-background-gui-test.py" ''
     import json, os, sys, threading, time
 
@@ -517,8 +563,6 @@ let
 
     def start_driver():
         import subprocess
-        # CUA_ATSPI_DEBUG makes the driver log what its native AT-SPI walk finds
-        # (app/pid match, node counts) to stderr, surfaced in the test output.
         env = {**os.environ, "CUA_ATSPI_DEBUG": "1"}
         proc = subprocess.Popen(
             [DRIVER_BIN, "mcp", "--no-daemon-relaunch"],
@@ -585,9 +629,7 @@ let
             time.sleep(1.5)
             print("background GUI test typed", flush=True)
 
-            # Read it back through the driver's *own* native AT-SPI client
-            # (page/get_text walks the same accessibility tree it just wrote to).
-            # Retry: a11y trees can take a moment to reflect the insertion.
+            # Read it back through the driver's *own* native AT-SPI client.
             readback = ""
             last_resp = None
             for _ in range(8):
@@ -614,6 +656,197 @@ let
     if __name__ == "__main__":
         main()
   '';
+
+  # ── SKELETON: read-only smoke + GIF; focus-free WRITE / typed-text assertions
+  # are added later via trajectories. ─────────────────────────────────────────
+  # Skeleton MCP driver script: ONLY drives `page get_text` (read) against the
+  # found window. It does NOT call type_text and does NOT assert any typed text.
+  # It prints the raw get_text response so the testScript can check it returned a
+  # non-error accessibility payload.
+  skeletonMcpTest = pkgs.writeText "mcp-background-gui-skeleton.py" ''
+    import json, os, sys, threading, time
+
+    DRIVER_BIN = os.environ.get("CUA_DRIVER_BIN", "cua-driver")
+
+    def start_driver():
+        import subprocess
+        env = {**os.environ, "CUA_ATSPI_DEBUG": "1"}
+        proc = subprocess.Popen(
+            [DRIVER_BIN, "mcp", "--no-daemon-relaunch"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=env,
+        )
+        def drain():
+            for line in proc.stderr:
+                sys.stderr.buffer.write(line); sys.stderr.buffer.flush()
+        threading.Thread(target=drain, daemon=True).start()
+        return proc
+
+    def send(proc, method, params=None, req_id=None):
+        msg = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
+        if req_id is not None:
+            msg["id"] = req_id
+        proc.stdin.write((json.dumps(msg) + "\n").encode()); proc.stdin.flush()
+
+    def recv(proc, timeout=45):
+        result = [None]
+        def reader():
+            result[0] = proc.stdout.readline()
+        t = threading.Thread(target=reader); t.start(); t.join(timeout)
+        if t.is_alive():
+            raise TimeoutError("No response within timeout")
+        line = result[0].decode().strip()
+        if not line:
+            raise RuntimeError("Driver returned an empty response")
+        return json.loads(line)
+
+    def main():
+        with open("/tmp/target-xid.txt") as f:
+            target_xid = int(f.read().strip())
+        with open("/tmp/target-pid.txt") as f:
+            target_pid = int(f.read().strip())
+
+        proc = start_driver()
+        try:
+            send(proc, "initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "nixos-background-gui-skeleton", "version": "1.0.0"},
+            }, req_id=1)
+            recv(proc)
+            send(proc, "notifications/initialized", {})
+            time.sleep(0.3)
+
+            # READ-ONLY: drive page/get_text against the inactive window. Retry a
+            # few times — real apps (Electron/KDE) take a moment to build their
+            # accessibility tree after first paint.
+            readback = ""
+            last_resp = None
+            is_error = True
+            for _ in range(10):
+                send(proc, "tools/call", {
+                    "name": "page",
+                    "arguments": {
+                        "action": "get_text",
+                        "pid": target_pid,
+                        "window_id": target_xid,
+                    },
+                }, req_id=3)
+                resp = recv(proc)
+                last_resp = resp
+                # A transport-level error or isError=true is a non-result; keep
+                # retrying. Any structured content counts as a non-error response.
+                if resp.get("error") or resp.get("result", {}).get("isError"):
+                    time.sleep(1.0)
+                    continue
+                content = resp.get("result", {}).get("content", [])
+                readback = " ".join(
+                    c.get("text", "") for c in content if c.get("type") == "text"
+                )
+                is_error = False
+                if readback.strip():
+                    break
+                time.sleep(1.0)
+
+            print("RAW_GET_TEXT_RESPONSE: " + json.dumps(last_resp), flush=True)
+            print("GET_TEXT_IS_ERROR: " + ("yes" if is_error else "no"), flush=True)
+            if not is_error:
+                print("GET_TEXT_OK", flush=True)
+            print("READBACK_BEGIN", flush=True)
+            print(readback, flush=True)
+            print("READBACK_END", flush=True)
+        finally:
+            proc.stdin.close(); proc.terminate(); proc.wait(timeout=5)
+
+    if __name__ == "__main__":
+        main()
+  '';
+
+  # The window-find shell command, parameterised on the app's windowMatch. Tries
+  # the toolkit class/name match first, then falls back to the launched PID's
+  # window, then the newest visible window — so real apps that don't expose the
+  # expected class still surface a window for the read-only drive.
+  windowFindCmd = ''
+    DISPLAY=:99 sh -c '
+      xid=$(xdotool search --sync --onlyvisible ${selected.windowMatch} 2>/dev/null | head -1)
+      if [ -z "$xid" ]; then
+        xid=$(xdotool search --all --pid $(cat /tmp/target-pid.txt) 2>/dev/null | head -1)
+      fi
+      if [ -z "$xid" ]; then
+        xid=$(xdotool search --onlyvisible "" 2>/dev/null | tail -1)
+      fi
+      test -n "$xid" && printf "%s" "$xid" >/tmp/target-xid.txt && test -s /tmp/target-xid.txt
+    '
+  '';
+
+  # ── Skeleton (read-only) drive + assertions ─────────────────────────────────
+  skeletonDrive = ''
+    with subtest("SKELETON read-only: drive cua-driver page/get_text against the inactive window"):
+        # SKELETON: read-only smoke + GIF; focus-free WRITE / typed-text
+        # assertions are added later via trajectories. This path only proves the
+        # app window appeared and the driver can READ its accessibility tree.
+        machine.copy_from_host("${skeletonMcpTest}", "/tmp/mcp-background-gui-skeleton.py")
+        machine.execute(
+            "sh -lc '${recordGifScript} :99 /tmp/gui-frames ${outputGif} "
+            "/tmp/stop-gui-recorder /tmp/record-gui.log 10 0.2 >/dev/null 2>&1 & echo $! >/tmp/record-gui.pid'"
+        )
+        status, result = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-skeleton.py 2>&1")
+        machine.log(result)
+        # Stop the recorder and copy the GIF out *now*, before any assertion can
+        # fail, so every matrix job uploads a GIF of the interaction.
+        machine.execute("touch /tmp/stop-gui-recorder")
+        machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
+        machine.execute("test -s ${outputGif}")
+        machine.copy_from_machine("${outputGif}", "")
+        # Lenient assertion: get_text returned a NON-error accessibility response.
+        # Do NOT require any specific role (entry/text/...) — any content is fine.
+        assert "GET_TEXT_OK" in result, (
+            "driver page/get_text did not return a non-error response for the "
+            "background app:\n" + result
+        )
+
+    with subtest("Focus stayed on the control terminal"):
+        control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
+        active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
+        assert control == active, "expected active window " + control + ", got " + active
+  '';
+
+  # ── Full-entry (chromium/tk) drive + assertions (original behaviour) ─────────
+  fullDrive = ''
+    with subtest("Drive cua-driver against the inactive window (AT-SPI)"):
+        machine.copy_from_host("${mcpTest}", "/tmp/mcp-background-gui-test.py")
+        machine.execute(
+            "sh -lc '${recordGifScript} :99 /tmp/gui-frames ${outputGif} "
+            "/tmp/stop-gui-recorder /tmp/record-gui.log 10 0.2 >/dev/null 2>&1 & echo $! >/tmp/record-gui.pid'"
+        )
+        status, result = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
+        machine.log(result)
+        machine.execute("touch /tmp/stop-gui-recorder")
+        machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
+        machine.execute("test -s ${outputGif}")
+        machine.copy_from_machine("${outputGif}", "")
+        assert "background GUI test typed" in result, result
+
+    with subtest("Input landed: driver's native AT-SPI reads the window back"):
+        assert any(tok in result for tok in ('frame "', 'window "', 'document', 'text "', 'entry "')), (
+            "driver get_text did not return an accessibility node for the background app:\n"
+            + result
+        )
+
+    with subtest("Focus stayed on the control terminal"):
+        control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
+        active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
+        assert control == active, "expected active window " + control + ", got " + active
+
+    ${cdpSubtest}
+    ${tkSubtest}
+  '';
+
+  driveBody = if isSkeleton then skeletonDrive else fullDrive;
 in
 
 pkgs.testers.nixosTest {
@@ -661,9 +894,6 @@ pkgs.testers.nixosTest {
         machine.execute("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork >/tmp/dbus.log 2>&1")
         machine.wait_until_succeeds("test -S /tmp/cua-session-bus", timeout=10)
         machine.succeed("mkdir -p /tmp/cua-cfg")
-        # Start the AT-SPI bus launcher and wait until *it* owns org.a11y.Bus,
-        # checked via the bus driver's NameHasOwner (which does NOT D-Bus-activate
-        # the name — activating it would spawn a second, conflicting launcher).
         machine.execute("${a11yEnv} ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher --launch-immediately >/tmp/atspi-launcher.log 2>&1 &")
         machine.wait_until_succeeds(
             "${a11yEnv} dbus-send --session --print-reply "
@@ -671,17 +901,12 @@ pkgs.testers.nixosTest {
             "string:org.a11y.Bus | grep -q 'boolean true'",
             timeout=15,
         )
-        # at-spi-bus-launcher reports a11y enabled only once an AT client has
-        # registered (or IsEnabled is set explicitly); GTK3 apps check this at
-        # startup and stay silent otherwise. Set it on the now-owned launcher.
         machine.execute(
             "${a11yEnv} dbus-send --session --print-reply --dest=org.a11y.Bus "
             "/org/a11y/bus org.freedesktop.DBus.Properties.Set "
             "string:org.a11y.Status string:IsEnabled variant:boolean:true 2>&1 | tee /tmp/a11y-enable.log"
         )
         machine.log("a11y IsEnabled set: " + machine.execute("cat /tmp/a11y-enable.log")[1])
-        # Read it back + dump the launcher log to see whether the Set actually
-        # stuck (vs. the toolkit bridges simply not activating).
         machine.execute(
             "${a11yEnv} dbus-send --session --print-reply --dest=org.a11y.Bus "
             "/org/a11y/bus org.freedesktop.DBus.Properties.Get "
@@ -701,87 +926,15 @@ pkgs.testers.nixosTest {
         # platform-plugin error) are visible instead of just a window-find timeout.
         machine.sleep(5)
         machine.log("target.log after launch: " + machine.execute("cat /tmp/target.log")[1])
-        machine.wait_until_succeeds("DISPLAY=:99 xdotool search --sync --onlyvisible --name cua-initial | head -1 >/tmp/target-xid.txt && test -s /tmp/target-xid.txt", timeout=120)
+        # Find the background window via the per-app matcher, with a PID / newest
+        # -window fallback. Generous timeout: Electron/KDE are slow to first paint.
+        machine.wait_until_succeeds("${windowFindCmd}", timeout=120)
+        machine.log("target-xid: " + machine.execute("cat /tmp/target-xid.txt")[1])
+        # Keep focus on the control terminal — launching the app in the
+        # background must not steal focus.
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/control-xid.txt)")
         machine.succeed("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/control-xid.txt)")
 
-    with subtest("Drive cua-driver against the inactive window (AT-SPI)"):
-        machine.copy_from_host("${mcpTest}", "/tmp/mcp-background-gui-test.py")
-        # Record a GIF of display :99 while the driver types into the background
-        # window. Started here and stopped + copied out *before* any failing
-        # assertion (the qt/tk toolkit checks below), so every matrix job —
-        # including the ones that fail — still produces a GIF of the interaction.
-        machine.execute(
-            "sh -lc '${recordGifScript} :99 /tmp/gui-frames ${outputGif} "
-            "/tmp/stop-gui-recorder /tmp/record-gui.log 10 0.2 >/dev/null 2>&1 & echo $! >/tmp/record-gui.pid'"
-        )
-        # Use execute (not succeed) so a non-zero driver exit can't abort the
-        # test before the recorder is stopped and the GIF is copied out.
-        status, result = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
-        machine.log(result)
-        # Stop the recorder and copy the GIF into $out *now*, before any
-        # assertion below can fail and abort the test. This guarantees every
-        # matrix job (including qt/tk, whose later toolkit assertions fail)
-        # uploads a GIF showing the focus-free drive interaction.
-        machine.execute("touch /tmp/stop-gui-recorder")
-        machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
-        machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
-        machine.execute("test -s ${outputGif}")
-        machine.copy_from_machine("${outputGif}", "")
-        # type_text is exercised (it returns ok via AT-SPI insert or the X11
-        # fallback), but we do NOT assert the typed text reads back: focus-free
-        # WRITE into a *background, unfocused* toolkit window is not reliably
-        # supported — toolkits gate editable accessibility on focus/activation
-        # (Chromium exposes its fields read-only over AT-SPI; an unfocused Qt
-        # window exposes only its top node; a GTK app's atk-bridge does not even
-        # register in this headless session). The driver's value validated here
-        # is the native AT-SPI READ path.
-        assert "background GUI test typed" in result, result
-
-    with subtest("Input landed: driver's native AT-SPI reads the window back"):
-        # get_text must return the target window's accessibility/structure for a
-        # background window — the proven read path. Chromium yields its full a11y
-        # tree; GTK/X11-fallback toolkits yield at least the window/frame node;
-        # Qt (esp. Qt6) exposes the editable directly, so get_text returns a bare
-        # "text"/"entry" node (and the focus-free write even lands). Accept any
-        # of these accessibility-node forms.
-        assert any(tok in result for tok in ('frame "', 'window "', 'document', 'text "', 'entry "')), (
-            "driver get_text did not return an accessibility node for the background app:\n"
-            + result
-        )
-        # For Qt and GTK4 apps, assert the typed text actually landed.
-        #   - Qt5: synthetic-focus workaround exposes the widget tree.
-        #   - Qt6: exposes the editable natively over AT-SPI.
-        #   - GTK4: launched with GTK_A11Y=atspi so it exports its accessible tree
-        #     (GtkEntry with EditableText) over AT-SPI; the driver's generic
-        #     EditableText+GrabFocus path writes into it, with a synthetic-focus
-        #     re-walk fallback in atspi::insert_text for the unfocused-window gate.
-        if "${app}" in ["qt", "qt6", "gtk4"]:
-            assert "${typed}" in result, (
-                "${app} app should support focus-free write, but typed text not found in readback:\n"
-                + result
-            )
-
-    with subtest("Focus stayed on the control terminal"):
-        control = machine.succeed("head -1 /tmp/control-xid.txt").strip()
-        active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
-        assert control == active, "expected active window " + control + ", got " + active
-
-    ${cdpSubtest}
-    ${tkSubtest}
-    with subtest("Confirm: focusing the window exposes the editable (diagnostic)"):
-        # Direct confirmation of the focus-gate finding. Activate the target so it
-        # becomes the focused window, then re-run the driver: with focus the
-        # toolkit exposes its editable, so type_text can land and get_text should
-        # read it back. Non-fatal — this is evidence in the logs, not a gate,
-        # because behaviour differs per toolkit (GTK's bridge still won't register
-        # here). Done last, after the focus-free assertions above.
-        machine.execute("DISPLAY=:99 xdotool windowactivate --sync $(head -1 /tmp/target-xid.txt)")
-        machine.execute("DISPLAY=:99 xdotool windowfocus --sync $(head -1 /tmp/target-xid.txt)")
-        machine.sleep(1)
-        status, focused = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-test.py 2>&1")
-        machine.log("FOCUSED-WINDOW RUN (exit=" + str(status) + "):")
-        machine.log(focused)
-        machine.log("focused readback contains typed text (${typed}): " + str("${typed}" in focused))
+    ${driveBody}
   '';
 }

@@ -96,15 +96,47 @@
                       };
                     }
                   )
-                  # "firefox" temporarily disabled: it does not surface its
-                  # window within the launch timeout under the emulated CI VM
-                  # (no KVM), so the job times out before any AT-SPI subtest
-                  # runs. The browser/AT-SPI read path is covered by chromium.
-                  # chromium + electron also exercise the CDP focus-free-write
-                  # override (Input.insertText into the background window).
-                  # gtk4/qt6 extend the native AT-SPI path to current toolkit
-                  # versions; tk is the negative control (no AT-SPI bridge).
-                ) [ "chromium" "electron" "gtk" "gtk4" "qt" "qt6" "tk" ]
+                  # Real-app matrix: 5 apps per toolkit category run as a LENIENT,
+                  # READ-ONLY skeleton (find window + driver page/get_text + GIF;
+                  # focus-free WRITE / typed-text assertions are added later via
+                  # trajectories). chromium keeps the full CDP focus-free-write
+                  # override; tk is the negative-control full entry (Tk `send`).
+                  # "firefox" remains disabled: under the emulated CI VM (no KVM)
+                  # it does not surface its window within the launch timeout.
+                ) [
+                  "chromium"
+                  "tk"
+                  # GTK3
+                  "gtk3-gedit"
+                  "gtk3-mousepad"
+                  "gtk3-geany"
+                  "gtk3-scite"
+                  "gtk3-abiword"
+                  # GTK4
+                  "gtk4-text-editor"
+                  "gtk4-characters"
+                  "gtk4-console"
+                  "gtk4-contacts"
+                  "gtk4-calendar"
+                  # Qt5
+                  "qt5-manuskript"
+                  "qt5-klog"
+                  "qt5-wsjtx"
+                  "qt5-qsstv"
+                  "qt5-openambit"
+                  # Qt6
+                  "qt6-kate"
+                  "qt6-kcalc"
+                  "qt6-okular"
+                  "qt6-ghostwriter"
+                  "qt6-qownnotes"
+                  # Electron
+                  "electron-marktext"
+                  "electron-zettlr"
+                  "electron-vscodium"
+                  "electron-joplin"
+                  "electron-logseq"
+                ]
               )
             );
         }

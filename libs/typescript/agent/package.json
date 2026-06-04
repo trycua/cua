@@ -48,6 +48,6 @@
     "happy-dom": "^20.0.11",
     "tsdown": "^0.14.1",
     "typescript": "^5.7.2",
-    "vitest": "^4.0.14"
+    "vitest": "^4.1.0"
   }
 }

@@ -96,7 +96,7 @@ class TestOverlayZOrder(unittest.TestCase):
         time.sleep(0.5)
 
     def tearDown(self) -> None:
-        if hasattr(self, "_focus_proc"):
+        if hasattr(self, '_focus_proc'):
             self._focus_proc.terminate()
             try:
                 self._focus_proc.wait(timeout=3)
@@ -126,20 +126,18 @@ class TestOverlayZOrder(unittest.TestCase):
         cy = b["height"] / 2.0
 
         fg_wins_before = [
-            w
-            for w in all_before
-            if w["z_index"] > calc_z_before and w["pid"] != driver_pid and w.get("is_on_screen")
+            w for w in all_before
+            if w["z_index"] > calc_z_before
+            and w["pid"] != driver_pid
+            and w.get("is_on_screen")
         ]
 
-        self.client.call_tool(
-            "click",
-            {
-                "pid": self.calc_pid,
-                "window_id": calc_win_id,
-                "x": cx,
-                "y": cy,
-            },
-        )
+        self.client.call_tool("click", {
+            "pid": self.calc_pid,
+            "window_id": calc_win_id,
+            "x": cx,
+            "y": cy,
+        })
 
         # Let defensive-repin ticks fully settle.
         time.sleep(1.5)
@@ -156,7 +154,9 @@ class TestOverlayZOrder(unittest.TestCase):
         overlay_z = max(w["z_index"] for w in overlay_wins)
 
         calc_wins_after = [w for w in all_after if w["pid"] == self.calc_pid]
-        calc_z_after = max(w["z_index"] for w in calc_wins_after) if calc_wins_after else 0
+        calc_z_after = (
+            max(w["z_index"] for w in calc_wins_after) if calc_wins_after else 0
+        )
         self.assertGreater(
             overlay_z,
             calc_z_after,

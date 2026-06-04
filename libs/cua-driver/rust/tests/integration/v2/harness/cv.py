@@ -19,9 +19,8 @@ import os
 from typing import Optional, Tuple
 
 try:
-    import numpy as np
     from PIL import Image, ImageChops
-
+    import numpy as np
     _PIL_AVAILABLE = True
 except ImportError:
     _PIL_AVAILABLE = False
@@ -91,7 +90,7 @@ def find_template(
     n_norm = (n_arr - n_mean) / n_std
 
     # Sliding-window NCC via FFT
-    from numpy.fft import fft2, fftshift, ifft2
+    from numpy.fft import fft2, ifft2, fftshift
 
     # Zero-pad haystack to same size for FFT correlation
     pad_h = H + th - 1
@@ -103,13 +102,12 @@ def find_template(
 
     # Local haystack std for normalisation
     from numpy.lib.stride_tricks import sliding_window_view
-
     windows = sliding_window_view(h_arr, (th, tw))
     local_std = windows.reshape(-1, th * tw).std(axis=1).reshape(H - th + 1, W - tw + 1)
     local_std[local_std < 1e-6] = 1.0
 
     # Trim correlation to valid region
-    corr_valid = corr[th - 1 : th - 1 + (H - th + 1), tw - 1 : tw - 1 + (W - tw + 1)]
+    corr_valid = corr[th - 1:th - 1 + (H - th + 1), tw - 1:tw - 1 + (W - tw + 1)]
     ncc = corr_valid / (local_std * th * tw)
 
     best_idx = np.argmax(ncc)

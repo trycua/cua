@@ -82,24 +82,26 @@ jobs:
             visual: true
             result_link: result-linux-background-gui-gtk3-mousepad
             artifact_name: cua-driver-linux-background-gui-gtk3-mousepad
-          - name: Linux background GUI test (gtk3-geany)
-            check_attr: cua-driver-linux-background-gui-gtk3-geany
-            timeout_minutes: 15
-            visual: true
-            result_link: result-linux-background-gui-gtk3-geany
-            artifact_name: cua-driver-linux-background-gui-gtk3-geany
+          # gtk3-geany temporarily disabled (huge AT-SPI tree grinds the emulated VM; job times out)
+          # - name: Linux background GUI test (gtk3-geany)
+          #   check_attr: cua-driver-linux-background-gui-gtk3-geany
+          #   timeout_minutes: 15
+          #   visual: true
+          #   result_link: result-linux-background-gui-gtk3-geany
+          #   artifact_name: cua-driver-linux-background-gui-gtk3-geany
           - name: Linux background GUI test (gtk3-scite)
             check_attr: cua-driver-linux-background-gui-gtk3-scite
             timeout_minutes: 15
             visual: true
             result_link: result-linux-background-gui-gtk3-scite
             artifact_name: cua-driver-linux-background-gui-gtk3-scite
-          - name: Linux background GUI test (gtk3-abiword)
-            check_attr: cua-driver-linux-background-gui-gtk3-abiword
-            timeout_minutes: 15
-            visual: true
-            result_link: result-linux-background-gui-gtk3-abiword
-            artifact_name: cua-driver-linux-background-gui-gtk3-abiword
+          # gtk3-abiword temporarily disabled (huge AT-SPI tree grinds the emulated VM; job times out)
+          # - name: Linux background GUI test (gtk3-abiword)
+          #   check_attr: cua-driver-linux-background-gui-gtk3-abiword
+          #   timeout_minutes: 15
+          #   visual: true
+          #   result_link: result-linux-background-gui-gtk3-abiword
+          #   artifact_name: cua-driver-linux-background-gui-gtk3-abiword
           # GTK4
           - name: Linux background GUI test (gtk4-characters)
             check_attr: cua-driver-linux-background-gui-gtk4-characters
@@ -280,9 +282,7 @@ jobs:
               'cua-driver-linux-background-gui-tk',
               'cua-driver-linux-background-gui-gtk3-gedit',
               'cua-driver-linux-background-gui-gtk3-mousepad',
-              'cua-driver-linux-background-gui-gtk3-geany',
               'cua-driver-linux-background-gui-gtk3-scite',
-              'cua-driver-linux-background-gui-gtk3-abiword',
               'cua-driver-linux-background-gui-gtk4-characters',
               'cua-driver-linux-background-gui-qt5-manuskript',
               'cua-driver-linux-background-gui-qt5-klog',

@@ -4,7 +4,10 @@
   "description": "Unity is a cross-platform game engine and development environment for creating 2D, 3D, augmented reality (AR), and virtual reality (VR) experiences. It provides a comprehensive suite of tools for game development, visualization, simulation, and interactive content creation.",
   "website": "https://unity.com",
   "icon_url": "https://unity.com/favicon.ico",
-  "categories": ["Game Engine", "Development Tool"],
+  "categories": [
+    "Game Engine",
+    "Development Tool"
+  ],
   "tags": [
     "game development",
     "3D graphics",
@@ -15,7 +18,11 @@
     "real-time rendering",
     "visual scripting"
   ],
-  "os_support": ["linux", "macos", "windows"],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
   "requires_payment": false,
   "foss": false,
   "gh_repo": "",

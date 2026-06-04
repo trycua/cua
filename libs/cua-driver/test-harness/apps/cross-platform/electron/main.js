@@ -39,7 +39,7 @@ function createWindow() {
   // cua-driver tests can find the window by substring match. Without this,
   // Electron syncs window.title to document.title which would be
   // 'cua-driver Web Harness' (the page's title).
-  mainWindow.on('page-title-updated', (e) => e.preventDefault());
+  mainWindow.on('page-title-updated', e => e.preventDefault());
   mainWindow.setTitle(fixedTitle);
 
   mainWindow
@@ -52,7 +52,7 @@ function createWindow() {
         mainWindow.setTitle(fixedTitle);
       }
     })
-    .catch((err) => {
+    .catch(err => {
       // Fail deterministically rather than leaving the harness window
       // up with no content — the integration tests would then time out
       // waiting for the DOM markers to render.

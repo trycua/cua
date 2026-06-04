@@ -5,7 +5,11 @@
   "website": "https://godotengine.org",
   "foss": true,
   "gh_repo": "https://github.com/godotengine/godot",
-  "os_support": ["linux", "windows", "macos"],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
   "requires_payment": false,
   "app_type": "standalone",
   "package_managers": {

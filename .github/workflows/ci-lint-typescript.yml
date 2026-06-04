@@ -32,4 +32,4 @@ jobs:
         run: node ./scripts/typescript-typecheck.js
 
       - name: Prettier check
-        run: pnpm prettier --check "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
+        run: pnpm prettier --check "libs/typescript/**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"

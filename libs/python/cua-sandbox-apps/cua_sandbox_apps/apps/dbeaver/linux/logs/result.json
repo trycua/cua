@@ -10,11 +10,15 @@
     "binary_name": "dbeaver",
     "display_name": "DBeaver",
     "desktop_entry": "",
-    "icon_paths": ["/home/cua/.local/opt/dbeaver/dbeaver.png"],
+    "icon_paths": [
+      "/home/cua/.local/opt/dbeaver/dbeaver.png"
+    ],
     "version": "26.0.2"
   },
   "sandbox_name": "linux-d19bcba0",
   "screenshot_verification": "PASS: DBeaver 26.0.2 is visibly open with its main window displayed, showing the Statistics collection dialog and a \"Can't lock workspace\" error dialog in the foreground.",
   "verification_passed": true,
-  "extracted_icons": ["cua_sandbox_apps\\apps\\dbeaver\\linux\\logs\\icon-256x256.png"]
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\dbeaver\\linux\\logs\\icon-256x256.png"
+  ]
 }

@@ -12,7 +12,9 @@
     "binary_name": "nvim",
     "display_name": "Neovim",
     "desktop_entry": "/usr/share/applications/nvim.desktop",
-    "icon_paths": ["/usr/share/icons/hicolor/128x128/apps/nvim.png"],
+    "icon_paths": [
+      "/usr/share/icons/hicolor/128x128/apps/nvim.png"
+    ],
     "version": "v0.6.1"
   },
   "sandbox_name": "linux-43132913",
@@ -21,5 +23,7 @@
   "notes": "Neovim v0.6.1 successfully installed via apt-get on Ubuntu. This is a terminal-based text editor that runs in a terminal window. The screenshot shows Neovim running with a sample file open in xfce4-terminal. Display name extracted from .desktop file, all icon paths validated to exist.",
   "screenshot_verification": "PASS: A terminal window is displaying Neovim's welcome screen with information about the editor, its features, and usage instructions, along with an open sample file at /tmp/neovim_demo/sample.txt.",
   "verification_passed": true,
-  "extracted_icons": ["cua_sandbox_apps\\apps\\neovim\\linux\\logs\\icon-128x128.png"]
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\neovim\\linux\\logs\\icon-128x128.png"
+  ]
 }

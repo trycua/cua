@@ -71,20 +71,12 @@ def iter_source_files(root: pathlib.Path) -> Iterable[pathlib.Path]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "root", nargs="?", default=DEFAULT_ROOT, help=f"directory to scan (default: {DEFAULT_ROOT})"
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("root", nargs="?", default=DEFAULT_ROOT, help=f"directory to scan (default: {DEFAULT_ROOT})")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--apply", action="store_true", help="insert headers on files that lack them (default)"
-    )
+    mode.add_argument("--apply", action="store_true", help="insert headers on files that lack them (default)")
     mode.add_argument("--check", action="store_true", help="exit 1 if any file is missing a header")
-    mode.add_argument(
-        "--dry-run", action="store_true", help="report what would change without writing"
-    )
+    mode.add_argument("--dry-run", action="store_true", help="report what would change without writing")
     args = parser.parse_args()
 
     root = pathlib.Path(args.root).resolve()
@@ -115,9 +107,7 @@ def main() -> int:
     print()
     if args.check:
         if missing:
-            print(
-                f"error: {len(missing)} file(s) missing SPDX header under {root}", file=sys.stderr
-            )
+            print(f"error: {len(missing)} file(s) missing SPDX header under {root}", file=sys.stderr)
             return 1
         print(f"ok: all {skipped} source files under {root} carry SPDX headers")
         return 0

@@ -20,7 +20,11 @@
     "exploit-development",
     "vulnerability-scanner"
   ],
-  "os_support": ["linux", "windows", "macos"],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/rapid7/metasploit-framework",

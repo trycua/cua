@@ -67,6 +67,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               {children}
             </RootProvider>
+
           </CopilotKitProvider>
           <CookieConsent />
         </PHProvider>

@@ -12,12 +12,16 @@
     "binary_name": "code",
     "display_name": "Visual Studio Code",
     "desktop_entry": "/usr/share/applications/code.desktop",
-    "icon_paths": ["/usr/share/pixmaps/vscode.png"],
+    "icon_paths": [
+      "/usr/share/pixmaps/vscode.png"
+    ],
     "version": "1.115.0"
   },
   "is_cli": false,
   "notes": "Visual Studio Code successfully installed from Microsoft's official APT repository and launched on Ubuntu/Debian Linux. The install script is idempotent and adds the Microsoft repository with GPG key verification. The launch script sets DONT_PROMPT_WSL_INSTALL to suppress WSL detection warnings. The metadata extraction script dynamically discovers all values from installed artifacts: binary via which, version via dpkg-query, desktop file by searching /usr/share/applications, display name from desktop file with dpkg/apt-cache fallbacks, and icon files by searching standard directories based on the Icon= field.",
   "screenshot_verification": "PASS: Visual Studio Code is visibly open with the Welcome tab displayed and a trust dialog box asking about folder authors.",
   "verification_passed": true,
-  "extracted_icons": ["cua_sandbox_apps\\apps\\visual-studio-code\\linux\\logs\\icon-1024x1024.png"]
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\visual-studio-code\\linux\\logs\\icon-1024x1024.png"
+  ]
 }

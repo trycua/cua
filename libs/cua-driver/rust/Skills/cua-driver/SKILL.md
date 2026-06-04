@@ -136,8 +136,8 @@ persisted to config.
 cursor, keyed by the session's id (the proxy mints one session id per
 MCP connection and the daemon scopes the cursor, config overrides, and
 recording to it). You normally pass nothing — the session key is wired
-through for you. Pass an explicit `cursor_id` only to _deliberately
-share_ one cursor across sessions. When a session ends (the MCP client
+through for you. Pass an explicit `cursor_id` only to *deliberately
+share* one cursor across sessions. When a session ends (the MCP client
 disconnects) its cursor is removed automatically.
 
 **Visibility caveat (AX runs).** On a pure accessibility-action run
@@ -145,7 +145,7 @@ disconnects) its cursor is removed automatically.
 on-screen a short distance from the target and plays a brief glide +
 pulse** — not the long Bezier sweep a cursor already on-screen would
 trace from its previous spot. It's subtle and easy to miss in a
-recording. If you want a clearly _gliding_ cursor for a demo or screen
+recording. If you want a clearly *gliding* cursor for a demo or screen
 recording, do a pixel click (`click({pid,x,y})`) or a `move_agent_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
@@ -194,11 +194,11 @@ Two orthogonal axes shape what the agent can do.
 
 **capture_mode → addressing mode**
 
-| `capture_mode`      | `get_window_state` returns | Use for actions                           |
-| ------------------- | -------------------------- | ----------------------------------------- |
-| **`som`** (default) | tree + screenshot          | `element_index` preferred; pixel fallback |
-| **`ax`**            | tree only (no PNG)         | `element_index` only                      |
-| **`vision`**        | PNG only (no tree)         | pixel only — see `SCREENSHOT.md`          |
+| `capture_mode` | `get_window_state` returns | Use for actions |
+|---|---|---|
+| **`som`** (default) | tree + screenshot | `element_index` preferred; pixel fallback |
+| **`ax`** | tree only (no PNG) | `element_index` only |
+| **`vision`** | PNG only (no tree) | pixel only — see `SCREENSHOT.md` |
 
 `vision` was renamed from `screenshot` — the old name still decodes
 as a deprecated alias, so an on-disk `"capture_mode": "screenshot"`
@@ -217,13 +217,13 @@ multiple correction cycles on text-heavy UIs.
 
 **Window state → what works**
 
-| state                      | `get_window_state`                                                                             | element-index click (AX/UIA) | `press_key` commit                                    | pixel click                    |
-| -------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------- | ----------------------------------------------------- | ------------------------------ |
-| frontmost                  | ✅                                                                                             | ✅                           | ✅                                                    | ✅                             |
-| backgrounded / visible     | ✅                                                                                             | ✅                           | ✅                                                    | ✅                             |
-| **minimized**              | ✅                                                                                             | ✅ (actions fire in place)   | ❌ silent no-op — use `set_value` or click equivalent | ❌ no on-screen bounds         |
-| hidden                     | ✅                                                                                             | ✅                           | depends                                               | ❌                             |
-| on another desktop / Space | ⚠️ tree may be stripped on some apps — response carries `off_space: true` so you can detect it | ✅                           | ✅                                                    | ❌ not in current-desktop list |
+| state | `get_window_state` | element-index click (AX/UIA) | `press_key` commit | pixel click |
+|---|---|---|---|---|
+| frontmost | ✅ | ✅ | ✅ | ✅ |
+| backgrounded / visible | ✅ | ✅ | ✅ | ✅ |
+| **minimized** | ✅ | ✅ (actions fire in place) | ❌ silent no-op — use `set_value` or click equivalent | ❌ no on-screen bounds |
+| hidden | ✅ | ✅ | depends | ❌ |
+| on another desktop / Space | ⚠️ tree may be stripped on some apps — response carries `off_space: true` so you can detect it | ✅ | ✅ | ❌ not in current-desktop list |
 
 **Critical cell — minimized + keyboard commit.** The keystroke
 reaches the app but accessibility focus doesn't propagate to renderer
@@ -250,7 +250,7 @@ end_session(session)              # when the run finishes
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
-**Declare a session.** A session is _your run's_ identity — a stable id
+**Declare a session.** A session is *your run's* identity — a stable id
 you choose (`"research-1"`), declared with `start_session` and passed as
 `session` on every action. It owns your agent cursor (a distinct colour
 per id), follows the run across any apps/windows, and is the same whether
@@ -266,8 +266,8 @@ its **own `session`** (→ its own cursor) AND pass
 The element cache is keyed on `(pid, window_id)` and the cursor on `session`,
 so distinct instances + distinct sessions keep the runs fully separated.
 
-**Parallelism vs. ordering.** Distinct sessions give distinct _cursors_, not
-distinct _connections_. Subagents that share one `cua-driver mcp` (stdio)
+**Parallelism vs. ordering.** Distinct sessions give distinct *cursors*, not
+distinct *connections*. Subagents that share one `cua-driver mcp` (stdio)
 connection have their tool calls **serialized** by the transport — they take
 turns, not run in parallel. That's not a correctness problem (session + window
 isolation means they can't collide), just a throughput one. For genuinely
@@ -328,10 +328,10 @@ complementary, not redundant.** In `som` mode every turn's
 `get_window_state` gives you both halves and you should pull signal
 from each:
 
-- The **tree** tells you _what's clickable_ — roles, labels,
+- The **tree** tells you *what's clickable* — roles, labels,
   `element_index` handles, advertised actions, parent-child
   structure. This is the ground truth for dispatching.
-- The **screenshot** tells you _which one_ — the tree often has
+- The **screenshot** tells you *which one* — the tree often has
   many buttons with similar or empty labels ("Delete", "OK",
   anonymous UUID-labeled buttons, repeated static-text), and visual
   context disambiguates. Captions, colors, layout relationships
@@ -363,19 +363,19 @@ Every row assumes a `(pid, window_id)` pair from the last
 ignored on pixel-only forms unless you want to anchor the conversion
 against a specific window.
 
-| Intent                     | Tool                                                                                                            | Notes                                                                                                                                                                   |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| List an app's windows      | `list_windows({pid})`                                                                                           | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids |
-| Snapshot a window          | `get_window_state({pid, window_id})`                                                                            | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache                                                                          |
-| Left click                 | `click({pid, window_id, element_index})`                                                                        | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]`                                                          |
-| Double-click / open        | `double_click({pid, window_id, element_index})`                                                                 | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center                          |
-| Right click / context menu | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left on macOS — see `WEB_APPS.md`                                                                                     |
-| Type at cursor             | `type_text({pid, text, window_id, element_index})`                                                              | focuses element first, then writes via the platform's text-set primitive                                                                                                |
-| Set whole field value      | `set_value({pid, window_id, element_index, value})`                                                             | sliders, steppers, text fields; **use for keyboard-commit workarounds on minimized windows**                                                                            |
-| Scroll                     | `scroll({pid, direction, amount, by, window_id, element_index})`                                                | synthesizes per-pid PageUp/PageDown/arrows                                                                                                                              |
-| Focus + send key           | `press_key({pid, key, window_id, element_index, modifiers})`                                                    | element_index sets focus, then posts key                                                                                                                                |
-| Send key to pid            | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                        |
-| Modifier combo             | `hotkey({pid, keys})`                                                                                           | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap                                                                                                        |
+| Intent | Tool | Notes |
+|---|---|---|
+| List an app's windows | `list_windows({pid})` | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids |
+| Snapshot a window | `get_window_state({pid, window_id})` | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache |
+| Left click | `click({pid, window_id, element_index})` | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]` |
+| Double-click / open | `double_click({pid, window_id, element_index})` | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center |
+| Right click / context menu | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left on macOS — see `WEB_APPS.md` |
+| Type at cursor | `type_text({pid, text, window_id, element_index})` | focuses element first, then writes via the platform's text-set primitive |
+| Set whole field value | `set_value({pid, window_id, element_index, value})` | sliders, steppers, text fields; **use for keyboard-commit workarounds on minimized windows** |
+| Scroll | `scroll({pid, direction, amount, by, window_id, element_index})` | synthesizes per-pid PageUp/PageDown/arrows |
+| Focus + send key | `press_key({pid, key, window_id, element_index, modifiers})` | element_index sets focus, then posts key |
+| Send key to pid | `press_key({pid, key, modifiers})` | no focus change; key goes to pid's current focus |
+| Modifier combo | `hotkey({pid, keys})` | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap |
 
 **All keyboard/text primitives require `pid`.** There is no
 frontmost-routed variant — every key goes to the named target via
@@ -503,13 +503,13 @@ doesn't-survive-across-sessions caveat.
 
 ## Common error patterns (cross-platform)
 
-| Error text                                                                         | Meaning                                                                                                                                                                          | Fix                                                                                                                                                                                                                  |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `No cached AX state for pid X window_id W`                                         | You either skipped `get_window_state` this turn, or passed a different `window_id` to the click than the one the snapshot cached against                                         | Call `get_window_state({pid: X, window_id: W})` first — the same window_id you intend to click in                                                                                                                    |
-| `Invalid element_index N for pid X window_id W`                                    | Index is stale or out of range                                                                                                                                                   | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree                                                                                                                              |
-| `window_id W belongs to pid P, not …`                                              | Passed a window_id that's owned by a different process                                                                                                                           | Use `list_windows({pid: X})` to enumerate this pid's own windows                                                                                                                                                     |
-| `AX action … failed with code …` / `UIA invoke failed`                             | Element doesn't support the default action                                                                                                                                       | Try `show_menu`, `confirm`, `cancel`, `pick`, or fall through to a pixel click on the element's center                                                                                                               |
-| `The user doesn't want to proceed with this tool use. The tool use was rejected …` | The harness uses this _exact_ string for BOTH a permission-prompt denial AND a manual interrupt (Esc / stop) of a running tool — they are indistinguishable from the tool result | Treat as "tool canceled, no result, await the user." Do NOT paraphrase ("you stopped me") — quote the literal message and name the canceled tool + its args, so the user can tell what was in flight vs. what landed |
+| Error text | Meaning | Fix |
+|---|---|---|
+| `No cached AX state for pid X window_id W` | You either skipped `get_window_state` this turn, or passed a different `window_id` to the click than the one the snapshot cached against | Call `get_window_state({pid: X, window_id: W})` first — the same window_id you intend to click in |
+| `Invalid element_index N for pid X window_id W` | Index is stale or out of range | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree |
+| `window_id W belongs to pid P, not …` | Passed a window_id that's owned by a different process | Use `list_windows({pid: X})` to enumerate this pid's own windows |
+| `AX action … failed with code …` / `UIA invoke failed` | Element doesn't support the default action | Try `show_menu`, `confirm`, `cancel`, `pick`, or fall through to a pixel click on the element's center |
+| `The user doesn't want to proceed with this tool use. The tool use was rejected …` | The harness uses this *exact* string for BOTH a permission-prompt denial AND a manual interrupt (Esc / stop) of a running tool — they are indistinguishable from the tool result | Treat as "tool canceled, no result, await the user." Do NOT paraphrase ("you stopped me") — quote the literal message and name the canceled tool + its args, so the user can tell what was in flight vs. what landed |
 
 Platform-specific errors (TCC dialogs on macOS, Session 0 / UAC
 prompts on Windows, AT-SPI bus issues on Linux) live in their

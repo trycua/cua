@@ -42,7 +42,6 @@ without further wiring.
 ## What's exercised
 
 WPF (`apps/windows/wpf`):
-
 - Plain XAML controls + AutomationIds (`counter`, `text_body`)
 - TextBox + mirrored label (`text_input`)
 - Right/double-click target (`click_target`)
@@ -55,23 +54,19 @@ WPF (`apps/windows/wpf`):
 - Keyboard accelerators — F5 + Ctrl+Shift+H (`accelerator`)
 
 WinUI3 (`apps/windows/winui3`):
-
 - `counter` / `text_body` / `exit` (parity with WPF)
 - TextBox + mirror (`text_input` — UIA `ValuePattern`)
 - `CommandBarFlyout` — popup in same HWND, DComp-rendered
 - XAML `Popup` — primitive, not a separate HWND
 
 WebView2 (`apps/windows/webview2`):
-
 - Loads `shared/web/index.html` — same page as the Electron harness.
 - Exposes CDP on `default_cdp_port=9222` so cua-driver's `page` tool can drive it.
 
 Electron (`apps/cross-platform/electron`):
-
 - Loads the same `shared/web/index.html`. CDP on `default_cdp_port=9223`.
 
 AppKit (`apps/macos/appkit`):
-
 - Plain NSButton + NSTextField counter (`counter`)
 - NSTextField label with shared marker (`text_body`)
 - Editable NSTextField + mirror label (`text_input`)
@@ -81,7 +76,6 @@ AppKit (`apps/macos/appkit`):
 - Exit button
 
 SwiftUI (`apps/macos/swiftui`):
-
 - Counter / text_body / text_input parity with AppKit
 - SwiftUI `.popover()` — Mac analogue of WinUI3 CommandBarFlyout / XAML Popup
 - Exit button
@@ -90,30 +84,30 @@ SwiftUI (`apps/macos/swiftui`):
 
 Windows:
 
-| Capability                        | WPF | WinUI3     |
-| --------------------------------- | --- | ---------- |
-| Smoke (UIA tree + AutomationIds)  | yes | yes        |
-| UIA Invoke click                  | yes | (implicit) |
-| `right_click`                     | yes | —          |
-| `double_click`                    | yes | —          |
-| `type_text` (PostMessage / UIA)   | yes | yes        |
-| `set_value` (UIA ValuePattern)    | yes | (covered)  |
-| `scroll` (WM_VSCROLL via hook)    | yes | —          |
-| `press_key` accelerator (F5)      | yes | —          |
-| Modal `MessageBox` open + dismiss | yes | —          |
-| Owned popup open + parse          | yes | —          |
-| Layered popup capture             | yes | —          |
-| XAML Popup open + parse           | —   | yes        |
+| Capability                          | WPF             | WinUI3       |
+|-------------------------------------|-----------------|--------------|
+| Smoke (UIA tree + AutomationIds)    | yes             | yes          |
+| UIA Invoke click                    | yes             | (implicit)   |
+| `right_click`                       | yes             | —            |
+| `double_click`                      | yes             | —            |
+| `type_text` (PostMessage / UIA)     | yes             | yes          |
+| `set_value` (UIA ValuePattern)      | yes             | (covered)    |
+| `scroll` (WM_VSCROLL via hook)      | yes             | —            |
+| `press_key` accelerator (F5)        | yes             | —            |
+| Modal `MessageBox` open + dismiss   | yes             | —            |
+| Owned popup open + parse            | yes             | —            |
+| Layered popup capture               | yes             | —            |
+| XAML Popup open + parse             | —               | yes          |
 
 macOS:
 
-| Capability                      | AppKit           | SwiftUI    |
-| ------------------------------- | ---------------- | ---------- |
-| Smoke (AX tree + identifiers)   | yes              | yes        |
-| Counter click via element_index | yes              | (implicit) |
-| `set_value` (AXSetAttribute)    | yes              | (covered)  |
-| Popover open + body assert      | —                | yes        |
-| Per-tool CLI smoke              | `smoke/macos.sh` | —          |
+| Capability                          | AppKit          | SwiftUI      |
+|-------------------------------------|-----------------|--------------|
+| Smoke (AX tree + identifiers)       | yes             | yes          |
+| Counter click via element_index     | yes             | (implicit)   |
+| `set_value` (AXSetAttribute)        | yes             | (covered)    |
+| Popover open + body assert          | —               | yes          |
+| Per-tool CLI smoke                  | `smoke/macos.sh`| —            |
 
 ## Build
 

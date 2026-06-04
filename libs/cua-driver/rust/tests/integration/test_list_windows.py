@@ -25,7 +25,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from driver_client import DriverClient, default_binary_path
 
-
 CALCULATOR_BUNDLE = "com.apple.calculator"
 
 
@@ -53,13 +52,17 @@ class ListWindowsTests(unittest.TestCase):
     def test_default_returns_layer_zero_windows_with_field_names(self):
         body = self._call_list_windows()
         windows = body["windows"]
-        self.assertGreater(
-            len(windows), 0, "expected at least Calculator's window"
-        )
+        self.assertGreater(len(windows), 0, "expected at least Calculator's window")
 
         required = {
-            "window_id", "pid", "app_name", "title", "bounds",
-            "layer", "z_index", "is_on_screen",
+            "window_id",
+            "pid",
+            "app_name",
+            "title",
+            "bounds",
+            "layer",
+            "z_index",
+            "is_on_screen",
         }
         for w in windows:
             self.assertTrue(
@@ -71,9 +74,7 @@ class ListWindowsTests(unittest.TestCase):
     def test_pid_filter_narrows_to_one_pid(self):
         body = self._call_list_windows(pid=self.calc_pid)
         windows = body["windows"]
-        self.assertGreater(
-            len(windows), 0, "Calculator should have at least one window"
-        )
+        self.assertGreater(len(windows), 0, "Calculator should have at least one window")
         self.assertTrue(
             all(w["pid"] == self.calc_pid for w in windows),
             "pid filter leaked other pids into the result",
@@ -103,7 +104,8 @@ class ListWindowsTests(unittest.TestCase):
             for field in ("x", "y", "width", "height"):
                 self.assertIn(field, b, f"bounds missing '{field}'")
                 self.assertGreaterEqual(
-                    b[field], 0,
+                    b[field],
+                    0,
                     f"bounds.{field} should be non-negative, got {b[field]}",
                 )
 
@@ -112,7 +114,8 @@ class ListWindowsTests(unittest.TestCase):
         windows = body["windows"]
         for w in windows:
             self.assertGreater(
-                w["z_index"], 0,
+                w["z_index"],
+                0,
                 f"z_index should be > 0 (front-to-back ordering), got {w['z_index']}",
             )
 

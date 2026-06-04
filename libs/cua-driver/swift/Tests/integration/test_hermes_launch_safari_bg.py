@@ -50,8 +50,8 @@ _FOCUS_APP_DIR = os.path.join(_REPO_ROOT, "Tests", "FocusMonitorApp")
 _FOCUS_APP_EXE = os.path.join(
     _FOCUS_APP_DIR, "FocusMonitorApp.app", "Contents", "MacOS", "FocusMonitorApp"
 )
-_LOSS_FILE       = "/tmp/focus_monitor_losses.txt"
-_KEY_LOSS_FILE   = "/tmp/focus_monitor_key_losses.txt"
+_LOSS_FILE = "/tmp/focus_monitor_losses.txt"
+_KEY_LOSS_FILE = "/tmp/focus_monitor_key_losses.txt"
 _FIELD_LOSS_FILE = "/tmp/focus_monitor_field_losses.txt"
 
 _HERMES_BIN = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")
@@ -60,11 +60,12 @@ _ANTHROPIC_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 _MODEL = os.environ.get("HERMES_TEST_MODEL", "claude-haiku-4-5-20251001")
 
 _SAFARI_BUNDLE = "com.apple.Safari"
-_LAUNCH_URL    = "https://example.com"
+_LAUNCH_URL = "https://example.com"
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _read_file_int(path: str) -> int:
     try:
@@ -93,9 +94,7 @@ def _safari_window_count_via_driver(wait_s: float = 4.0) -> int:
             r = c.call_tool("list_windows", {})
             sc = r.get("structuredContent") or {}
             wins = sc.get("windows") or []
-            count = sum(
-                1 for w in wins if "safari" in w.get("app_name", "").lower()
-            )
+            count = sum(1 for w in wins if "safari" in w.get("app_name", "").lower())
             if count > 0 or time.time() >= deadline:
                 return count
             time.sleep(0.5)
@@ -103,7 +102,10 @@ def _safari_window_count_via_driver(wait_s: float = 4.0) -> int:
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
     proc = subprocess.Popen(
-        [_FOCUS_APP_EXE], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        [_FOCUS_APP_EXE],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
     )
     for _ in range(40):
         line = proc.stdout.readline().strip()
@@ -117,6 +119,7 @@ def _launch_focus_app() -> tuple[subprocess.Popen, int]:
 # ---------------------------------------------------------------------------
 # Test
 # ---------------------------------------------------------------------------
+
 
 class TestHermesLaunchSafariBg(unittest.TestCase):
     """Verify hermes launches Safari in the background without stealing focus."""
@@ -133,8 +136,9 @@ class TestHermesLaunchSafariBg(unittest.TestCase):
 
         # Build FocusMonitorApp if needed.
         src = os.path.join(_FOCUS_APP_DIR, "FocusMonitorApp.swift")
-        if (not os.path.exists(_FOCUS_APP_EXE)
-                or os.path.getmtime(src) > os.path.getmtime(_FOCUS_APP_EXE)):
+        if not os.path.exists(_FOCUS_APP_EXE) or os.path.getmtime(src) > os.path.getmtime(
+            _FOCUS_APP_EXE
+        ):
             subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
         # Kill Safari so we can detect a fresh launch.
@@ -159,8 +163,8 @@ class TestHermesLaunchSafariBg(unittest.TestCase):
             prev = cur
             time.sleep(0.3)
 
-        cls._losses_before       = _read_file_int(_LOSS_FILE)
-        cls._key_losses_before   = _read_file_int(_KEY_LOSS_FILE)
+        cls._losses_before = _read_file_int(_LOSS_FILE)
+        cls._key_losses_before = _read_file_int(_KEY_LOSS_FILE)
         cls._field_losses_before = _read_file_int(_FIELD_LOSS_FILE)
 
     @classmethod
@@ -190,23 +194,32 @@ class TestHermesLaunchSafariBg(unittest.TestCase):
 
         result = subprocess.run(
             [
-                _HERMES_BIN, "chat",
-                "--provider", "anthropic",
-                "-m", _MODEL,
-                "--toolsets", "computer_use",
+                _HERMES_BIN,
+                "chat",
+                "--provider",
+                "anthropic",
+                "-m",
+                _MODEL,
+                "--toolsets",
+                "computer_use",
                 "--yolo",
                 "-Q",
-                "--max-turns", str(max_turns),
-                "-q", prompt,
+                "--max-turns",
+                str(max_turns),
+                "-q",
+                prompt,
             ],
-            env=env, capture_output=True, text=True, timeout=timeout,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         return (result.stdout + "\n" + result.stderr).strip()
 
     def _assert_no_new_focus_loss(self, allow_field_losses: int = 1) -> None:
         time.sleep(0.3)
-        app_delta   = _read_file_int(_LOSS_FILE)    - self._losses_before
-        key_delta   = _read_file_int(_KEY_LOSS_FILE) - self._key_losses_before
+        app_delta = _read_file_int(_LOSS_FILE) - self._losses_before
+        key_delta = _read_file_int(_KEY_LOSS_FILE) - self._key_losses_before
         field_delta = _read_file_int(_FIELD_LOSS_FILE) - self._field_losses_before
         msgs = []
         if app_delta:
@@ -215,11 +228,11 @@ class TestHermesLaunchSafariBg(unittest.TestCase):
             msgs.append(f"window lost key status {key_delta}x")
         if field_delta > allow_field_losses:
             msgs.append(
-                f"text-input lost first-responder {field_delta}x "
-                f"(allowed {allow_field_losses})"
+                f"text-input lost first-responder {field_delta}x " f"(allowed {allow_field_losses})"
             )
         self.assertEqual(
-            len(msgs), 0,
+            len(msgs),
+            0,
             "Focus stolen during launch_app: " + "; ".join(msgs),
         )
 
@@ -256,7 +269,8 @@ class TestHermesLaunchSafariBg(unittest.TestCase):
         #    the URL loads, so _safari_window_count_via_driver polls for up to 4s.
         window_count = _safari_window_count_via_driver(wait_s=4.0)
         self.assertGreater(
-            window_count, 0,
+            window_count,
+            0,
             f"cua-driver sees no Safari windows after launch_app+URL "
             f"(got {window_count}). "
             f"Safari may have launched without a window — ensure urls=['{_LAUNCH_URL}'] "

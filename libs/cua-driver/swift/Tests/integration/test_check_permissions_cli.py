@@ -35,7 +35,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from driver_client import default_binary_path
 
-
 WARNING_MARKER = "Not running inside the cua-driver daemon process"
 
 
@@ -51,9 +50,7 @@ def _run_cli(binary: str, *args: str) -> subprocess.CompletedProcess:
 
 def _stop_daemon(binary: str) -> None:
     """Best-effort stop; the 'not running' case is not an error here."""
-    subprocess.run(
-        [binary, "stop"], capture_output=True, text=True, timeout=5
-    )
+    subprocess.run([binary, "stop"], capture_output=True, text=True, timeout=5)
     # Let the socket file vanish before the next call.
     time.sleep(0.3)
 
@@ -64,12 +61,8 @@ def _start_daemon(binary: str) -> None:
     inherits the shell's TCC context, defeating the point of the test."""
     # Resolve the .app path from the binary path. The build script puts
     # the binary at `.build/CuaDriver.app/Contents/MacOS/cua-driver`.
-    app_path = os.path.abspath(
-        os.path.join(os.path.dirname(binary), "..", "..")
-    )
-    assert app_path.endswith(".app"), (
-        f"expected binary inside CuaDriver.app, got {app_path!r}"
-    )
+    app_path = os.path.abspath(os.path.join(os.path.dirname(binary), "..", ".."))
+    assert app_path.endswith(".app"), f"expected binary inside CuaDriver.app, got {app_path!r}"
     subprocess.run(
         ["open", "-a", app_path, "--args", "serve"],
         check=True,
@@ -79,9 +72,7 @@ def _start_daemon(binary: str) -> None:
     # PermissionsGate before binding the socket, so this can take ~1s.
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        result = subprocess.run(
-            [binary, "status"], capture_output=True, text=True, timeout=2
-        )
+        result = subprocess.run([binary, "status"], capture_output=True, text=True, timeout=2)
         if result.returncode == 0:
             return
         time.sleep(0.1)

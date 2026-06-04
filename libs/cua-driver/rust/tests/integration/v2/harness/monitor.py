@@ -22,19 +22,18 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # Try to import PyObjC; fall back to no-op monitor on systems without it.
 try:
-    from AppKit import NSWorkspace
-    from AppKit import NSEvent
+    from AppKit import NSEvent, NSWorkspace
     from Quartz import (
         CGWindowListCopyWindowInfo,
-        kCGWindowListOptionOnScreenOnly,
         kCGNullWindowID,
         kCGWindowLayer,
-        kCGWindowOwnerPID,
+        kCGWindowListOptionOnScreenOnly,
         kCGWindowName,
+        kCGWindowOwnerPID,
     )
+
     _PYOBJC_AVAILABLE = True
 except ImportError:
     _PYOBJC_AVAILABLE = False
@@ -49,7 +48,7 @@ _POLL_INTERVAL_S = 0.005  # 5 ms
 
 @dataclass
 class Violation:
-    kind: str   # "cursor" | "frontmost" | "overlay_z"
+    kind: str  # "cursor" | "frontmost" | "overlay_z"
     detail: str
     timestamp: float = field(default_factory=time.monotonic)
 
@@ -189,9 +188,7 @@ class UXMonitor:
 
     def _check_overlay_z(self) -> None:
         """Check that no cua-driver overlay window is above foreground windows."""
-        wins = CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-        )
+        wins = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
         if not wins:
             return
 
@@ -204,8 +201,9 @@ class UXMonitor:
             name = str(w.get(kCGWindowName, "") or "")
             layer = int(w.get(kCGWindowLayer, 0))
 
-            is_overlay = name in ("cua-agent-cursor", "cua-overlay") or \
-                         "cua-driver" in str(name).lower()
+            is_overlay = (
+                name in ("cua-agent-cursor", "cua-overlay") or "cua-driver" in str(name).lower()
+            )
 
             if is_overlay:
                 overlay_layers.append(layer)

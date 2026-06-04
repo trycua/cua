@@ -46,15 +46,15 @@ FOCUS_MONITOR_BUNDLE = "com.trycua.FocusMonitorApp"
 # Column centers (x): 29, 86, 144, 201
 # Row centers (y):    133, 193, 253, 313, 373
 CALC_BUTTONS = {
-    "1": (29,  313), "2": (86,  313), "3": (144, 313),
+    "1": (29, 313),
+    "2": (86, 313),
+    "3": (144, 313),
 }
 
 
 def _build_focus_app() -> None:
     if not os.path.exists(_FOCUS_APP_EXE):
-        subprocess.run(
-            [os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True
-        )
+        subprocess.run([os.path.join(_FOCUS_APP_DIR, "build.sh")], check=True)
 
 
 def _launch_focus_app() -> tuple[subprocess.Popen, int]:
@@ -85,10 +85,10 @@ def _find_calc_button(tree: str, label: str) -> int | None:
     for line in tree.split("\n"):
         if "AXButton" not in line:
             continue
-        m = re.search(r'\[(\d+)\]', line)
+        m = re.search(r"\[(\d+)\]", line)
         if not m:
             continue
-        if f'({label})' in line or f'id={label}' in line:
+        if f"({label})" in line or f"id={label}" in line:
             return int(m.group(1))
     return None
 
@@ -141,15 +141,15 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
 
         with DriverClient(cls.binary) as c:
             active = frontmost_bundle_id(c)
-            assert active == FOCUS_MONITOR_BUNDLE, (
-                f"Expected FocusMonitorApp frontmost, got {active}"
-            )
+            assert (
+                active == FOCUS_MONITOR_BUNDLE
+            ), f"Expected FocusMonitorApp frontmost, got {active}"
         losses = _read_focus_losses()
         assert losses == 0, f"Expected 0 focus losses at start, got {losses}"
 
     @classmethod
     def tearDownClass(cls) -> None:
-        if hasattr(cls, '_focus_proc'):
+        if hasattr(cls, "_focus_proc"):
             cls._focus_proc.terminate()
             try:
                 cls._focus_proc.wait(timeout=3)
@@ -173,11 +173,14 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             btn = _find_calc_button(tree, "All Clear") or _find_calc_button(tree, "Clear")
             if btn is not None:
-                c.call_tool("click", {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "element_index": btn,
-                })
+                c.call_tool(
+                    "click",
+                    {
+                        "pid": self._calc_pid,
+                        "window_id": window_id,
+                        "element_index": btn,
+                    },
+                )
                 time.sleep(0.3)
         subprocess.run(
             ["osascript", "-e", 'tell application "FocusMonitorApp" to activate'],
@@ -203,12 +206,15 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
                 bx, by = CALC_BUTTONS[digit]
                 x = int(bx * w / 230)
                 y = int(by * h / 408)
-                result = c.call_tool("click", {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "x": x,
-                    "y": y,
-                })
+                result = c.call_tool(
+                    "click",
+                    {
+                        "pid": self._calc_pid,
+                        "window_id": window_id,
+                        "x": x,
+                        "y": y,
+                    },
+                )
                 print(f"    {digit}: pixel ({x},{y})")
                 time.sleep(0.15)
 
@@ -220,7 +226,8 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
             active = frontmost_bundle_id(c)
         print(f"  losses: {self._losses_before}->{losses}, frontmost: {active}")
         self.assertEqual(
-            active, FOCUS_MONITOR_BUNDLE,
+            active,
+            FOCUS_MONITOR_BUNDLE,
             f"Focus stolen — frontmost is {active}",
         )
 
@@ -228,9 +235,13 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
         """AX-click 1+2 on backgrounded Calculator — verifies AX event delivery."""
         with DriverClient(self.binary) as c:
             window_id = resolve_window_id(c, self._calc_pid)
-            snap = c.call_tool("get_window_state", {
-                "pid": self._calc_pid, "window_id": window_id,
-            })
+            snap = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                },
+            )
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
 
             btn_1 = _find_calc_button(tree, "1")
@@ -245,18 +256,24 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
             self.assertIsNotNone(btn_eq, "'Equals' button not found")
 
             for idx in [btn_1, btn_add, btn_2, btn_eq]:
-                c.call_tool("click", {
-                    "pid": self._calc_pid,
-                    "window_id": window_id,
-                    "element_index": idx,
-                })
+                c.call_tool(
+                    "click",
+                    {
+                        "pid": self._calc_pid,
+                        "window_id": window_id,
+                        "element_index": idx,
+                    },
+                )
                 time.sleep(0.3)
 
-            snap = c.call_tool("get_window_state", {
-                "pid": self._calc_pid,
-                "window_id": window_id,
-                "query": "AXStaticText",
-            })
+            snap = c.call_tool(
+                "get_window_state",
+                {
+                    "pid": self._calc_pid,
+                    "window_id": window_id,
+                    "query": "AXStaticText",
+                },
+            )
             tree = snap.get("structuredContent", snap).get("tree_markdown", "")
             print(f"  result tree:\n{tree}")
 
@@ -267,7 +284,8 @@ class CalculatorPixelClickDelivery(unittest.TestCase):
             active = frontmost_bundle_id(c)
         print(f"  losses: {self._losses_before}->{losses}, frontmost: {active}")
         self.assertEqual(
-            active, FOCUS_MONITOR_BUNDLE,
+            active,
+            FOCUS_MONITOR_BUNDLE,
             f"Focus stolen by AX click — frontmost is {active}",
         )
 

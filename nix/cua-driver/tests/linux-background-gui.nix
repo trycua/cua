@@ -792,7 +792,7 @@ let
                 # Bounds collection does one D-Bus GetExtents round-trip per
                 # action node; big trees (geany walked 787 nodes) need well over
                 # the default 45s, so give this call a longer window.
-                ws = recv(proc, timeout=150)
+                ws = recv(proc, timeout=90)
                 result_obj = ws.get("result", {}) if isinstance(ws, dict) else {}
                 # The structured `elements` array lives in structuredContent;
                 # fall back to scanning any text content that carries JSON.
@@ -865,6 +865,9 @@ let
         # fail, so every matrix job uploads a GIF of the interaction.
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        # If the recorder (or its convert) is still grinding past the wait,
+        # kill it hard so it can't thrash the VM and wedge later commands.
+        machine.execute("pkill -9 -f record-x11-gif >/dev/null 2>&1; pkill -9 -x convert >/dev/null 2>&1; pkill -9 -x import >/dev/null 2>&1; true")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
         # Best-effort: a missing GIF (recorder/convert hiccup under load) must
         # not fail the read-only job — copy only when the file exists.
@@ -926,6 +929,9 @@ let
         machine.log(result)
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        # If the recorder (or its convert) is still grinding past the wait,
+        # kill it hard so it can't thrash the VM and wedge later commands.
+        machine.execute("pkill -9 -f record-x11-gif >/dev/null 2>&1; pkill -9 -x convert >/dev/null 2>&1; pkill -9 -x import >/dev/null 2>&1; true")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
         # Best-effort GIF copy (see skeleton path): a recorder hiccup must not
         # fail the job before the real assertions run.

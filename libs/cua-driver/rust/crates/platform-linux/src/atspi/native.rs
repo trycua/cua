@@ -696,8 +696,17 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
         // first nodes are the window chrome / toolbars that are actually
         // visible, which is what bounds consumers (overlays, targeting) need.
         const MAX_BOUNDS_NODES: usize = 150;
+        // Hard wall-clock budget for the whole collection: on pathological
+        // trees individual D-Bus calls each burn up to CALL_TIMEOUT (geany's
+        // unrealized nodes did exactly that), so a per-node cap alone can
+        // still add up to minutes. Return whatever was collected in time.
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
         let mut out = Vec::with_capacity(action_nodes.len().min(MAX_BOUNDS_NODES));
         for (idx, node) in action_nodes.iter().enumerate().take(MAX_BOUNDS_NODES) {
+            if std::time::Instant::now() >= deadline {
+                dlog!("get_all_element_bounds: 20s budget exhausted at node {idx}; returning {} bound(s)", out.len());
+                break;
+            }
             if !node.has_component {
                 continue;
             }

@@ -4,9 +4,7 @@
   "description": "The leading open-source integrated development environment for professional developers. Eclipse IDE provides a powerful, extensible platform with support for Java, C/C++, Python, and many other languages through its extensive plugin ecosystem. Features include advanced debugging, refactoring tools, version control integration, and AI-powered development capabilities.",
   "website": "https://www.eclipse.org",
   "icon_url": "https://www.eclipse.org/eclipse.org-common/themes/solstice/public/images/logo/eclipse-foundation-white-orange.svg",
-  "categories": [
-    "IDE"
-  ],
+  "categories": ["IDE"],
   "tags": [
     "java",
     "development",
@@ -17,11 +15,7 @@
     "multi-language",
     "professional"
   ],
-  "os_support": [
-    "linux",
-    "macos",
-    "windows"
-  ],
+  "os_support": ["linux", "macos", "windows"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/eclipse-ide/eclipse.platform",

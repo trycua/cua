@@ -4,10 +4,7 @@
   "description": "Free, open-source integrated development environment (IDE) and application platform that supports multiple programming languages including Java, JavaScript, PHP, HTML5, CSS, and more. Offers advanced features like syntax highlighting, semantic analysis, refactoring, and a modular architecture for building extensible applications.",
   "website": "https://netbeans.apache.org",
   "icon_url": "https://netbeans.apache.org/images/logo.png",
-  "categories": [
-    "IDE",
-    "Development Tools"
-  ],
+  "categories": ["IDE", "Development Tools"],
   "tags": [
     "java-ide",
     "open-source",
@@ -17,11 +14,7 @@
     "apache",
     "free"
   ],
-  "os_support": [
-    "linux",
-    "windows",
-    "macos"
-  ],
+  "os_support": ["linux", "windows", "macos"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/apache/netbeans",

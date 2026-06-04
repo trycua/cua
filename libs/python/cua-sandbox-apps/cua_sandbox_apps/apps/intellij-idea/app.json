@@ -4,9 +4,7 @@
   "description": "A professional integrated development environment (IDE) designed for Java and Kotlin development with support for multiple programming languages. Features comprehensive code assistance, static analysis, debugging, version control integration, and enhanced developer productivity tools.",
   "website": "https://www.jetbrains.com/idea",
   "icon_url": "https://www.jetbrains.com/idea/img/idea_192.png",
-  "categories": [
-    "IDE"
-  ],
+  "categories": ["IDE"],
   "tags": [
     "Java",
     "Kotlin",
@@ -18,11 +16,7 @@
     "Profiler",
     "Version Control"
   ],
-  "os_support": [
-    "linux",
-    "macos",
-    "windows"
-  ],
+  "os_support": ["linux", "macos", "windows"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/JetBrains/intellij-community",

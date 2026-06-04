@@ -5,11 +5,7 @@
   "website": "https://www.wireshark.org",
   "download_url": "https://www.wireshark.org/download/win64/Wireshark-4.6.4-x64.exe",
   "icon_url": "https://gitlab.com/uploads/-/system/project/avatar/7898047/wsicon256.png",
-  "categories": [
-    "Network Analysis",
-    "Network Tools",
-    "Security"
-  ],
+  "categories": ["Network Analysis", "Network Tools", "Security"],
   "tags": [
     "packet-sniffer",
     "network-analyzer",
@@ -19,11 +15,7 @@
     "network-security",
     "open-source"
   ],
-  "os_support": [
-    "linux",
-    "windows",
-    "macos"
-  ],
+  "os_support": ["linux", "windows", "macos"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://gitlab.com/wireshark/wireshark",

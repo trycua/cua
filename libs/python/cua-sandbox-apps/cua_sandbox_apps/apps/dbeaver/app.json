@@ -4,11 +4,7 @@
   "description": "Free, open-source multi-platform database management tool for developers, SQL programmers, database administrators and analysts. Features SQL/schema editors, data editing, ER diagrams, AI-powered code completion, SSH tunneling, data import/export, and support for 100+ database drivers.",
   "website": "https://dbeaver.io",
   "icon_url": "https://raw.githubusercontent.com/dbeaver/dbeaver/master/modules/model/icons/model_16.png",
-  "categories": [
-    "Database IDE",
-    "Database Management",
-    "SQL Client"
-  ],
+  "categories": ["Database IDE", "Database Management", "SQL Client"],
   "tags": [
     "database",
     "sql",
@@ -19,11 +15,7 @@
     "cross-platform",
     "java"
   ],
-  "os_support": [
-    "linux",
-    "windows",
-    "macos"
-  ],
+  "os_support": ["linux", "windows", "macos"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/dbeaver/dbeaver",

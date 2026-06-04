@@ -4,12 +4,7 @@
   "description": "An AI-powered DevSecOps platform that provides end-to-end software development capabilities including version control, CI/CD, issue tracking, code review, and integrated security scanning.",
   "website": "https://gitlab.com",
   "icon_url": "https://about.gitlab.com/images/press/logo/png/gitlab-icon-rgb.png",
-  "categories": [
-    "DevOps Platform",
-    "Source Control",
-    "CI/CD",
-    "DevSecOps"
-  ],
+  "categories": ["DevOps Platform", "Source Control", "CI/CD", "DevSecOps"],
   "tags": [
     "git",
     "version-control",
@@ -23,11 +18,7 @@
     "docker",
     "agile"
   ],
-  "os_support": [
-    "linux",
-    "windows",
-    "macos"
-  ],
+  "os_support": ["linux", "windows", "macos"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://gitlab.com/gitlab-org/gitlab",

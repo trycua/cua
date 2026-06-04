@@ -6,21 +6,21 @@
 
 The driver exposes a small, stable interface:
 
-| Tool | Purpose |
-|------|---------|
+| Tool               | Purpose                            |
+| ------------------ | ---------------------------------- |
 | `get_window_state` | Snapshot: AX/UIA tree + screenshot |
-| `click` | Click at element or pixel |
-| `type_text` | Type a string |
-| `type_text_chars` | Type via keystroke synthesis |
-| `press_key` | Send a named key |
-| `hotkey` | Send a key combo |
-| `scroll` | Scroll wheel |
-| `drag` | Mouse drag |
+| `click`            | Click at element or pixel          |
+| `type_text`        | Type a string                      |
+| `type_text_chars`  | Type via keystroke synthesis       |
+| `press_key`        | Send a named key                   |
+| `hotkey`           | Send a key combo                   |
+| `scroll`           | Scroll wheel                       |
+| `drag`             | Mouse drag                         |
 
 Tests **never** reach for `page.execute_javascript`, CDP, Apple Events, or
 any other internal mechanism. The driver is a black box that delivers the
 action via whatever technique works best for the target app. Tests verify
-the *observable outcome*, not the delivery path.
+the _observable outcome_, not the delivery path.
 
 ---
 
@@ -49,11 +49,11 @@ assert <state changed in after>
 
 A background thread polls at 5 ms and records any violation of:
 
-| Signal | Violation |
-|--------|-----------|
-| Real cursor position (`NSEvent.mouseLocation`) | Moved > 4 px from baseline |
-| Frontmost app PID (`NSWorkspace.frontmostApplication`) | Changed from sentinel |
-| Agent overlay z-order (`CGWindowListCopyWindowInfo`) | cua-driver layer ≥ frontmost non-agent window layer |
+| Signal                                                 | Violation                                           |
+| ------------------------------------------------------ | --------------------------------------------------- |
+| Real cursor position (`NSEvent.mouseLocation`)         | Moved > 4 px from baseline                          |
+| Frontmost app PID (`NSWorkspace.frontmostApplication`) | Changed from sentinel                               |
+| Agent overlay z-order (`CGWindowListCopyWindowInfo`)   | cua-driver layer ≥ frontmost non-agent window layer |
 
 The `ux_guard` pytest fixture starts the monitor before each test and calls
 `monitor.assert_clean()` in teardown. If any violation was recorded the test
@@ -63,14 +63,14 @@ fails with a list of every incident.
 
 ## App-specific Oracle Strategy
 
-| App | Primary oracle | Cross-check |
-|-----|---------------|-------------|
-| Safari | AX tree text values | — |
-| Chrome | AX tree text values | — |
-| Electron | AX tree text values | HTTP API on port 6769 |
-| Tauri | AX tree text values | HTTP API on port 6769 |
-| Blender | Screenshot + NCC template match | AX tree window title |
-| Calculator | AX tree static text | — |
+| App        | Primary oracle                  | Cross-check           |
+| ---------- | ------------------------------- | --------------------- |
+| Safari     | AX tree text values             | —                     |
+| Chrome     | AX tree text values             | —                     |
+| Electron   | AX tree text values             | HTTP API on port 6769 |
+| Tauri      | AX tree text values             | HTTP API on port 6769 |
+| Blender    | Screenshot + NCC template match | AX tree window title  |
+| Calculator | AX tree static text             | —                     |
 
 For browser apps the test page (`assets/test_page.html`) provides a
 self-contained oracle: every interactive element reflects its state back into

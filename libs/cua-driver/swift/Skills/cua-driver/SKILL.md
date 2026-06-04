@@ -27,15 +27,15 @@ is therefore forbidden unless the user **explicitly** asked for
 frontmost state:
 
 - **Every form of the `open` CLI — `open -a <App>`, `open -b
-  <bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
-  <url>` — always activates.** macOS routes all forms through
+<bundle-id>`, `open <file>`, `open <path-to-App.app>`, `open
+<url>` — always activates.** macOS routes all forms through
   LaunchServices, which unhides and foregrounds the target
   regardless of whether you passed an app name, a bundle id, a
   document, a URL, or the bundle path itself. The activation
   happens even when the only intent was "start the process."
   **Never use `open` for any app launch.** This includes launching
   a just-built .app from a local build dir (e.g. `open
-  build/Build/Products/Debug/MyApp.app`) — resolve the
+build/Build/Products/Debug/MyApp.app`) — resolve the
   `CFBundleIdentifier` from `Info.plist` and use `launch_app`
   with that id. See "The narrow carve-out" below for why
   `launch_app` is safe even when the app internally calls
@@ -68,7 +68,7 @@ frontmost state:
   delivered to a backgrounded pid via `hotkey`, the downstream app
   pulls focus. **For omnibox navigation specifically**, the correct
   path is `launch_app({bundle_id: "com.google.Chrome", urls:
-  ["https://…"]})` — no omnibox dance, no `⌘L`, no focus-steal. Do
+["https://…"]})` — no omnibox dance, no `⌘L`, no focus-steal. Do
   NOT try `set_value` on the omnibox: Chrome's commit logic requires
   a "user-typed" signal that neither an AX value write nor
   `CGEvent.postToPid` keystrokes supply from a backgrounded pid —
@@ -106,9 +106,9 @@ frontmost is true'`). Mutating it is not.
 **Corollary — the AXMenuBar rule.** `AXMenuBarItem` + AXPick
 dispatches at the AX layer regardless of which app is frontmost,
 but macOS's on-screen menu bar always belongs to the frontmost
-app. If you drive a *backgrounded* app's menu bar, the AX call
+app. If you drive a _backgrounded_ app's menu bar, the AX call
 succeeds but the viewer sees the dispatch rendered over the
-*frontmost* app's menu bar — confusing in any observed session and
+_frontmost_ app's menu bar — confusing in any observed session and
 routinely a silent no-op too, because action menu items go
 `DISABLED` when their owning app isn't the key window. **So: only
 use menu-bar navigation when the target is already frontmost.** For
@@ -156,16 +156,16 @@ Intent → tool mapping. If you find yourself reaching for the right
 column, something has gone wrong — re-read "The no-foreground
 contract" above:
 
-| Intent | Use | Don't use |
-|---|---|---|
-| Open / launch an app | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})` | `open -a`, `osascript 'tell app … to launch/activate/open'` |
-| Find a pid | `list_apps` or `launch_app`'s return | `pgrep`, `ps`, `osascript frontmost` |
-| Enumerate an app's windows | `list_windows({pid})` — or read the `windows` array `launch_app` already returns | `osascript 'every window of app …'` |
-| Click / type / scroll / keys | `click`, `type_text`, `scroll`, `press_key`, `hotkey` | `osascript`, `cliclick`, raw `CGEvent`, `open <url>` |
-| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag` |
-| Screenshot | `screenshot` or the PNG in `get_window_state` | `screencapture` |
-| Quit an app | ask the user first, then `hotkey({pid, keys:["cmd","q"]})` | `kill`, `killall`, `pkill` |
-| Hand a file/URL to an app | `launch_app({bundle_id, urls:[<path>]})` | `open -a <App> <path>`, `open <url>` |
+| Intent                                | Use                                                                                    | Don't use                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Open / launch an app                  | `launch_app({bundle_id})` or `launch_app({bundle_id, urls:[...]})`                     | `open -a`, `osascript 'tell app … to launch/activate/open'` |
+| Find a pid                            | `list_apps` or `launch_app`'s return                                                   | `pgrep`, `ps`, `osascript frontmost`                        |
+| Enumerate an app's windows            | `list_windows({pid})` — or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
+| Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
+| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
+| Screenshot                            | `screenshot` or the PNG in `get_window_state`                                          | `screencapture`                                             |
+| Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
+| Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
 
 ### The narrow carve-out
 
@@ -322,11 +322,11 @@ Two orthogonal axes shape what the agent can do.
 
 **capture_mode → addressing mode**
 
-| `capture_mode` | `get_window_state` returns | Use for actions |
-|---|---|---|
-| **`som`** (default) | tree + screenshot | `element_index` preferred; pixel fallback |
-| **`ax`** | tree only (no PNG) | `element_index` only |
-| **`vision`** | PNG only (no tree) | pixel only — see [SCREENSHOT.md](./SCREENSHOT.md) |
+| `capture_mode`      | `get_window_state` returns | Use for actions                                   |
+| ------------------- | -------------------------- | ------------------------------------------------- |
+| **`som`** (default) | tree + screenshot          | `element_index` preferred; pixel fallback         |
+| **`ax`**            | tree only (no PNG)         | `element_index` only                              |
+| **`vision`**        | PNG only (no tree)         | pixel only — see [SCREENSHOT.md](./SCREENSHOT.md) |
 
 `vision` was renamed from `screenshot` — the old name still decodes
 as a deprecated alias, so an on-disk `"capture_mode": "screenshot"`
@@ -348,13 +348,13 @@ JPEG-over-PNG finding.
 
 **Window state → what works**
 
-| state | `get_window_state` | `click`/`set_value` (AX) | `press_key` commit (Return/Space/Tab) | pixel click |
-|---|---|---|---|---|
-| frontmost | ✅ | ✅ | ✅ | ✅ |
-| backgrounded / visible | ✅ | ✅ | ✅ | ✅ |
-| **minimized** (Dock genie) | ✅ | ✅ (no deminiaturize — AX actions fire on the minimized window in place) | ❌ silent no-op / system beep — use `set_value` or click equivalent | ❌ no on-screen bounds |
-| hidden (`hides=true` / `NSApp.hide`) | ✅ | ✅ | depends | ❌ |
-| on another Space | ⚠️ AX tree often stripped to menu-bar-only on SwiftUI apps (System Settings) — AppKit apps usually fine. Response carries `off_space: true` + `window_space_ids` so you can detect it | ✅ | ✅ | ❌ window not in current-Space list |
+| state                                | `get_window_state`                                                                                                                                                                    | `click`/`set_value` (AX)                                                 | `press_key` commit (Return/Space/Tab)                               | pixel click                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------- |
+| frontmost                            | ✅                                                                                                                                                                                    | ✅                                                                       | ✅                                                                  | ✅                                  |
+| backgrounded / visible               | ✅                                                                                                                                                                                    | ✅                                                                       | ✅                                                                  | ✅                                  |
+| **minimized** (Dock genie)           | ✅                                                                                                                                                                                    | ✅ (no deminiaturize — AX actions fire on the minimized window in place) | ❌ silent no-op / system beep — use `set_value` or click equivalent | ❌ no on-screen bounds              |
+| hidden (`hides=true` / `NSApp.hide`) | ✅                                                                                                                                                                                    | ✅                                                                       | depends                                                             | ❌                                  |
+| on another Space                     | ⚠️ AX tree often stripped to menu-bar-only on SwiftUI apps (System Settings) — AppKit apps usually fine. Response carries `off_space: true` + `window_space_ids` so you can detect it | ✅                                                                       | ✅                                                                  | ❌ window not in current-Space list |
 
 **Critical cell — minimized + keyboard commit.** The keystroke
 reaches the app but AX focus doesn't propagate to renderer focus on
@@ -444,7 +444,7 @@ In `som` mode (the default) the response carries:
   `screenshot_out_file` was passed. Absent otherwise.
 - `screenshot_width` / `_height` / `_scale_factor` — dimensions of the
   captured image. Present whenever a screenshot was taken.
-**Getting the screenshot as a file (CLI and context-constrained agents):**
+  **Getting the screenshot as a file (CLI and context-constrained agents):**
 
 ```bash
 # write to file — stdout stays readable (AX tree / summary only, no base64)
@@ -465,10 +465,10 @@ complementary, not redundant.** In `som` mode every
 turn's `get_window_state` gives you both halves and you should pull
 signal from each:
 
-- The **AX tree** tells you *what's clickable* — roles, labels,
+- The **AX tree** tells you _what's clickable_ — roles, labels,
   `element_index` handles, advertised actions, parent-child
   structure. This is the ground truth for dispatching.
-- The **screenshot** tells you *which one* — the tree often has
+- The **screenshot** tells you _which one_ — the tree often has
   many buttons with similar or empty labels ("Delete", "OK",
   anonymous UUID-labeled buttons, five `AXStaticText = " "`), and
   visual context disambiguates. Captions, colors, layout relationships
@@ -500,20 +500,20 @@ last `get_window_state`; `window_id` is required alongside
 `element_index`, ignored on pixel-only forms unless you want to
 anchor the conversion against a specific window):
 
-| Intent | Tool | Notes |
-|---|---|---|
-| List an app's windows | `list_windows({pid})` | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids |
-| Snapshot a window | `get_window_state({pid, window_id})` | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache |
-| Left click | `click({pid, window_id, element_index})` | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional — when supplied, pinpoints the anchor window) — `modifier: ["cmd"]` |
-| Double-click / open | `double_click({pid, window_id, element_index})` | AXOpen when advertised (Finder items, openable rows); else stamped pixel double-click at the element's center. Pixel form: `double_click({pid, x, y})` — primer-gated recipe lands on backgrounded Chromium web content (YouTube fullscreen, Finder open-on-dbl). `click({..., count: 2})` still works and routes through the same recipe; `double_click` is the intent-first spelling |
-| Right click / context menu | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left — see `WEB_APPS.md` |
-| Type at cursor | `type_text({pid, text, window_id, element_index})` | `AXSelectedText` write; focuses first |
-| Set whole field value | `set_value({pid, window_id, element_index, value})` | sliders, steppers, text fields; **use for keyboard-commit workarounds on minimized windows** |
-| Scroll | `scroll({pid, direction, amount, by, window_id, element_index})` | synthesizes PageUp/PageDown/arrows via SLEventPostToPid |
-| Focus + send key | `press_key({pid, key, window_id, element_index, modifiers})` | element_index sets AXFocused, then posts key |
-| Send key to pid | `press_key({pid, key, modifiers})` | no focus change; key goes to pid's current focus |
-| Modifier combo | `hotkey({pid, keys})` | e.g. `["cmd","c"]`; posted per-pid, not HID tap |
-| Unicode keystrokes | `type_text({pid, text, delay_ms})` | AX write with automatic CGEvent fallback; reaches Chromium/Electron inputs |
+| Intent                     | Tool                                                                                                            | Notes                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| List an app's windows      | `list_windows({pid})`                                                                                           | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids                                                                                                                                                                                                                |
+| Snapshot a window          | `get_window_state({pid, window_id})`                                                                            | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache                                                                                                                                                                                                                                                                                         |
+| Left click                 | `click({pid, window_id, element_index})`                                                                        | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional — when supplied, pinpoints the anchor window) — `modifier: ["cmd"]`                                                                                                                                                                                                                                    |
+| Double-click / open        | `double_click({pid, window_id, element_index})`                                                                 | AXOpen when advertised (Finder items, openable rows); else stamped pixel double-click at the element's center. Pixel form: `double_click({pid, x, y})` — primer-gated recipe lands on backgrounded Chromium web content (YouTube fullscreen, Finder open-on-dbl). `click({..., count: 2})` still works and routes through the same recipe; `double_click` is the intent-first spelling |
+| Right click / context menu | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left — see `WEB_APPS.md`                                                                                                                                                                                                                                                                                                             |
+| Type at cursor             | `type_text({pid, text, window_id, element_index})`                                                              | `AXSelectedText` write; focuses first                                                                                                                                                                                                                                                                                                                                                  |
+| Set whole field value      | `set_value({pid, window_id, element_index, value})`                                                             | sliders, steppers, text fields; **use for keyboard-commit workarounds on minimized windows**                                                                                                                                                                                                                                                                                           |
+| Scroll                     | `scroll({pid, direction, amount, by, window_id, element_index})`                                                | synthesizes PageUp/PageDown/arrows via SLEventPostToPid                                                                                                                                                                                                                                                                                                                                |
+| Focus + send key           | `press_key({pid, key, window_id, element_index, modifiers})`                                                    | element_index sets AXFocused, then posts key                                                                                                                                                                                                                                                                                                                                           |
+| Send key to pid            | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                                                                                                                                                                                                                                       |
+| Modifier combo             | `hotkey({pid, keys})`                                                                                           | e.g. `["cmd","c"]`; posted per-pid, not HID tap                                                                                                                                                                                                                                                                                                                                        |
+| Unicode keystrokes         | `type_text({pid, text, delay_ms})`                                                                              | AX write with automatic CGEvent fallback; reaches Chromium/Electron inputs                                                                                                                                                                                                                                                                                                             |
 
 **All keyboard/text primitives require `pid`.** There is no
 frontmost-routed variant — every key goes to the named target via
@@ -655,11 +655,11 @@ functional and one perceptual:
 - **Functional:** menu items that touch document/playback/editor
   state go `DISABLED` when their owning app isn't the key window
   (Preview rotate, IINA speed change, most editor commands). AXPick
-  + AXPress will dispatch successfully from the driver's side but
-  no-op at the target — you get a silent false-pass.
+  - AXPress will dispatch successfully from the driver's side but
+    no-op at the target — you get a silent false-pass.
 - **Perceptual (matters for demos, screen recordings, and anything
   the user watches live):** macOS's screen-rendered menu bar
-  always belongs to the *frontmost* app. AXPick on a backgrounded
+  always belongs to the _frontmost_ app. AXPick on a backgrounded
   app's `AXMenuBarItem` dispatches to that app's per-process menu at
   the AX layer, but any visible menu render happens over the
   frontmost app's menu bar — the viewer sees an IINA submenu
@@ -669,9 +669,9 @@ functional and one perceptual:
   integrity bug even though it's not a correctness bug.
 
 **Good decision rule:** if the target is not already frontmost, do
-not use `AXMenuBarItem` at all. For *reading* in-window state,
+not use `AXMenuBarItem` at all. For _reading_ in-window state,
 snapshot the window AX tree — most apps expose the same state via
-an in-window `AXStaticText`, title bar, or toolbar. For *dispatching*
+an in-window `AXStaticText`, title bar, or toolbar. For _dispatching_
 actions, use in-window `element_index` (buttons, toolbar items) or
 pixel clicks on in-window controls — both dispatch via AppKit's
 window-under-pointer hit-test and are **not** frontmost-gated.
@@ -684,7 +684,7 @@ the canonical path for menus.
 Menu contents are a two-snapshot flow. Closed AXMenu subtrees are
 deliberately skipped during snapshot — otherwise every app's File /
 Edit / View hierarchy plus every Recent Items macOS has ever seen
-would inflate the tree 10-100x. But once a menu is *open*, its
+would inflate the tree 10-100x. But once a menu is _open_, its
 AXMenuItem children do receive `element_index` values so you can
 click them normally.
 
@@ -767,12 +767,12 @@ Apple Events" to be enabled — see `WEB_APPS.md` for the setup path.
   article text, or any raw text the AX tree truncates or omits.
 
 - `page({pid, window_id, action: "query_dom", css_selector: "a[href]",
-  attributes: ["href"]})` — runs `querySelectorAll` and returns each
+attributes: ["href"]})` — runs `querySelectorAll` and returns each
   match's tag, text, and requested attributes as a JSON array. Use for
   table rows, link hrefs, data attributes, structured page data.
 
 - `page({pid, window_id, action: "execute_javascript", javascript:
-  "..."})` — raw JS. Wrap in an IIFE with try-catch. Don't use this for
+"..."})` — raw JS. Wrap in an IIFE with try-catch. Don't use this for
   elements already indexed by `get_window_state` — `click` and
   `set_value` are more reliable there.
 
@@ -789,23 +789,23 @@ page data in the same turn.
 
 **Decision rule — AX vs JS:**
 
-| Need | Use |
-|---|---|
-| Click / type into an element | `get_window_state` → `click` / `set_value` (AX, works backgrounded) |
-| Read text the AX tree drops | `page(get_text)` or `get_window_state(javascript=)` |
-| Scrape structured data (tables, hrefs) | `page(query_dom)` |
-| Trigger JS events / mutations | `page(execute_javascript)` |
+| Need                                   | Use                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------- |
+| Click / type into an element           | `get_window_state` → `click` / `set_value` (AX, works backgrounded) |
+| Read text the AX tree drops            | `page(get_text)` or `get_window_state(javascript=)`                 |
+| Scrape structured data (tables, hrefs) | `page(query_dom)`                                                   |
+| Trigger JS events / mutations          | `page(execute_javascript)`                                          |
 
 Supported backends:
 
-| App type | How | Context |
-|---|---|---|
-| Chrome / Brave / Edge | Apple Events `execute javascript` | Full DOM ✅ |
-| Safari | Apple Events `do JavaScript` | Full DOM ✅ |
-| Electron (VS Code, Cursor…) | SIGUSR1 → V8 inspector → CDP | Main process only: `process`, `Buffer` — no `document`, no `require` in sandboxed apps |
-| Electron (with `--remote-debugging-port`) | CDP page target | Full DOM ✅ |
+| App type                                  | How                               | Context                                                                                |
+| ----------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------- |
+| Chrome / Brave / Edge                     | Apple Events `execute javascript` | Full DOM ✅                                                                            |
+| Safari                                    | Apple Events `do JavaScript`      | Full DOM ✅                                                                            |
+| Electron (VS Code, Cursor…)               | SIGUSR1 → V8 inspector → CDP      | Main process only: `process`, `Buffer` — no `document`, no `require` in sandboxed apps |
+| Electron (with `--remote-debugging-port`) | CDP page target                   | Full DOM ✅                                                                            |
 
-**Electron sandbox note:** SIGUSR1 connects to the Node.js *main* process.
+**Electron sandbox note:** SIGUSR1 connects to the Node.js _main_ process.
 Sandboxed Electron apps (VS Code, Cursor) strip `require` and Electron
 APIs there. Useful for: `process.env`, `process.versions`, `process.cwd()`,
 `process.pid`. For full DOM/renderer access, launch the app with
@@ -842,15 +842,15 @@ doesn't-survive-across-sessions caveat.
 
 ## Common error patterns
 
-| Error text | Meaning | Fix |
-|---|---|---|
-| `No cached AX state for pid X window_id W` | You either skipped `get_window_state` this turn, or passed a different `window_id` to the click than the one the snapshot cached against | Call `get_window_state({pid: X, window_id: W})` first — the same window_id you intend to click in |
-| `Invalid element_index N for pid X window_id W` | Index is stale or out of range | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree |
-| `window_id W belongs to pid P, not …` | Passed a window_id that's owned by a different process | Use `list_windows({pid: X})` to enumerate this pid's own windows |
-| `AX action AXPress failed with code …` | Element doesn't support AXPress | Try `show_menu`, `confirm`, `cancel`, or `pick` |
-| macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section |
-| `Accessibility permission not granted` | TCC not granted | Stop; tell user to grant in System Settings |
-| `Screen Recording permission not granted` | TCC not granted for capture | Affects `screenshot` and `get_window_state` (which always captures). Grant in System Settings — the driver can't operate without it |
+| Error text                                                    | Meaning                                                                                                                                  | Fix                                                                                                                                                                     |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `No cached AX state for pid X window_id W`                    | You either skipped `get_window_state` this turn, or passed a different `window_id` to the click than the one the snapshot cached against | Call `get_window_state({pid: X, window_id: W})` first — the same window_id you intend to click in                                                                       |
+| `Invalid element_index N for pid X window_id W`               | Index is stale or out of range                                                                                                           | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree                                                                                 |
+| `window_id W belongs to pid P, not …`                         | Passed a window_id that's owned by a different process                                                                                   | Use `list_windows({pid: X})` to enumerate this pid's own windows                                                                                                        |
+| `AX action AXPress failed with code …`                        | Element doesn't support AXPress                                                                                                          | Try `show_menu`, `confirm`, `cancel`, or `pick`                                                                                                                         |
+| macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows                        | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section |
+| `Accessibility permission not granted`                        | TCC not granted                                                                                                                          | Stop; tell user to grant in System Settings                                                                                                                             |
+| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                                              | Affects `screenshot` and `get_window_state` (which always captures). Grant in System Settings — the driver can't operate without it                                     |
 
 ## Things to avoid
 
@@ -882,6 +882,6 @@ doesn't-survive-across-sessions caveat.
    populated AX subtree (sidebar, list view, files).
 3. Done.
 
-If the user instead asks to navigate *within* an already-open Finder
+If the user instead asks to navigate _within_ an already-open Finder
 window, use the menu-bar flow from the "Navigating native menu bars"
 section above (click Go → pick a menu item → re-snapshot → click it).

@@ -4,12 +4,7 @@
   "description": "A distributed, RESTful search and analytics engine that enables rapid searching, indexing, and data analysis. Serves as a scalable data store and vector database optimized for full-text search, log analytics, observability, security operations, and AI-powered retrieval augmented generation (RAG).",
   "website": "https://www.elastic.co/elasticsearch",
   "icon_url": "https://www.elastic.co/favicons/favicon-32x32.png",
-  "categories": [
-    "Search Engine",
-    "Database",
-    "Analytics",
-    "Vector Database"
-  ],
+  "categories": ["Search Engine", "Database", "Analytics", "Vector Database"],
   "tags": [
     "distributed-search",
     "full-text-search",
@@ -21,11 +16,7 @@
     "elastic-stack",
     "real-time-analytics"
   ],
-  "os_support": [
-    "linux",
-    "macos",
-    "windows"
-  ],
+  "os_support": ["linux", "macos", "windows"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/elastic/elasticsearch",

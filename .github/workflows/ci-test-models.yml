@@ -12,7 +12,7 @@ on:
         default: true
         type: boolean
   schedule:
-    - cron: '0 9 * * 1'  # Every Monday at 9:00 UTC
+    - cron: "0 9 * * 1" # Every Monday at 9:00 UTC
 
 jobs:
   # Test all Cua models - runs on PRs, pushes to main, or when manually triggered

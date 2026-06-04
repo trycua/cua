@@ -10,9 +10,7 @@
     "binary_name": "azuredatastudio",
     "display_name": "Azure Data Studio",
     "desktop_entry": "/usr/share/applications/azuredatastudio.desktop",
-    "icon_paths": [
-      "/usr/share/pixmaps/com.azuredatastudio.png"
-    ],
+    "icon_paths": ["/usr/share/pixmaps/com.azuredatastudio.png"],
     "version": "1.52.0-1749833751"
   },
   "sandbox_name": "linux-305346c3",
@@ -22,7 +20,5 @@
   "notes": "Azure Data Studio is a lightweight cross-platform database management tool. Successfully installed, launched, and verified on Linux. The application displays the Welcome screen with connection options, query editor, and server deployment features.",
   "screenshot_verification": "PASS: Azure Data Studio is visibly open with the Welcome tab displayed, showing the main application interface with logo, buttons (New, Open file, Open folder), and several dialog boxes overlaid on top.",
   "verification_passed": true,
-  "extracted_icons": [
-    "cua_sandbox_apps\\apps\\azure-data-studio\\linux\\logs\\icon-1024x1024.png"
-  ]
+  "extracted_icons": ["cua_sandbox_apps\\apps\\azure-data-studio\\linux\\logs\\icon-1024x1024.png"]
 }

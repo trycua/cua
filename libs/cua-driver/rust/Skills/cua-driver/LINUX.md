@@ -51,8 +51,8 @@ If you're agent-driving on Linux and a tool call surprises you:
    is gated by portals; `x11` means XTest works but routes via focus.
 3. If Wayland: confirm `org.freedesktop.portal.RemoteDesktop` is
    present (`gdbus introspect --session --dest
-   org.freedesktop.portal.Desktop --object-path
-   /org/freedesktop/portal/desktop`). Without it, input synthesis
+org.freedesktop.portal.Desktop --object-path
+/org/freedesktop/portal/desktop`). Without it, input synthesis
    is denied.
 
 ## Forbidden vectors
@@ -71,17 +71,17 @@ ask the user.
 
 ## What to expect today
 
-| Intent | Status |
-|---|---|
-| Snapshot UIA tree | ✅ AT-SPI when available, often partial for GTK4/Qt6 |
-| Pixel click | ⚠️ X11 only, focus-stealing semantics |
-| Element-indexed click | ⚠️ AT-SPI `accDoDefaultAction` when supported |
-| Type text | ⚠️ XTest, focus-sensitive |
-| Hotkey | ⚠️ XTest, focus-sensitive |
-| Screenshot full-display | ✅ X11 (xshm); ⚠️ Wayland (portal-gated) |
-| Screenshot per-window | ⚠️ X11 with composite extension; Wayland TBD |
-| launch_app | ⚠️ xdg-open / gtk-launch; no FocusRestoreGuard yet |
-| Recording | ❌ not implemented |
+| Intent                  | Status                                               |
+| ----------------------- | ---------------------------------------------------- |
+| Snapshot UIA tree       | ✅ AT-SPI when available, often partial for GTK4/Qt6 |
+| Pixel click             | ⚠️ X11 only, focus-stealing semantics                |
+| Element-indexed click   | ⚠️ AT-SPI `accDoDefaultAction` when supported        |
+| Type text               | ⚠️ XTest, focus-sensitive                            |
+| Hotkey                  | ⚠️ XTest, focus-sensitive                            |
+| Screenshot full-display | ✅ X11 (xshm); ⚠️ Wayland (portal-gated)             |
+| Screenshot per-window   | ⚠️ X11 with composite extension; Wayland TBD         |
+| launch_app              | ⚠️ xdg-open / gtk-launch; no FocusRestoreGuard yet   |
+| Recording               | ❌ not implemented                                   |
 
 Until Linux reaches GA, treat this doc as a planning placeholder
 rather than a contract.

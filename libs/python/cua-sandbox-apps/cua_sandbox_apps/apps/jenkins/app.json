@@ -4,11 +4,7 @@
   "description": "The leading open-source automation server. Jenkins enables developers to build, deploy, and automate projects at any scale. It provides a flexible, extensible platform for continuous integration and continuous delivery with hundreds of plugins for integration with virtually any tool in the CI/CD toolchain.",
   "website": "https://www.jenkins.io",
   "icon_url": "https://jenkins.io/images/logos/jenkins/256.png",
-  "categories": [
-    "CI/CD",
-    "DevOps",
-    "Automation"
-  ],
+  "categories": ["CI/CD", "DevOps", "Automation"],
   "tags": [
     "continuous-integration",
     "continuous-deployment",
@@ -19,11 +15,7 @@
     "java",
     "open-source"
   ],
-  "os_support": [
-    "linux",
-    "macos",
-    "windows"
-  ],
+  "os_support": ["linux", "macos", "windows"],
   "requires_payment": false,
   "foss": true,
   "gh_repo": "https://github.com/jenkinsci/jenkins",

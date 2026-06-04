@@ -2,5 +2,12 @@
   "title": "Guide",
   "description": "Learn how to build with Cua",
   "icon": "Book",
-  "pages": ["get-started", "sandbox", "agents-in-sandbox", "fundamentals", "advanced", "integrations"]
+  "pages": [
+    "get-started",
+    "sandbox",
+    "agents-in-sandbox",
+    "fundamentals",
+    "advanced",
+    "integrations"
+  ]
 }

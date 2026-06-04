@@ -1,1 +1,6 @@
-{"download_available": false, "install_exit_code": -1, "app_name": "Adobe Photoshop", "reason": "Proprietary, requires license"}
+{
+  "download_available": false,
+  "install_exit_code": -1,
+  "app_name": "Adobe Photoshop",
+  "reason": "Proprietary, requires license"
+}

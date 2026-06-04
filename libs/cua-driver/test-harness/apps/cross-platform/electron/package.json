@@ -25,10 +25,14 @@
       "package.json"
     ],
     "win": {
-      "target": [{
-        "target": "portable",
-        "arch": ["x64"]
-      }]
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "portable": {
       "artifactName": "CuaTestHarness.Electron.exe"

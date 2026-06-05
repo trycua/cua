@@ -77,10 +77,16 @@ jobs:
         include:
           - os: macos-latest
             platform: macos
+            arch: universal
           - os: ubuntu-latest
             platform: linux
+            arch: x86_64
           - os: windows-latest
             platform: windows
+            arch: x86_64
+          - os: windows-latest
+            platform: windows
+            arch: arm64
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -111,7 +117,7 @@ jobs:
         shell: bash
         run: |
           cd libs/cua-driver/python
-          python build_wheel.py --version "${{ needs.get-version.outputs.version }}"
+          python build_wheel.py --version "${{ needs.get-version.outputs.version }}" --arch "${{ matrix.arch }}"
 
       - name: List built artifacts
         shell: bash
@@ -120,7 +126,7 @@ jobs:
 
       - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
-          name: wheel-${{ matrix.platform }}
+          name: wheel-${{ matrix.platform }}-${{ matrix.arch }}
           path: libs/cua-driver/python/dist/*.whl
           if-no-files-found: error
 

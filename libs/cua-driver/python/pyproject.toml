@@ -50,3 +50,4 @@ packages = ["src/cua_driver"]
 artifacts = [
     "src/cua_driver/bin/*",
 ]
+pure-python = false

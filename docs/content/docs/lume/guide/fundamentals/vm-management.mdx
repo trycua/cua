@@ -119,6 +119,51 @@ lume set my-vm --disk-size 100GB
 lume set my-vm --display 1920x1080
 ```
 
+## Expand macOS VM disk capacity
+
+Increasing host-side disk allocation does not automatically give the macOS guest filesystem the extra space. For macOS VMs, you must resize inside the VM after `lume set`.
+
+<Callout type="warn">
+  Back up VM data before resizing. Removing/rebuilding recovery partitions is destructive and can make a VM unbootable without a backup.
+</Callout>
+
+### 1. Increase the VM disk on the host
+
+Shut down the VM and increase its allocated virtual disk:
+
+```bash
+lume stop my-vm
+lume clone my-vm my-vm-before-resize
+lume set my-vm --disk-size 100GB
+lume run my-vm
+```
+
+### 2. Resize APFS inside macOS
+
+In a terminal inside the VM, resize the disk layout to consume free space from the enlarged disk image.
+
+```bash
+# Identify the VM boot disk and APFS container IDs
+diskutil list
+diskutil apfs list
+
+# Replace these values with the identifiers shown by diskutil
+VM_BOOT_DISK=disk0
+APFS_CONTAINER_PARTITION=disk0s2
+
+# Repair the VM boot disk structures first
+sudo diskutil repairDisk "$VM_BOOT_DISK"
+
+# Fill the APFS container with remaining free space
+sudo diskutil apfs resizeContainer "$APFS_CONTAINER_PARTITION" 0
+```
+
+Set `VM_BOOT_DISK` and `APFS_CONTAINER_PARTITION` from `diskutil list` and `diskutil apfs list` inside the VM. Stop if you are not sure which disk belongs to the VM. The resize command is the key step; in some releases, recovery partition layout blocks it. If that happens, remove/recreate recovery first, then rerun `resizeContainer`.
+
+<Callout type="warn">
+  The recovery-partition removal step is optional and destructive. Only run it if you have a working backup and understand recovery-recreation steps.
+</Callout>
+
 ## Clone a VM
 
 Cloning creates a full copy—useful for backups or creating variants:

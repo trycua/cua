@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cua-driver"
+version = "0.5.1"
+description = "Python wrapper for cua-driver - cross-platform MCP server for computer-use automation"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "mcp",
+    "computer-use",
+    "automation",
+    "accessibility",
+    "screen-capture",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.10"
+
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://github.com/trycua/cua/tree/main/libs/cua-driver"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[project.scripts]
+cua-driver = "cua_driver.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua_driver"]
+artifacts = [
+    "src/cua_driver/bin/*",
+]

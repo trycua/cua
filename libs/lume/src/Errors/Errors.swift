@@ -52,6 +52,7 @@ enum PullError: Error, LocalizedError {
     case tokenFetchFailed
     case manifestFetchFailed
     case layerDownloadFailed(String)
+    case layerVerificationFailed(expected: String, actual: String)
     case missingPart(Int)
     case decompressionFailed(String)
     case reassemblyFailed(String)
@@ -70,6 +71,11 @@ enum PullError: Error, LocalizedError {
             return "Failed to fetch image manifest from registry."
         case .layerDownloadFailed(let digest):
             return "Failed to download layer: \(digest)"
+        case .layerVerificationFailed(let expected, let actual):
+            return
+                "Downloaded layer failed checksum verification (expected \(expected), got \(actual)). "
+                + "The blob was likely corrupted in transit. Retrying may help; if it persists, "
+                + "clear the lume cache and pull again."
         case .missingPart(let partNum):
             return "Missing required part number \(partNum) for reassembly."
         case .decompressionFailed(let file):

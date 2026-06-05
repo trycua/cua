@@ -33,7 +33,16 @@ def get_platform_info(arch_override: str = None):
     system = platform.system().lower()
 
     if arch_override:
-        arch = arch_override
+        # Normalize arch_override to handle common aliases/casing
+        arch_lower = arch_override.lower()
+        if arch_lower in ("x86_64", "amd64", "x64"):
+            arch = "x86_64"
+        elif arch_lower in ("arm64", "aarch64"):
+            arch = "arm64"
+        elif arch_lower == "universal":
+            arch = "universal"
+        else:
+            raise ValueError(f"Unsupported architecture override: {arch_override}")
     else:
         machine = platform.machine().lower()
         # Normalize architecture names
@@ -201,12 +210,33 @@ def extract_binaries(archive_path: Path, binary_names: list[str], dest_dir: Path
     return extracted_paths
 
 
-def build_wheel(package_dir: Path) -> None:
-    """Build the wheel using hatchling."""
+def build_wheel(package_dir: Path, target_arch: str = None) -> None:
+    """Build the wheel using hatchling.
+
+    Args:
+        package_dir: Directory containing pyproject.toml
+        target_arch: Target architecture for cross-compilation (x86_64, arm64)
+    """
     print("\nBuilding wheel...")
+
+    env = os.environ.copy()
+
+    # Set platform tag override for cross-compilation
+    if target_arch:
+        system = platform.system().lower()
+        if system == "windows":
+            # Override wheel platform tag for Windows cross-compilation
+            if target_arch == "arm64":
+                env["_PYTHON_HOST_PLATFORM"] = "win-arm64"
+            elif target_arch == "x86_64":
+                env["_PYTHON_HOST_PLATFORM"] = "win-amd64"
+        # Linux and macOS don't need overrides for our use case
+        # (macOS uses universal binary, Linux builds on native arch)
+
     subprocess.run(
         [sys.executable, "-m", "build", "--wheel"],
         cwd=package_dir,
+        env=env,
         check=True,
     )
     print("Wheel built successfully!")
@@ -280,8 +310,8 @@ def main():
         if binary.is_file():
             print(f"  - {binary.name} ({binary.stat().st_size / 1024 / 1024:.2f} MB)")
 
-    # Build the wheel
-    build_wheel(script_dir)
+    # Build the wheel (pass target arch for cross-compilation)
+    build_wheel(script_dir, target_arch=arch if not args.skip_download else None)
 
 
 if __name__ == "__main__":

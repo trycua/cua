@@ -670,3 +670,66 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
         Ok((x, y, w.max(0) as u32, h.max(0) as u32))
     })
 }
+
+/// Screen-coordinate bounds for every action node in the tree, keyed by the
+/// same `element_index` used by [`walk_tree`]/`get_element_bounds`.
+///
+/// Walks the application once (unlike calling `get_element_bounds` per node,
+/// which would reconnect and re-walk every time) and queries each node's
+/// `Component.GetExtents(Screen)`. Nodes without a usable Component interface,
+/// or whose extents query fails/times out, are silently skipped — the result is
+/// best-effort and never errors on a per-node hiccup.
+///
+/// Returns `(element_index, x, y, width, height)` tuples.
+pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
+    runtime().block_on(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = collect_visited(&conn, pid)
+            .await?
+            .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        // Each element costs ~3 D-Bus round-trips (proxies + component +
+        // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
+        // minutes and time out callers, so cap the walk; pre-order means the
+        // first nodes are the window chrome / toolbars that are actually
+        // visible, which is what bounds consumers (overlays, targeting) need.
+        const MAX_BOUNDS_NODES: usize = 150;
+        // Hard wall-clock budget for the whole collection: on pathological
+        // trees individual D-Bus calls each burn up to CALL_TIMEOUT (geany's
+        // unrealized nodes did exactly that), so a per-node cap alone can
+        // still add up to minutes. Return whatever was collected in time.
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut out = Vec::with_capacity(action_nodes.len().min(MAX_BOUNDS_NODES));
+        for (idx, node) in action_nodes.iter().enumerate().take(MAX_BOUNDS_NODES) {
+            if std::time::Instant::now() >= deadline {
+                dlog!("get_all_element_bounds: 20s budget exhausted at node {idx}; returning {} bound(s)", out.len());
+                break;
+            }
+            if !node.has_component {
+                continue;
+            }
+            let proxies = match call(node.acc.proxies()).await {
+                Some(Ok(p)) => p,
+                _ => continue,
+            };
+            let comp = match call(proxies.component()).await {
+                Some(Ok(c)) => c,
+                _ => continue,
+            };
+            if let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Screen)).await {
+                // Unrealized widgets (e.g. items inside closed menus/popovers)
+                // report GetExtents as the i32::MIN sentinel and/or a degenerate
+                // 0x0 / 1x1 size. Emitting those poisons downstream consumers
+                // (overlay renderers, click targeting), so keep only elements
+                // with plausible on-screen geometry.
+                if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
+                    continue;
+                }
+                out.push((idx, x, y, w as u32, h as u32));
+            }
+        }
+        Ok(out)
+    })
+}

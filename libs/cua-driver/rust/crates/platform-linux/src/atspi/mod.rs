@@ -134,6 +134,14 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 }
 
 /// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
+/// Screen-coordinate bounds for every action node in pid's AT-SPI tree, keyed
+/// by `element_index`. Best-effort: nodes whose bounds can't be read are
+/// omitted rather than erroring the whole call. Returns `(element_index, x, y,
+/// width, height)` tuples in screen coordinates.
+pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
+    native::get_all_element_bounds(pid)
+}
+
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     native::get_element_bounds(pid, idx)
 }

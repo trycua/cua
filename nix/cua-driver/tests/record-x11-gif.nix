@@ -28,15 +28,22 @@ pkgs.writeShellScript "record-x11-gif.sh" ''
   rm -rf "$frames_dir"
   mkdir -p "$frames_dir"
 
+  # Cap the frame count: long driver runs (the skeleton budget is 300s) can
+  # otherwise pile up 1000+ frames and the final `convert` thrashes/OOMs the
+  # 2GB test VM, wedging every later command in the job. 450 frames is a ~45s
+  # GIF at the default cadence — plenty. Each `import` and the final `convert`
+  # are also time-bounded so a wedged X grab or a slow stitch can't stall the
+  # job.
+  max_frames=450
   i=0
-  while [ ! -f "$stop_file" ]; do
+  while [ ! -f "$stop_file" ] && [ "$i" -lt "$max_frames" ]; do
     frame=$(printf "%s/frame-%04d.png" "$frames_dir" "$i")
-    import -display "$display" -window root "$frame" >>"$log_file" 2>&1 || true
+    timeout 10 import -display "$display" -window root "$frame" >>"$log_file" 2>&1 || true
     i=$((i + 1))
     sleep "$interval"
   done
 
   if ls "$frames_dir"/frame-*.png >/dev/null 2>&1; then
-    convert -delay "$delay_cs" -loop 0 "$frames_dir"/frame-*.png "$output_gif" >>"$log_file" 2>&1
+    timeout 120 convert -delay "$delay_cs" -loop 0 "$frames_dir"/frame-*.png "$output_gif" >>"$log_file" 2>&1 || true
   fi
 ''

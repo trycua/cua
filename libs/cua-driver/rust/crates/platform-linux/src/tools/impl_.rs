@@ -362,6 +362,13 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
+            // Best-effort per-element screen bounds (AT-SPI Component.GetExtents).
+            // Tolerant: an empty/missing map never fails the call.
+            let bounds = if do_tree {
+                crate::atspi::get_all_element_bounds(pid).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let screenshot = if do_shot {
                 match crate::capture::screenshot_window_bytes(xid) {
                     Ok(raw) => {
@@ -377,11 +384,11 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            Ok((tree_result, screenshot))
+            Ok((tree_result, screenshot, bounds))
         }).await;
 
         match result {
-            Ok(Ok((tree_opt, shot_opt))) => {
+            Ok(Ok((tree_opt, shot_opt, bounds))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
@@ -392,6 +399,31 @@ impl Tool for GetWindowStateTool {
                     state.element_cache.update(pid, xid, &tr.nodes);
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
+
+                    // Additive `elements` array: one entry per tree node that
+                    // has an element_index AND a successfully-resolved screen
+                    // bounds (AT-SPI Component.GetExtents(Screen)).
+                    use std::collections::HashMap;
+                    let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
+                        .into_iter()
+                        .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
+                        .collect();
+                    let elements: Vec<serde_json::Value> = tr
+                        .nodes
+                        .iter()
+                        .filter_map(|n| {
+                            let idx = n.element_index?;
+                            let (x, y, w, h) = bounds_by_idx.get(&idx).copied()?;
+                            Some(json!({
+                                "element_index": idx,
+                                "role": n.role,
+                                "name": n.name,
+                                "x": x, "y": y,
+                                "width": w, "height": h,
+                            }))
+                        })
+                        .collect();
+                    structured["elements"] = json!(elements);
                 }
 
                 if let Some((b64, w, h, orig_w)) = shot_opt {

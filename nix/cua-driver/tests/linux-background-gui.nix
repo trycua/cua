@@ -52,6 +52,87 @@ let
   # up once it has been copied into the test derivation's $out.
   outputGif = "/tmp/cua-driver-linux-background-gui-${app}.gif";
 
+  # Per-app still screenshot + AT-SPI overlay PNGs. The raw PNG is a full-screen
+  # capture whose pixel coordinates align 1:1 with the AT-SPI screen-coordinate
+  # bounds (no translation), so the overlay can draw element boxes directly.
+  rawPng = "/tmp/cua-driver-linux-background-gui-${app}.png";
+  atspiPng = "/tmp/cua-driver-linux-background-gui-${app}-atspi.png";
+  # Per-app copy of the AT-SPI element bounds JSON ({element_index, role, name,
+  # x, y, width, height} in screen coords) — emitted as a CI artifact so the
+  # coordinates are inspectable alongside the annotated screenshots.
+  elementsJson = "/tmp/cua-driver-linux-background-gui-${app}-elements.json";
+
+  # Reads /tmp/cua-elements.json and draws each element's screen-coordinate box
+  # + label onto a copy of the raw PNG via a single ImageMagick `convert`. If
+  # the element list is empty (or anything goes wrong) it just copies the raw
+  # PNG through, so an overlay hiccup never fails the job.
+  # stdlib-python overlay: reads the raw PNG + /tmp/cua-elements.json and shells
+  # out to ImageMagick `convert` to draw a red box + label per element, in a
+  # single invocation. Tolerant: on an empty list or ANY error it copies the raw
+  # PNG through, so the *-atspi.png artifact is always produced.
+  atspiOverlayPy = pkgs.writeText "cua-atspi-overlay.py" ''
+    import json, os, shutil, subprocess, sys
+
+    CONVERT = "${pkgs.imagemagick}/bin/convert"
+    # -annotate renders TEXT and needs an explicit font: the minimal test VM has
+    # no fontconfig-discoverable fonts, so convert exits 1 without this.
+    FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf"
+
+    def main():
+        raw, out = sys.argv[1], sys.argv[2]
+        elems_path = sys.argv[3] if len(sys.argv) > 3 else "/tmp/cua-elements.json"
+        if not (os.path.exists(raw) and os.path.getsize(raw) > 0):
+            return
+        try:
+            with open(elems_path) as f:
+                elems = json.load(f)
+        except Exception:
+            elems = []
+        if not isinstance(elems, list):
+            elems = []
+        argv = [CONVERT, raw]
+        drew = False
+        for e in elems:
+            try:
+                x = int(e["x"]); y = int(e["y"])
+                w = int(e["width"]); h = int(e["height"])
+                idx = e.get("element_index")
+            except Exception:
+                continue
+            # Skip AT-SPI's "no extents" sentinel (i32::MIN) and degenerate
+            # 1x1 boxes from unrealized widgets (items inside closed menus) —
+            # ImageMagick errors out on those coordinates. The driver filters
+            # these too; this is belt-and-braces for older driver builds.
+            if x < 0 or y < 0 or x > 16384 or y > 16384 or w <= 1 or h <= 1:
+                continue
+            label = "%s (%d,%d %dx%d)" % (idx, x, y, w, h)
+            argv += ["-stroke", "red", "-fill", "none",
+                     "-draw", "rectangle %d,%d %d,%d" % (x, y, x + w, y + h)]
+            argv += ["-stroke", "none", "-fill", "red", "-font", FONT,
+                     "-pointsize", "12",
+                     "-annotate", "+%d+%d" % (x + 2, max(y + 12, 12)), label]
+            drew = True
+        if not drew:
+            shutil.copyfile(raw, out)
+            print("ATSPI_OVERLAY: no elements, copied raw -> " + out, flush=True)
+            return
+        argv.append(out)
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError("convert rc=%d stderr=%s" % (r.returncode, r.stderr[-500:]))
+            print("ATSPI_OVERLAY: drew overlay -> " + out, flush=True)
+        except Exception as ex:
+            print("ATSPI_OVERLAY_ERROR: " + repr(ex), flush=True)
+            shutil.copyfile(raw, out)
+
+    if __name__ == "__main__":
+        try:
+            main()
+        except Exception as ex:
+            print("ATSPI_OVERLAY_FATAL: " + repr(ex), flush=True)
+  '';
+
   # Plain python3 (stdlib only) to drive the MCP JSON-RPC handshake in the test.
   # The driver now speaks AT-SPI natively over D-Bus (no pyatspi / GI typelibs),
   # so no accessibility Python packages are needed anywhere.
@@ -704,6 +785,49 @@ let
             print("READBACK_BEGIN", flush=True)
             print(readback, flush=True)
             print("READBACK_END", flush=True)
+
+            # READ-ONLY: pull the AT-SPI element bounds via get_window_state so
+            # we can draw an overlay PNG as a CI artifact. Tolerant — any
+            # failure here just yields an empty element list; it never affects
+            # the read-only assertions above.
+            elements = []
+            try:
+                send(proc, "tools/call", {
+                    "name": "get_window_state",
+                    "arguments": {
+                        "pid": target_pid,
+                        "window_id": target_xid,
+                    },
+                }, req_id=4)
+                # Bounds collection does one D-Bus GetExtents round-trip per
+                # action node; big trees (geany walked 787 nodes) need well over
+                # the default 45s, so give this call a longer window.
+                ws = recv(proc, timeout=90)
+                result_obj = ws.get("result", {}) if isinstance(ws, dict) else {}
+                # The structured `elements` array lives in structuredContent;
+                # fall back to scanning any text content that carries JSON.
+                structured = result_obj.get("structuredContent") or {}
+                if isinstance(structured, dict) and isinstance(structured.get("elements"), list):
+                    elements = structured["elements"]
+                else:
+                    for c in result_obj.get("content", []):
+                        if c.get("type") == "text":
+                            try:
+                                obj = json.loads(c.get("text", ""))
+                            except Exception:
+                                continue
+                            if isinstance(obj, dict) and isinstance(obj.get("elements"), list):
+                                elements = obj["elements"]
+                                break
+            except Exception as e:
+                print("GET_WINDOW_STATE_ERROR: " + repr(e), flush=True)
+                elements = []
+            if not isinstance(elements, list):
+                elements = []
+            with open("/tmp/cua-elements.json", "w") as f:
+                json.dump(elements, f)
+            print("ELEMENTS_JSON: " + json.dumps(elements), flush=True)
+            print("ELEMENTS_COUNT: " + str(len(elements)), flush=True)
         finally:
             proc.stdin.close(); proc.terminate(); proc.wait(timeout=5)
 
@@ -743,15 +867,59 @@ let
             "sh -lc '${recordGifScript} :99 /tmp/gui-frames ${outputGif} "
             "/tmp/stop-gui-recorder /tmp/record-gui.log 10 0.2 >/dev/null 2>&1 & echo $! >/tmp/record-gui.pid'"
         )
-        status, result = machine.execute("${a11yEnv} timeout 200 python3 /tmp/mcp-background-gui-skeleton.py 2>&1")
+        # 300s: get_text retries + the bounded get_window_state bounds walk
+        # (recv timeout 150s) must both fit.
+        status, result = machine.execute("${a11yEnv} timeout 300 python3 /tmp/mcp-background-gui-skeleton.py 2>&1")
         machine.log(result)
         # Stop the recorder and copy the GIF out *now*, before any assertion can
         # fail, so every matrix job uploads a GIF of the interaction.
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        # If the recorder (or its convert) is still grinding past the wait,
+        # kill it hard so it can't thrash the VM and wedge later commands.
+        machine.execute("pkill -9 -f record-x11-gif >/dev/null 2>&1; pkill -9 -x convert >/dev/null 2>&1; pkill -9 -x import >/dev/null 2>&1; true")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
-        machine.execute("test -s ${outputGif}")
-        machine.copy_from_machine("${outputGif}", "")
+        # Best-effort: a missing GIF (recorder/convert hiccup under load) must
+        # not fail the read-only job — copy only when the file exists.
+        if machine.execute("test -s ${outputGif}")[0] == 0:
+            machine.copy_from_machine("${outputGif}", "")
+        else:
+            machine.log("WARN: ${outputGif} missing; skipping GIF copy")
+
+        # Annotated screenshots (CI artifacts), produced BEFORE any assertion can
+        # fail and wrapped in execute() so a capture/drawing hiccup never fails
+        # the read-only job:
+        #   ${rawPng}            full-screen still (screen coords == AT-SPI bounds)
+        #   ${atspiPng}          raw + AT-SPI element boxes/labels overlay
+        # The downstream `som-annotate` job consumes the raw PNG to emit *-som.png.
+        # `import` can block indefinitely if another client wedges the X server
+        # grab (it hung a job to the GH 15-min cap once) — bound it hard.
+        machine.execute("${a11yEnv} timeout 30 ${pkgs.imagemagick}/bin/import -window root ${rawPng}")
+        machine.copy_from_host("${atspiOverlayPy}", "/tmp/cua-atspi-overlay.py")
+        st_ov, out_ov = machine.execute(
+            "${a11yEnv} timeout 60 ${pkgs.python3}/bin/python3 /tmp/cua-atspi-overlay.py "
+            "${rawPng} ${atspiPng} /tmp/cua-elements.json 2>&1"
+        )
+        machine.log(out_ov)
+        # Always emit both PNGs; fall back to copying the raw PNG if the overlay
+        # step produced nothing. Copies are best-effort — a capture hiccup must
+        # not fail the read-only job.
+        machine.execute("test -s ${atspiPng} || cp ${rawPng} ${atspiPng} 2>/dev/null")
+        if machine.execute("test -s ${rawPng}")[0] == 0:
+            machine.copy_from_machine("${rawPng}", "")
+        else:
+            machine.log("WARN: ${rawPng} missing; skipping raw screenshot copy")
+        if machine.execute("test -s ${atspiPng}")[0] == 0:
+            machine.copy_from_machine("${atspiPng}", "")
+        else:
+            machine.log("WARN: ${atspiPng} missing; skipping atspi overlay copy")
+        # Emit the element-bounds JSON (the coordinates) as an artifact too.
+        machine.execute("cp /tmp/cua-elements.json ${elementsJson} 2>/dev/null; true")
+        if machine.execute("test -s ${elementsJson}")[0] == 0:
+            machine.copy_from_machine("${elementsJson}", "")
+        else:
+            machine.log("WARN: ${elementsJson} missing; skipping elements JSON copy")
+
         # Lenient assertion: get_text returned a NON-error accessibility response.
         # Do NOT require any specific role (entry/text/...) — any content is fine.
         assert "GET_TEXT_OK" in result, (
@@ -777,9 +945,16 @@ let
         machine.log(result)
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
+        # If the recorder (or its convert) is still grinding past the wait,
+        # kill it hard so it can't thrash the VM and wedge later commands.
+        machine.execute("pkill -9 -f record-x11-gif >/dev/null 2>&1; pkill -9 -x convert >/dev/null 2>&1; pkill -9 -x import >/dev/null 2>&1; true")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
-        machine.execute("test -s ${outputGif}")
-        machine.copy_from_machine("${outputGif}", "")
+        # Best-effort GIF copy (see skeleton path): a recorder hiccup must not
+        # fail the job before the real assertions run.
+        if machine.execute("test -s ${outputGif}")[0] == 0:
+            machine.copy_from_machine("${outputGif}", "")
+        else:
+            machine.log("WARN: ${outputGif} missing; skipping GIF copy")
         assert "background GUI test typed" in result, result
 
     with subtest("Input landed: driver's native AT-SPI reads the window back"):

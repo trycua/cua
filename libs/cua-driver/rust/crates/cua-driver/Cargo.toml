@@ -60,8 +60,10 @@ platform-windows = { path = "../platform-windows" }
 platform-linux = { path = "../platform-linux" }
 
 [build-dependencies]
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
 # Embed the Windows manifest for DPI awareness (fixes coordinate mismatches
-# at 125%/150%/200% scaling). No-op on non-Windows hosts.
+# at 125%/150%/200% scaling).
 embed-resource = "2"
 
 [dev-dependencies]

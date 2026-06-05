@@ -155,7 +155,7 @@ def download_file(url: str, dest: Path, expected_sha256: str) -> None:
         # Verify SHA256
         print("Verifying SHA256 checksum...")
         verify_sha256(dest, expected_sha256)
-        print("✓ Checksum verified")
+        print("[OK] Checksum verified")
 
     except Exception as e:
         if dest.exists():
@@ -285,7 +285,7 @@ def main():
             # Verify cached archive too
             print("Verifying cached archive SHA256...")
             verify_sha256(archive_path, expected_sha256)
-            print("✓ Cached archive checksum verified")
+            print("[OK] Cached archive checksum verified")
 
         # Extract binaries
         extract_binaries(archive_path, binary_names, bin_dir)

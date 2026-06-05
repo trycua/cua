@@ -1,0 +1,20 @@
+{
+  "name": "gemini-computer-use-cli",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Gemini 3.5 Flash Computer Use with window scoping",
+  "main": "ui.js",
+  "scripts": {
+    "start": "bun ui.js",
+    "test": "bun autocomplete.test.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1",
+    "sharp": "^0.34.5"
+  }
+}

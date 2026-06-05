@@ -47,10 +47,6 @@ cua-driver = "cua_driver.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cua_driver"]
-# Include platform-specific binary in package data
-include = [
+artifacts = [
     "src/cua_driver/bin/*",
 ]
-
-[tool.hatch.build.targets.wheel.force-include]
-# This will be populated by the build script with the appropriate binary

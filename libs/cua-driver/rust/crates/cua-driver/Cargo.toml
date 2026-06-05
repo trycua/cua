@@ -59,6 +59,13 @@ platform-windows = { path = "../platform-windows" }
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "../platform-linux" }
 
+[build-dependencies]
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+# Embed the Windows manifest for DPI awareness (fixes coordinate mismatches
+# at 125%/150%/200% scaling).
+embed-resource = "2"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 image = { workspace = true }

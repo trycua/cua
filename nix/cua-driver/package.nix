@@ -25,7 +25,7 @@ pkgs.rustPlatform.buildRustPackage {
   # gracefully via `cargo vendor`.
   # Bumped when the dependency set changes (added `atspi`/zbus for native
   # AT-SPI). If this mismatches, the nix build prints the expected value.
-  cargoHash = "sha256-Zy2TgY9xgvkjm/xfF+1M6Z2/LxARVsbjYmw/4Fiy2hg=";
+  cargoHash = "sha256-P+f+ma8ZDWhhk1TTCGgbLTp4zU/uuh4vHYYQMIjlCbU=";
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win

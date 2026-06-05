@@ -166,6 +166,62 @@ pub fn post_drag(
     Ok(())
 }
 
+/// Press-drag-release via PostMessage, resolving the **deepest child** at the
+/// drag-start screen point and posting in that child's client coordinates.
+///
+/// `post_drag` (above) posts to the top-level frame, so a child-windowed
+/// control (a WinForms `Panel`, a Win32 child canvas, …) never sees the drag —
+/// the frame gets messages over a region it doesn't own and ignores them. This
+/// variant mirrors `post_click`: it hit-tests down to the deepest descendant
+/// under the start point and targets that HWND for the whole gesture (a drag
+/// stays within one control), with each point converted to the child's own
+/// client space. Endpoints are given in **screen** coordinates.
+pub fn post_drag_screen(
+    root: u64,
+    sx_from: i32,
+    sy_from: i32,
+    sx_to: i32,
+    sy_to: i32,
+    duration_ms: u64,
+    steps: usize,
+    button: &str,
+) -> Result<()> {
+    let root_hwnd = HWND(root as *mut _);
+    let (target, c_from) = deepest_child(root_hwnd, POINT { x: sx_from, y: sy_from });
+    let mut c_to = POINT { x: sx_to, y: sy_to };
+    unsafe { let _ = ScreenToClient(target, &mut c_to); }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
+        anyhow::bail!(msg);
+    }
+    let (down_msg, up_msg, mk_flag) = match button {
+        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
+        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+    };
+    let wparam = WPARAM(mk_flag as usize);
+    let steps = steps.max(1);
+    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+    unsafe {
+        // Pre-drag MOUSEMOVE (wParam=0, no buttons down yet) then DOWN at from.
+        PostMessageW(target, WM_MOUSEMOVE, WPARAM(0), make_lparam(c_from.x, c_from.y))?;
+        PostMessageW(target, down_msg, wparam, make_lparam(c_from.x, c_from.y))?;
+    }
+    sleep(Duration::from_millis(CLICK_DELAY_MS));
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let ix = c_from.x + ((c_to.x - c_from.x) as f64 * t).round() as i32;
+        let iy = c_from.y + ((c_to.y - c_from.y) as f64 * t).round() as i32;
+        unsafe { PostMessageW(target, WM_MOUSEMOVE, wparam, make_lparam(ix, iy))?; }
+        if step_delay_ms > 0 {
+            sleep(Duration::from_millis(step_delay_ms));
+        }
+    }
+    unsafe {
+        PostMessageW(target, up_msg, WPARAM(0), make_lparam(c_to.x, c_to.y))?;
+    }
+    Ok(())
+}
+
 /// Pack two 16-bit integers into a LPARAM (low word = x, high word = y).
 fn make_lparam(x: i32, y: i32) -> LPARAM {
     LPARAM((((y as u16 as u32) << 16) | (x as u16 as u32)) as isize)

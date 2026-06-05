@@ -1,0 +1,22 @@
+[package]
+name = "jukebox-orchestrator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "jukebox-orchestrator"
+path = "src/main.rs"
+
+[dependencies]
+# Minimal, well-tested SMF parser so real multitrack .mid files Just Work.
+midly = { version = "0.5", default-features = false, features = ["std"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_Media",
+] }

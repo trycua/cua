@@ -31,6 +31,9 @@ pub struct MotionConfig {
     pub min_start_speed: f64,
     /// Minimum cursor speed at end of glide (deceleration floor), pts/sec.
     pub min_end_speed: f64,
+    /// Minimum turning radius of the Dubins glide path, in points. Smaller =
+    /// tighter curves. Matches the Swift reference default of 80.
+    pub turn_radius: f64,
 }
 
 impl Default for MotionConfig {
@@ -48,11 +51,13 @@ impl Default for MotionConfig {
             peak_speed: 900.0,
             min_start_speed: 300.0,
             min_end_speed: 200.0,
+            turn_radius: 80.0,
         }
     }
 }
 
 impl MotionConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn with_overrides(
         &self,
         start_handle: Option<f64>,
@@ -64,6 +69,7 @@ impl MotionConfig {
         dwell_after_click_ms: Option<f64>,
         idle_hide_ms: Option<f64>,
         press_duration_ms: Option<f64>,
+        turn_radius: Option<f64>,
     ) -> Self {
         fn clamp(v: f64, lo: f64, hi: f64) -> f64 { v.clamp(lo, hi) }
         Self {
@@ -79,6 +85,7 @@ impl MotionConfig {
             peak_speed:           self.peak_speed,
             min_start_speed:      self.min_start_speed,
             min_end_speed:        self.min_end_speed,
+            turn_radius:          clamp(turn_radius.unwrap_or(self.turn_radius), 1.0, 1000.0),
         }
     }
 }

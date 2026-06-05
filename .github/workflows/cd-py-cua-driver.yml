@@ -33,7 +33,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       should_publish: ${{ steps.version.outputs.should_publish }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Determine version
         id: version
@@ -43,16 +43,23 @@ jobs:
             SHOULD_PUBLISH="true"
           else
             # Extract from the tag that triggered the workflow_run
-            # The workflow_run event gives us the head_sha, fetch tags
-            git fetch --tags
-            TAG=$(git tag --points-at ${{ github.event.workflow_run.head_sha }} | grep '^cua-driver-rs-v' | head -1 || echo "")
-            if [ -n "$TAG" ]; then
-              VERSION="${TAG#cua-driver-rs-v}"
-              SHOULD_PUBLISH="true"
-            else
-              # No matching tag, skip
+            # Validate SHA format to prevent injection
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "Invalid SHA format: $HEAD_SHA"
               VERSION="0.0.0"
               SHOULD_PUBLISH="false"
+            else
+              git fetch --tags
+              TAG=$(git tag --points-at "$HEAD_SHA" | grep '^cua-driver-rs-v' | head -1 || echo "")
+              if [ -n "$TAG" ]; then
+                VERSION="${TAG#cua-driver-rs-v}"
+                SHOULD_PUBLISH="true"
+              else
+                # No matching tag, skip
+                VERSION="0.0.0"
+                SHOULD_PUBLISH="false"
+              fi
             fi
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -75,9 +82,9 @@ jobs:
           - os: windows-latest
             platform: windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a20 # v5.3.0
         with:
           python-version: "3.12"
 
@@ -86,20 +93,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install build hatchling
 
-      - name: Update version in pyproject.toml
+      - name: Update version in pyproject.toml and __init__.py
         shell: bash
         run: |
           VERSION="${{ needs.get-version.outputs.version }}"
           cd libs/cua-driver/python
-          # Update version field
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
-          else
-            sed -i.bak "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
-            rm -f pyproject.toml.bak
-          fi
-          echo "Updated pyproject.toml:"
+          # Portable sed: use temp file approach for all platforms
+          sed "s/^version = .*/version = \"$VERSION\"/" pyproject.toml > pyproject.toml.tmp
+          mv pyproject.toml.tmp pyproject.toml
+          sed "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua_driver/__init__.py > __init__.py.tmp
+          mv __init__.py.tmp src/cua_driver/__init__.py
+          echo "Updated versions:"
           grep "^version = " pyproject.toml
+          grep "^__version__ = " src/cua_driver/__init__.py
 
       - name: Build wheel with bundled binary
         shell: bash
@@ -112,7 +118,7 @@ jobs:
         run: |
           ls -lh libs/cua-driver/python/dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: wheel-${{ matrix.platform }}
           path: libs/cua-driver/python/dist/*.whl
@@ -127,7 +133,7 @@ jobs:
       id-token: write  # For trusted publishing
     steps:
       - name: Download all wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           pattern: wheel-*
           path: dist
@@ -138,7 +144,7 @@ jobs:
           ls -lh dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@67339c736fd9354cd4f8cb0b744f2b82a74b5c70 # v1.12.2
         with:
           packages-dir: dist/
           skip-existing: true

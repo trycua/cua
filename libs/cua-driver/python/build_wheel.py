@@ -73,8 +73,47 @@ def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, s
     return f"{base_url}/{filename}", binary_name
 
 
-def download_file(url: str, dest: Path) -> None:
-    """Download a file with progress indication."""
+def verify_sha256(file_path: Path, expected_sha256: str) -> None:
+    """Verify file matches expected SHA256 hash."""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    actual = h.hexdigest()
+    if actual != expected_sha256:
+        raise ValueError(
+            f"SHA256 mismatch for {file_path.name}: expected {expected_sha256}, got {actual}"
+        )
+
+
+def get_expected_sha256(version: str, archive_name: str) -> str:
+    """Fetch and parse checksums.txt from GitHub release."""
+    checksums_url = f"https://github.com/trycua/cua/releases/download/cua-driver-rs-v{version}/checksums.txt"
+    print(f"Fetching checksums from {checksums_url}...")
+
+    try:
+        with urllib.request.urlopen(checksums_url) as response:
+            content = response.read().decode("utf-8")
+
+        for line in content.splitlines():
+            line = line.strip()
+            # Skip empty lines, comments, and headers
+            if not line or line.startswith("#") or "Checksums" in line or line.startswith("```"):
+                continue
+            # Parse "SHA256  filename" format
+            parts = line.split()
+            if len(parts) >= 2:
+                sha, name = parts[0], parts[-1]
+                if name == archive_name:
+                    return sha
+
+        raise ValueError(f"SHA256 for {archive_name} not found in checksums.txt")
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch or parse checksums: {e}")
+
+
+def download_file(url: str, dest: Path, expected_sha256: str) -> None:
+    """Download a file with progress indication and SHA256 verification."""
     print(f"Downloading {url}...")
     try:
         with urllib.request.urlopen(url) as response:
@@ -95,6 +134,12 @@ def download_file(url: str, dest: Path) -> None:
                         print(f"  {percent:.1f}% ({downloaded}/{total_size} bytes)", end="\r")
 
         print(f"\nDownloaded to {dest}")
+
+        # Verify SHA256
+        print("Verifying SHA256 checksum...")
+        verify_sha256(dest, expected_sha256)
+        print("✓ Checksum verified")
+
     except Exception as e:
         if dest.exists():
             dest.unlink()
@@ -108,9 +153,10 @@ def extract_binary(archive_path: Path, binary_name: str, dest_dir: Path) -> Path
 
     if archive_path.suffix == ".zip":
         with zipfile.ZipFile(archive_path, "r") as zf:
-            # Find the binary in the zip
+            # Find the binary in the zip (exact match or ends with /<binary_name>)
             for name in zf.namelist():
-                if name.endswith(binary_name):
+                # Match exact name or path ending with /binary_name
+                if name == binary_name or name.endswith(f"/{binary_name}"):
                     with zf.open(name) as src, open(dest_path, "wb") as dst:
                         shutil.copyfileobj(src, dst)
                     break
@@ -169,11 +215,18 @@ def main():
         archive_name = url.split("/")[-1]
         archive_path = download_dir / archive_name
 
-        # Download the release archive
+        # Get expected SHA256 from checksums.txt
+        expected_sha256 = get_expected_sha256(args.version, archive_name)
+
+        # Download the release archive (or verify cached)
         if not archive_path.exists():
-            download_file(url, archive_path)
+            download_file(url, archive_path, expected_sha256)
         else:
             print(f"Using cached archive: {archive_path}")
+            # Verify cached archive too
+            print("Verifying cached archive SHA256...")
+            verify_sha256(archive_path, expected_sha256)
+            print("✓ Cached archive checksum verified")
 
         # Extract binary
         extract_binary(archive_path, binary_name, bin_dir)

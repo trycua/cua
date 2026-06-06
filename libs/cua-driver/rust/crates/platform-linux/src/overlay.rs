@@ -29,6 +29,7 @@ use cursor_overlay::ZOrderEnforcer;
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayCommand>> = OnceLock::new();
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayCommand>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderState>> = Mutex::new(None);
+static ARRIVAL_TX: Mutex<Option<tokio::sync::oneshot::Sender<()>>> = Mutex::new(None);
 
 pub fn init(cfg: CursorConfig) {
     let (tx, rx) = std::sync::mpsc::sync_channel(4096);
@@ -41,6 +42,48 @@ pub fn send_command(cmd: OverlayCommand) {
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(cmd);
     }
+}
+
+pub fn is_enabled() -> bool {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.core.visible))
+        .unwrap_or(false)
+}
+
+pub fn current_position() -> (f64, f64) {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().map(|rs| rs.core.pos))
+        .unwrap_or((-200.0, -200.0))
+}
+
+pub async fn animate_cursor_to(x: f64, y: f64) {
+    let should_animate = {
+        let guard = RENDER.lock().unwrap();
+        match guard.as_ref() {
+            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
+            _ => false,
+        }
+    };
+    if !should_animate {
+        return;
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut guard = ARRIVAL_TX.lock().unwrap();
+        if let Some(old_tx) = guard.take() {
+            let _ = old_tx.send(());
+        }
+        *guard = Some(tx);
+    }
+
+    send_command(OverlayCommand::MoveTo {
+        x,
+        y,
+        end_heading_radians: std::f64::consts::FRAC_PI_4,
+    });
+
+    let _ = rx.await;
 }
 
 /// Spawn the overlay on a dedicated thread.  Non-blocking.
@@ -92,8 +135,8 @@ impl RenderState {
         }
     }
 
-    fn tick(&mut self, dt: f64) {
-        self.core.tick_motion(dt);
+    fn tick(&mut self, dt: f64) -> bool {
+        self.core.tick_motion(dt)
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
@@ -215,15 +258,17 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
         last_tick = now;
 
         // Drain commands and tick.
-        {
+        let fire_arrival = {
             let mut guard = RENDER.lock().unwrap();
             if let Some(rs) = guard.as_mut() {
                 while let Ok(cmd) = rx.try_recv() {
                     rs.apply_command(cmd);
                 }
-                rs.tick(dt);
+                rs.tick(dt)
+            } else {
+                false
             }
-        }
+        };
 
         // Render and paint.
         let pixmap = {
@@ -241,6 +286,12 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
 
         if let Some(pm) = pixmap {
             paint_x11(&conn, win, scr_w, scr_h, depth, visual_id, &pm);
+        }
+
+        if fire_arrival {
+            if let Some(tx) = ARRIVAL_TX.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
         }
 
         // Z-order maintenance every 80ms — delegate to the cross-platform

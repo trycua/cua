@@ -131,11 +131,23 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
 unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
 
     let mut rect = RECT::default();
     GetWindowRect(hwnd, &mut rect)?;
-    let w = rect.right - rect.left;
-    let h = rect.bottom - rect.top;
+
+    // With permonitorv2 DPI awareness, GetWindowRect returns logical coordinates.
+    // BitBlt needs physical pixel coordinates, so scale by the window's DPI.
+    let dpi = GetDpiForWindow(hwnd);
+    let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+
+    let physical_left = (rect.left as f64 * scale).round() as i32;
+    let physical_top = (rect.top as f64 * scale).round() as i32;
+    let physical_right = (rect.right as f64 * scale).round() as i32;
+    let physical_bottom = (rect.bottom as f64 * scale).round() as i32;
+
+    let w = physical_right - physical_left;
+    let h = physical_bottom - physical_top;
     if w <= 0 || h <= 0 {
         bail!("screen-region fallback: window has zero/negative bounds: {w}x{h}");
     }
@@ -145,8 +157,8 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)
     let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
     let old_bitmap = SelectObject(mem_dc, bitmap);
 
-    // Copy from screen coords (rect.left, rect.top) into our memory DC at (0, 0).
-    let blt_ok = BitBlt(mem_dc, 0, 0, w, h, screen_dc, rect.left, rect.top, SRCCOPY);
+    // Copy from physical screen coords into our memory DC at (0, 0).
+    let blt_ok = BitBlt(mem_dc, 0, 0, w, h, screen_dc, physical_left, physical_top, SRCCOPY);
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -272,13 +284,23 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // client-sized buffer loses the Save/Cancel/OK row at the bottom.
     // Window-sized buffer captures title bar + body + non-client trim
     // correctly.
+    //
+    // With permonitorv2 DPI awareness, GetWindowRect returns logical dimensions
+    // but GetWindowDC and PrintWindow/BitBlt operate in physical pixels.
+    // Scale to physical dimensions for the bitmap.
     let mut win_rect = RECT::default();
     GetWindowRect(hwnd, &mut win_rect)?;
-    let w = (win_rect.right - win_rect.left) as i32;
-    let h = (win_rect.bottom - win_rect.top) as i32;
-    if w <= 0 || h <= 0 {
-        bail!("Window has zero/negative size: {}x{}", w, h);
+    let logical_w = (win_rect.right - win_rect.left) as i32;
+    let logical_h = (win_rect.bottom - win_rect.top) as i32;
+    if logical_w <= 0 || logical_h <= 0 {
+        bail!("Window has zero/negative size: {}x{}", logical_w, logical_h);
     }
+
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    let dpi = GetDpiForWindow(hwnd);
+    let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+    let w = (logical_w as f64 * scale).round() as i32;
+    let h = (logical_h as f64 * scale).round() as i32;
 
     let screen_dc = GetWindowDC(hwnd);
     let mem_dc = CreateCompatibleDC(screen_dc);
@@ -454,9 +476,17 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
-        let w = GetSystemMetrics(SM_CXSCREEN);
-        let h = GetSystemMetrics(SM_CYSCREEN);
-        if w <= 0 || h <= 0 { bail!("Could not get screen metrics"); }
+        use windows::Win32::UI::HiDpi::GetDpiForSystem;
+        // With permonitorv2 DPI awareness, GetSystemMetrics returns logical pixels.
+        // BitBlt captures physical pixels, so we must scale by DPI factor.
+        let logical_w = GetSystemMetrics(SM_CXSCREEN);
+        let logical_h = GetSystemMetrics(SM_CYSCREEN);
+        if logical_w <= 0 || logical_h <= 0 { bail!("Could not get screen metrics"); }
+
+        let dpi = GetDpiForSystem();
+        let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+        let w = (logical_w as f64 * scale).round() as i32;
+        let h = (logical_h as f64 * scale).round() as i32;
         let screen_dc = GetDC(HWND::default());
         let mem_dc = CreateCompatibleDC(screen_dc);
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);

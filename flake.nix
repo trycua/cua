@@ -61,7 +61,79 @@
                   services.cua-driver.package = cuaDriverPackage;
                 };
               };
-            };
+
+              cua-driver-linux-cursor-click-gif = import ./nix/cua-driver/tests/linux-cursor-click-gif.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
+              cua-driver-linux-background-terminal-gif = import ./nix/cua-driver/tests/linux-background-terminal-gif.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+            }
+            // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
+              # Background GUI input coverage — one independent matrix job per
+              # app, proving focus-free typing into real toolkit/browser windows.
+              pkgs.lib.listToAttrs (
+                map (
+                  app:
+                  pkgs.lib.nameValuePair "cua-driver-linux-background-gui-${app}" (
+                    import ./nix/cua-driver/tests/linux-background-gui.nix {
+                      inherit pkgs app;
+                      inherit (pkgs) lib;
+                      cuaDriverModule = {
+                        imports = [ ./nix/cua-driver/module.nix ];
+                        services.cua-driver.package = cuaDriverPackage;
+                      };
+                    }
+                  )
+                  # Real-app matrix: 5 apps per toolkit category run as a LENIENT,
+                  # READ-ONLY skeleton (find window + driver page/get_text + GIF;
+                  # focus-free WRITE / typed-text assertions are added later via
+                  # trajectories). chromium keeps the full CDP focus-free-write
+                  # override; tk is the negative-control full entry (Tk `send`).
+                  # "firefox" remains disabled: under the emulated CI VM (no KVM)
+                  # it does not surface its window within the launch timeout.
+                ) [
+                  "chromium"
+                  "tk"
+                  # GTK3
+                  "gtk3-gedit"
+                  "gtk3-mousepad"
+                  # gtk3-geany / gtk3-abiword temporarily disabled: their huge
+                  # AT-SPI trees make the bounds walk + recorder grind in the
+                  # emulated CI VM and the jobs time out. Re-enable once the
+                  # walk is fast enough for 700+-node trees.
+                  # "gtk3-geany"
+                  "gtk3-scite"
+                  # "gtk3-abiword"
+                  # GTK4
+                  "gtk4-characters"
+                  # Qt5
+                  "qt5-manuskript"
+                  "qt5-klog"
+                  "qt5-openambit"
+                  # Qt6
+                  "qt6-kate"
+                  "qt6-kcalc"
+                  "qt6-okular"
+                  "qt6-qownnotes"
+                  # Electron
+                  "electron-zettlr"
+                  "electron-joplin"
+                  "electron-logseq"
+                ]
+              )
+            );
         }
       )
     // {

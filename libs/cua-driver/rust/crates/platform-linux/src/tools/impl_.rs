@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
 use serde_json::{json, Value};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::atspi::ElementCache;
@@ -360,6 +362,13 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
+            // Best-effort per-element screen bounds (AT-SPI Component.GetExtents).
+            // Tolerant: an empty/missing map never fails the call.
+            let bounds = if do_tree {
+                crate::atspi::get_all_element_bounds(pid).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let screenshot = if do_shot {
                 match crate::capture::screenshot_window_bytes(xid) {
                     Ok(raw) => {
@@ -375,11 +384,11 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            Ok((tree_result, screenshot))
+            Ok((tree_result, screenshot, bounds))
         }).await;
 
         match result {
-            Ok(Ok((tree_opt, shot_opt))) => {
+            Ok(Ok((tree_opt, shot_opt, bounds))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
@@ -390,6 +399,31 @@ impl Tool for GetWindowStateTool {
                     state.element_cache.update(pid, xid, &tr.nodes);
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
+
+                    // Additive `elements` array: one entry per tree node that
+                    // has an element_index AND a successfully-resolved screen
+                    // bounds (AT-SPI Component.GetExtents(Screen)).
+                    use std::collections::HashMap;
+                    let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
+                        .into_iter()
+                        .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
+                        .collect();
+                    let elements: Vec<serde_json::Value> = tr
+                        .nodes
+                        .iter()
+                        .filter_map(|n| {
+                            let idx = n.element_index?;
+                            let (x, y, w, h) = bounds_by_idx.get(&idx).copied()?;
+                            Some(json!({
+                                "element_index": idx,
+                                "role": n.role,
+                                "name": n.name,
+                                "x": x, "y": y,
+                                "width": w, "height": h,
+                            }))
+                        })
+                        .collect();
+                    structured["elements"] = json!(elements);
                 }
 
                 if let Some((b64, w, h, orig_w)) = shot_opt {
@@ -515,6 +549,153 @@ fn resolve_element_local_coords(pid: u32, idx: usize, xid_hint: Option<u64>)
     Ok((xid, local_x, local_y))
 }
 
+fn element_screen_center(pid: u32, idx: usize) -> anyhow::Result<(f64, f64)> {
+    let (bx, by, bw, bh) = crate::atspi::get_element_bounds(pid, idx)?;
+    Ok((bx as f64 + bw as f64 / 2.0, by as f64 + bh as f64 / 2.0))
+}
+
+fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    let reply = conn.translate_coordinates(xid as u32, root, 0, 0)?.reply()?;
+    Ok((reply.dst_x as f64 + x, reply.dst_y as f64 + y))
+}
+
+async fn overlay_glide_to(sx: f64, sy: f64) {
+    if !crate::overlay::is_enabled() {
+        return;
+    }
+    let pos = crate::overlay::current_position();
+    if pos.0 < 0.0 && pos.1 < 0.0 {
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        return;
+    }
+    crate::overlay::animate_cursor_to(sx, sy).await;
+}
+
+fn process_name(pid: u32) -> Option<String> {
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let first = String::from_utf8_lossy(&cmdline)
+        .split('\0')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if !first.is_empty() {
+        return std::path::Path::new(&first)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .or(Some(first));
+    }
+
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status.lines()
+        .find(|l| l.starts_with("Name:"))
+        .map(|l| l[5..].trim().to_owned())
+}
+
+fn is_terminal_process(pid: u32) -> bool {
+    matches!(
+        process_name(pid).as_deref(),
+        Some(
+            "xfce4-terminal"
+                | "gnome-terminal-server"
+                | "xterm"
+                | "konsole"
+                | "kitty"
+                | "alacritty"
+                | "wezterm-gui"
+                | "tilix"
+        )
+    )
+}
+
+fn terminal_descendant_ttys(pid: u32) -> Vec<PathBuf> {
+    let mut parent_to_children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    let proc_dir = std::path::Path::new("/proc");
+    let entries = match fs::read_dir(proc_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    for entry in entries.flatten() {
+        let pid_str = entry.file_name();
+        let pid_str = pid_str.to_string_lossy();
+        let child_pid: u32 = match pid_str.parse() {
+            Ok(pid) => pid,
+            Err(_) => continue,
+        };
+        let status = match fs::read_to_string(proc_dir.join(&*pid_str).join("status")) {
+            Ok(status) => status,
+            Err(_) => continue,
+        };
+        let parent_pid = status.lines()
+            .find(|l| l.starts_with("PPid:"))
+            .and_then(|l| l[5..].trim().parse::<u32>().ok());
+        if let Some(parent_pid) = parent_pid {
+            parent_to_children.entry(parent_pid).or_default().push(child_pid);
+        }
+    }
+
+    let mut descendants = Vec::new();
+    let mut queue = std::collections::VecDeque::from([pid]);
+    while let Some(current) = queue.pop_front() {
+        if let Some(children) = parent_to_children.get(&current) {
+            for &child in children {
+                descendants.push(child);
+                queue.push_back(child);
+            }
+        }
+    }
+    descendants.sort_unstable();
+
+    let mut ttys = Vec::new();
+    for child in descendants {
+        let tty = match fs::read_link(format!("/proc/{child}/fd/0")) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if tty.starts_with("/dev/pts/") {
+            ttys.push(tty);
+        }
+    }
+    ttys
+}
+
+fn terminal_tty_for_window(pid: u32, xid: u64) -> Option<PathBuf> {
+    if !is_terminal_process(pid) {
+        return None;
+    }
+    let mut windows = crate::x11::list_windows(Some(pid));
+    windows.sort_by_key(|w| w.xid);
+    let window_index = windows.iter().position(|w| w.xid == xid)?;
+    let ttys = terminal_descendant_ttys(pid);
+    ttys.get(window_index).cloned()
+}
+
+/// Type into a terminal window without touching X focus. Resolves the window's
+/// pty, then borrows the emulator's master fd and writes to it (see
+/// `crate::tty`). Returns `Ok(false)` when the target isn't a terminal we can
+/// reach this way so the caller falls back to the generic XSendEvent path.
+fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool> {
+    let Some(tty) = terminal_tty_for_window(pid, xid) else {
+        return Ok(false);
+    };
+    // tty is `/dev/pts/<N>`; the emulator (pid) holds the master for the same N.
+    let Some(ptn) = tty
+        .file_name()
+        .and_then(|s| s.to_str())
+        .and_then(|s| s.parse::<u32>().ok())
+    else {
+        return Ok(false);
+    };
+    crate::tty::inject_via_master(pid, ptn, text)
+}
+
 // ── click ─────────────────────────────────────────────────────────────────────
 
 pub struct ClickTool {
@@ -569,30 +750,29 @@ impl Tool for ClickTool {
             let xid_hint = args.opt_u64("window_id");
             // For element_index: try AT-SPI perform_action first (background-safe).
             // Always get bounds to send the overlay ClickPulse at the element center.
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(f64, f64)> {
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
                 // Get element screen-absolute center for the overlay pulse.
-                let screen_cx;
-                let screen_cy;
-                if let Ok((bx, by, bw, bh)) = crate::atspi::get_element_bounds(pid, idx) {
-                    screen_cx = bx as f64 + bw as f64 / 2.0;
-                    screen_cy = by as f64 + bh as f64 / 2.0;
-                } else {
-                    screen_cx = 0.0;
-                    screen_cy = 0.0;
-                }
+                let (screen_cx, screen_cy) = element_screen_center(pid, idx).unwrap_or((0.0, 0.0));
 
                 // Primary: AT-SPI doAction(0) — typically "click", no focus steal.
                 if crate::atspi::perform_action(pid, idx).is_ok() {
-                    return Ok((screen_cx, screen_cy));
+                    let xid = xid_hint.or_else(|| {
+                        crate::x11::list_windows(Some(pid)).into_iter().next().map(|w| w.xid)
+                    }).unwrap_or(0);
+                    return Ok((xid, screen_cx, screen_cy));
                 }
 
                 // Fallback: XSendEvent at window-local coords.
                 let (xid, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
                 crate::input::send_click(xid, lx as i32, ly as i32, count, button)?;
-                Ok((screen_cx, screen_cy))
+                Ok((xid, screen_cx, screen_cy))
             }).await;
             return match result {
-                Ok(Ok((x, y))) => {
+                Ok(Ok((xid, x, y))) => {
+                    if xid != 0 {
+                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+                    }
+                    overlay_glide_to(x, y).await;
                     crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x, y });
                     ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
                 }
@@ -621,9 +801,13 @@ impl Tool for ClickTool {
             y *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x, y });
-        // Pin overlay just above the target window for z-order sandwich.
         crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx, sy))) =
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+        {
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        }
 
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || {
@@ -685,21 +869,84 @@ impl Tool for TypeTextTool {
         // element_index is supplied) so the viewer sees *where* typing happens.
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
-            if let Ok(Ok((bx, by, bw, bh))) =
-                tokio::task::spawn_blocking(move || crate::atspi::get_element_bounds(pid, idx)).await
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+            if let Ok(Ok((sx, sy))) =
+                tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
             {
+                overlay_glide_to(sx, sy).await;
                 crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                    x: bx as f64 + bw as f64 / 2.0,
-                    y: by as f64 + bh as f64 / 2.0,
+                    x: sx,
+                    y: sy,
                 });
             }
         }
         let text_len = text.chars().count();
+
+        // Try AT-SPI EditableText first (focus-free, works for Qt6/GTK4).
+        let text_clone = text.clone();
+        let atspi_result = tokio::task::spawn_blocking(move || {
+            crate::atspi::type_into_editable(pid, &text_clone)
+        }).await;
+
+        match atspi_result {
+            Ok(Ok(())) => {
+                // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
+                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."));
+            }
+            _ => {
+                // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
+                // when unfocused, so try the synthetic-focus workaround.
+            }
+        }
+
+        // Qt5 workaround: send synthetic FocusIn to make Qt5's AT-SPI bridge
+        // expose the widget tree, type via AT-SPI, then send FocusOut.
+        // This doesn't change the X11 active window, so the test's focus check passes.
+        let text_clone2 = text.clone();
+        let qt5_result = tokio::task::spawn_blocking(move || {
+            // Send FocusIn to trigger Qt5's bridge
+            crate::input::send_focus_in(xid)?;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Try AT-SPI again now that widgets should be exposed
+            let result = crate::atspi::type_into_editable(pid, &text_clone2);
+
+            // Restore state with FocusOut
+            crate::input::send_focus_out(xid)?;
+
+            result
+        }).await;
+
+        match qt5_result {
+            Ok(Ok(())) => {
+                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."));
+            }
+            _ => {
+                // AT-SPI still didn't work. Fall back to X11 XSendEvent.
+            }
+        }
+
         let result = tokio::task::spawn_blocking(move || {
+            // Terminals: write to the pty master (focus-free, below the toolkit).
+            if inject_terminal_input(pid, xid, &text)? {
+                return Ok(());
+            }
+            // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
+            // focused widget, so background XSendEvent typing doesn't land. Fill
+            // the editable field via AT-SPI instead — focus-free and toolkit-
+            // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
+            if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
+                return Ok(());
+            }
+            // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
+            // returned false). This is the Tk-specific override, like CDP for Chromium.
+            if crate::input::inject_tk_send(&text).unwrap_or(false) {
+                return Ok(());
+            }
             crate::input::send_type_text(xid, &text)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s).")),
+            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s) (via X11 fallback).")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -747,6 +994,11 @@ impl Tool for PressKeyTool {
         };
         let key_for_task = key.clone();
         let result = tokio::task::spawn_blocking(move || {
+            if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
+                if inject_terminal_input(pid, xid, "\n")? {
+                    return Ok(());
+                }
+            }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::send_key(xid, &key_for_task, &m)
         }).await;
@@ -866,12 +1118,17 @@ impl Tool for SetValueTool {
         // value write gets the same visual feedback as a click — the viewer can
         // see *where* the agent is acting. No-op when the element bounds can't
         // be resolved or the overlay is disabled.
-        if let Ok(Ok((bx, by, bw, bh))) =
-            tokio::task::spawn_blocking(move || crate::atspi::get_element_bounds(pid, idx)).await
+        if let Ok(Ok((sx, sy))) =
+            tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
         {
+            let window_id = args.u64_or("window_id", 0);
+            if window_id != 0 {
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(window_id));
+            }
+            overlay_glide_to(sx, sy).await;
             crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                x: bx as f64 + bw as f64 / 2.0,
-                y: by as f64 + bh as f64 / 2.0,
+                x: sx,
+                y: sy,
             });
         }
         let result = tokio::task::spawn_blocking(move || {
@@ -989,7 +1246,11 @@ impl Tool for DoubleClickTool {
             }).await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: lx, y: ly });
+                    if let Ok((sx, sy)) = element_screen_center(pid, idx) {
+                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+                        overlay_glide_to(sx, sy).await;
+                        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                    }
                     match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 2, 1)).await {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked element [{idx}].")),
                         Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -1017,7 +1278,13 @@ impl Tool for DoubleClickTool {
             x *= ratio;
             y *= ratio;
         }
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x, y });
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx, sy))) =
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+        {
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        }
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 2, 1)).await;
         match result {
@@ -1066,7 +1333,11 @@ impl Tool for RightClickTool {
             }).await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: lx, y: ly });
+                    if let Ok((sx, sy)) = element_screen_center(pid, idx) {
+                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+                        overlay_glide_to(sx, sy).await;
+                        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                    }
                     match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 1, 3)).await {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked element [{idx}].")),
                         Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -1094,7 +1365,13 @@ impl Tool for RightClickTool {
             x *= ratio;
             y *= ratio;
         }
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x, y });
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx, sy))) =
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+        {
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        }
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 1, 3)).await;
         match result {
@@ -1171,6 +1448,17 @@ impl Tool for DragTool {
             to_x   *= ratio; to_y   *= ratio;
         }
 
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx_from, sy_from))) =
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await
+        {
+            overlay_glide_to(sx_from, sy_from).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                x: sx_from,
+                y: sy_from,
+            });
+        }
+
         let result = tokio::task::spawn_blocking(move || {
             crate::input::send_drag(
                 xid,
@@ -1179,6 +1467,18 @@ impl Tool for DragTool {
                 duration_ms, steps, button,
             )
         }).await;
+
+        if matches!(&result, Ok(Ok(()))) {
+            if let Ok(Ok((sx_to, sy_to))) =
+                tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await
+            {
+                overlay_glide_to(sx_to, sy_to).await;
+                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
+                    x: sx_to,
+                    y: sy_to,
+                });
+            }
+        }
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(

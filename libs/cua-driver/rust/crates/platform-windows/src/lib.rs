@@ -7,7 +7,14 @@
 //! - Win32 EnumWindows / CreateToolhelp32Snapshot for enumeration
 //! - PrintWindow / GDI BitBlt for screenshots
 //!
-//! Reference: /tmp/trope-cua/src/CuaDriver.Win/
+//! ## Provenance
+//!
+//! The Windows accessibility-tree walk, app/window enumeration, UIA
+//! InvokePattern click, and ValuePattern set-value all derive from prior art in
+//! Interface-Agent (github.com/francedot/Interface-Agent, packages/windows, 2024).
+//! trope-cua (MIT, github.com/voctory/trope-cua) was a useful cross-reference for
+//! some of the details during this Rust implementation — thanks to Victor Vannara
+//! for that work.
 
 use cua_driver_core::tool::ToolRegistry;
 

@@ -180,6 +180,10 @@ let
     sleep infinity
   '';
 
+  # openbox config with focusNew=no (see openbox-rc.nix) so the xterm under test
+  # keeps X focus when it maps.
+  openboxRc = import ./openbox-rc.nix { inherit pkgs; };
+
 in
 
 pkgs.testers.nixosTest {
@@ -226,7 +230,7 @@ pkgs.testers.nixosTest {
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
         # Start openbox WM so _NET_CLIENT_LIST is populated for list_windows
-        machine.execute("DISPLAY=:99 openbox >/dev/null 2>&1 &")
+        machine.execute("DISPLAY=:99 openbox --config-file ${openboxRc} >/dev/null 2>&1 &")
         # Start compositing manager so X11 GetImage returns rendered pixels
         machine.execute("DISPLAY=:99 picom --backend xrender >/dev/null 2>&1 &")
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")

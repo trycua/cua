@@ -127,6 +127,10 @@ let
   '';
 
   recordGifScript = import ./record-x11-gif.nix { inherit pkgs; };
+
+  # openbox config with focusNew=no (see openbox-rc.nix) so focus stays on the
+  # control terminal when the target xterm maps.
+  openboxRc = import ./openbox-rc.nix { inherit pkgs; };
 in
 
 pkgs.testers.nixosTest {
@@ -161,7 +165,7 @@ pkgs.testers.nixosTest {
     with subtest("Start X11 desktop and target/control xterms"):
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
-        machine.execute("DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &")
+        machine.execute("DISPLAY=:99 openbox --config-file ${openboxRc} >/tmp/openbox.log 2>&1 &")
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
         machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Background Target' -fa Monospace -fs 14 -geometry 70x24+40+120 >/tmp/background-target.log 2>&1 & echo \\$! >/tmp/background-target-pid.txt\"")
         machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Background Control' -fa Monospace -fs 14 -geometry 70x24+690+120 >/tmp/background-control.log 2>&1 & echo \\$! >/tmp/background-control-pid.txt\"")

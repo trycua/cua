@@ -2,7 +2,8 @@
 #
 # Runs the integration test and then uses cua-driver's own get_window_state
 # tool to capture a screenshot of an xterm window via MCP. The screenshot
-# is extracted as a PNG from the base64 MCP response and copied out of the VM.
+# is extracted as a PNG from the base64 MCP response and copied out of the
+# container.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-screenshot
 #
@@ -187,7 +188,7 @@ pkgs.testers.nixosTest {
     maintainers = [ ];
   };
 
-  nodes.machine =
+  containers.machine =
     {
       config,
       pkgs,
@@ -196,10 +197,6 @@ pkgs.testers.nixosTest {
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
@@ -235,7 +232,7 @@ pkgs.testers.nixosTest {
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
         machine.execute("DISPLAY=:99 xterm -T 'CUA Test' -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
-        # Wait for xterm window to appear (poll via xdotool inside the VM)
+        # Wait for xterm window to appear (poll via xdotool inside the container)
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --class xterm", timeout=15)
         # Save the xterm window ID and PID for the MCP screenshot test
         machine.succeed("DISPLAY=:99 xdotool search --class xterm | head -1 > /tmp/xterm-xid.txt")
@@ -254,7 +251,7 @@ pkgs.testers.nixosTest {
         assert "Screenshot test complete" in result, f"Test did not complete: {result}"
 
     with subtest("Extract screenshot"):
-        # Copy screenshot out of VM if it exists
+        # Copy screenshot out of the container if it exists
         machine.succeed("test -f /tmp/cua-driver-screenshot.png || test -f /tmp/cua-driver-response.json")
         machine.copy_from_machine("/tmp/cua-driver-screenshot.png", "")
   '';

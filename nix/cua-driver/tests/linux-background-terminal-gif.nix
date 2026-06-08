@@ -133,17 +133,13 @@ pkgs.testers.nixosTest {
   name = "cua-driver-linux-background-terminal-gif-test";
   meta.maintainers = [ ];
 
-  nodes.machine =
+  containers.machine =
     {
       pkgs,
       ...
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
@@ -194,7 +190,7 @@ pkgs.testers.nixosTest {
         active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
         assert control == active, f"expected active window {control}, got {active}"
 
-    with subtest("Copy GIF out of the VM"):
+    with subtest("Copy GIF out of the container"):
         machine.copy_from_machine("/tmp/cua-driver-linux-background-terminal.gif", "")
   '';
 }

@@ -121,17 +121,13 @@ pkgs.testers.nixosTest {
   name = "cua-driver-linux-cursor-click-gif-test";
   meta.maintainers = [ ];
 
-  nodes.machine =
+  containers.machine =
     {
       pkgs,
       ...
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
@@ -177,7 +173,7 @@ pkgs.testers.nixosTest {
         machine.succeed("test -s /tmp/cua-driver-linux-cursor-click.gif")
         machine.wait_until_succeeds("test -f /tmp/click-focus.txt", timeout=20)
 
-    with subtest("Copy GIF out of the VM"):
+    with subtest("Copy GIF out of the container"):
         machine.copy_from_machine("/tmp/cua-driver-linux-cursor-click.gif", "")
   '';
 }

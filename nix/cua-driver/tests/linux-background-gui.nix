@@ -74,7 +74,7 @@ let
     import json, os, shutil, subprocess, sys
 
     CONVERT = "${pkgs.imagemagick}/bin/convert"
-    # -annotate renders TEXT and needs an explicit font: the minimal test VM has
+    # -annotate renders TEXT and needs an explicit font: the minimal test container has
     # no fontconfig-discoverable fonts, so convert exits 1 without this.
     FONT = "${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans.ttf"
 
@@ -373,13 +373,12 @@ let
   mkSkeleton =
     {
       packages,
-      memoryMB ? 2048,
       envExports ? "",
       cmd,
       windowMatch,
     }:
     {
-      inherit packages memoryMB windowMatch;
+      inherit packages windowMatch;
       skeleton = true;
       launch = pkgs.writeShellScript "cua-launch-${app}.sh" ''
         ${envExports}
@@ -477,25 +476,22 @@ let
     };
 
     # ── Electron real apps (READ-ONLY SKELETON) ─────────────────────────────
-    # Heavy Chromium embeds; given more memory and a longer CI timeout. Read-only
+    # Heavy Chromium embeds; given a longer CI timeout. Read-only
     # skeleton (CDP write is exercised by the chromium full entry instead).
     # marktext (steals focus on launch) and vscodium (no window headless within
     # 120s) were dropped.
     electron-zettlr = mkSkeleton {
       packages = [ pkgs.zettlr ];
-      memoryMB = 4096;
       cmd = "${pkgs.zettlr}/bin/zettlr ${electronCommonFlags}";
       windowMatch = "--class zettlr";
     };
     electron-joplin = mkSkeleton {
       packages = [ pkgs.joplin-desktop ];
-      memoryMB = 4096;
       cmd = "${pkgs.joplin-desktop}/bin/joplin-desktop ${electronCommonFlags}";
       windowMatch = "--class joplin";
     };
     electron-logseq = mkSkeleton {
       packages = [ pkgs.logseq ];
-      memoryMB = 6144;
       cmd = "${pkgs.logseq}/bin/logseq ${electronCommonFlags}";
       windowMatch = "--class logseq";
     };
@@ -503,7 +499,6 @@ let
     # ── Full entries (unchanged behaviour): chromium (CDP) + tk (send) ───────
     chromium = {
       packages = [ pkgs.chromium ];
-      memoryMB = 4096;
       cdp = true;
       windowMatch = "--name cua-initial";
       launch = pkgs.writeShellScript "cua-launch-chromium.sh" ''
@@ -518,7 +513,6 @@ let
     };
     tk = {
       packages = [ tkEnv pkgs.tk ];
-      memoryMB = 2048;
       tksend = true;
       windowMatch = "--name cua-initial";
       launch = pkgs.writeShellScript "cua-launch-tk.sh" ''
@@ -876,7 +870,7 @@ let
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
         # If the recorder (or its convert) is still grinding past the wait,
-        # kill it hard so it can't thrash the VM and wedge later commands.
+        # kill it hard so it can't thrash the container and wedge later commands.
         machine.execute("pkill -9 -f record-x11-gif >/dev/null 2>&1; pkill -9 -x convert >/dev/null 2>&1; pkill -9 -x import >/dev/null 2>&1; true")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
         # Best-effort: a missing GIF (recorder/convert hiccup under load) must
@@ -946,7 +940,7 @@ let
         machine.execute("touch /tmp/stop-gui-recorder")
         machine.execute("timeout 60 sh -lc 'while kill -0 $(cat /tmp/record-gui.pid) 2>/dev/null; do sleep 0.2; done'")
         # If the recorder (or its convert) is still grinding past the wait,
-        # kill it hard so it can't thrash the VM and wedge later commands.
+        # kill it hard so it can't thrash the container and wedge later commands.
         machine.execute("pkill -9 -f record-x11-gif >/dev/null 2>&1; pkill -9 -x convert >/dev/null 2>&1; pkill -9 -x import >/dev/null 2>&1; true")
         machine.log(machine.execute("sh -lc 'cat /tmp/record-gui.log || true'")[1])
         # Best-effort GIF copy (see skeleton path): a recorder hiccup must not
@@ -979,15 +973,10 @@ pkgs.testers.nixosTest {
   name = "cua-driver-linux-background-gui-${app}-test";
   meta.maintainers = [ ];
 
-  nodes.machine =
+  containers.machine =
     { pkgs, ... }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = selected.memoryMB;
-        diskSize = 8192;
-      };
       services.cua-driver.enable = true;
       services.dbus.enable = true;
       environment.systemPackages = with pkgs; [

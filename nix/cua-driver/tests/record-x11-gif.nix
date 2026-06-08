@@ -30,7 +30,7 @@ pkgs.writeShellScript "record-x11-gif.sh" ''
 
   # Cap the frame count: long driver runs (the skeleton budget is 300s) can
   # otherwise pile up 1000+ frames and the final `convert` thrashes/OOMs the
-  # 2GB test VM, wedging every later command in the job. 450 frames is a ~45s
+  # test container, wedging every later command in the job. 450 frames is a ~45s
   # GIF at the default cadence — plenty. Each `import` and the final `convert`
   # are also time-bounded so a wedged X grab or a slow stitch can't stall the
   # job.

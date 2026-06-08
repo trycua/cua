@@ -88,6 +88,10 @@ export interface DumpDocsOutput {
   mcp: MCPDocumentation;
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -221,16 +225,28 @@ async function main() {
     });
   } catch (error) {
     console.error('Failed to build cua-driver');
+    console.error(errorMessage(error));
+    console.error('Ensure Rust is installed and cargo can build libs/cua-driver/rust.');
     process.exit(1);
   }
 
   // Step 2: Extract all docs in a single invocation
   console.log('\nExtracting documentation...');
   const binary = process.env.CUA_DRIVER_BINARY || CUA_DRIVER_BIN;
-  const dumpDocsJson = execFileSync(binary, ['dump-docs', '--type', 'all', '--pretty'], {
-    cwd: CUA_DRIVER_DIR,
-    encoding: 'utf-8',
-  });
+  let dumpDocsJson: string;
+  try {
+    dumpDocsJson = execFileSync(binary, ['dump-docs', '--type', 'all', '--pretty'], {
+      cwd: CUA_DRIVER_DIR,
+      encoding: 'utf-8',
+    });
+  } catch (error) {
+    console.error(`Failed to run cua-driver dump-docs using ${binary}`);
+    console.error(errorMessage(error));
+    console.error(
+      'The docs generator expects a release binary. It normally builds one with `cargo build -p cua-driver --release`; set CUA_DRIVER_BINARY=/path/to/cua-driver to use a prebuilt binary.'
+    );
+    process.exit(1);
+  }
   const dumpDocs: DumpDocsOutput = JSON.parse(dumpDocsJson);
   console.log(`   Found ${dumpDocs.cli.commands.length} CLI commands`);
   console.log(`   Found ${dumpDocs.mcp.tools.length} MCP tools`);

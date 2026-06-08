@@ -199,19 +199,31 @@ snap = get_window_state({pid, window_id})
 scroll({pid, window_id, direction: "down", amount: 3, by: "page", element_index: <web_area>})
 ```
 
-Under the hood: `scroll` synthesizes PageUp / PageDown / arrow-key
-keystrokes and posts them via the same auth-signed `SLEventPostToPid`
-path `press_key` uses. That's why it reaches Chromium even when the
-window is backgrounded. Wheel events posted via the same per-pid
-SkyLight path are silently dropped by Chromium's renderer (no
-Scroll-specific auth subclass exists — probe tests confirmed this),
-so the working primitive is keyboard.
+Under the hood: `scroll` uses PageUp / PageDown / arrow-key
+keystrokes for `by: "page"` and `by: "line"`, posted via the same
+auth-signed `SLEventPostToPid` path `press_key` uses. That's the
+most reliable primitive for ordinary document scrolling.
 
 Granularity: `by: "page"` → PageDown/PageUp (one viewport height
 per unit). `by: "line"` → arrow keys (fine-grained; a few pixels
 per unit in web views, one line in text views). Horizontal `page`
 falls back to Left/Right arrows since there's no standard
 horizontal-page shortcut.
+
+For canvas / WebGL / infinite-canvas surfaces that don't expose a
+scrollable AXWebArea and don't respond to arrow/PageDown, switch to
+native pixel-wheel mode:
+
+```text
+scroll({pid, window_id, by: "pixel", direction: "down", amount: 240, x: 600, y: 400})
+scroll({pid, window_id, delta_x: 300, delta_y: -120, steps: 4})
+```
+
+`x` / `y` are window-local screenshot pixels and anchor the wheel
+event under the virtual cursor. Positive `delta_x` pans right;
+positive `delta_y` pans down. Use `modifier: ["cmd"]` /
+`["option"]` / `["ctrl"]` for apps that bind wheel+modifier to zoom
+or alternate pan modes.
 
 `element_index` is focused (`AXFocused=true`) before the
 keystrokes fire — useful for directing the scroll into a specific

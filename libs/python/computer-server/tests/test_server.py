@@ -38,3 +38,21 @@ class TestServerInitialization:
         except Exception as e:
             # Some initialization errors are acceptable in unit tests
             pytest.skip(f"Server initialization requires specific setup: {e}")
+
+
+class TestRunCommand:
+    @pytest.mark.asyncio
+    async def test_run_command_marks_nonzero_returncode_as_failure(self):
+        from computer_server.handlers.base import BaseAutomationHandler
+
+        Handler = type(
+            "Handler",
+            (BaseAutomationHandler,),
+            {name: (lambda self, *args, **kwargs: None) for name in BaseAutomationHandler.__abstractmethods__},
+        )
+        Handler.__abstractmethods__ = frozenset()
+
+        result = await Handler().run_command("false")
+
+        assert result["success"] is False
+        assert result["return_code"] != 0

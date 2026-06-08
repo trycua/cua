@@ -26,6 +26,13 @@ import {
   TelemetryEvent,
 } from './telemetry.js';
 import { getXpraAttachArgs, getXpraBinPath, nameToColor } from './utils.js';
+import {
+  BashResult,
+  bashResultFromBackgroundLaunch,
+  bashResultFromExecError,
+  buildContainerScript,
+  buildDockerExecScriptCommand,
+} from './bashResult.js';
 
 const execAsync = promisify(exec);
 
@@ -301,18 +308,14 @@ async function ensureContainer(): Promise<number> {
 async function execInContainer(
   command: string,
   options: { timeout?: number; runInBackground?: boolean } = {}
-): Promise<{ stdout: string; stderr: string; pid?: number }> {
+): Promise<BashResult> {
   const { timeout = 60000, runInBackground = false } = options;
 
   // Write command to a temp script file inside the container to avoid shell escaping issues
   const scriptId = Date.now() + Math.random().toString(36).slice(2);
   const scriptPath = `/tmp/cuabot-cmd-${scriptId}.sh`;
 
-  // Create the script content with proper shebang and DISPLAY
-  const scriptContent = `#!/bin/bash
-export DISPLAY=:100
-${command}
-`;
+  const scriptContent = buildContainerScript(command);
 
   // Write script to container using docker exec with base64 to avoid any escaping issues
   const base64Script = Buffer.from(scriptContent).toString('base64');
@@ -324,33 +327,32 @@ ${command}
     if (runInBackground) {
       // Run in background with nohup, capture PID
       // Wait 1 second to catch any immediate errors (syntax errors, command not found, etc.)
-      const bgCmd = `docker exec ${getContainerName()} bash -c "nohup ${scriptPath} > /tmp/cuabot-bg-${scriptId}.log 2>&1 & echo \\$!; sleep 1; if ! kill -0 \\$! 2>/dev/null; then cat /tmp/cuabot-bg-${scriptId}.log; exit 1; fi"`;
+      const bgCmd = `docker exec ${getContainerName()} bash -c "nohup ${scriptPath} > /tmp/cuabot-bg-${scriptId}.log 2>&1 & pid=\\$!; echo \\$pid; sleep 1; if kill -0 \\$pid 2>/dev/null; then echo OUTCOME:RUNNING; else wait \\$pid; code=\\$?; echo OUTCOME:EXIT:\\$code; cat /tmp/cuabot-bg-${scriptId}.log >&2; fi"`;
 
       const { stdout, stderr } = await execAsync(bgCmd, { timeout: 10000 });
-      const pid = parseInt(stdout.trim().split('\n')[0], 10);
 
       // Clean up script after a delay (let it start first)
       setTimeout(async () => {
         await execAsync(`docker exec ${getContainerName()} rm -f ${scriptPath}`).catch(() => {});
       }, 5000);
 
-      return { stdout: `Background process started with PID ${pid}`, stderr, pid };
+      return bashResultFromBackgroundLaunch(stdout, stderr);
     } else {
       // Run synchronously
       const { stdout, stderr } = await execAsync(
-        `docker exec ${getContainerName()} ${scriptPath}`,
-        { timeout }
+        buildDockerExecScriptCommand(getContainerName(), scriptPath, timeout),
+        { timeout: timeout + 5000 }
       );
 
       // Clean up script
       await execAsync(`docker exec ${getContainerName()} rm -f ${scriptPath}`).catch(() => {});
 
-      return { stdout, stderr };
+      return { stdout, stderr, exit_code: 0, success: true };
     }
   } catch (err: any) {
     // Clean up script on error
     await execAsync(`docker exec ${getContainerName()} rm -f ${scriptPath}`).catch(() => {});
-    return { stdout: err.stdout || '', stderr: err.stderr || err.message };
+    return bashResultFromExecError(err);
   }
 }
 

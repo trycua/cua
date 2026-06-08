@@ -422,7 +422,7 @@ class BaseAutomationHandler(ABC):
                     "return_code": -1,
                 }
             return {
-                "success": True,
+                "success": process.returncode == 0,
                 "stdout": stdout.decode() if stdout else "",
                 "stderr": stderr.decode() if stderr else "",
                 "return_code": process.returncode,

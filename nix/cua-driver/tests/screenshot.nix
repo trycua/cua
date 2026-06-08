@@ -215,6 +215,9 @@ pkgs.testers.nixosTest {
     };
 
   testScript = ''
+    # cache-bust 2026-06-08.1: this comment is part of the test derivation, so
+    # bumping it changes the output path and forces the test to actually re-run
+    # instead of being substituted from the binary cache. Bump again to re-run.
     machine.start()
     machine.wait_for_unit("multi-user.target")
 

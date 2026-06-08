@@ -106,7 +106,7 @@ jobs:
 
             if (pngs.length > 0) {
               const artifactUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-              body += `Screenshot captured by cua-driver's \`get_window_state\` tool from inside a NixOS VM.\n\n`;
+              body += `Screenshot captured by cua-driver's \`get_window_state\` tool from inside a NixOS container.\n\n`;
               body += `📸 [Download screenshot artifact](${artifactUrl})\n\n`;
               body += '✅ Test passed\n';
             } else {

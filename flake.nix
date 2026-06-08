@@ -21,7 +21,17 @@
       (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            # Several Electron-based apps in the background-GUI test matrix
+            # (logseq, joplin, zettlr) pin Electron releases that nixos-26.05
+            # flags as EOL/insecure. These are read-only smoke tests running in
+            # throwaway CI containers, so permit insecure Electron specifically
+            # (version-agnostic, so a nixpkgs bump to a newer EOL Electron keeps
+            # working without editing an exact version string here).
+            config.allowInsecurePredicate =
+              pkg: nixpkgs.lib.hasPrefix "electron" (nixpkgs.lib.getName pkg);
+          };
 
           rustSrc = ./libs/cua-driver/rust;
 

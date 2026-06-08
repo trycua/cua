@@ -594,8 +594,16 @@ fn render_loop(
             }
         };
 
+        let woke_from_idle = first_msg.is_some();
         let now = Instant::now();
-        let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
+        let dt = if woke_from_idle {
+            // The blocking recv() above can span an arbitrarily long idle period.
+            // Do not charge that time to the first animation tick after a command;
+            // let the wake-up frame render the newly-applied state at t=0.
+            0.0
+        } else {
+            now.duration_since(last_tick).as_secs_f64().min(0.05)
+        };
         last_tick = now;
 
         // ── Phase 1: drain + tick all cursors (one lock acquisition) ──────

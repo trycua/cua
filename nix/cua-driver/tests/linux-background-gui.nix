@@ -47,6 +47,10 @@ let
   # tests. Needs `pkgs.imagemagick` in environment.systemPackages (below).
   recordGifScript = import ./record-x11-gif.nix { inherit pkgs; };
 
+  # openbox config with focusNew=no so background apps can't steal X focus when
+  # their window maps mid-test (see openbox-rc.nix).
+  openboxRc = import ./openbox-rc.nix { inherit pkgs; };
+
   # Distinct per-app GIF name so concurrent matrix jobs and their artifacts
   # never collide; the workflow's `find -L "<result>/" -name '*.gif'` picks it
   # up once it has been copied into the test derivation's $out.
@@ -1003,7 +1007,7 @@ pkgs.testers.nixosTest {
     with subtest("Start X11 + session D-Bus + AT-SPI bus"):
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
-        machine.execute("DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &")
+        machine.execute("DISPLAY=:99 openbox --config-file ${openboxRc} >/tmp/openbox.log 2>&1 &")
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
         machine.succeed("mkdir -p /run/user/0 && chmod 700 /run/user/0")
         machine.execute("dbus-daemon --session --address=unix:path=/tmp/cua-session-bus --fork >/tmp/dbus.log 2>&1")

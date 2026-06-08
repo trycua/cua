@@ -5,6 +5,7 @@ import sys
 from unittest.mock import patch
 
 import pytest
+from cua_cli.commands import info
 from cua_cli.main import create_parser, main
 
 
@@ -74,6 +75,13 @@ class TestCreateParser:
         args = parser.parse_args(["serve-mcp"])
         assert args.command == "serve-mcp"
 
+    def test_has_info_command(self):
+        """Test that info command is registered."""
+        parser = create_parser()
+
+        args = parser.parse_args(["info"])
+        assert args.command == "info"
+
 
 class TestMain:
     """Tests for main function."""
@@ -140,6 +148,40 @@ class TestMain:
 
         mock_execute.assert_called_once()
         assert result == 0
+
+    def test_dispatch_to_info(self):
+        """Test dispatch to info command."""
+        with patch.object(sys, "argv", ["cua", "info"]):
+            with patch("cua_cli.commands.info.execute", return_value=0) as mock_execute:
+                result = main()
+
+        mock_execute.assert_called_once()
+        assert result == 0
+
+    def test_info_output_contains_expected_fields(self, capsys):
+        """Test that info output has required diagnostic fields."""
+        diagnostics = {
+            "cua_cli_version": "test-version",
+            "python_version": "3.12.4",
+            "platform": "TestPlatform",
+            "system": "Linux",
+            "release": "6.1.0",
+            "machine": "x86_64",
+        }
+
+        with patch("cua_cli.commands.info.collect_diagnostics", return_value=diagnostics):
+            result = info.execute(argparse.Namespace())
+
+        # No host-derived fields, so output can be asserted deterministically.
+        captured = capsys.readouterr()
+        assert result == 0
+        assert "Environment Diagnostics" in captured.out
+        assert "cua-cli version: test-version" in captured.out
+        assert "python version: 3.12.4" in captured.out
+        assert "platform: TestPlatform" in captured.out
+        assert "system: Linux" in captured.out
+        assert "release: 6.1.0" in captured.out
+        assert "machine/architecture: x86_64" in captured.out
 
     def test_keyboard_interrupt_returns_130(self):
         """Test that KeyboardInterrupt returns exit code 130."""

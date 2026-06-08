@@ -1,6 +1,6 @@
 # CUA Driver Integration Test
 #
-# Tests the cua-driver MCP server end-to-end in a NixOS VM with Xvfb.
+# Tests the cua-driver MCP server end-to-end in a NixOS container with Xvfb.
 # Verifies CLI subcommands, MCP protocol handshake, and tool invocation.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-integration
@@ -139,7 +139,7 @@ pkgs.testers.nixosTest {
     maintainers = [ ];
   };
 
-  nodes.machine =
+  containers.machine =
     {
       config,
       pkgs,
@@ -148,10 +148,6 @@ pkgs.testers.nixosTest {
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver # Xvfb for headless X11

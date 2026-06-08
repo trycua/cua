@@ -2,7 +2,7 @@
   description = "CUA - Computer Use Agent";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -41,7 +41,7 @@
               cua-driver-build = cuaDriverPackage;
             }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-              # NixOS VM integration test (x86_64-linux only)
+              # NixOS container integration test (x86_64-linux only)
               cua-driver-integration = import ./nix/cua-driver/tests/integration.nix {
                 inherit pkgs;
                 inherit (pkgs) lib;
@@ -124,8 +124,10 @@
                   # focus-free WRITE / typed-text assertions are added later via
                   # trajectories). chromium keeps the full CDP focus-free-write
                   # override; tk is the negative-control full entry (Tk `send`).
-                  # "firefox" remains disabled: under the emulated CI VM (no KVM)
-                  # it does not surface its window within the launch timeout.
+                  # "firefox" remains disabled: historically it did not surface its
+                  # window within the launch timeout in CI. Container tests run at
+                  # native speed, so this may now pass — left disabled pending
+                  # verification.
                 ) [
                   "chromium"
                   "tk"
@@ -133,9 +135,10 @@
                   "gtk3-gedit"
                   "gtk3-mousepad"
                   # gtk3-geany / gtk3-abiword temporarily disabled: their huge
-                  # AT-SPI trees make the bounds walk + recorder grind in the
-                  # emulated CI VM and the jobs time out. Re-enable once the
-                  # walk is fast enough for 700+-node trees.
+                  # AT-SPI trees made the bounds walk + recorder grind in the
+                  # previous emulated VM and the jobs timed out. Container tests run
+                  # at native speed, so this may now pass — re-enable once verified
+                  # fast enough for 700+-node trees.
                   # "gtk3-geany"
                   "gtk3-scite"
                   # "gtk3-abiword"

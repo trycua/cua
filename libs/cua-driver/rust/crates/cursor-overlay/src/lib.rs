@@ -283,8 +283,12 @@ pub enum OverlayMsg {
 pub enum OverlayCommand {
     /// Animate the cursor to a new screen position.
     MoveTo { x: f64, y: f64, end_heading_radians: f64 },
+    /// Snap the cursor immediately to a screen position, optionally updating heading.
+    SnapTo { x: f64, y: f64, heading_radians: Option<f64> },
     /// Start the click-press visual.
     ClickPulse { x: f64, y: f64 },
+    /// Toggle the held-button visual state.
+    SetPressed(bool),
     /// Show or hide the overlay.
     SetEnabled(bool),
     /// Update the motion/timing config live.

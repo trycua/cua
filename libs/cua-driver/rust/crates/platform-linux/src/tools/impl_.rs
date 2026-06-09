@@ -662,6 +662,17 @@ async fn overlay_glide_to(sx: f64, sy: f64) {
     overlay_glide_to_for("default", sx, sy).await;
 }
 
+fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
+    crate::overlay::send_command_for(
+        cursor_id.to_owned(),
+        cursor_overlay::OverlayCommand::SnapTo {
+            x: sx,
+            y: sy,
+            heading_radians: heading,
+        },
+    );
+}
+
 async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     if !crate::overlay::is_enabled_for(cursor_id) {
         return;
@@ -1598,26 +1609,97 @@ impl Tool for DragTool {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await
         {
             overlay_glide_to_for(&cursor_id, sx_from, sy_from).await;
+            self.state.cursor_registry.update_position(&cursor_id, sx_from, sy_from);
+            overlay_snap_to_for(&cursor_id, sx_from, sy_from, None);
             crate::overlay::send_command_for(
                 cursor_id.clone(),
                 cursor_overlay::OverlayCommand::ClickPulse { x: sx_from, y: sy_from },
             );
         }
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(true),
+        );
 
-        let result = tokio::task::spawn_blocking(move || {
-            crate::input::send_drag(
-                xid,
-                from_x as i32, from_y as i32,
-                to_x   as i32, to_y   as i32,
-                duration_ms, steps, button,
-            )
+        let press_result = tokio::task::spawn_blocking(move || {
+            crate::input::send_button_down(xid, from_x.round() as i32, from_y.round() as i32, button)
         }).await;
+        let mut result: anyhow::Result<()> = match press_result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(anyhow::anyhow!("Task error: {e}")),
+        };
 
-        if matches!(&result, Ok(Ok(()))) {
+        if result.is_ok() {
+            let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+            let mut prev_x = from_x;
+            let mut prev_y = from_y;
+            for i in 1..=steps {
+                let t = i as f64 / steps.max(1) as f64;
+                let ix = from_x + (to_x - from_x) * t;
+                let iy = from_y + (to_y - from_y) * t;
+                let motion_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
+                }).await;
+                match motion_result {
+                    Ok(Ok(())) => {
+                        if let Ok(Ok((sx, sy))) =
+                            tokio::task::spawn_blocking(move || window_local_to_screen(xid, ix, iy)).await
+                        {
+                            let heading = if (ix - prev_x).abs() > f64::EPSILON
+                                || (iy - prev_y).abs() > f64::EPSILON
+                            {
+                                Some((iy - prev_y).atan2(ix - prev_x))
+                            } else {
+                                None
+                            };
+                            self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                            overlay_snap_to_for(&cursor_id, sx, sy, heading);
+                        }
+                        prev_x = ix;
+                        prev_y = iy;
+                        if step_delay_ms > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        result = Err(e);
+                        break;
+                    }
+                    Err(e) => {
+                        result = Err(anyhow::anyhow!("Task error: {e}"));
+                        break;
+                    }
+                }
+            }
+        }
+
+        let release_result = tokio::task::spawn_blocking(move || {
+            crate::input::send_button_up(xid, to_x.round() as i32, to_y.round() as i32, button)
+        }).await;
+        if result.is_ok() {
+            result = match release_result {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(e),
+                Err(e) => Err(anyhow::anyhow!("Task error: {e}")),
+            };
+        }
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(false),
+        );
+
+        if result.is_ok() {
             if let Ok(Ok((sx_to, sy_to))) =
                 tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await
             {
-                overlay_glide_to_for(&cursor_id, sx_to, sy_to).await;
+                self.state.cursor_registry.update_position(&cursor_id, sx_to, sy_to);
+                overlay_snap_to_for(
+                    &cursor_id,
+                    sx_to,
+                    sy_to,
+                    Some((to_y - from_y).atan2(to_x - from_x)),
+                );
                 crate::overlay::send_command_for(
                     cursor_id.clone(),
                     cursor_overlay::OverlayCommand::ClickPulse { x: sx_to, y: sy_to },
@@ -1626,13 +1708,12 @@ impl Tool for DragTool {
         }
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
+            Ok(()) => ToolResult::text(format!(
                 "✅ Posted drag ({button_str}) to pid {pid} \
                  from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
                  in {duration_ms}ms / {steps} steps."
             )),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(e.to_string()),
         }
     }
 }
@@ -1713,6 +1794,16 @@ impl Tool for MouseButtonDownTool {
             Ok(Ok(())) => {
                 let hold = MouseHoldState { cursor_id: cursor_id.clone(), pid, xid, button, x, y };
                 self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
+                if let Ok(Ok((sx, sy))) =
+                    tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+                {
+                    self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                    overlay_snap_to_for(&cursor_id, sx, sy, None);
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::SetPressed(true),
+                    );
+                }
                 ToolResult::text(format!(
                     "✅ Cursor '{cursor_id}' held {} button down at ({x:.1}, {y:.1}).",
                     mouse_button_name(button),
@@ -1792,30 +1883,64 @@ impl Tool for MouseDragTool {
         );
         if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await {
             overlay_glide_to_for(&cursor_id, sx, sy).await;
+            self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+            overlay_snap_to_for(&cursor_id, sx, sy, None);
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(true),
+            );
         }
 
         let button = hold.button;
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
-            for i in 1..=steps {
-                let t = i as f64 / steps as f64;
-                let ix = from_x + (to_x - from_x) * t;
-                let iy = from_y + (to_y - from_y) * t;
-                crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))?;
-                if step_delay_ms > 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+        let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+        let mut result: anyhow::Result<()> = Ok(());
+        let mut prev_x = from_x;
+        let mut prev_y = from_y;
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let ix = from_x + (to_x - from_x) * t;
+            let iy = from_y + (to_y - from_y) * t;
+            let move_result = tokio::task::spawn_blocking(move || {
+                crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
+            }).await;
+            match move_result {
+                Ok(Ok(())) => {
+                    if let Ok(Ok((sx, sy))) =
+                        tokio::task::spawn_blocking(move || window_local_to_screen(xid, ix, iy)).await
+                    {
+                        let heading = if (ix - prev_x).abs() > f64::EPSILON || (iy - prev_y).abs() > f64::EPSILON {
+                            Some((iy - prev_y).atan2(ix - prev_x))
+                        } else {
+                            None
+                        };
+                        self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                        overlay_snap_to_for(&cursor_id, sx, sy, heading);
+                    }
+                    prev_x = ix;
+                    prev_y = iy;
+                    if step_delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
+                    }
+                }
+                Ok(Err(e)) => {
+                    result = Err(e);
+                    break;
+                }
+                Err(e) => {
+                    result = Err(anyhow::anyhow!("Task error: {e}"));
+                    break;
                 }
             }
-            Ok(())
-        }).await;
+        }
 
         match result {
-            Ok(Ok(())) => {
+            Ok(()) => {
                 hold.x = to_x;
                 hold.y = to_y;
                 self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
                 if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
-                    overlay_glide_to_for(&cursor_id, sx, sy).await;
+                    self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                    overlay_snap_to_for(&cursor_id, sx, sy, Some((to_y - from_y).atan2(to_x - from_x)));
                     crate::overlay::send_command_for(
                         cursor_id.clone(),
                         cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
@@ -1827,9 +1952,7 @@ impl Tool for MouseDragTool {
                 ))
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
             }
-            Ok(Err(e)) => ToolResult::error(e.to_string())
-                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
-            Err(e) => ToolResult::error(format!("Task error: {e}"))
+            Err(e) => ToolResult::error(e.to_string())
                 .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
         }
     }
@@ -1901,6 +2024,16 @@ impl Tool for MouseButtonUpTool {
             Ok(Ok(())) => {
                 hold.x = x;
                 hold.y = y;
+                if let Ok(Ok((sx, sy))) =
+                    tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+                {
+                    self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                    overlay_snap_to_for(&cursor_id, sx, sy, None);
+                }
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::SetPressed(false),
+                );
                 self.state.mouse_hold.lock().unwrap().remove(&cursor_id);
                 let cleared = mouse_hold_json(&cursor_id, None);
                 ToolResult::text(format!(

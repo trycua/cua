@@ -175,6 +175,75 @@ class CloudV2Provider(BaseVMProvider):
                     logger.error(f"list_vms failed: HTTP {resp.status} - {text}")
                     return []
 
+    async def create_vm(
+        self,
+        os: str = "linux",
+        region: str = "us-east-1",
+        docker_image: Optional[str] = None,
+        instance_type: str = "vm",
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Create a new instance via POST /v1/vms.
+
+        Args:
+            os: Operating system type (default: "linux")
+            region: Region to create the VM in (default: "us-east-1")
+            docker_image: Optional public Docker image to use. Only public images
+                         are supported. When provided, instance_type determines
+                         the provisioning back-end.
+            instance_type: Controls the provisioning back-end when docker_image is set:
+                          "vm" (default) → KubeVirt VMI (containerDisk)
+                          "container"    → gVisor/Incus container (spec.image)
+                          Ignored when docker_image is None.
+            cpu: Optional CPU count override
+            memory_mb: Optional memory in MB override
+            disk_gb: Optional disk size in GB override
+
+        Returns:
+            Dictionary with VM creation status and information including the VM name.
+            The ``source`` key indicates the provisioning back-end used:
+            ``"kubevirt-ubuntu"`` for VMI, ``"incus-container"`` for container.
+
+        Raises:
+            RuntimeError: If the creation request fails.
+        """
+        url = f"{self.api_base}/v1/vms"
+        headers = {**self._base_headers(), "Content-Type": "application/json"}
+
+        payload: Dict[str, Any] = {"os": os, "region": region}
+        if docker_image:
+            payload["dockerImage"] = docker_image
+            # Only send instanceType when an image is provided.
+            payload["instanceType"] = instance_type or "vm"
+        if cpu is not None:
+            payload["cpu"] = cpu
+        if memory_mb is not None:
+            payload["memoryMb"] = memory_mb
+        if disk_gb is not None:
+            payload["diskGb"] = disk_gb
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                text = await resp.text()
+                if resp.status in (200, 201, 202):
+                    try:
+                        data = await resp.json(content_type=None)
+                        if isinstance(data, dict):
+                            return data
+                    except Exception:
+                        pass
+                    return {"status": "provisioning", "raw": text}
+                elif resp.status == 400:
+                    raise RuntimeError(f"Bad request creating VM: {text}")
+                elif resp.status == 401:
+                    raise RuntimeError("Unauthorized: invalid CUA API key")
+                elif resp.status == 402:
+                    raise RuntimeError(f"Payment required: {text}")
+                else:
+                    raise RuntimeError(f"Failed to create VM: HTTP {resp.status} - {text}")
+
     async def run_vm(
         self,
         name: str,

@@ -54,7 +54,7 @@
     "@types/react-dom": "^19.1.5",
     "fast-glob": "^3.3.3",
     "next-validate-link": "^1.6.4",
-    "postcss": "^8.5.4",
+    "postcss": "^8.5.10",
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.8",
     "tsx": "^4.7.0",

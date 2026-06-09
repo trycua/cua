@@ -115,7 +115,9 @@ describe('MacOSComputerInterface', () => {
             case 'read_bytes':
               ws.send(
                 JSON.stringify({
-                  content_b64: Buffer.from('binary content').toString('base64'),
+                  content_b64: Buffer.from(
+                    message.params?.path === '/path/to/file.txt' ? 'file content' : 'binary content'
+                  ).toString('base64'),
                   success: true,
                 })
               );
@@ -674,9 +676,10 @@ describe('MacOSComputerInterface', () => {
 
       const lastMessage = receivedMessages[receivedMessages.length - 1];
       expect(lastMessage).toEqual({
-        command: 'read_text',
+        command: 'read_bytes',
         params: {
           path: '/path/to/file.txt',
+          offset: 0,
         },
       });
     });
@@ -686,10 +689,11 @@ describe('MacOSComputerInterface', () => {
 
       const lastMessage = receivedMessages[receivedMessages.length - 1];
       expect(lastMessage).toEqual({
-        command: 'write_text',
+        command: 'write_bytes',
         params: {
           path: '/path/to/file.txt',
-          content: 'new content',
+          content_b64: Buffer.from('new content').toString('base64'),
+          append: false,
         },
       });
     });
@@ -705,6 +709,7 @@ describe('MacOSComputerInterface', () => {
         command: 'read_bytes',
         params: {
           path: '/path/to/file.bin',
+          offset: 0,
         },
       });
     });
@@ -719,6 +724,7 @@ describe('MacOSComputerInterface', () => {
         params: {
           path: '/path/to/file.bin',
           content_b64: buffer.toString('base64'),
+          append: false,
         },
       });
     });
@@ -859,6 +865,39 @@ describe('MacOSComputerInterface', () => {
 
       // Connection should fail
       await expect(macosInterface.connect()).rejects.toThrow();
+    });
+
+    it('should not keep retrying after a failed connection is disconnected', async () => {
+      const probeWss = new WebSocketServer({ port: 0 });
+      const closedPort = (probeWss.address() as { port: number }).port;
+      await new Promise<void>((resolve) => {
+        probeWss.close(() => resolve());
+      });
+
+      const macosInterface = new MacOSComputerInterface(
+        `localhost:${closedPort}`,
+        testParams.username,
+        testParams.password,
+        undefined,
+        testParams.vmName
+      );
+
+      await expect(macosInterface.connect()).rejects.toThrow();
+      macosInterface.disconnect();
+
+      let reconnectAttempts = 0;
+      const lateWss = new WebSocketServer({ port: closedPort });
+      lateWss.on('connection', (ws) => {
+        reconnectAttempts += 1;
+        ws.close();
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      expect(reconnectAttempts).toBe(0);
+
+      await new Promise<void>((resolve) => {
+        lateWss.close(() => resolve());
+      });
     });
 
     it('should handle command errors', async () => {

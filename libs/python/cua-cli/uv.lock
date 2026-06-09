@@ -406,7 +406,7 @@ all = [
 
 [[package]]
 name = "cua-cli"
-version = "0.1.8"
+version = "0.1.11"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -443,9 +443,9 @@ requires-dist = [
     { name = "cua-auto", extras = ["all"], specifier = ">=0.1.0" },
     { name = "cua-cli", extras = ["mcp", "skills"], marker = "extra == 'all'" },
     { name = "cua-computer", specifier = ">=0.5.0" },
-    { name = "cua-core", specifier = ">=0.1.18" },
+    { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0" },
-    { name = "litellm", marker = "extra == 'skills'", specifier = ">=1.74.0" },
+    { name = "litellm", marker = "extra == 'skills'", specifier = "==1.80.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
@@ -459,7 +459,7 @@ provides-extras = ["mcp", "skills", "all", "dev"]
 
 [[package]]
 name = "cua-computer"
-version = "0.5.17"
+version = "0.5.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -470,21 +470,21 @@ dependencies = [
     { name = "websocket-client" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/42/932b8008cd15e40651b3bef4df700feeca7f962f9220fca69c27b800b907/cua_computer-0.5.17.tar.gz", hash = "sha256:8a8881adbbdbf5e65ae7b1cf93e3f1d9c2781fbadd90acd5de757771b5e312f7", size = 101747, upload-time = "2026-03-04T15:47:38.565Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/b1/0ad69b0fd25bb11b2f68c7db5481b8a020763a354f1f636698fee00f383d/cua_computer-0.5.18.tar.gz", hash = "sha256:4f15df2dffc60af7cf80e0954186b12301ee08fd12d6fdf8b531ec4c63650837", size = 102054, upload-time = "2026-04-15T21:22:03.49Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/ba/cd691109cba3251302c1b5bdbddfc69a85bb04ccb37984737c4389a12f55/cua_computer-0.5.17-py3-none-any.whl", hash = "sha256:1c4fb866ea8a0ec2c05b853306437fc38bdd7e2acd4772e4811303a80f08697b", size = 117364, upload-time = "2026-03-04T15:47:37.544Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/52/1d0ba187276259bd1306a4a568cf50fedc9b0ac48743a60629d6ba21ed81/cua_computer-0.5.18-py3-none-any.whl", hash = "sha256:afeff75460cacf4c2a112f9aeb972da3dfe134db9e916c71b8ae1466e67e0e85", size = 117684, upload-time = "2026-04-15T21:22:02.088Z" },
 ]
 
 [[package]]
 name = "cua-core"
-version = "0.1.18"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "posthog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/07/92955e3643fc41f090b41cd7dc699c7dd4a50c873557e060bb2fa19ccc1b/cua_core-0.1.18.tar.gz", hash = "sha256:8c05c96b3942214769d1ef79d09265b416de4a7c7d647d21541878c744221858", size = 10499, upload-time = "2026-02-25T20:43:02.752Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/82/ec371bde395bbbd326a3467a1702b34ab629defa0cc89bd81ac78507ca5a/cua_core-0.3.1.tar.gz", hash = "sha256:a8fc4204981b9d5b604bd2a34de0bb41cf926309e4dd9f364c827750a86408da", size = 10710, upload-time = "2026-04-15T21:39:49.172Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/83/719c32bed7741af5759812ea214c3ea5bb7b7878cac86cb390468b2856fc/cua_core-0.1.18-py3-none-any.whl", hash = "sha256:c66ea5b2b8f0a0d1902efe2cf05e068fa34f4fc4acde1e8f9b6be37a314a6237", size = 9825, upload-time = "2026-02-25T20:43:02.013Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/90/5148998a26671855539e2c3a620f72ef51f83118beffdfb7e77893d4730b/cua_core-0.3.1-py3-none-any.whl", hash = "sha256:9191b8abf5e02ea6bf8ba21237e747d4e3b319f6f24d4e66e04b7606fcc449f6", size = 10239, upload-time = "2026-04-15T21:39:48.265Z" },
 ]
 
 [[package]]
@@ -1004,7 +1004,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.82.1"
+version = "1.80.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1020,9 +1020,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/bd/6251e9a965ae2d7bc3342ae6c1a2d25dd265d354c502e63225451b135016/litellm-1.82.1.tar.gz", hash = "sha256:bc8427cdccc99e191e08e36fcd631c93b27328d1af789839eb3ac01a7d281890", size = 17197496, upload-time = "2026-03-10T09:10:04.438Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/8c/48d533affdbc6d485b7ad4221cd3b40b8c12f9f5568edfe0be0b11e7b945/litellm-1.80.0.tar.gz", hash = "sha256:eeac733eb6b226f9e5fb020f72fe13a32b3354b001dc62bcf1bc4d9b526d6231", size = 11591976, upload-time = "2025-11-16T00:03:51.812Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl", hash = "sha256:a9ec3fe42eccb1611883caaf8b1bf33c9f4e12163f94c7d1004095b14c379eb2", size = 15341896, upload-time = "2026-03-10T09:10:00.702Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/53/aa31e4d057b3746b3c323ca993003d6cf15ef987e7fe7ceb53681695ae87/litellm-1.80.0-py3-none-any.whl", hash = "sha256:fd0009758f4772257048d74bf79bb64318859adb4ea49a8b66fdbc718cd80b6e", size = 10492975, upload-time = "2025-11-16T00:03:49.182Z" },
 ]
 
 [[package]]

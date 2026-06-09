@@ -494,6 +494,7 @@ pub fn send_parallel_virtual_pointer_drags(
     supports_parallel_pointer_injection(display)?;
 
     struct ActiveDrag {
+        cursor_id: String,
         ids: MasterPointerIds,
         device: Arc<Mutex<VirtualDevice>>,
         drag: VirtualPointerDrag,
@@ -518,6 +519,7 @@ pub fn send_parallel_virtual_pointer_drags(
                 .cloned()
                 .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
             active.push(ActiveDrag {
+                cursor_id: cursor_id.clone(),
                 ids,
                 device,
                 drag: *drag,
@@ -571,6 +573,16 @@ pub fn send_parallel_virtual_pointer_drags(
                     if dx != 0 || dy != 0 {
                         let mut device = item.device.lock().unwrap();
                         emit_relative_motion(&mut device, dx, dy)?;
+                        // Keep the agent cursor overlay tracking the drag so
+                        // the gesture is visible, not just its endpoints.
+                        crate::overlay::send_command_for(
+                            item.cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::SnapTo {
+                                x: ix as f64,
+                                y: iy as f64,
+                                heading_radians: Some((dy as f64).atan2(dx as f64)),
+                            },
+                        );
                     }
                     item.last_x = ix;
                     item.last_y = iy;

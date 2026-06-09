@@ -1318,6 +1318,7 @@ impl Tool for DoubleClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
@@ -1419,7 +1420,6 @@ impl Tool for RightClickTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {

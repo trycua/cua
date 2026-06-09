@@ -39,6 +39,7 @@ def resolve_image_kind(image: Image) -> Image:
     manifest = get_manifest(image._registry)
     kind = detect_kind(manifest)
     os_type = detect_os_from_config(image._registry, manifest) or image.os_type
+    agent_type = image._agent_type or manifest.get("annotations", {}).get("org.trycua.agent_type")
 
     return Image(
         os_type=os_type,
@@ -51,6 +52,7 @@ def resolve_image_kind(image: Image) -> Image:
         _files=image._files,
         _registry=image._registry,
         _disk_path=image._disk_path,
+        _agent_type=agent_type,
     )
 
 
@@ -78,6 +80,7 @@ def pull_image(
     kind = detect_kind(manifest)
     os_type = detect_os_from_config(image._registry, manifest) or image.os_type
     fmt = detect_format(manifest)
+    agent_type = image._agent_type or manifest.get("annotations", {}).get("org.trycua.agent_type")
 
     resolved = Image(
         os_type=os_type,
@@ -90,6 +93,7 @@ def pull_image(
         _files=image._files,
         _registry=image._registry,
         _disk_path=image._disk_path,
+        _agent_type=agent_type,
     )
 
     # Cache the manifest
@@ -99,6 +103,15 @@ def pull_image(
         # For containers, docker pull handles everything — just return the ref
         logger.info(f"Container image {image._registry} — use docker pull")
         return resolved, dest_dir
+
+    # Android AVD format — extract to ~/.cua/android-avd/
+    if fmt == ImageFormat.ANDROID_AVD:
+        from cua_sandbox.registry.avd_builder import pull_avd
+
+        avd_home = dest_dir.parent  # use the same cache hierarchy
+        avd_config, avd_path = pull_avd(image._registry, avd_home, force=force)
+        logger.info(f"Android AVD extracted to {avd_path}")
+        return resolved, avd_path
 
     # QEMU format — use dedicated pull
     if fmt == ImageFormat.QEMU:

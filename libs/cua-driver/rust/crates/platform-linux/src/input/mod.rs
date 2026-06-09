@@ -14,6 +14,7 @@
 use anyhow::{anyhow, bail, Result};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
@@ -113,7 +114,49 @@ fn supports_parallel_pointer_injection(display: *mut x11::xlib::Display) -> Resu
              pointers cannot become real X input devices here."
         );
     }
+    if is_xtigervnc_process_running() {
+        let display_name = std::env::var("DISPLAY").unwrap_or_else(|_| "<unknown>".to_owned());
+        bail!(
+            "parallel_mouse_drag is not supported on display {display_name} because the active X server is Xtigervnc. \
+             Xtigervnc exposes only its built-in VNC/XTEST devices, so Linux uinput/libinput pointers \
+             cannot become real X input devices in this environment."
+        );
+    }
     Ok(())
+}
+
+fn is_xtigervnc_process_running() -> bool {
+    let display_name = std::env::var("DISPLAY").ok();
+    let Ok(proc_entries) = fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in proc_entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(pid) = file_name.to_str() else {
+            continue;
+        };
+        if !pid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(cmdline) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if cmdline.is_empty() {
+            continue;
+        }
+        let cmd = String::from_utf8_lossy(&cmdline).replace('\0', " ");
+        if !cmd.contains("Xtigervnc") {
+            continue;
+        }
+        if let Some(display_name) = &display_name {
+            if cmd.contains(display_name) {
+                return true;
+            }
+        } else {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn check_parallel_pointer_support() -> Result<()> {

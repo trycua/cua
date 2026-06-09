@@ -41,7 +41,7 @@
     "@types/uuid": "^10.0.0",
     "pino": "^9.7.0",
     "posthog-node": "^5.14.1",
-    "uuid": "^11.1.0"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

@@ -2,11 +2,107 @@
 
 This file contains shared fixtures and configuration for all agent tests.
 Following SRP: This file ONLY handles test setup/teardown.
+
+Windows / Anaconda note (issue #1381)
+--------------------------------------
+On Windows with Anaconda, importing torch before numpy (or vice-versa) can
+load two copies of the OpenMP runtime (libiomp5md.dll / vcomp*.dll), which
+causes a fatal ``OMP: Error #15`` crash.  The two-line environment-variable
+patch below sets KMP_DUPLICATE_LIB_OK=TRUE *before* any test module imports
+torch, which silences the crash.  This is a well-known Intel MKL/OMP
+workaround and is safe for a test environment.
 """
+
+import os
+import sys
+
+# ── Windows / Anaconda OMP duplicate-library fix (issue #1381) ────────────
+# Must be set before torch is imported by any test or fixture.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# ──────────────────────────────────────────────────────────────────────────
 
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Torch / Transformers mock fixture
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_torch_and_transformers():
+    """Session-scoped fixture that injects fake torch/transformers modules.
+
+    Injecting lightweight stubs into sys.modules prevents the real PyTorch
+    from being imported during the test session.  This avoids:
+
+    * The OMP duplicate-library fatal crash on Windows + Anaconda (#1381)
+    * Long import times / CUDA initialisation in CI without a GPU
+    * Tests accidentally requiring heavyweight ML dependencies
+
+    The stubs expose just enough surface area so that
+    ``huggingfacelocal_adapter.py`` (and ``adapters/models/__init__.py``)
+    can be imported without error.
+    """
+    from types import ModuleType
+
+    def _stub(name: str, **attrs) -> ModuleType:
+        m = ModuleType(name)
+        for k, v in attrs.items():
+            setattr(m, k, v)
+        return m
+
+    # torch stub
+    torch_stub = _stub(
+        "torch",
+        cuda=MagicMock(is_available=Mock(return_value=False)),
+        device=Mock,
+        float16=None,
+        bfloat16=None,
+    )
+
+    # transformers stub
+    transformers_stub = _stub(
+        "transformers",
+        AutoModelForImageTextToText=MagicMock(),
+        AutoProcessor=MagicMock(),
+        AutoConfig=MagicMock(),
+    )
+
+    stubs = {
+        "torch": torch_stub,
+        "transformers": transformers_stub,
+    }
+
+    originals = {k: sys.modules.get(k) for k in stubs}
+
+    for name, stub in stubs.items():
+        existing = sys.modules.get(name)
+        if existing is None:
+            sys.modules[name] = stub
+        else:
+            # Fill in any attributes the earlier stub didn't define so that
+            # session-wide stubs remain authoritative even when a test module
+            # already inserted a minimal stub via sys.modules.setdefault().
+            for attr in vars(stub):
+                if not hasattr(existing, attr):
+                    setattr(existing, attr, getattr(stub, attr))
+
+    yield
+
+    # Restore originals (important when running alongside integration tests)
+    for name, original in originals.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
+
+
+# ---------------------------------------------------------------------------
+# Existing shared fixtures (unchanged)
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture

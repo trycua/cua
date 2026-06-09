@@ -292,12 +292,12 @@ impl RenderState {
 #[cfg(target_os = "linux")]
 fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
     use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
-    use x11rb::protocol::xproto::ConnectionExt as _;
-    use x11rb::protocol::shape::*;
-    use x11rb::protocol::shape::ConnectionExt as _;
-    use x11rb::wrapper::ConnectionExt as _;
-    use x11rb::COPY_FROM_PARENT;
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{
+        AtomEnum, ColormapAlloc, CreateWindowAux, EventMask, PropMode, WindowClass,
+    };
+    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
+    use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
     // Connect to X11.
     let (conn, screen_num) = match x11rb::connect(None) {
@@ -372,8 +372,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let empty_region_pixmap = conn.generate_id().unwrap();
     conn.create_pixmap(1, empty_region_pixmap, root, 1, 1).ok();
     conn.shape_mask(
-        x11rb::protocol::shape::SO::SET,
-        x11rb::protocol::shape::SK::INPUT,
+        SO::SET,
+        SK::INPUT,
         win,
         0, 0,
         x11rb::NONE,
@@ -475,8 +475,7 @@ struct X11ZOrderEnforcer<'a, C: x11rb::connection::Connection> {
 #[cfg(target_os = "linux")]
 impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<'a, C> {
     fn reassert(&self, target: Option<u64>) {
-        use x11rb::protocol::xproto::*;
-        use x11rb::protocol::xproto::ConnectionExt as _;
+        use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as XprotoConnectionExt, StackMode};
 
         // Per the ZOrderEnforcer trait contract, a stale `target` (window
         // gone) should fall back to the `None` behavior — top of the
@@ -539,8 +538,7 @@ fn paint_x11(
     _visual_id: u32,
     pm: &tiny_skia::Pixmap,
 ) {
-    use x11rb::protocol::xproto::*;
-    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, CreateGCAux, ImageFormat};
     if pm.width() == 0 || pm.height() == 0 { return; }
 
     // Create a GC for the window if we don't have one.

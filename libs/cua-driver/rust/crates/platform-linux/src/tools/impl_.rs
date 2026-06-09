@@ -631,6 +631,33 @@ fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
     }
 }
 
+fn held_target_mismatch(args: &Value, cursor_id: &str, hold: &MouseHoldState) -> Option<ToolResult> {
+    match args.opt_u32("pid") {
+        Ok(Some(pid)) if pid != hold.pid => {
+            return Some(
+                ToolResult::error(format!(
+                    "Cursor '{cursor_id}' is holding a button for pid {}, not pid {pid}.",
+                    hold.pid
+                ))
+                .with_structured(mouse_hold_json(cursor_id, Some(hold))),
+            );
+        }
+        Err(err) => return Some(err.with_structured(mouse_hold_json(cursor_id, Some(hold)))),
+        _ => {}
+    }
+
+    match args.opt_u64("window_id") {
+        Some(xid) if xid != hold.xid => Some(
+            ToolResult::error(format!(
+                "Cursor '{cursor_id}' is holding a button for window_id {}, not {xid}.",
+                hold.xid
+            ))
+            .with_structured(mouse_hold_json(cursor_id, Some(hold))),
+        ),
+        _ => None,
+    }
+}
+
 async fn overlay_glide_to(sx: f64, sy: f64) {
     overlay_glide_to_for("default", sx, sy).await;
 }
@@ -1640,7 +1667,6 @@ impl Tool for MouseButtonDownTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         if let Some(held) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() {
             return ToolResult::error(format!(
@@ -1730,7 +1756,6 @@ impl Tool for MouseDragTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let Some(mut hold) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() else {
             return ToolResult::error(format!(
@@ -1738,6 +1763,9 @@ impl Tool for MouseDragTool {
             ))
             .with_structured(mouse_hold_json(&cursor_id, None));
         };
+        if let Some(err) = held_target_mismatch(&args, &cursor_id, &hold) {
+            return err;
+        }
 
         let mut to_x = args.f64_or("x", 0.0);
         let mut to_y = args.f64_or("y", 0.0);
@@ -1752,14 +1780,7 @@ impl Tool for MouseDragTool {
             to_y *= ratio;
         }
 
-        let xid = args.opt_u64("window_id").unwrap_or(hold.xid);
-        if xid != hold.xid {
-            return ToolResult::error(format!(
-                "mouse_drag window_id {xid} does not match held window {}.",
-                hold.xid
-            ))
-            .with_structured(mouse_hold_json(&cursor_id, Some(&hold)));
-        }
+        let xid = hold.xid;
 
         let from_x = hold.x;
         let from_y = hold.y;
@@ -1840,21 +1861,16 @@ impl Tool for MouseButtonUpTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let Some(mut hold) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() else {
             return ToolResult::error(format!("No mouse button is currently held for cursor '{cursor_id}'."))
                 .with_structured(mouse_hold_json(&cursor_id, None));
         };
-
-        let xid = args.opt_u64("window_id").unwrap_or(hold.xid);
-        if xid != hold.xid {
-            return ToolResult::error(format!(
-                "mouse_button_up window_id {xid} does not match held window {}.",
-                hold.xid
-            ))
-            .with_structured(mouse_hold_json(&cursor_id, Some(&hold)));
+        if let Some(err) = held_target_mismatch(&args, &cursor_id, &hold) {
+            return err;
         }
+
+        let xid = hold.xid;
 
         let mut x = args.opt_f64("x").unwrap_or(hold.x);
         let mut y = args.opt_f64("y").unwrap_or(hold.y);
@@ -2089,7 +2105,6 @@ impl Tool for SetAgentCursorMotionTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.opt_str("cursor_icon") { cfg.cursor_icon = Some(v); }

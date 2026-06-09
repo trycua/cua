@@ -22,10 +22,21 @@ pub struct WindowInfo {
 
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    match list_windows_inner(filter_pid) {
+    let mut windows = match list_windows_inner(filter_pid) {
         Ok(w) => w,
         Err(_) => Vec::new(),
+    };
+    for window in crate::hyprland::list_windows(filter_pid) {
+        if windows.iter().any(|existing| same_window(existing, &window)) {
+            continue;
+        }
+        windows.push(window);
     }
+    windows
+}
+
+fn same_window(a: &WindowInfo, b: &WindowInfo) -> bool {
+    a.xid == b.xid || (a.pid == b.pid && a.title == b.title)
 }
 
 fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {

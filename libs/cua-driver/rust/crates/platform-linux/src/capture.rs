@@ -12,6 +12,9 @@ use std::process::Command;
 
 /// Capture a window by X11 XID. Returns raw PNG bytes.
 pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
+    if xid > u32::MAX as u64 {
+        return crate::hyprland::screenshot_window_bytes(xid);
+    }
     // Try `import -window <xid> png:-` (ImageMagick).
     if let Ok(bytes) = capture_via_import(xid) {
         return Ok(bytes);
@@ -25,6 +28,11 @@ pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
 
 /// Capture a window by X11 XID. Returns (base64_png, width, height).
 pub fn screenshot_window(xid: u64) -> Result<(String, u32, u32)> {
+    if xid > u32::MAX as u64 {
+        let bytes = crate::hyprland::screenshot_window_bytes(xid)?;
+        let (w, h) = cua_driver_core::image_utils::png_dimensions(&bytes)?;
+        return Ok((BASE64.encode(&bytes), w, h));
+    }
     // Try `import -window <xid> png:-` (ImageMagick).
     if let Ok(bytes) = capture_via_import(xid) {
         let (w, h) = cua_driver_core::image_utils::png_dimensions(&bytes)?;
@@ -160,4 +168,3 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
     cua_driver_core::image_utils::crosshair_png_bytes(png_bytes, cx, cy)
 }
-

@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use atspi::connection::AccessibilityConnection;
 use atspi::proxy::accessible::AccessibleProxy;
+use atspi::proxy::component::ComponentProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State};
 
@@ -349,6 +350,59 @@ fn format_value(v: f64) -> String {
     format!("{v:?}")
 }
 
+fn first_window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
+    let window = crate::x11::list_windows(Some(pid)).into_iter().next()?;
+    Some((window.x, window.y))
+}
+
+async fn component_extents_for_pid(
+    comp: &ComponentProxy<'_>,
+    pid: u32,
+) -> Option<(i32, i32, u32, u32)> {
+    let screen_extents = call(comp.get_extents(CoordType::Screen))
+        .await
+        .and_then(|r| r.ok());
+
+    if let Some((x, y, w, h)) = screen_extents {
+        if plausible_extents(x, y, w, h) && (x != 0 || y != 0) {
+            return Some((x, y, w as u32, h as u32));
+        }
+
+        // GTK-on-XWayland can report every component at (0,0) in Screen
+        // coordinates while still returning correct sizes. In that case try
+        // the Window coordinate frame and translate by the X11 toplevel origin.
+        if let Some((wx, wy, ww, wh)) = call(comp.get_extents(CoordType::Window))
+            .await
+            .and_then(|r| r.ok())
+        {
+            if plausible_extents(wx, wy, ww, wh) && (wx != 0 || wy != 0) {
+                if let Some((origin_x, origin_y)) = first_window_origin_for_pid(pid) {
+                    return Some((origin_x + wx, origin_y + wy, ww as u32, wh as u32));
+                }
+            }
+        }
+
+        if plausible_extents(x, y, w, h) {
+            return Some((x, y, w as u32, h as u32));
+        }
+    }
+
+    call(comp.get_extents(CoordType::Window))
+        .await
+        .and_then(|r| r.ok())
+        .and_then(|(wx, wy, ww, wh)| {
+            if !plausible_extents(wx, wy, ww, wh) {
+                return None;
+            }
+            let (origin_x, origin_y) = first_window_origin_for_pid(pid)?;
+            Some((origin_x + wx, origin_y + wy, ww as u32, wh as u32))
+        })
+}
+
+fn plausible_extents(x: i32, y: i32, w: i32, h: i32) -> bool {
+    x != i32::MIN && y != i32::MIN && x >= -16384 && y >= -16384 && w > 1 && h > 1
+}
+
 // ── Public (sync) entry points ───────────────────────────────────────────────
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
@@ -663,11 +717,9 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             .component()
             .await
             .map_err(|e| anyhow!("Component unavailable: {e}"))?;
-        let (x, y, w, h) = comp
-            .get_extents(CoordType::Screen)
+        component_extents_for_pid(&comp, pid)
             .await
-            .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-        Ok((x, y, w.max(0) as u32, h.max(0) as u32))
+            .ok_or_else(|| anyhow!("getExtents returned no usable bounds for element {idx}"))
     })
 }
 
@@ -718,16 +770,8 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
                 Some(Ok(c)) => c,
                 _ => continue,
             };
-            if let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Screen)).await {
-                // Unrealized widgets (e.g. items inside closed menus/popovers)
-                // report GetExtents as the i32::MIN sentinel and/or a degenerate
-                // 0x0 / 1x1 size. Emitting those poisons downstream consumers
-                // (overlay renderers, click targeting), so keep only elements
-                // with plausible on-screen geometry.
-                if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
-                    continue;
-                }
-                out.push((idx, x, y, w as u32, h as u32));
+            if let Some((x, y, w, h)) = component_extents_for_pid(&comp, pid).await {
+                out.push((idx, x, y, w, h));
             }
         }
         Ok(out)

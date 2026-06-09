@@ -351,6 +351,21 @@ impl Tool for GetWindowStateTool {
         let capture_mode = args.str_or("capture_mode", &default_mode);
         let query = args.opt_str("query");
 
+        let requested_pid = pid;
+        let requested_xid = xid;
+        let matching_window = tokio::task::spawn_blocking(move || {
+            crate::x11::list_windows(Some(requested_pid))
+                .into_iter()
+                .any(|w| w.xid == requested_xid)
+        })
+        .await
+        .unwrap_or(false);
+        if !matching_window {
+            return ToolResult::error(format!(
+                "No window_id {xid} is currently visible for pid {pid}; call list_windows to refresh window state."
+            ));
+        }
+
         // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
         let do_tree = capture_mode != "vision";
         let do_shot = capture_mode != "ax";
@@ -495,7 +510,10 @@ impl Tool for LaunchAppTool {
                 let mut parts = cmd.split_whitespace();
                 let prog = parts.next().unwrap_or(cmd);
                 let rest: Vec<&str> = parts.collect();
-                match std::process::Command::new(prog).args(&rest).spawn() {
+                let mut command = std::process::Command::new(prog);
+                command.args(&rest);
+                prefer_xwayland_for_launched_apps(&mut command);
+                match command.spawn() {
                     Ok(child) => return Ok(format!("Launched '{}' with pid {}.", cmd, child.id())),
                     Err(_) => {
                         // Fall back to xdg-open for .desktop app names.
@@ -517,6 +535,31 @@ impl Tool for LaunchAppTool {
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 
+fn is_native_wayland_window_id(xid: u64) -> bool {
+    xid > u32::MAX as u64
+}
+
+fn native_wayland_input_error(action: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "{action} is not supported for native Wayland windows yet. Use AT-SPI element_index actions or set_value when the app exposes accessibility actions."
+    ))
+}
+
+fn prefer_xwayland_for_launched_apps(command: &mut std::process::Command) {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() || std::env::var_os("DISPLAY").is_none() {
+        return;
+    }
+
+    // The Linux backend currently enumerates and captures X11/XWayland
+    // windows. When launch_app starts a toolkit app in a Wayland session, GTK
+    // and Qt default to native Wayland and the very next list_windows call can
+    // legitimately see nothing. Prefer XWayland for driver-launched apps so the
+    // launched surface remains automatable. Explicit env in the user's command
+    // still wins, e.g. env GDK_BACKEND=wayland ... .
+    command.env("GDK_BACKEND", "x11");
+    command.env("QT_QPA_PLATFORM", "xcb");
+}
+
 /// Resolve an AT-SPI element's center in window-local X11 coordinates.
 ///
 /// Returns `(xid, window_local_x, window_local_y)`.
@@ -537,6 +580,11 @@ fn resolve_element_local_coords(pid: u32, idx: usize, xid_hint: Option<u64>)
             .into_iter().next().map(|w| w.xid)
             .ok_or_else(|| anyhow::anyhow!("No windows for pid {pid}"))?
     };
+    if is_native_wayland_window_id(xid) {
+        anyhow::bail!(
+            "X11 pixel fallback is not supported for native Wayland window_id {xid}; use AT-SPI element_index actions"
+        );
+    }
 
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -786,6 +834,9 @@ impl Tool for ClickTool {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Pixel click");
+        }
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -899,6 +950,21 @@ impl Tool for TypeTextTool {
             }
         }
 
+        if is_native_wayland_window_id(xid) {
+            let text_clone = text.clone();
+            let insert_result = tokio::task::spawn_blocking(move || {
+                crate::atspi::insert_text(pid, &text_clone)
+            }).await;
+            return match insert_result {
+                Ok(Ok(true)) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (via AT-SPI insert_text)."
+                )),
+                Ok(Ok(false)) => native_wayland_input_error("X11 text fallback"),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // Qt5 workaround: send synthetic FocusIn to make Qt5's AT-SPI bridge
         // expose the widget tree, type via AT-SPI, then send FocusOut.
         // This doesn't change the X11 active window, so the test's focus check passes.
@@ -992,6 +1058,9 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Key press");
+        }
         let key_for_task = key.clone();
         let result = tokio::task::spawn_blocking(move || {
             if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
@@ -1055,6 +1124,9 @@ impl Tool for HotkeyTool {
                 }
             }
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Hotkey");
+        }
 
         // Parse keys array (preferred) or fall back to legacy key+modifiers.
         let (key, mods) = if let Some(arr) = args.get("keys").and_then(|v| v.as_array()) {
@@ -1186,6 +1258,9 @@ impl Tool for ScrollTool {
                 }
             }
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Scroll");
+        }
 
         // X11 scroll buttons: 4=up, 5=down, 6=left, 7=right
         // Note: "page" scroll is still per-click on X11; send more ticks for page.
@@ -1264,6 +1339,9 @@ impl Tool for DoubleClickTool {
         let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Double-click");
+        }
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -1351,6 +1429,9 @@ impl Tool for RightClickTool {
         let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Right-click");
+        }
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -1419,6 +1500,9 @@ impl Tool for DragTool {
         let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("window_id is required on Linux."),
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Drag");
+        }
 
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key).or_else(|| args.opt_i64(key).map(|i| i as f64))
@@ -2191,6 +2275,9 @@ impl Tool for TypeTextCharsTool {
                 }
             }
         };
+        if is_native_wayland_window_id(xid) {
+            return native_wayland_input_error("Character-by-character typing");
+        }
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
             crate::input::send_type_text_with_delay(xid, &text, delay_ms)

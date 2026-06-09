@@ -20,6 +20,9 @@ pub mod pip;
 pub mod x11;
 
 #[cfg(target_os = "linux")]
+pub mod hyprland;
+
+#[cfg(target_os = "linux")]
 pub mod input;
 
 #[cfg(target_os = "linux")]

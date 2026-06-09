@@ -673,6 +673,17 @@ fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) 
     );
 }
 
+fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
+    crate::overlay::send_command_for(
+        cursor_id.to_owned(),
+        cursor_overlay::OverlayCommand::MoveTo {
+            x: sx,
+            y: sy,
+            end_heading_radians: heading.unwrap_or(std::f64::consts::FRAC_PI_4),
+        },
+    );
+}
+
 async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     if !crate::overlay::is_enabled_for(cursor_id) {
         return;
@@ -1646,20 +1657,20 @@ impl Tool for DragTool {
                         if let Ok(Ok((sx, sy))) =
                             tokio::task::spawn_blocking(move || window_local_to_screen(xid, ix, iy)).await
                         {
-                            let heading = if (ix - prev_x).abs() > f64::EPSILON
-                                || (iy - prev_y).abs() > f64::EPSILON
-                            {
-                                Some((iy - prev_y).atan2(ix - prev_x))
-                            } else {
-                                None
-                            };
-                            self.state.cursor_registry.update_position(&cursor_id, sx, sy);
-                            overlay_snap_to_for(&cursor_id, sx, sy, heading);
-                        }
-                        prev_x = ix;
-                        prev_y = iy;
-                        if step_delay_ms > 0 {
-                            tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
+                        let heading = if (ix - prev_x).abs() > f64::EPSILON
+                            || (iy - prev_y).abs() > f64::EPSILON
+                        {
+                            Some((iy - prev_y).atan2(ix - prev_x))
+                        } else {
+                            None
+                        };
+                        self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                        overlay_move_to_for(&cursor_id, sx, sy, heading);
+                    }
+                    prev_x = ix;
+                    prev_y = iy;
+                    if step_delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
                         }
                     }
                     Ok(Err(e)) => {
@@ -1914,7 +1925,7 @@ impl Tool for MouseDragTool {
                             None
                         };
                         self.state.cursor_registry.update_position(&cursor_id, sx, sy);
-                        overlay_snap_to_for(&cursor_id, sx, sy, heading);
+                        overlay_move_to_for(&cursor_id, sx, sy, heading);
                     }
                     prev_x = ix;
                     prev_y = iy;

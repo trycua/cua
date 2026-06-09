@@ -560,7 +560,7 @@ pub fn paint_cursor(
     let alpha_scale = core.idle_alpha as f32;
 
     // --- Bloom (radial gradient behind the arrow) ---
-    let bloom_r: f32 = if core.pressed { 28.0 } else { 22.0 };
+    let bloom_r: f32 = if core.pressed { 34.0 } else { 22.0 };
     // Use runtime bloom_override if set, otherwise fall back to palette.
     let (br, bg, bb) = if let Some([r, g, b, _]) = core.bloom_override {
         (r, g, b)
@@ -609,16 +609,32 @@ pub fn paint_cursor(
     if core.pressed {
         let [pr, pg, pb, _] = core.palette.cursor_mid;
         let ring_color =
-            tiny_skia::Color::from_rgba8(pr, pg, pb, (185.0 * alpha_scale) as u8);
+            tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
         let mut ring_paint = tiny_skia::Paint::default();
         ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
         ring_paint.anti_alias = true;
         let stroke = tiny_skia::Stroke {
-            width: 2.5,
+            width: 3.0,
             ..Default::default()
         };
+        let core_fill =
+            tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
+        let mut fill_paint = tiny_skia::Paint::default();
+        fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
+        fill_paint.anti_alias = true;
         let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, 11.0);
+        pb.push_circle(px as f32, py as f32, 6.5);
+        if let Some(path) = pb.finish() {
+            pm.fill_path(
+                &path,
+                &fill_paint,
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(px as f32, py as f32, 13.0);
         if let Some(path) = pb.finish() {
             pm.stroke_path(
                 &path,

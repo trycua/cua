@@ -21,6 +21,68 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
 
+#[derive(Clone, Copy, Debug)]
+struct EventTarget {
+    window: Window,
+    local_x: i16,
+    local_y: i16,
+    root_x: i16,
+    root_y: i16,
+}
+
+fn point_in_rect(x: i32, y: i32, geom: &GetGeometryReply) -> bool {
+    x >= geom.x as i32
+        && y >= geom.y as i32
+        && x < geom.x as i32 + geom.width as i32
+        && y < geom.y as i32 + geom.height as i32
+}
+
+fn deepest_child_at_point(
+    conn: &RustConnection,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<(Window, i32, i32)> {
+    let tree = conn.query_tree(window)?.reply()?;
+    for child in tree.children.iter().rev() {
+        let Ok(geom) = conn.get_geometry(*child)?.reply() else {
+            continue;
+        };
+        if !point_in_rect(local_x, local_y, &geom) {
+            continue;
+        }
+        let child_x = local_x - geom.x as i32;
+        let child_y = local_y - geom.y as i32;
+        return deepest_child_at_point(conn, *child, child_x, child_y);
+    }
+    Ok((window, local_x, local_y))
+}
+
+fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+    let top = xid as Window;
+    let root = conn.setup().roots[0].root;
+    let root_pos = conn.translate_coordinates(top, root, 0, 0)?.reply()?;
+    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
+    Ok(EventTarget {
+        window,
+        local_x: local_x as i16,
+        local_y: local_y as i16,
+        root_x: (root_pos.dst_x as i32 + x) as i16,
+        root_y: (root_pos.dst_y as i32 + y) as i16,
+    })
+}
+
+fn button_state_mask(button: u8) -> KeyButMask {
+    match button {
+        1 => KeyButMask::BUTTON1,
+        2 => KeyButMask::BUTTON2,
+        3 => KeyButMask::BUTTON3,
+        4 => KeyButMask::BUTTON4,
+        5 => KeyButMask::BUTTON5,
+        _ => KeyButMask::from(0u16),
+    }
+}
+
 /// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
 /// This can trigger toolkit-level focus handlers (e.g., Qt5's AT-SPI bridge) without
 /// moving the window manager's active window. Use with send_focus_out to restore state.
@@ -62,23 +124,22 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
     let (conn, _) = RustConnection::connect(None)?;
-    let window = xid as u32;
-
-    // Get the root window for the display.
     let root = conn.setup().roots[0].root;
 
     for _ in 0..count {
+        let target = resolve_event_target(&conn, xid, x, y)?;
         let press = ButtonPressEvent {
             response_type: BUTTON_PRESS_EVENT,
             detail: button,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
             root,
-            event: window,
+            event: target.window,
             child: x11rb::NONE,
-            root_x: 0, root_y: 0,
-            event_x: x as i16,
-            event_y: y as i16,
+            root_x: target.root_x,
+            root_y: target.root_y,
+            event_x: target.local_x,
+            event_y: target.local_y,
             state: KeyButMask::from(0u16),
             same_screen: true,
         };
@@ -89,18 +150,19 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             sequence: 0,
             time: x11rb::CURRENT_TIME,
             root,
-            event: window,
+            event: target.window,
             child: x11rb::NONE,
-            root_x: 0, root_y: 0,
-            event_x: x as i16,
-            event_y: y as i16,
-            state: KeyButMask::from(0u16),
+            root_x: target.root_x,
+            root_y: target.root_y,
+            event_x: target.local_x,
+            event_y: target.local_y,
+            state: button_state_mask(button),
             same_screen: true,
         };
 
-        conn.send_event(false, window, EventMask::BUTTON_PRESS, &press)?;
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, window, EventMask::BUTTON_RELEASE, &release)?;
+        conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
         conn.flush()?;
 
         if count > 1 {
@@ -126,10 +188,10 @@ pub fn send_drag(
     button: u8,
 ) -> Result<()> {
     let (conn, _) = RustConnection::connect(None)?;
-    let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+    let press_target = resolve_event_target(&conn, xid, from_x, from_y)?;
 
     // ButtonPress at start.
     let press = ButtonPressEvent {
@@ -137,13 +199,13 @@ pub fn send_drag(
         detail: button,
         sequence: 0,
         time: x11rb::CURRENT_TIME,
-        root, event: window, child: x11rb::NONE,
-        root_x: 0, root_y: 0,
-        event_x: from_x as i16, event_y: from_y as i16,
+        root, event: press_target.window, child: x11rb::NONE,
+        root_x: press_target.root_x, root_y: press_target.root_y,
+        event_x: press_target.local_x, event_y: press_target.local_y,
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    conn.send_event(false, window, EventMask::BUTTON_PRESS, &press)?;
+    conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, &press)?;
     conn.flush()?;
     sleep(Duration::from_millis(CLICK_DELAY_MS));
 
@@ -152,18 +214,19 @@ pub fn send_drag(
         let t = i as f64 / steps as f64;
         let ix = from_x + ((to_x - from_x) as f64 * t).round() as i32;
         let iy = from_y + ((to_y - from_y) as f64 * t).round() as i32;
+        let target = resolve_event_target(&conn, xid, ix, iy)?;
         let motion = MotionNotifyEvent {
             response_type: MOTION_NOTIFY_EVENT,
             detail: Motion::NORMAL,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
-            root, event: window, child: x11rb::NONE,
-            root_x: 0, root_y: 0,
-            event_x: ix as i16, event_y: iy as i16,
-            state: KeyButMask::from(0u16),
+            root, event: target.window, child: x11rb::NONE,
+            root_x: target.root_x, root_y: target.root_y,
+            event_x: target.local_x, event_y: target.local_y,
+            state: button_state_mask(button),
             same_screen: true,
         };
-        conn.send_event(false, window, EventMask::POINTER_MOTION, &motion)?;
+        conn.send_event(false, target.window, EventMask::POINTER_MOTION, &motion)?;
         conn.flush()?;
         if step_delay_ms > 0 {
             sleep(Duration::from_millis(step_delay_ms));
@@ -171,18 +234,91 @@ pub fn send_drag(
     }
 
     // ButtonRelease at end.
+    let release_target = resolve_event_target(&conn, xid, to_x, to_y)?;
     let release = ButtonReleaseEvent {
         response_type: BUTTON_RELEASE_EVENT,
         detail: button,
         sequence: 0,
         time: x11rb::CURRENT_TIME,
-        root, event: window, child: x11rb::NONE,
-        root_x: 0, root_y: 0,
-        event_x: to_x as i16, event_y: to_y as i16,
+        root, event: release_target.window, child: x11rb::NONE,
+        root_x: release_target.root_x, root_y: release_target.root_y,
+        event_x: release_target.local_x, event_y: release_target.local_y,
+        state: button_state_mask(button),
+        same_screen: true,
+    };
+    conn.send_event(false, release_target.window, EventMask::BUTTON_RELEASE, &release)?;
+    conn.flush()?;
+    Ok(())
+}
+
+pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[0].root;
+    let target = resolve_event_target(&conn, xid, x, y)?;
+    let press = ButtonPressEvent {
+        response_type: BUTTON_PRESS_EVENT,
+        detail: button,
+        sequence: 0,
+        time: x11rb::CURRENT_TIME,
+        root,
+        event: target.window,
+        child: x11rb::NONE,
+        root_x: target.root_x,
+        root_y: target.root_y,
+        event_x: target.local_x,
+        event_y: target.local_y,
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    conn.send_event(false, window, EventMask::BUTTON_RELEASE, &release)?;
+    conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
+    conn.flush()?;
+    Ok(())
+}
+
+pub fn send_motion(xid: u64, x: i32, y: i32, button: Option<u8>) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[0].root;
+    let target = resolve_event_target(&conn, xid, x, y)?;
+    let motion = MotionNotifyEvent {
+        response_type: MOTION_NOTIFY_EVENT,
+        detail: Motion::NORMAL,
+        sequence: 0,
+        time: x11rb::CURRENT_TIME,
+        root,
+        event: target.window,
+        child: x11rb::NONE,
+        root_x: target.root_x,
+        root_y: target.root_y,
+        event_x: target.local_x,
+        event_y: target.local_y,
+        state: button.map(button_state_mask).unwrap_or_else(|| KeyButMask::from(0u16)),
+        same_screen: true,
+    };
+    conn.send_event(false, target.window, EventMask::POINTER_MOTION, &motion)?;
+    conn.flush()?;
+    Ok(())
+}
+
+pub fn send_button_up(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
+    let (conn, _) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[0].root;
+    let target = resolve_event_target(&conn, xid, x, y)?;
+    let release = ButtonReleaseEvent {
+        response_type: BUTTON_RELEASE_EVENT,
+        detail: button,
+        sequence: 0,
+        time: x11rb::CURRENT_TIME,
+        root,
+        event: target.window,
+        child: x11rb::NONE,
+        root_x: target.root_x,
+        root_y: target.root_y,
+        event_x: target.local_x,
+        event_y: target.local_y,
+        state: button_state_mask(button),
+        same_screen: true,
+    };
+    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
     conn.flush()?;
     Ok(())
 }

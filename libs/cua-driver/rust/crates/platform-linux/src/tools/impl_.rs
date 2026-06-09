@@ -65,7 +65,17 @@ pub struct ToolState {
     pub cursor_registry: Arc<CursorRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
+    pub mouse_hold: std::sync::Mutex<Option<MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MouseHoldState {
+    pub pid: u32,
+    pub xid: u64,
+    pub button: u8,
+    pub x: f64,
+    pub y: f64,
 }
 
 impl ToolState {
@@ -75,6 +85,7 @@ impl ToolState {
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
+            mouse_hold: std::sync::Mutex::new(None),
             config: Arc::new(RwLock::new(DriverConfig::default())),
         })
     }
@@ -565,6 +576,43 @@ fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)
     Ok((reply.dst_x as f64 + x, reply.dst_y as f64 + y))
 }
 
+fn parse_mouse_button(name: &str) -> u8 {
+    match name {
+        "right" => 3,
+        "middle" => 2,
+        _ => 1,
+    }
+}
+
+fn mouse_button_name(button: u8) -> &'static str {
+    match button {
+        3 => "right",
+        2 => "middle",
+        _ => "left",
+    }
+}
+
+fn mouse_hold_json(hold: Option<&MouseHoldState>) -> Value {
+    match hold {
+        Some(hold) => json!({
+            "held": true,
+            "pid": hold.pid,
+            "window_id": hold.xid,
+            "button": mouse_button_name(hold.button),
+            "x": hold.x,
+            "y": hold.y,
+        }),
+        None => json!({
+            "held": false,
+            "pid": Value::Null,
+            "window_id": Value::Null,
+            "button": Value::Null,
+            "x": Value::Null,
+            "y": Value::Null,
+        }),
+    }
+}
+
 async fn overlay_glide_to(sx: f64, sy: f64) {
     if !crate::overlay::is_enabled() {
         return;
@@ -739,11 +787,7 @@ impl Tool for ClickTool {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;
-        let button: u8 = match args.str_or("button", "left").as_str() {
-            "right" => 3,
-            "middle" => 2,
-            _ => 1,
-        };
+        let button = parse_mouse_button(args.str_or("button", "left").as_str());
 
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1431,7 +1475,7 @@ impl Tool for DragTool {
         let duration_ms = args.u64_or("duration_ms", 500);
         let steps       = args.u64_or("steps", 20) as usize;
         let button_str  = args.str_or("button", "left");
-        let button: u8  = match button_str.as_str() { "right" => 3, "middle" => 2, _ => 1 };
+        let button = parse_mouse_button(button_str.as_str());
         let from_zoom   = args.bool_or("from_zoom", false);
 
         if from_zoom {
@@ -1488,6 +1532,270 @@ impl Tool for DragTool {
             )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
+        }
+    }
+}
+
+// ── mouse_button_down / mouse_drag / mouse_button_up ────────────────────────
+
+pub struct MouseButtonDownTool {
+    state: Arc<ToolState>,
+}
+static MDOWN_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for MouseButtonDownTool {
+    fn def(&self) -> &ToolDef {
+        MDOWN_DEF.get_or_init(|| ToolDef {
+            name: "mouse_button_down".into(),
+            description: "Press and hold a mouse button at (x,y) via background X11 delivery. \
+                Does not release the button; pair with mouse_drag / mouse_button_up. \
+                Returns the current held-button state.".into(),
+            input_schema: json!({"type":"object","required":["pid","window_id","x","y"],"properties":{
+                "pid":{"type":"integer"},
+                "window_id":{"type":"integer"},
+                "x":{"type":"number"},
+                "y":{"type":"number"},
+                "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: left."},
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        if self.state.mouse_hold.lock().unwrap().is_some() {
+            let held = self.state.mouse_hold.lock().unwrap().clone();
+            return ToolResult::error("A mouse button is already held. Call mouse_button_up first.")
+                .with_structured(mouse_hold_json(held.as_ref()));
+        }
+
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let xid = match args.opt_u64("window_id") {
+            Some(v) => v,
+            None => return ToolResult::error("window_id is required on Linux."),
+        };
+        let button_name = args.str_or("button", "left");
+        let button = parse_mouse_button(button_name.as_str());
+        let mut x = args.f64_or("x", 0.0);
+        let mut y = args.f64_or("y", 0.0);
+        if args.bool_or("from_zoom", false) {
+            match self.state.zoom_registry.get(pid) {
+                Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
+                None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {pid}. Call zoom first.")),
+            }
+        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            x *= ratio;
+            y *= ratio;
+        }
+
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await {
+            overlay_glide_to(sx, sy).await;
+            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        }
+
+        let xi = x as i32;
+        let yi = y as i32;
+        let result = tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await;
+        match result {
+            Ok(Ok(())) => {
+                let hold = MouseHoldState { pid, xid, button, x, y };
+                *self.state.mouse_hold.lock().unwrap() = Some(hold.clone());
+                ToolResult::text(format!(
+                    "✅ Held {} button down at ({x:.1}, {y:.1}).",
+                    mouse_button_name(button)
+                ))
+                .with_structured(mouse_hold_json(Some(&hold)))
+            }
+            Ok(Err(e)) => ToolResult::error(e.to_string())
+                .with_structured(mouse_hold_json(self.state.mouse_hold.lock().unwrap().as_ref())),
+            Err(e) => ToolResult::error(format!("Task error: {e}"))
+                .with_structured(mouse_hold_json(self.state.mouse_hold.lock().unwrap().as_ref())),
+        }
+    }
+}
+
+pub struct MouseDragTool {
+    state: Arc<ToolState>,
+}
+static MDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for MouseDragTool {
+    fn def(&self) -> &ToolDef {
+        MDRAG_DEF.get_or_init(|| ToolDef {
+            name: "mouse_drag".into(),
+            description: "Move a previously-held mouse button to a new point via background X11 delivery. \
+                Requires an active mouse_button_down state; does not release the button. \
+                Returns the updated held-button state.".into(),
+            input_schema: json!({"type":"object","required":["x","y"],"properties":{
+                "pid":{"type":"integer"},
+                "window_id":{"type":"integer"},
+                "x":{"type":"number"},
+                "y":{"type":"number"},
+                "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Total drag duration. Default: 500."},
+                "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Intermediate MotionNotify events. Default: 20."},
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().clone() else {
+            return ToolResult::error("No mouse button is currently held. Call mouse_button_down first.")
+                .with_structured(mouse_hold_json(None));
+        };
+
+        let mut to_x = args.f64_or("x", 0.0);
+        let mut to_y = args.f64_or("y", 0.0);
+        if args.bool_or("from_zoom", false) {
+            match self.state.zoom_registry.get(hold.pid) {
+                Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(to_x, to_y); to_x = wx; to_y = wy; }
+                None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {}. Call zoom first.", hold.pid))
+                    .with_structured(mouse_hold_json(Some(&hold))),
+            }
+        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+            to_x *= ratio;
+            to_y *= ratio;
+        }
+
+        let xid = args.opt_u64("window_id").unwrap_or(hold.xid);
+        if xid != hold.xid {
+            return ToolResult::error(format!(
+                "mouse_drag window_id {xid} does not match held window {}.",
+                hold.xid
+            ))
+            .with_structured(mouse_hold_json(Some(&hold)));
+        }
+
+        let from_x = hold.x;
+        let from_y = hold.y;
+        let duration_ms = args.u64_or("duration_ms", 500);
+        let steps = args.u64_or("steps", 20).max(1) as usize;
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await {
+            overlay_glide_to(sx, sy).await;
+        }
+
+        let button = hold.button;
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+            for i in 1..=steps {
+                let t = i as f64 / steps as f64;
+                let ix = from_x + (to_x - from_x) * t;
+                let iy = from_y + (to_y - from_y) * t;
+                crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))?;
+                if step_delay_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+                }
+            }
+            Ok(())
+        }).await;
+
+        match result {
+            Ok(Ok(())) => {
+                hold.x = to_x;
+                hold.y = to_y;
+                *self.state.mouse_hold.lock().unwrap() = Some(hold.clone());
+                if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
+                    overlay_glide_to(sx, sy).await;
+                    crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                }
+                ToolResult::text(format!(
+                    "✅ Dragged held {} button to ({to_x:.1}, {to_y:.1}).",
+                    mouse_button_name(hold.button)
+                ))
+                .with_structured(mouse_hold_json(Some(&hold)))
+            }
+            Ok(Err(e)) => ToolResult::error(e.to_string())
+                .with_structured(mouse_hold_json(Some(&hold))),
+            Err(e) => ToolResult::error(format!("Task error: {e}"))
+                .with_structured(mouse_hold_json(Some(&hold))),
+        }
+    }
+}
+
+pub struct MouseButtonUpTool {
+    state: Arc<ToolState>,
+}
+static MUP_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for MouseButtonUpTool {
+    fn def(&self) -> &ToolDef {
+        MUP_DEF.get_or_init(|| ToolDef {
+            name: "mouse_button_up".into(),
+            description: "Release a previously-held mouse button via background X11 delivery. \
+                If x/y are omitted, releases at the last held position. Returns the current held-button state.".into(),
+            input_schema: json!({"type":"object","properties":{
+                "pid":{"type":"integer"},
+                "window_id":{"type":"integer"},
+                "x":{"type":"number"},
+                "y":{"type":"number"},
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().clone() else {
+            return ToolResult::error("No mouse button is currently held.")
+                .with_structured(mouse_hold_json(None));
+        };
+
+        let xid = args.opt_u64("window_id").unwrap_or(hold.xid);
+        if xid != hold.xid {
+            return ToolResult::error(format!(
+                "mouse_button_up window_id {xid} does not match held window {}.",
+                hold.xid
+            ))
+            .with_structured(mouse_hold_json(Some(&hold)));
+        }
+
+        let mut x = args.opt_f64("x").unwrap_or(hold.x);
+        let mut y = args.opt_f64("y").unwrap_or(hold.y);
+        if args.bool_or("from_zoom", false) {
+            match self.state.zoom_registry.get(hold.pid) {
+                Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
+                None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {}. Call zoom first.", hold.pid))
+                    .with_structured(mouse_hold_json(Some(&hold))),
+            }
+        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+            x *= ratio;
+            y *= ratio;
+        }
+
+        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await {
+            overlay_glide_to(sx, sy).await;
+        }
+
+        let button = hold.button;
+        let xi = x as i32;
+        let yi = y as i32;
+        let result = tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button)).await;
+        match result {
+            Ok(Ok(())) => {
+                hold.x = x;
+                hold.y = y;
+                *self.state.mouse_hold.lock().unwrap() = None;
+                let cleared = mouse_hold_json(None);
+                ToolResult::text(format!(
+                    "✅ Released held {} button at ({x:.1}, {y:.1}).",
+                    mouse_button_name(button)
+                ))
+                .with_structured(cleared)
+            }
+            Ok(Err(e)) => ToolResult::error(e.to_string())
+                .with_structured(mouse_hold_json(Some(&hold))),
+            Err(e) => ToolResult::error(format!("Task error: {e}"))
+                .with_structured(mouse_hold_json(Some(&hold))),
         }
     }
 }
@@ -2314,6 +2622,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(DoubleClickTool { state: state.clone() }));
     r.register(Box::new(RightClickTool { state: state.clone() }));
     r.register(Box::new(DragTool { state: state.clone() }));
+    r.register(Box::new(MouseButtonDownTool { state: state.clone() }));
+    r.register(Box::new(MouseDragTool { state: state.clone() }));
+    r.register(Box::new(MouseButtonUpTool { state: state.clone() }));
     r.register(Box::new(TypeTextTool));
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));

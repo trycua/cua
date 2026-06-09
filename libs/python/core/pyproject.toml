@@ -10,6 +10,10 @@ readme = "README.md"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "posthog>=3.20.0",
 ]

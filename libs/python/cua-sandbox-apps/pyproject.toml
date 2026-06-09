@@ -5,6 +5,10 @@ description = "Universal app catalog and installer pipeline for CUA sandboxes â€
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "TryCua", email = "gh@trycua.com" }]
 readme = "README.md"
+license = "MIT"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 
 dependencies = [
     "claude-agent-sdk>=0.1.0",

@@ -1,6 +1,7 @@
 """Tests for auth command module."""
 
 import argparse
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cua_cli.commands import auth
@@ -95,49 +96,80 @@ class TestCmdLogin:
         """Test login with --api-key flag and value."""
         args = args_namespace(api_key="test-api-key")
 
-        with patch.object(auth, "get_api_key", return_value=None):
+        with patch.object(
+            auth,
+            "_fetch_me",
+            return_value=(
+                200,
+                {
+                    "workspace": {"slug": "test-workspace", "name": "Test Workspace"},
+                    "organization": {"name": "Test Org"},
+                },
+            ),
+        ):
+            with patch.object(auth, "save_workspace") as mock_save_workspace:
+                with patch.object(auth, "set_active_workspace") as mock_set_active:
+                    with patch.object(auth, "print_info"):
+                        with patch.object(auth, "print_success"):
+                            result = auth.cmd_login(args)
+
+        mock_save_workspace.assert_called_once_with(
+            "test-workspace",
+            "test-api-key",
+            "Test Workspace",
+            "Test Org",
+        )
+        mock_set_active.assert_called_once_with("test-workspace")
+        assert result == 0
+
+    def test_login_with_api_key_legacy_response(self, args_namespace):
+        """Test direct login when /v1/me returns no workspace metadata."""
+        args = args_namespace(api_key="test-api-key")
+
+        with patch.object(auth, "_fetch_me", return_value=(200, {})):
             with patch.object(auth, "save_api_key") as mock_save:
-                with patch.object(auth, "print_info"):
-                    with patch.object(auth, "print_success"):
-                        result = auth.cmd_login(args)
+                with patch.object(auth, "_get_store") as mock_store:
+                    with patch.object(auth, "print_info"):
+                        with patch.object(auth, "print_success"):
+                            result = auth.cmd_login(args)
 
         mock_save.assert_called_once_with("test-api-key")
+        mock_store.return_value.delete.assert_called_once_with(auth.ACTIVE_WORKSPACE_KEY)
         assert result == 0
-
-    def test_login_already_authenticated(self, args_namespace):
-        """Test login when already authenticated."""
-        args = args_namespace(api_key=None)
-
-        with patch.object(auth, "get_api_key", return_value="existing-key"):
-            with patch.object(auth, "print_info") as mock_info:
-                result = auth.cmd_login(args)
-
-        assert result == 0
-        mock_info.assert_called()
 
     def test_login_browser_flow(self, args_namespace):
         """Test login with browser OAuth flow."""
         args = args_namespace(api_key=None)
 
-        with patch.object(auth, "get_api_key", return_value=None):
-            with patch.object(auth, "run_async") as mock_run:
-                mock_run.return_value = "browser-api-key"
-                with patch.object(auth, "save_api_key") as mock_save:
+        with patch.object(auth, "run_async") as mock_run:
+            mock_run.return_value = SimpleNamespace(
+                token="browser-api-key",
+                workspace_slug="test-workspace",
+                workspace_name="Test Workspace",
+                org_name="Test Org",
+            )
+            with patch.object(auth, "save_workspace") as mock_save_workspace:
+                with patch.object(auth, "set_active_workspace") as mock_set_active:
                     with patch.object(auth, "print_success"):
                         result = auth.cmd_login(args)
 
-        mock_save.assert_called_once_with("browser-api-key")
+        mock_save_workspace.assert_called_once_with(
+            "test-workspace",
+            "browser-api-key",
+            "Test Workspace",
+            "Test Org",
+        )
+        mock_set_active.assert_called_once_with("test-workspace")
         assert result == 0
 
     def test_login_browser_flow_timeout(self, args_namespace):
         """Test login when browser flow times out."""
         args = args_namespace(api_key=None)
 
-        with patch.object(auth, "get_api_key", return_value=None):
-            with patch.object(auth, "run_async") as mock_run:
-                mock_run.side_effect = TimeoutError("Authentication timed out")
-                with patch.object(auth, "print_error"):
-                    result = auth.cmd_login(args)
+        with patch.object(auth, "run_async") as mock_run:
+            mock_run.side_effect = TimeoutError("Authentication timed out")
+            with patch.object(auth, "print_error"):
+                result = auth.cmd_login(args)
 
         assert result == 1
 
@@ -145,13 +177,14 @@ class TestCmdLogin:
 class TestCmdLogout:
     """Tests for cmd_logout function."""
 
-    def test_logout_clears_credentials(self, args_namespace):
-        """Test that logout clears credentials."""
+    def test_logout_clears_legacy_credentials(self, args_namespace):
+        """Test that logout clears legacy credentials when no workspace is active."""
         args = args_namespace()
 
-        with patch.object(auth, "clear_credentials") as mock_clear:
-            with patch.object(auth, "print_success"):
-                result = auth.cmd_logout(args)
+        with patch.object(auth, "get_active_workspace", return_value=None):
+            with patch.object(auth, "clear_legacy_credentials") as mock_clear:
+                with patch.object(auth, "print_success"):
+                    result = auth.cmd_logout(args)
 
         mock_clear.assert_called_once()
         assert result == 0

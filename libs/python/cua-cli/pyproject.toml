@@ -111,3 +111,8 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv.sources]
+cua-auto = { path = "../cua-auto", editable = true }
+cua-computer = { path = "../computer", editable = true }
+cua-core = { path = "../core", editable = true }

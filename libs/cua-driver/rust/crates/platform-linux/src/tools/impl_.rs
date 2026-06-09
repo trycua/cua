@@ -1,7 +1,11 @@
 //! Real Linux tool implementations (compiled only on Linux).
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef, ToolRegistry},
+    tool_args::ArgsExt,
+};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -807,7 +811,6 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;

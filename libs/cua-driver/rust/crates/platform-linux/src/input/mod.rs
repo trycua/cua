@@ -40,6 +40,8 @@ pub struct VirtualPointerDrag {
 struct MasterPointerIds {
     pointer_id: i32,
     keyboard_id: i32,
+    xtest_pointer_id: i32,
+    xtest_keyboard_id: i32,
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
@@ -118,6 +120,8 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     let devices = xi2_query_devices(display)?;
     let mut pointer_id = None;
     let mut keyboard_id = None;
+    let mut xtest_pointer_id = None;
+    let mut xtest_keyboard_id = None;
     for (device_id, use_, device_name) in devices {
         if !device_name.contains(&base) {
             continue;
@@ -126,6 +130,10 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
             pointer_id = Some(device_id);
         } else if use_ == x11::xinput2::XIMasterKeyboard {
             keyboard_id = Some(device_id);
+        } else if use_ == x11::xinput2::XISlavePointer && device_name.contains("XTEST") {
+            xtest_pointer_id = Some(device_id);
+        } else if use_ == x11::xinput2::XISlaveKeyboard && device_name.contains("XTEST") {
+            xtest_keyboard_id = Some(device_id);
         }
     }
     unsafe { x11::xlib::XCloseDisplay(display) };
@@ -133,6 +141,10 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     let ids = MasterPointerIds {
         pointer_id: pointer_id.ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?,
         keyboard_id: keyboard_id.ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?,
+        xtest_pointer_id: xtest_pointer_id
+            .ok_or_else(|| anyhow!("failed to locate created XTEST slave pointer for '{cursor_id}'"))?,
+        xtest_keyboard_id: xtest_keyboard_id
+            .ok_or_else(|| anyhow!("failed to locate created XTEST slave keyboard for '{cursor_id}'"))?,
     };
     mpx_pointers().lock().unwrap().insert(cursor_id.to_owned(), ids);
     Ok(ids)
@@ -152,10 +164,14 @@ fn with_open_pointer_device<T>(
 ) -> Result<T> {
     let ids = ensure_master_pointer(cursor_id)?;
     let display = open_display()?;
-    let device = unsafe { x11::xinput::XOpenDevice(display, ids.pointer_id as u64) };
+    let device = unsafe { x11::xinput::XOpenDevice(display, ids.xtest_pointer_id as u64) };
     if device.is_null() {
         unsafe { x11::xlib::XCloseDisplay(display) };
-        bail!("XOpenDevice failed for master pointer {}", ids.pointer_id);
+        bail!(
+            "XOpenDevice failed for XTEST slave pointer {} (master pointer {})",
+            ids.xtest_pointer_id,
+            ids.pointer_id
+        );
     }
 
     let result = f(display, device, ids);

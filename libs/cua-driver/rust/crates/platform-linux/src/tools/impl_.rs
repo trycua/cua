@@ -2091,6 +2091,12 @@ impl Tool for ParallelMouseDragTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        match tokio::task::spawn_blocking(crate::input::check_parallel_pointer_support).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return ToolResult::error(e.to_string()),
+            Err(e) => return ToolResult::error(format!("Task error: {e}")),
+        }
+
         let Some(items) = args.get("drags").and_then(|v| v.as_array()) else {
             return ToolResult::error("drags[] is required.");
         };

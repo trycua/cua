@@ -96,6 +96,33 @@ fn xi2_query_devices(
     Ok(out)
 }
 
+fn x_server_vendor(display: *mut x11::xlib::Display) -> String {
+    let ptr = unsafe { x11::xlib::XServerVendor(display) };
+    if ptr.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+}
+
+fn supports_parallel_pointer_injection(display: *mut x11::xlib::Display) -> Result<()> {
+    let vendor = x_server_vendor(display);
+    if vendor.to_ascii_lowercase().contains("tigervnc") {
+        bail!(
+            "parallel_mouse_drag is not supported on this X server ('{vendor}'). \
+             Xtigervnc exposes only its built-in VNC/XTEST devices, so Linux uinput/libinput \
+             pointers cannot become real X input devices here."
+        );
+    }
+    Ok(())
+}
+
+pub fn check_parallel_pointer_support() -> Result<()> {
+    let display = open_display()?;
+    let result = supports_parallel_pointer_injection(display);
+    unsafe { x11::xlib::XCloseDisplay(display) };
+    result
+}
+
 fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
         return Ok(ids);
@@ -163,7 +190,46 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
-    mpx_pointers().lock().unwrap().remove(cursor_id);
+    let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
+        return;
+    };
+
+    let Ok(display) = open_display() else {
+        return;
+    };
+
+    let Ok(devices) = xi2_query_devices(display) else {
+        unsafe { x11::xlib::XCloseDisplay(display) };
+        return;
+    };
+
+    let mut virtual_core_pointer = None;
+    let mut virtual_core_keyboard = None;
+    for (device_id, use_, device_name) in devices {
+        if device_name == "Virtual core pointer" && use_ == x11::xinput2::XIMasterPointer {
+            virtual_core_pointer = Some(device_id);
+        } else if device_name == "Virtual core keyboard" && use_ == x11::xinput2::XIMasterKeyboard {
+            virtual_core_keyboard = Some(device_id);
+        }
+    }
+
+    let (Some(return_pointer), Some(return_keyboard)) = (virtual_core_pointer, virtual_core_keyboard) else {
+        unsafe { x11::xlib::XCloseDisplay(display) };
+        return;
+    };
+
+    let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
+    unsafe {
+        let remove = change.remove();
+        (*remove)._type = x11::xinput2::XIRemoveMaster;
+        (*remove).deviceid = ids.pointer_id;
+        (*remove).return_mode = x11::xinput2::XIAttachToMaster;
+        (*remove).return_pointer = return_pointer;
+        (*remove).return_keyboard = return_keyboard;
+        let _ = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XCloseDisplay(display);
+    }
 }
 
 fn with_open_pointer_device<T>(
@@ -240,6 +306,10 @@ fn fake_device_button(
 pub fn send_parallel_virtual_pointer_drags(
     drags: &[(String, VirtualPointerDrag)],
 ) -> Result<()> {
+    let display = open_display()?;
+    supports_parallel_pointer_injection(display)?;
+    unsafe { x11::xlib::XCloseDisplay(display) };
+
     let start_at = std::time::Instant::now() + Duration::from_millis(120);
     let mut threads = Vec::with_capacity(drags.len());
     for (cursor_id, drag) in drags.iter().cloned() {

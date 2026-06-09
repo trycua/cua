@@ -628,15 +628,22 @@ fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
 }
 
 async fn overlay_glide_to(sx: f64, sy: f64) {
-    if !crate::overlay::is_enabled() {
+    overlay_glide_to_for("default", sx, sy).await;
+}
+
+async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
+    if !crate::overlay::is_enabled_for(cursor_id) {
         return;
     }
-    let pos = crate::overlay::current_position();
+    let pos = crate::overlay::current_position_for(cursor_id);
     if pos.0 < 0.0 && pos.1 < 0.0 {
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        crate::overlay::send_command_for(
+            cursor_id.to_owned(),
+            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+        );
         return;
     }
-    crate::overlay::animate_cursor_to(sx, sy).await;
+    crate::overlay::animate_cursor_to_for(cursor_id.to_owned(), sx, sy).await;
 }
 
 fn process_name(pid: u32) -> Option<String> {
@@ -783,6 +790,8 @@ impl Tool for ClickTool {
                 back to full-window space.".into(),
             input_schema: json!({
                 "type":"object","required":["pid"],"properties":{
+                    "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                    "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "x":{"type":"number"},
@@ -799,6 +808,7 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;
         let button = parse_mouse_button(args.str_or("button", "left").as_str());
@@ -828,10 +838,16 @@ impl Tool for ClickTool {
             return match result {
                 Ok(Ok((xid, x, y))) => {
                     if xid != 0 {
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(xid),
+                        );
                     }
-                    overlay_glide_to(x, y).await;
-                    crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x, y });
+                    overlay_glide_to_for(&cursor_id, x, y).await;
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::ClickPulse { x, y },
+                    );
                     ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AT-SPI element click failed: {e}")),
@@ -859,12 +875,18 @@ impl Tool for ClickTool {
             y *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
         {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
 
         let (xi, yi) = (x as i32, y as i32);
@@ -1283,6 +1305,8 @@ impl Tool for DoubleClickTool {
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1295,6 +1319,7 @@ impl Tool for DoubleClickTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1305,9 +1330,15 @@ impl Tool for DoubleClickTool {
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
                     if let Ok((sx, sy)) = element_screen_center(pid, idx) {
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
-                        overlay_glide_to(sx, sy).await;
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(xid),
+                        );
+                        overlay_glide_to_for(&cursor_id, sx, sy).await;
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+                        );
                     }
                     match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 2, 1)).await {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked element [{idx}].")),
@@ -1336,12 +1367,18 @@ impl Tool for DoubleClickTool {
             x *= ratio;
             y *= ratio;
         }
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
         {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 2, 1)).await;
@@ -1369,6 +1406,8 @@ impl Tool for RightClickTool {
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1382,6 +1421,7 @@ impl Tool for RightClickTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1392,9 +1432,15 @@ impl Tool for RightClickTool {
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
                     if let Ok((sx, sy)) = element_screen_center(pid, idx) {
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
-                        overlay_glide_to(sx, sy).await;
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(xid),
+                        );
+                        overlay_glide_to_for(&cursor_id, sx, sy).await;
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+                        );
                     }
                     match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 1, 3)).await {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked element [{idx}].")),
@@ -1423,12 +1469,18 @@ impl Tool for RightClickTool {
             x *= ratio;
             y *= ratio;
         }
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
         {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 1, 3)).await;
@@ -1456,6 +1508,8 @@ impl Tool for DragTool {
                           window-local screenshot pixels via XSendEvent (ButtonPress + MotionNotify × steps + ButtonRelease). \
                           duration_ms (default 500), steps (default 20). No focus steal.".into(),
             input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"Target window XID. Required."},
                 "from_x":{"type":"number"},
@@ -1473,6 +1527,7 @@ impl Tool for DragTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("window_id is required on Linux."),
@@ -1506,15 +1561,18 @@ impl Tool for DragTool {
             to_x   *= ratio; to_y   *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx_from, sy_from))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await
         {
-            overlay_glide_to(sx_from, sy_from).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                x: sx_from,
-                y: sy_from,
-            });
+            overlay_glide_to_for(&cursor_id, sx_from, sy_from).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx_from, y: sy_from },
+            );
         }
 
         let result = tokio::task::spawn_blocking(move || {
@@ -1530,11 +1588,11 @@ impl Tool for DragTool {
             if let Ok(Ok((sx_to, sy_to))) =
                 tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await
             {
-                overlay_glide_to(sx_to, sy_to).await;
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                    x: sx_to,
-                    y: sy_to,
-                });
+                overlay_glide_to_for(&cursor_id, sx_to, sy_to).await;
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::ClickPulse { x: sx_to, y: sy_to },
+                );
             }
         }
 
@@ -1608,10 +1666,16 @@ impl Tool for MouseButtonDownTool {
             y *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
 
         let xi = x as i32;
@@ -1699,9 +1763,12 @@ impl Tool for MouseDragTool {
         let from_y = hold.y;
         let duration_ms = args.u64_or("duration_ms", 500);
         let steps = args.u64_or("steps", 20).max(1) as usize;
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await {
-            overlay_glide_to(sx, sy).await;
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
         }
 
         let button = hold.button;
@@ -1725,8 +1792,11 @@ impl Tool for MouseDragTool {
                 hold.y = to_y;
                 self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
                 if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
-                    overlay_glide_to(sx, sy).await;
-                    crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                    overlay_glide_to_for(&cursor_id, sx, sy).await;
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+                    );
                 }
                 ToolResult::text(format!(
                     "✅ Cursor '{cursor_id}' dragged held {} button to ({to_x:.1}, {to_y:.1}).",
@@ -1797,9 +1867,12 @@ impl Tool for MouseButtonUpTool {
             y *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await {
-            overlay_glide_to(sx, sy).await;
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
         }
 
         let button = hold.button;
@@ -1934,9 +2007,14 @@ impl Tool for MoveCursorTool {
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
-            x, y, end_heading_radians: std::f64::consts::FRAC_PI_4,
-        });
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+        );
         ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
     }
 }
@@ -1966,7 +2044,10 @@ impl Tool for SetAgentCursorEnabledTool {
         let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
         let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.set_enabled(&cursor_id, enabled);
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetEnabled(enabled),
+        );
         ToolResult::text(format!("Agent cursor '{cursor_id}' {}.", if enabled { "enabled" } else { "disabled" }))
     }
 }
@@ -2167,15 +2248,18 @@ impl Tool for SetAgentCursorStyleTool {
 
         // Dispatch to overlay
         if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command(cmd);
+            crate::overlay::send_command_for(cursor_id.clone(), cmd);
         }
         let gradient_provided = args.get("gradient_colors").is_some();
         let bloom_provided = args.get("bloom_color").is_some();
         if gradient_provided || bloom_provided {
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::SetGradient {
-                gradient_colors,
-                bloom_color: bloom_color.flatten(),
-            });
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetGradient {
+                    gradient_colors,
+                    bloom_color: bloom_color.flatten(),
+                },
+            );
         }
 
         let grad_str = args.get("gradient_colors")
@@ -2647,6 +2731,15 @@ impl Tool for BringToFrontTool {
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
+    {
+        let cursor_registry = state.cursor_registry.clone();
+        let state_for_session_end = state.clone();
+        cua_driver_core::session::register_session_end_hook(move |session_id| {
+            cursor_registry.remove(session_id);
+            crate::overlay::remove_cursor(session_id.to_owned());
+            state_for_session_end.mouse_hold.lock().unwrap().remove(session_id);
+        });
+    }
     let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));

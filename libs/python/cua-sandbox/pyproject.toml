@@ -36,7 +36,7 @@ dependencies = [
     "vncdotool>=1.2.0",
     "paramiko>=4.0.0",
     "grpcio==1.78.0",
-    "protobuf==6.31.1",
+    "protobuf==6.33.5",
     "pycdlib>=1.14.0",
 ]
 

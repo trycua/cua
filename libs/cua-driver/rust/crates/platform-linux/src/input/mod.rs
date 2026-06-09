@@ -62,10 +62,9 @@ fn open_display() -> Result<*mut x11::xlib::Display> {
 
 fn xi2_query_devices(
     display: *mut x11::xlib::Display,
-    xi2: &x11::xinput2::XInput2,
 ) -> Result<Vec<(i32, i32, String)>> {
     let mut count = 0;
-    let ptr = unsafe { (xi2.XIQueryDevice)(display, x11::xinput2::XIAllDevices, &mut count) };
+    let ptr = unsafe { x11::xinput2::XIQueryDevice(display, x11::xinput2::XIAllDevices, &mut count) };
     if ptr.is_null() {
         bail!("XIQueryDevice returned null");
     }
@@ -79,7 +78,7 @@ fn xi2_query_devices(
         };
         out.push((info.deviceid, info._use, name));
     }
-    unsafe { (xi2.XIFreeDeviceInfo)(ptr) };
+    unsafe { x11::xinput2::XIFreeDeviceInfo(ptr) };
     Ok(out)
 }
 
@@ -89,10 +88,9 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     }
 
     let display = open_display()?;
-    let xi2 = x11::xinput2::XInput2::open().map_err(|_| anyhow!("failed to open libXi XI2 bindings"))?;
     let mut major = 2;
     let mut minor = 3;
-    let rc = unsafe { (xi2.XIQueryVersion)(display, &mut major, &mut minor) };
+    let rc = unsafe { x11::xinput2::XIQueryVersion(display, &mut major, &mut minor) };
     if rc != 0 {
         unsafe { x11::xlib::XCloseDisplay(display) };
         bail!("XIQueryVersion failed with status {rc}");
@@ -108,7 +106,7 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
         (*add).send_core = 1;
         (*add).enable = 1;
     }
-    let rc = unsafe { (xi2.XIChangeHierarchy)(display, &mut change, 1) };
+    let rc = unsafe { x11::xinput2::XIChangeHierarchy(display, &mut change, 1) };
     unsafe {
         x11::xlib::XSync(display, 0);
     }
@@ -117,7 +115,7 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
         bail!("XIChangeHierarchy(XIAddMaster) failed with status {rc}");
     }
 
-    let devices = xi2_query_devices(display, &xi2)?;
+    let devices = xi2_query_devices(display)?;
     let mut pointer_id = None;
     let mut keyboard_id = None;
     for (device_id, use_, device_name) in devices {
@@ -148,24 +146,21 @@ fn with_open_pointer_device<T>(
     cursor_id: &str,
     f: impl FnOnce(
         *mut x11::xlib::Display,
-        &x11::xtest::Xf86vmode,
         *mut x11::xinput::XDevice,
         MasterPointerIds,
     ) -> Result<T>,
 ) -> Result<T> {
     let ids = ensure_master_pointer(cursor_id)?;
     let display = open_display()?;
-    let xinput = x11::xinput::XInput::open().map_err(|_| anyhow!("failed to open libXi XInput bindings"))?;
-    let xtest = x11::xtest::Xf86vmode::open().map_err(|_| anyhow!("failed to open libXtst bindings"))?;
-    let device = unsafe { (xinput.XOpenDevice)(display, ids.pointer_id as u64) };
+    let device = unsafe { x11::xinput::XOpenDevice(display, ids.pointer_id as u64) };
     if device.is_null() {
         unsafe { x11::xlib::XCloseDisplay(display) };
         bail!("XOpenDevice failed for master pointer {}", ids.pointer_id);
     }
 
-    let result = f(display, &xtest, device, ids);
+    let result = f(display, device, ids);
     unsafe {
-        (xinput.XCloseDevice)(display, device);
+        x11::xinput::XCloseDevice(display, device);
         x11::xlib::XCloseDisplay(display);
     }
     result
@@ -173,13 +168,12 @@ fn with_open_pointer_device<T>(
 
 fn fake_device_motion(
     display: *mut x11::xlib::Display,
-    xtest: &x11::xtest::Xf86vmode,
     device: *mut x11::xinput::XDevice,
     x: i32,
     y: i32,
 ) -> Result<()> {
     let mut axes = [x, y];
-    let rc = unsafe { (xtest.XTestFakeDeviceMotionEvent)(display, device, 0, 0, axes.as_mut_ptr(), 2, 0) };
+    let rc = unsafe { x11::xtest::XTestFakeDeviceMotionEvent(display, device, 0, 0, axes.as_mut_ptr(), 2, 0) };
     if rc == 0 {
         bail!("XTestFakeDeviceMotionEvent failed");
     }
@@ -191,13 +185,12 @@ fn fake_device_motion(
 
 fn fake_device_button(
     display: *mut x11::xlib::Display,
-    xtest: &x11::xtest::Xf86vmode,
     device: *mut x11::xinput::XDevice,
     button: u8,
     press: bool,
 ) -> Result<()> {
     let rc = unsafe {
-        (xtest.XTestFakeDeviceButtonEvent)(
+        x11::xtest::XTestFakeDeviceButtonEvent(
             display,
             device,
             button as u32,
@@ -223,13 +216,13 @@ pub fn send_parallel_virtual_pointer_drags(
     let mut threads = Vec::with_capacity(drags.len());
     for (cursor_id, drag) in drags.iter().cloned() {
         threads.push(std::thread::spawn(move || -> Result<()> {
-            with_open_pointer_device(&cursor_id, |display, xtest, device, _ids| {
+            with_open_pointer_device(&cursor_id, |display, device, _ids| {
                 let now = std::time::Instant::now();
                 if start_at > now {
                     std::thread::sleep(start_at - now);
                 }
-                fake_device_motion(display, xtest, device, drag.from_x, drag.from_y)?;
-                fake_device_button(display, xtest, device, drag.button, true)?;
+                fake_device_motion(display, device, drag.from_x, drag.from_y)?;
+                fake_device_button(display, device, drag.button, true)?;
 
                 let steps = drag.steps.max(1);
                 let step_delay_ms = if steps > 1 {
@@ -241,12 +234,12 @@ pub fn send_parallel_virtual_pointer_drags(
                     let t = i as f64 / steps as f64;
                     let ix = drag.from_x + ((drag.to_x - drag.from_x) as f64 * t).round() as i32;
                     let iy = drag.from_y + ((drag.to_y - drag.from_y) as f64 * t).round() as i32;
-                    fake_device_motion(display, xtest, device, ix, iy)?;
+                    fake_device_motion(display, device, ix, iy)?;
                     if step_delay_ms > 0 {
                         std::thread::sleep(Duration::from_millis(step_delay_ms));
                     }
                 }
-                fake_device_button(display, xtest, device, drag.button, false)?;
+                fake_device_button(display, device, drag.button, false)?;
                 Ok(())
             })
         }));

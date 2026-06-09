@@ -2157,7 +2157,8 @@ impl Tool for ParallelMouseDragTool {
             ));
         }
 
-        let result = tokio::task::spawn_blocking(move || crate::input::send_parallel_virtual_pointer_drags(&drags)).await;
+        let drags_for_task = drags.clone();
+        let result = tokio::task::spawn_blocking(move || crate::input::send_parallel_virtual_pointer_drags(&drags_for_task)).await;
         match result {
             Ok(Ok(())) => {
                 for (session, drag) in &drags {

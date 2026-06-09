@@ -878,6 +878,10 @@ class VM {
         // Use provided networkMode, falling back to config value
         let effectiveNetworkMode = networkMode ?? vmDirContext.config.networkMode
 
+        guard let macAddress = vmDirContext.config.macAddress else {
+            throw VMError.notInitialized(vmDirContext.name)
+        }
+
         return VMVirtualizationServiceContext(
             cpuCount: cpuCount,
             memorySize: memorySize,
@@ -886,7 +890,7 @@ class VM {
             mount: mount,
             hardwareModel: vmDirContext.config.hardwareModel,
             machineIdentifier: vmDirContext.config.machineIdentifier,
-            macAddress: vmDirContext.config.macAddress!,
+            macAddress: macAddress,
             diskPath: vmDirContext.diskPath,
             nvramPath: vmDirContext.nvramPath,
             recoveryMode: recoveryMode,

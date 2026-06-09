@@ -40,7 +40,7 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
       console.error('Error copying markdown:', error);
 
       try {
-        const urlWithUtm = `https://cua.ai${pageUrl}?utm_source=cua.ai/docs`;
+        const urlWithUtm = `https://cua.ai/docs${pageUrl}?utm_source=cua.ai/docs`;
         await navigator.clipboard.writeText(urlWithUtm);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -76,7 +76,7 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
       page_title: pageTitle,
     });
 
-    const docUrl = `https://cua.ai${pageUrl}?utm_source=cua.ai/docs`;
+    const docUrl = `https://cua.ai/docs${pageUrl}?utm_source=cua.ai/docs`;
     const prompt = `I need help understanding this cua.ai documentation page: "${pageTitle}". Please read and help me with: ${docUrl}`;
     const chatgptUrl = `https://chatgpt.com/?q=${encodeURIComponent(prompt)}`;
     window.open(chatgptUrl, '_blank', 'noopener,noreferrer');
@@ -88,7 +88,7 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
       page_title: pageTitle,
     });
 
-    const docUrl = `https://cua.ai${pageUrl}?utm_source=cua.ai/docs`;
+    const docUrl = `https://cua.ai/docs${pageUrl}?utm_source=cua.ai/docs`;
     const prompt = `I need help understanding this cua.ai documentation page: "${pageTitle}". Please read and help me with: ${docUrl}`;
     const claudeUrl = `https://claude.ai/new?q=${encodeURIComponent(prompt)}`;
     window.open(claudeUrl, '_blank', 'noopener,noreferrer');

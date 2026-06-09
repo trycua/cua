@@ -238,7 +238,7 @@ pub fn run_on_thread() {
     let cfg = {
         let guard = RENDER.lock().unwrap();
         match &*guard {
-            Some(rs) => rs.core.cfg.clone(),
+            Some(map) => map.template.clone(),
             None => return,
         }
     };

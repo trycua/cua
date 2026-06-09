@@ -375,6 +375,30 @@ class CloudTransport(Transport):
             body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
         else:
             body["configuration"] = "small"
+
+        # User-defined Docker registry image support.
+        # When Image.from_registry("myorg/myimage:tag") is used, pass the
+        # registry ref as dockerImage and the image kind as instanceType.
+        # kind="vm"        → KubeVirt VMI   (containerDisk)
+        # kind="container" → gVisor/Incus   (spec.image)
+        #
+        # Priority order for instanceType:
+        #   1. _runtime_hint (set via image.runtime("qemu/cloud") / "oci/cloud")
+        #   2. image.kind ("vm" | "container")
+        #   3. default "vm"
+        registry_ref = getattr(self._image, "_registry", None)
+        if registry_ref:
+            body["dockerImage"] = registry_ref
+            runtime_hint = getattr(self._image, "_runtime_hint", None)
+            if runtime_hint:
+                # "qemu/cloud" → "vm", "oci/cloud" → "container"
+                engine = runtime_hint.split("/", 1)[0]
+                instance_type = "vm" if engine == "qemu" else "container"
+            else:
+                # Fall back to image.kind, default "vm"
+                instance_type = getattr(self._image, "kind", None) or "vm"
+            body["instanceType"] = instance_type
+
         resp = await self._post_with_retry("/v1/vms", body)
         resp.raise_for_status()
         return resp.json()
@@ -388,10 +412,12 @@ class CloudTransport(Transport):
                 return resp
             if attempt == _CREATE_MAX_RETRIES - 1:
                 break
-            delay = _CREATE_RETRY_BASE_S * (2 ** attempt)
+            delay = _CREATE_RETRY_BASE_S * (2**attempt)
             logger.warning(
                 "No sandbox capacity (503), retrying in %.1fs (attempt %d/%d)",
-                delay, attempt + 1, _CREATE_MAX_RETRIES,
+                delay,
+                attempt + 1,
+                _CREATE_MAX_RETRIES,
             )
             await asyncio.sleep(delay)
         return resp  # return last 503 response, caller will raise_for_status

@@ -54,14 +54,20 @@ def _parse_image(image_str: str, vm: bool = False):
     """
     from cua_sandbox import Image
 
-    # Registry reference: contains '/' or starts with a known registry hostname
+    # Registry reference: contains '/' or starts with a known registry hostname.
+    # Apply a runtime hint so instanceType is explicit rather than inferred:
+    #   --vm  → "qemu/cloud"  (KubeVirt VMI)
+    #   default → "oci/cloud" (gVisor container)
+    def _with_hint(img: Image) -> Image:
+        return img.runtime("qemu/cloud" if vm else "oci/cloud")
+
     if "/" in image_str:
         host = image_str.split("/")[0]
         if "." in host or host in _REGISTRY_HOSTNAMES:
-            return Image.from_registry(image_str)
+            return _with_hint(Image.from_registry(image_str))
     for rh in _REGISTRY_HOSTNAMES:
         if image_str.startswith(rh):
-            return Image.from_registry(image_str)
+            return _with_hint(Image.from_registry(image_str))
 
     # Split on ':'
     parts = image_str.split(":", 1)
@@ -86,8 +92,8 @@ def _parse_image(image_str: str, vm: bool = False):
         version = tag or "14"
         return Image.android(version)
 
-    # Unknown — try registry
-    return Image.from_registry(image_str)
+    # Unknown — treat as registry ref with explicit runtime hint
+    return _with_hint(Image.from_registry(image_str))
 
 
 # ---------------------------------------------------------------------------

@@ -30,3 +30,4 @@ libc = "0.2"
 # typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
 # re-exports the bus types we need (fdo::DBusProxy for pid resolution).
 atspi = { version = "0.30", features = ["tokio", "zbus"] }
+evdev = "0.12"

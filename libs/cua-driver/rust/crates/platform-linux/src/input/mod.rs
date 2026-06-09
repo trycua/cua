@@ -16,9 +16,12 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
+use evdev::uinput::VirtualDevice;
+use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
@@ -28,6 +31,7 @@ const KEY_DELAY_MS: u64 = 10;
 
 #[derive(Clone, Copy, Debug)]
 pub struct VirtualPointerDrag {
+    pub target_window: u64,
     pub button: u8,
     pub from_x: i32,
     pub from_y: i32,
@@ -41,19 +45,37 @@ pub struct VirtualPointerDrag {
 struct MasterPointerIds {
     pointer_id: i32,
     keyboard_id: i32,
-    xtest_pointer_id: i32,
-    xtest_keyboard_id: i32,
+    slave_pointer_id: i32,
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
+static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> = OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
+static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>> {
+    UINPUT_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn master_pointer_name(cursor_id: &str) -> String {
-    format!("CUA {cursor_id}")
+    let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("CUA {cursor_id} mp-{}-{nonce}", std::process::id())
+}
+
+fn slave_pointer_name(master_name: &str) -> String {
+    format!("{master_name} uinput pointer")
+}
+
+fn master_pointer_device_name(master_name: &str) -> String {
+    format!("{master_name} pointer")
+}
+
+fn master_keyboard_device_name(master_name: &str) -> String {
+    format!("{master_name} keyboard")
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
@@ -202,37 +224,37 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     let devices = xi2_query_devices(display)?;
     let mut pointer_id = None;
     let mut keyboard_id = None;
-    let mut xtest_pointer_id = None;
-    let mut xtest_keyboard_id = None;
+    let pointer_name = master_pointer_device_name(&base);
+    let keyboard_name = master_keyboard_device_name(&base);
     for (device_id, use_, device_name) in devices {
-        if !device_name.contains(&base) {
-            continue;
-        }
-        if use_ == x11::xinput2::XIMasterPointer {
+        if use_ == x11::xinput2::XIMasterPointer && device_name == pointer_name {
             pointer_id = Some(device_id);
-        } else if use_ == x11::xinput2::XIMasterKeyboard {
+        } else if use_ == x11::xinput2::XIMasterKeyboard && device_name == keyboard_name {
             keyboard_id = Some(device_id);
-        } else if use_ == x11::xinput2::XISlavePointer && device_name.contains("XTEST") {
-            xtest_pointer_id = Some(device_id);
-        } else if use_ == x11::xinput2::XISlaveKeyboard && device_name.contains("XTEST") {
-            xtest_keyboard_id = Some(device_id);
         }
     }
+
+    let pointer_id = pointer_id.ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?;
+    let keyboard_id = keyboard_id.ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
+
+    let device_name = slave_pointer_name(&base);
+    let uinput_device = create_uinput_pointer(&device_name)?;
+    let slave_pointer_id = wait_for_slave_pointer_id(display, &device_name)?;
+    attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
+    set_flat_pointer_accel(display, slave_pointer_id);
     unsafe { x11::xlib::XCloseDisplay(display) };
 
-    let ids = MasterPointerIds {
-        pointer_id: pointer_id.ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?,
-        keyboard_id: keyboard_id.ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?,
-        xtest_pointer_id: xtest_pointer_id
-            .ok_or_else(|| anyhow!("failed to locate created XTEST slave pointer for '{cursor_id}'"))?,
-        xtest_keyboard_id: xtest_keyboard_id
-            .ok_or_else(|| anyhow!("failed to locate created XTEST slave keyboard for '{cursor_id}'"))?,
-    };
+    let ids = MasterPointerIds { pointer_id, keyboard_id, slave_pointer_id };
     mpx_pointers().lock().unwrap().insert(cursor_id.to_owned(), ids);
+    uinput_pointers()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), Arc::new(Mutex::new(uinput_device)));
     Ok(ids)
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
+    uinput_pointers().lock().unwrap().remove(cursor_id);
     let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
         return;
     };
@@ -275,74 +297,193 @@ pub fn forget_master_pointer(cursor_id: &str) {
     }
 }
 
-fn with_open_pointer_device<T>(
-    cursor_id: &str,
-    f: impl FnOnce(
-        *mut x11::xlib::Display,
-        *mut x11::xinput::XDevice,
-        MasterPointerIds,
-    ) -> Result<T>,
-) -> Result<T> {
-    let ids = ensure_master_pointer(cursor_id)?;
-    let display = open_display()?;
-    let device = unsafe { x11::xinput::XOpenDevice(display, ids.xtest_pointer_id as u64) };
-    if device.is_null() {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        bail!(
-            "XOpenDevice failed for XTEST slave pointer {} (master pointer {})",
-            ids.xtest_pointer_id,
-            ids.pointer_id
-        );
-    }
+fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
+    let mut keys = AttributeSet::<Key>::new();
+    keys.insert(Key::BTN_LEFT);
+    keys.insert(Key::BTN_RIGHT);
+    keys.insert(Key::BTN_MIDDLE);
 
-    let result = f(display, device, ids);
-    unsafe {
-        x11::xinput::XCloseDevice(display, device);
-        x11::xlib::XCloseDisplay(display);
-    }
-    result
+    let mut rel_axes = AttributeSet::<RelativeAxisType>::new();
+    rel_axes.insert(RelativeAxisType::REL_X);
+    rel_axes.insert(RelativeAxisType::REL_Y);
+    rel_axes.insert(RelativeAxisType::REL_WHEEL);
+
+    Ok(
+        evdev::uinput::VirtualDeviceBuilder::new()?
+            .name(name)
+            .with_keys(&keys)?
+            .with_relative_axes(&rel_axes)?
+            .build()?,
+    )
 }
 
-fn fake_device_motion(
-    display: *mut x11::xlib::Display,
-    device: *mut x11::xinput::XDevice,
-    x: i32,
-    y: i32,
-) -> Result<()> {
-    let mut axes = [x, y];
-    let rc = unsafe { x11::xtest::XTestFakeDeviceMotionEvent(display, device, 0, 0, axes.as_mut_ptr(), 2, 0) };
-    if rc == 0 {
-        bail!("XTestFakeDeviceMotionEvent failed");
+fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str) -> Result<i32> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        for (device_id, use_, seen_name) in xi2_query_devices(display)? {
+            if use_ == x11::xinput2::XISlavePointer && seen_name == device_name {
+                return Ok(device_id);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!("timed out waiting for X input slave pointer '{device_name}'");
+        }
+        sleep(Duration::from_millis(50));
     }
+}
+
+fn attach_slave_to_master(display: *mut x11::xlib::Display, slave_pointer_id: i32, master_pointer_id: i32) -> Result<()> {
+    let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     unsafe {
-        x11::xlib::XFlush(display);
+        let attach = change.attach();
+        (*attach)._type = x11::xinput2::XIAttachSlave;
+        (*attach).deviceid = slave_pointer_id;
+        (*attach).new_master = master_pointer_id;
+    }
+    let rc = unsafe { x11::xinput2::XIChangeHierarchy(display, &mut change, 1) };
+    unsafe { x11::xlib::XSync(display, 0) };
+    if rc != 0 {
+        bail!("XIChangeHierarchy(XIAttachSlave) failed with status {rc}");
     }
     Ok(())
 }
 
-fn fake_device_button(
-    display: *mut x11::xlib::Display,
-    device: *mut x11::xinput::XDevice,
-    button: u8,
-    press: bool,
-) -> Result<()> {
-    let rc = unsafe {
-        x11::xtest::XTestFakeDeviceButtonEvent(
+fn set_flat_pointer_accel(display: *mut x11::xlib::Display, slave_pointer_id: i32) {
+    // Pin libinput's accel profile to flat so relative deltas map 1:1 onto
+    // cursor movement — the default adaptive profile rescales small deltas
+    // and makes drag endpoints drift off-target by a few pixels.
+    // Best-effort: the property only exists under xf86-input-libinput.
+    unsafe {
+        let prop = x11::xlib::XInternAtom(
             display,
-            device,
-            button as u32,
-            if press { 1 } else { 0 },
-            ptr::null_mut(),
+            c"libinput Accel Profile Enabled".as_ptr(),
+            x11::xlib::True,
+        );
+        if prop == 0 {
+            return;
+        }
+        let mut type_ret: x11::xlib::Atom = 0;
+        let mut format_ret: std::os::raw::c_int = 0;
+        let mut num_items: std::os::raw::c_ulong = 0;
+        let mut bytes_after: std::os::raw::c_ulong = 0;
+        let mut data: *mut std::os::raw::c_uchar = std::ptr::null_mut();
+        let rc = x11::xinput2::XIGetProperty(
+            display,
+            slave_pointer_id,
+            prop,
+            0,
+            16,
+            x11::xlib::False,
+            x11::xlib::AnyPropertyType as x11::xlib::Atom,
+            &mut type_ret,
+            &mut format_ret,
+            &mut num_items,
+            &mut bytes_after,
+            &mut data,
+        );
+        if rc != x11::xlib::Success as i32 || data.is_null() {
+            return;
+        }
+        // Profile order is (adaptive, flat[, custom]); enable flat only.
+        if format_ret == 8 && (2..=8).contains(&num_items) {
+            let mut values = vec![0u8; num_items as usize];
+            values[1] = 1;
+            x11::xinput2::XIChangeProperty(
+                display,
+                slave_pointer_id,
+                prop,
+                type_ret,
+                8,
+                x11::xlib::PropModeReplace,
+                values.as_mut_ptr(),
+                num_items as std::os::raw::c_int,
+            );
+            x11::xlib::XSync(display, 0);
+        }
+        x11::xlib::XFree(data as *mut _);
+    }
+}
+
+fn warp_master_pointer(display: *mut x11::xlib::Display, ids: MasterPointerIds, x: i32, y: i32) -> Result<()> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let rc = unsafe {
+        x11::xinput2::XIWarpPointer(
+            display,
+            ids.pointer_id,
+            0,
+            root,
+            0.0,
+            0.0,
             0,
             0,
+            x as f64,
+            y as f64,
         )
     };
-    if rc == 0 {
-        bail!("XTestFakeDeviceButtonEvent failed");
+    // XSync (not XFlush): the button press that follows is emitted through
+    // uinput on a separate kernel pipeline, and races ahead of a merely
+    // queued warp request. Once XSync returns the server has executed the
+    // warp, so the press lands at the warped position.
+    unsafe { x11::xlib::XSync(display, 0) };
+    if rc != 0 {
+        bail!("XIWarpPointer failed with status {rc}");
     }
-    unsafe {
-        x11::xlib::XFlush(display);
+    Ok(())
+}
+
+fn focus_master_pointer_target(
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    target_window: x11::xlib::Window,
+) -> Result<()> {
+    let rc = unsafe { x11::xinput2::XISetClientPointer(display, target_window, ids.pointer_id) };
+    if rc != 0 {
+        bail!("XISetClientPointer failed with status {rc}");
     }
+
+    let rc = unsafe {
+        x11::xinput2::XISetFocus(
+            display,
+            ids.keyboard_id,
+            target_window,
+            x11::xlib::CurrentTime,
+        )
+    };
+    if rc != 0 {
+        bail!("XISetFocus failed with status {rc}");
+    }
+
+    unsafe { x11::xlib::XFlush(display) };
+    Ok(())
+}
+
+fn button_code(button: u8) -> Result<Key> {
+    match button {
+        1 => Ok(Key::BTN_LEFT),
+        2 => Ok(Key::BTN_MIDDLE),
+        3 => Ok(Key::BTN_RIGHT),
+        _ => bail!("unsupported button {button} for uinput pointer"),
+    }
+}
+
+fn emit_button(device: &mut VirtualDevice, button: u8, press: bool) -> Result<()> {
+    let code = button_code(button)?;
+    device.emit(&[InputEvent::new(EventType::KEY, code.0, if press { 1 } else { 0 })])?;
+    Ok(())
+}
+
+fn emit_relative_motion(device: &mut VirtualDevice, dx: i32, dy: i32) -> Result<()> {
+    let mut events = Vec::with_capacity(2);
+    if dx != 0 {
+        events.push(InputEvent::new(EventType::RELATIVE, RelativeAxisType::REL_X.0, dx));
+    }
+    if dy != 0 {
+        events.push(InputEvent::new(EventType::RELATIVE, RelativeAxisType::REL_Y.0, dy));
+    }
+    if events.is_empty() {
+        return Ok(());
+    }
+    device.emit(&events)?;
     Ok(())
 }
 
@@ -351,45 +492,119 @@ pub fn send_parallel_virtual_pointer_drags(
 ) -> Result<()> {
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
-    unsafe { x11::xlib::XCloseDisplay(display) };
+
+    struct ActiveDrag {
+        ids: MasterPointerIds,
+        device: Arc<Mutex<VirtualDevice>>,
+        drag: VirtualPointerDrag,
+        steps: usize,
+        step_delay: Duration,
+        current_step: usize,
+        next_at: std::time::Instant,
+        last_x: i32,
+        last_y: i32,
+    }
 
     let start_at = std::time::Instant::now() + Duration::from_millis(120);
-    let mut threads = Vec::with_capacity(drags.len());
-    for (cursor_id, drag) in drags.iter().cloned() {
-        threads.push(std::thread::spawn(move || -> Result<()> {
-            with_open_pointer_device(&cursor_id, |display, device, _ids| {
-                let now = std::time::Instant::now();
-                if start_at > now {
-                    std::thread::sleep(start_at - now);
-                }
-                fake_device_motion(display, device, drag.from_x, drag.from_y)?;
-                fake_device_button(display, device, drag.button, true)?;
+    let mut active = Vec::with_capacity(drags.len());
 
-                let steps = drag.steps.max(1);
-                let step_delay_ms = if steps > 1 {
-                    drag.duration_ms / steps as u64
+    let result = (|| -> Result<()> {
+        for (cursor_id, drag) in drags {
+            let ids = ensure_master_pointer(cursor_id)?;
+            let device = uinput_pointers()
+                .lock()
+                .unwrap()
+                .get(cursor_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
+            active.push(ActiveDrag {
+                ids,
+                device,
+                drag: *drag,
+                steps: drag.steps.max(1),
+                step_delay: if drag.steps.max(1) > 1 {
+                    Duration::from_millis(drag.duration_ms / drag.steps.max(1) as u64)
                 } else {
-                    drag.duration_ms
-                };
-                for i in 1..=steps {
-                    let t = i as f64 / steps as f64;
-                    let ix = drag.from_x + ((drag.to_x - drag.from_x) as f64 * t).round() as i32;
-                    let iy = drag.from_y + ((drag.to_y - drag.from_y) as f64 * t).round() as i32;
-                    fake_device_motion(display, device, ix, iy)?;
-                    if step_delay_ms > 0 {
-                        std::thread::sleep(Duration::from_millis(step_delay_ms));
+                    Duration::from_millis(drag.duration_ms)
+                },
+                current_step: 0,
+                next_at: start_at,
+                last_x: drag.from_x,
+                last_y: drag.from_y,
+            });
+        }
+
+        let now = std::time::Instant::now();
+        if start_at > now {
+            std::thread::sleep(start_at - now);
+        }
+
+        for item in &active {
+            focus_master_pointer_target(
+                display,
+                item.ids,
+                item.drag.target_window as x11::xlib::Window,
+            )?;
+            warp_master_pointer(display, item.ids, item.drag.from_x, item.drag.from_y)?;
+            let mut device = item.device.lock().unwrap();
+            emit_button(&mut device, item.drag.button, true)?;
+        }
+
+        while active.iter().any(|item| item.current_step < item.steps) {
+            let now = std::time::Instant::now();
+            let mut advanced = false;
+            let mut next_deadline = None;
+
+            for item in &mut active {
+                if item.current_step >= item.steps {
+                    continue;
+                }
+                if now >= item.next_at {
+                    item.current_step += 1;
+                    let t = item.current_step as f64 / item.steps as f64;
+                    let ix = item.drag.from_x
+                        + ((item.drag.to_x - item.drag.from_x) as f64 * t).round() as i32;
+                    let iy = item.drag.from_y
+                        + ((item.drag.to_y - item.drag.from_y) as f64 * t).round() as i32;
+                    let dx = ix - item.last_x;
+                    let dy = iy - item.last_y;
+                    if dx != 0 || dy != 0 {
+                        let mut device = item.device.lock().unwrap();
+                        emit_relative_motion(&mut device, dx, dy)?;
+                    }
+                    item.last_x = ix;
+                    item.last_y = iy;
+                    item.next_at = now + item.step_delay;
+                    advanced = true;
+                }
+                if item.current_step < item.steps {
+                    next_deadline = Some(match next_deadline {
+                        Some(deadline) => std::cmp::min(deadline, item.next_at),
+                        None => item.next_at,
+                    });
+                }
+            }
+
+            if !advanced {
+                if let Some(deadline) = next_deadline {
+                    let now = std::time::Instant::now();
+                    if deadline > now {
+                        std::thread::sleep(deadline - now);
                     }
                 }
-                fake_device_button(display, device, drag.button, false)?;
-                Ok(())
-            })
-        }));
+            }
+        }
+
+        for item in &active {
+            let mut device = item.device.lock().unwrap();
+            emit_button(&mut device, item.drag.button, false)?;
+        }
+        Ok(())
+    })();
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
     }
-    for thread in threads {
-        let res = thread.join().map_err(|_| anyhow!("parallel virtual pointer drag thread panicked"))?;
-        res?;
-    }
-    Ok(())
+    result
 }
 
 #[derive(Clone, Copy, Debug)]

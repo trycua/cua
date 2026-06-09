@@ -368,17 +368,17 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     ).ok();
 
     // Make the window fully click-through using the Shape extension (empty input region).
-    // This is the X11 equivalent of WS_EX_TRANSPARENT on Windows.
-    let empty_region_pixmap = conn.generate_id().unwrap();
-    conn.create_pixmap(1, empty_region_pixmap, root, 1, 1).ok();
-    conn.shape_mask(
+    // This is the X11 equivalent of WS_EX_TRANSPARENT on Windows. Note that
+    // ShapeMask with a None pixmap would *reset* the input shape to the full
+    // window — an empty rectangle list is how an empty region is expressed.
+    conn.shape_rectangles(
         SO::SET,
         SK::INPUT,
+        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
         win,
         0, 0,
-        x11rb::NONE,
+        &[],
     ).ok();
-    conn.free_pixmap(empty_region_pixmap).ok();
 
     conn.map_window(win).ok();
     conn.flush().ok();

@@ -2152,6 +2152,7 @@ impl Tool for ParallelMouseDragTool {
             drags.push((
                 session.to_owned(),
                 crate::input::VirtualPointerDrag {
+                    target_window: xid,
                     button,
                     from_x: from.0.round() as i32,
                     from_y: from.1.round() as i32,

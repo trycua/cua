@@ -12,11 +12,13 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import re
 import time
 from contextlib import contextmanager
 from functools import wraps
 from threading import Lock
 from typing import Any, Callable, Dict, Generator, Optional, TypeVar, Union
+from urllib.parse import urlparse
 
 logger = logging.getLogger("core.telemetry.otel")
 
@@ -43,6 +45,11 @@ _operations_total: Optional[Any] = None  # Counter
 _errors_total: Optional[Any] = None  # Counter
 _concurrent_operations: Optional[Any] = None  # UpDownCounter
 _tokens_total: Optional[Any] = None  # Counter
+
+# HTTP stability metrics (lazily initialized)
+_http_request_duration: Optional[Any] = None  # Histogram
+_http_requests_total: Optional[Any] = None  # Counter
+_http_errors_total: Optional[Any] = None  # Counter
 
 
 def is_otel_enabled() -> bool:
@@ -91,6 +98,7 @@ def _initialize_otel() -> bool:
     global _initialized, _init_failed, _meter, _tracer, _meter_provider, _tracer_provider
     global _operation_duration, _operations_total, _errors_total
     global _concurrent_operations, _tokens_total
+    global _http_request_duration, _http_requests_total, _http_errors_total
 
     if _initialized:
         return True
@@ -185,6 +193,25 @@ def _initialize_otel() -> bool:
             _tokens_total = _meter.create_counter(
                 name="cua_sdk_tokens_total",
                 description="Total tokens consumed",
+                unit="1",
+            )
+
+            # HTTP stability metrics
+            _http_request_duration = _meter.create_histogram(
+                name="cua_sdk_http_request_duration_seconds",
+                description="Duration of HTTP requests to CUA APIs in seconds",
+                unit="s",
+            )
+
+            _http_requests_total = _meter.create_counter(
+                name="cua_sdk_http_requests_total",
+                description="Total number of HTTP requests to CUA APIs",
+                unit="1",
+            )
+
+            _http_errors_total = _meter.create_counter(
+                name="cua_sdk_http_errors_total",
+                description="Total number of failed HTTP requests to CUA APIs",
                 unit="1",
             )
 
@@ -341,6 +368,66 @@ def record_tokens(
                 )
     except Exception as e:
         logger.debug(f"Failed to record token metric: {e}")
+
+
+# Regex patterns for normalizing API paths to low-cardinality route templates.
+# Dynamic segments (e.g. VM names) are replaced with placeholders.
+_ROUTE_NORMALIZATION_PATTERNS = [
+    (re.compile(r"/v1/vms/[^/]+"), "/v1/vms/{name}"),
+]
+
+
+def _normalize_path(path: str) -> str:
+    """Normalize a URL path to a low-cardinality route template.
+
+    Replaces dynamic path segments (e.g. VM names) with placeholders to
+    prevent metric cardinality explosion per OpenTelemetry best practices.
+    """
+    for pattern, replacement in _ROUTE_NORMALIZATION_PATTERNS:
+        path = pattern.sub(replacement, path)
+    return path
+
+
+def record_http_request(
+    method: str,
+    url: str,
+    status_code: int,
+    duration_seconds: float,
+    error: Optional[str] = None,
+) -> None:
+    """Record an HTTP request metric for stability tracking.
+
+    Args:
+        method: HTTP method (GET, POST, etc.)
+        url: Full request URL (path is normalized to a route template)
+        status_code: HTTP response status code (0 if connection error)
+        duration_seconds: Request duration in seconds
+        error: Error type name if the request failed with an exception
+    """
+    if not _initialize_otel():
+        return
+
+    parsed = urlparse(url)
+    route = _normalize_path(parsed.path or "/")
+
+    attributes: Dict[str, str] = {
+        "http.method": method,
+        "http.route": route,
+        "http.status_code": str(status_code),
+    }
+    if error:
+        attributes["error.type"] = error
+
+    try:
+        if _http_request_duration is not None:
+            _http_request_duration.record(duration_seconds, attributes)
+        if _http_requests_total is not None:
+            _http_requests_total.add(1, attributes)
+        if error or status_code >= 400:
+            if _http_errors_total is not None:
+                _http_errors_total.add(1, attributes)
+    except Exception as e:
+        logger.debug(f"Failed to record HTTP request metric: {e}")
 
 
 @contextmanager

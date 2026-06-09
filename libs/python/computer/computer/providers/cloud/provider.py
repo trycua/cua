@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from cua_core.http import cua_version_headers
+from cua_core.telemetry.stability import create_trace_config
 
 DEFAULT_API_BASE = os.getenv("CUA_API_BASE", "https://api.cua.ai")
 
@@ -54,6 +55,8 @@ class CloudProvider(BaseVMProvider):
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")
         # Host caching dictionary: {vm_name: host_string}
         self._host_cache: Dict[str, str] = {}
+        # aiohttp trace config for stability metrics
+        self._trace_configs = [create_trace_config()]
 
     def _base_headers(self) -> Dict[str, str]:
         return {
@@ -85,7 +88,7 @@ class CloudProvider(BaseVMProvider):
         url = f"{self.api_base}/v1/vms/{name}"
         headers = self._base_headers()
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trace_configs=self._trace_configs) as session:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status == 404:
                         return {"name": name, "status": "not_found", "api_url": api_url}
@@ -121,7 +124,7 @@ class CloudProvider(BaseVMProvider):
     async def list_vms(self) -> ListVMsResponse:
         url = f"{self.api_base}/v1/vms"
         headers = self._base_headers()
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=self._trace_configs) as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     try:
@@ -181,7 +184,7 @@ class CloudProvider(BaseVMProvider):
         """Start a VM via public API. Returns a minimal status."""
         url = f"{self.api_base}/v1/vms/{name}/start"
         headers = self._base_headers()
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=self._trace_configs) as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status in (200, 201, 202, 204):
                     return {"name": name, "status": "starting"}
@@ -197,7 +200,7 @@ class CloudProvider(BaseVMProvider):
         """Stop a VM via public API."""
         url = f"{self.api_base}/v1/vms/{name}/stop"
         headers = self._base_headers()
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=self._trace_configs) as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status in (200, 202):
                     # Spec says 202 with {"status":"stopping"}
@@ -220,7 +223,7 @@ class CloudProvider(BaseVMProvider):
         """Restart a VM via public API."""
         url = f"{self.api_base}/v1/vms/{name}/restart"
         headers = self._base_headers()
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=self._trace_configs) as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status in (200, 202):
                     # Spec says 202 with {"status":"restarting"}

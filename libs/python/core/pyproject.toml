@@ -12,22 +12,16 @@ authors = [
 ]
 dependencies = [
     "posthog>=3.20.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
 requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
-# OpenTelemetry for operational metrics (Four Golden Signals)
-otel = [
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
-]
-# All telemetry features
-telemetry = [
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
-]
+# Kept for backward compatibility — these are now included by default.
+otel = []
+telemetry = []
 
 [tool.pdm]
 distribution = true

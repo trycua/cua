@@ -45,6 +45,7 @@ struct MasterPointerIds {
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
+static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -55,6 +56,17 @@ fn master_pointer_name(cursor_id: &str) -> String {
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
+    match XLIB_THREADS_READY.get_or_init(|| {
+        let rc = unsafe { x11::xlib::XInitThreads() };
+        if rc == 0 {
+            Err("XInitThreads failed".to_owned())
+        } else {
+            Ok(())
+        }
+    }) {
+        Ok(()) => {}
+        Err(err) => bail!("{err}"),
+    }
     let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
     if display.is_null() {
         bail!("XOpenDisplay returned null");

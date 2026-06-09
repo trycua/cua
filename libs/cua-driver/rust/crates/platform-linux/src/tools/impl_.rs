@@ -2061,6 +2061,137 @@ impl Tool for MouseButtonUpTool {
     }
 }
 
+pub struct ParallelMouseDragTool {
+    state: Arc<ToolState>,
+}
+static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for ParallelMouseDragTool {
+    fn def(&self) -> &ToolDef {
+        PMDRAG_DEF.get_or_init(|| ToolDef {
+            name: "parallel_mouse_drag".into(),
+            description: "Run multiple mouse press-drag-release gestures concurrently via Linux MPX/XI2 virtual master pointers. \
+                Each drag item is executed on its own session-scoped master pointer, allowing true same-window concurrent line draws on X11.".into(),
+            input_schema: json!({"type":"object","required":["drags"],"properties":{
+                "drags":{"type":"array","minItems":2,"items":{"type":"object","required":["session","window_id","from_x","from_y","to_x","to_y"],"properties":{
+                    "session":{"type":"string","description":"Session/cursor id; also keys the virtual master pointer."},
+                    "window_id":{"type":"integer"},
+                    "from_x":{"type":"number"},
+                    "from_y":{"type":"number"},
+                    "to_x":{"type":"number"},
+                    "to_y":{"type":"number"},
+                    "button":{"type":"string","enum":["left","right","middle"],"description":"Default: left."},
+                    "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Default: 500."},
+                    "steps":{"type":"integer","minimum":1,"maximum":300,"description":"Default: 20."}
+                },"additionalProperties":false}}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let Some(items) = args.get("drags").and_then(|v| v.as_array()) else {
+            return ToolResult::error("drags[] is required.");
+        };
+        if items.len() < 2 {
+            return ToolResult::error("parallel_mouse_drag requires at least two drag items.");
+        }
+
+        let mut drags = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(session) = item.get("session").and_then(|v| v.as_str()) else {
+                return ToolResult::error("each drag item requires session.");
+            };
+            let Some(xid) = item.get("window_id").and_then(|v| v.as_u64()) else {
+                return ToolResult::error("each drag item requires window_id.");
+            };
+            let Some(from_x) = item.get("from_x").and_then(|v| v.as_f64()) else {
+                return ToolResult::error("each drag item requires from_x.");
+            };
+            let Some(from_y) = item.get("from_y").and_then(|v| v.as_f64()) else {
+                return ToolResult::error("each drag item requires from_y.");
+            };
+            let Some(to_x) = item.get("to_x").and_then(|v| v.as_f64()) else {
+                return ToolResult::error("each drag item requires to_x.");
+            };
+            let Some(to_y) = item.get("to_y").and_then(|v| v.as_f64()) else {
+                return ToolResult::error("each drag item requires to_y.");
+            };
+
+            let button = parse_mouse_button(item.get("button").and_then(|v| v.as_str()).unwrap_or("left"));
+            let duration_ms = item.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(500);
+            let steps = item.get("steps").and_then(|v| v.as_u64()).unwrap_or(20).max(1) as usize;
+
+            let from = match tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await {
+                Ok(Ok(coords)) => coords,
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            let to = match tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
+                Ok(Ok(coords)) => coords,
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+
+            self.state.cursor_registry.update_position(session, from.0, from.1);
+            crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::PinAbove(xid));
+            crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SnapTo {
+                x: from.0,
+                y: from.1,
+                heading_radians: None,
+            });
+            crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(true));
+
+            drags.push((
+                session.to_owned(),
+                crate::input::VirtualPointerDrag {
+                    button,
+                    from_x: from.0.round() as i32,
+                    from_y: from.1.round() as i32,
+                    to_x: to.0.round() as i32,
+                    to_y: to.1.round() as i32,
+                    duration_ms,
+                    steps,
+                },
+            ));
+        }
+
+        let result = tokio::task::spawn_blocking(move || crate::input::send_parallel_virtual_pointer_drags(&drags)).await;
+        match result {
+            Ok(Ok(())) => {
+                for (session, drag) in &drags {
+                    self.state.cursor_registry.update_position(session, drag.to_x as f64, drag.to_y as f64);
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SnapTo {
+                        x: drag.to_x as f64,
+                        y: drag.to_y as f64,
+                        heading_radians: Some(((drag.to_y - drag.from_y) as f64).atan2((drag.to_x - drag.from_x) as f64)),
+                    });
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::ClickPulse {
+                        x: drag.to_x as f64,
+                        y: drag.to_y as f64,
+                    });
+                }
+                ToolResult::text(format!("✅ Ran {} MPX drag gesture(s) concurrently.", drags.len()))
+                    .with_structured(json!({"count": drags.len()}))
+            }
+            Ok(Err(e)) => {
+                for (session, _) in &drags {
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
+                }
+                ToolResult::error(e.to_string())
+            }
+            Err(e) => {
+                for (session, _) in &drags {
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
+                }
+                ToolResult::error(format!("Task error: {e}"))
+            }
+        }
+    }
+}
+
 // ── get_screen_size ───────────────────────────────────────────────────────────
 
 pub struct GetScreenSizeTool;
@@ -2899,6 +3030,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end.mouse_hold.lock().unwrap().remove(session_id);
+            crate::input::forget_master_pointer(session_id);
         });
     }
     let mut r = ToolRegistry::new();
@@ -2915,6 +3047,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(MouseButtonDownTool { state: state.clone() }));
     r.register(Box::new(MouseDragTool { state: state.clone() }));
     r.register(Box::new(MouseButtonUpTool { state: state.clone() }));
+    r.register(Box::new(ParallelMouseDragTool { state: state.clone() }));
     r.register(Box::new(TypeTextTool));
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));

@@ -11,7 +11,11 @@
 //! them, because XTest delivers to the *focused* window and would break the
 //! no-focus-steal contract.
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
+use std::collections::HashMap;
+use std::ffi::{CStr, CString};
+use std::ptr;
+use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
 use x11rb::connection::Connection;
@@ -20,6 +24,239 @@ use x11rb::rust_connection::RustConnection;
 
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
+
+#[derive(Clone, Copy, Debug)]
+pub struct VirtualPointerDrag {
+    pub button: u8,
+    pub from_x: i32,
+    pub from_y: i32,
+    pub to_x: i32,
+    pub to_y: i32,
+    pub duration_ms: u64,
+    pub steps: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MasterPointerIds {
+    pointer_id: i32,
+    keyboard_id: i32,
+}
+
+static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
+
+fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
+    MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn master_pointer_name(cursor_id: &str) -> String {
+    format!("CUA {cursor_id}")
+}
+
+fn open_display() -> Result<*mut x11::xlib::Display> {
+    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    if display.is_null() {
+        bail!("XOpenDisplay returned null");
+    }
+    Ok(display)
+}
+
+fn xi2_query_devices(
+    display: *mut x11::xlib::Display,
+    xi2: &x11::xinput2::XInput2,
+) -> Result<Vec<(i32, i32, String)>> {
+    let mut count = 0;
+    let ptr = unsafe { (xi2.XIQueryDevice)(display, x11::xinput2::XIAllDevices, &mut count) };
+    if ptr.is_null() {
+        bail!("XIQueryDevice returned null");
+    }
+    let mut out = Vec::new();
+    for i in 0..count {
+        let info = unsafe { *ptr.add(i as usize) };
+        let name = if info.name.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(info.name) }.to_string_lossy().into_owned()
+        };
+        out.push((info.deviceid, info._use, name));
+    }
+    unsafe { (xi2.XIFreeDeviceInfo)(ptr) };
+    Ok(out)
+}
+
+fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
+    if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
+        return Ok(ids);
+    }
+
+    let display = open_display()?;
+    let xi2 = x11::xinput2::XInput2::open().map_err(|_| anyhow!("failed to open libXi XI2 bindings"))?;
+    let mut major = 2;
+    let mut minor = 3;
+    let rc = unsafe { (xi2.XIQueryVersion)(display, &mut major, &mut minor) };
+    if rc != 0 {
+        unsafe { x11::xlib::XCloseDisplay(display) };
+        bail!("XIQueryVersion failed with status {rc}");
+    }
+
+    let base = master_pointer_name(cursor_id);
+    let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
+    let name = CString::new(base.clone())?;
+    unsafe {
+        let add = change.add();
+        (*add)._type = x11::xinput2::XIAddMaster;
+        (*add).name = name.as_ptr() as *mut _;
+        (*add).send_core = 1;
+        (*add).enable = 1;
+    }
+    let rc = unsafe { (xi2.XIChangeHierarchy)(display, &mut change, 1) };
+    unsafe {
+        x11::xlib::XSync(display, 0);
+    }
+    if rc != 0 {
+        unsafe { x11::xlib::XCloseDisplay(display) };
+        bail!("XIChangeHierarchy(XIAddMaster) failed with status {rc}");
+    }
+
+    let devices = xi2_query_devices(display, &xi2)?;
+    let mut pointer_id = None;
+    let mut keyboard_id = None;
+    for (device_id, use_, device_name) in devices {
+        if !device_name.contains(&base) {
+            continue;
+        }
+        if use_ == x11::xinput2::XIMasterPointer {
+            pointer_id = Some(device_id);
+        } else if use_ == x11::xinput2::XIMasterKeyboard {
+            keyboard_id = Some(device_id);
+        }
+    }
+    unsafe { x11::xlib::XCloseDisplay(display) };
+
+    let ids = MasterPointerIds {
+        pointer_id: pointer_id.ok_or_else(|| anyhow!("failed to locate created master pointer for '{cursor_id}'"))?,
+        keyboard_id: keyboard_id.ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?,
+    };
+    mpx_pointers().lock().unwrap().insert(cursor_id.to_owned(), ids);
+    Ok(ids)
+}
+
+pub fn forget_master_pointer(cursor_id: &str) {
+    mpx_pointers().lock().unwrap().remove(cursor_id);
+}
+
+fn with_open_pointer_device<T>(
+    cursor_id: &str,
+    f: impl FnOnce(
+        *mut x11::xlib::Display,
+        &x11::xtest::Xf86vmode,
+        *mut x11::xinput::XDevice,
+        MasterPointerIds,
+    ) -> Result<T>,
+) -> Result<T> {
+    let ids = ensure_master_pointer(cursor_id)?;
+    let display = open_display()?;
+    let xinput = x11::xinput::XInput::open().map_err(|_| anyhow!("failed to open libXi XInput bindings"))?;
+    let xtest = x11::xtest::Xf86vmode::open().map_err(|_| anyhow!("failed to open libXtst bindings"))?;
+    let device = unsafe { (xinput.XOpenDevice)(display, ids.pointer_id as u64) };
+    if device.is_null() {
+        unsafe { x11::xlib::XCloseDisplay(display) };
+        bail!("XOpenDevice failed for master pointer {}", ids.pointer_id);
+    }
+
+    let result = f(display, &xtest, device, ids);
+    unsafe {
+        (xinput.XCloseDevice)(display, device);
+        x11::xlib::XCloseDisplay(display);
+    }
+    result
+}
+
+fn fake_device_motion(
+    display: *mut x11::xlib::Display,
+    xtest: &x11::xtest::Xf86vmode,
+    device: *mut x11::xinput::XDevice,
+    x: i32,
+    y: i32,
+) -> Result<()> {
+    let mut axes = [x, y];
+    let rc = unsafe { (xtest.XTestFakeDeviceMotionEvent)(display, device, 0, 0, axes.as_mut_ptr(), 2, 0) };
+    if rc == 0 {
+        bail!("XTestFakeDeviceMotionEvent failed");
+    }
+    unsafe {
+        x11::xlib::XFlush(display);
+    }
+    Ok(())
+}
+
+fn fake_device_button(
+    display: *mut x11::xlib::Display,
+    xtest: &x11::xtest::Xf86vmode,
+    device: *mut x11::xinput::XDevice,
+    button: u8,
+    press: bool,
+) -> Result<()> {
+    let rc = unsafe {
+        (xtest.XTestFakeDeviceButtonEvent)(
+            display,
+            device,
+            button as u32,
+            if press { 1 } else { 0 },
+            ptr::null_mut(),
+            0,
+            0,
+        )
+    };
+    if rc == 0 {
+        bail!("XTestFakeDeviceButtonEvent failed");
+    }
+    unsafe {
+        x11::xlib::XFlush(display);
+    }
+    Ok(())
+}
+
+pub fn send_parallel_virtual_pointer_drags(
+    drags: &[(String, VirtualPointerDrag)],
+) -> Result<()> {
+    let start_at = std::time::Instant::now() + Duration::from_millis(120);
+    let mut threads = Vec::with_capacity(drags.len());
+    for (cursor_id, drag) in drags.iter().cloned() {
+        threads.push(std::thread::spawn(move || -> Result<()> {
+            with_open_pointer_device(&cursor_id, |display, xtest, device, _ids| {
+                let now = std::time::Instant::now();
+                if start_at > now {
+                    std::thread::sleep(start_at - now);
+                }
+                fake_device_motion(display, xtest, device, drag.from_x, drag.from_y)?;
+                fake_device_button(display, xtest, device, drag.button, true)?;
+
+                let steps = drag.steps.max(1);
+                let step_delay_ms = if steps > 1 {
+                    drag.duration_ms / steps as u64
+                } else {
+                    drag.duration_ms
+                };
+                for i in 1..=steps {
+                    let t = i as f64 / steps as f64;
+                    let ix = drag.from_x + ((drag.to_x - drag.from_x) as f64 * t).round() as i32;
+                    let iy = drag.from_y + ((drag.to_y - drag.from_y) as f64 * t).round() as i32;
+                    fake_device_motion(display, xtest, device, ix, iy)?;
+                    if step_delay_ms > 0 {
+                        std::thread::sleep(Duration::from_millis(step_delay_ms));
+                    }
+                }
+                fake_device_button(display, xtest, device, drag.button, false)?;
+                Ok(())
+            })
+        }));
+    }
+    for thread in threads {
+        let res = thread.join().map_err(|_| anyhow!("parallel virtual pointer drag thread panicked"))?;
+        res?;
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug)]
 struct EventTarget {

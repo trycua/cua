@@ -12,6 +12,10 @@ license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "pywebview>=5.3",
     "aiohttp>=3.9.0",
@@ -24,4 +28,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["bench_ui/"]
-source-includes = ["README.md"]
+source-includes = ["README.md", "LICENSE"]

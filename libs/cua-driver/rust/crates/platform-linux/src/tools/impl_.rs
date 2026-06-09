@@ -65,12 +65,13 @@ pub struct ToolState {
     pub cursor_registry: Arc<CursorRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
-    pub mouse_hold: std::sync::Mutex<Option<MouseHoldState>>,
+    pub mouse_hold: std::sync::Mutex<std::collections::HashMap<String, MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct MouseHoldState {
+    pub cursor_id: String,
     pub pid: u32,
     pub xid: u64,
     pub button: u8,
@@ -85,7 +86,7 @@ impl ToolState {
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
-            mouse_hold: std::sync::Mutex::new(None),
+            mouse_hold: std::sync::Mutex::new(Default::default()),
             config: Arc::new(RwLock::new(DriverConfig::default())),
         })
     }
@@ -592,9 +593,21 @@ fn mouse_button_name(button: u8) -> &'static str {
     }
 }
 
-fn mouse_hold_json(hold: Option<&MouseHoldState>) -> Value {
+fn resolve_cursor_key(args: &Value) -> String {
+    for key in ["session", "cursor_id"] {
+        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
+            if !v.is_empty() {
+                return v.to_owned();
+            }
+        }
+    }
+    "default".to_owned()
+}
+
+fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
     match hold {
         Some(hold) => json!({
+            "cursor_id": cursor_id,
             "held": true,
             "pid": hold.pid,
             "window_id": hold.xid,
@@ -603,6 +616,7 @@ fn mouse_hold_json(hold: Option<&MouseHoldState>) -> Value {
             "y": hold.y,
         }),
         None => json!({
+            "cursor_id": cursor_id,
             "held": false,
             "pid": Value::Null,
             "window_id": Value::Null,
@@ -1552,6 +1566,8 @@ impl Tool for MouseButtonDownTool {
                 Does not release the button; pair with mouse_drag / mouse_button_up. \
                 Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id","x","y"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1565,10 +1581,12 @@ impl Tool for MouseButtonDownTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if self.state.mouse_hold.lock().unwrap().is_some() {
-            let held = self.state.mouse_hold.lock().unwrap().clone();
-            return ToolResult::error("A mouse button is already held. Call mouse_button_up first.")
-                .with_structured(mouse_hold_json(held.as_ref()));
+        let cursor_id = resolve_cursor_key(&args);
+        if let Some(held) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() {
+            return ToolResult::error(format!(
+                "Cursor '{cursor_id}' already has a held mouse button. Call mouse_button_up first."
+            ))
+            .with_structured(mouse_hold_json(&cursor_id, Some(&held)));
         }
 
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
@@ -1601,18 +1619,18 @@ impl Tool for MouseButtonDownTool {
         let result = tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await;
         match result {
             Ok(Ok(())) => {
-                let hold = MouseHoldState { pid, xid, button, x, y };
-                *self.state.mouse_hold.lock().unwrap() = Some(hold.clone());
+                let hold = MouseHoldState { cursor_id: cursor_id.clone(), pid, xid, button, x, y };
+                self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
                 ToolResult::text(format!(
-                    "✅ Held {} button down at ({x:.1}, {y:.1}).",
-                    mouse_button_name(button)
+                    "✅ Cursor '{cursor_id}' held {} button down at ({x:.1}, {y:.1}).",
+                    mouse_button_name(button),
                 ))
-                .with_structured(mouse_hold_json(Some(&hold)))
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
             }
             Ok(Err(e)) => ToolResult::error(e.to_string())
-                .with_structured(mouse_hold_json(self.state.mouse_hold.lock().unwrap().as_ref())),
+                .with_structured(mouse_hold_json(&cursor_id, self.state.mouse_hold.lock().unwrap().get(&cursor_id))),
             Err(e) => ToolResult::error(format!("Task error: {e}"))
-                .with_structured(mouse_hold_json(self.state.mouse_hold.lock().unwrap().as_ref())),
+                .with_structured(mouse_hold_json(&cursor_id, self.state.mouse_hold.lock().unwrap().get(&cursor_id))),
         }
     }
 }
@@ -1631,6 +1649,8 @@ impl Tool for MouseDragTool {
                 Requires an active mouse_button_down state; does not release the button. \
                 Returns the updated held-button state.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1645,9 +1665,12 @@ impl Tool for MouseDragTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().clone() else {
-            return ToolResult::error("No mouse button is currently held. Call mouse_button_down first.")
-                .with_structured(mouse_hold_json(None));
+        let cursor_id = resolve_cursor_key(&args);
+        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() else {
+            return ToolResult::error(format!(
+                "No mouse button is currently held for cursor '{cursor_id}'. Call mouse_button_down first."
+            ))
+            .with_structured(mouse_hold_json(&cursor_id, None));
         };
 
         let mut to_x = args.f64_or("x", 0.0);
@@ -1656,7 +1679,7 @@ impl Tool for MouseDragTool {
             match self.state.zoom_registry.get(hold.pid) {
                 Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(to_x, to_y); to_x = wx; to_y = wy; }
                 None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {}. Call zoom first.", hold.pid))
-                    .with_structured(mouse_hold_json(Some(&hold))),
+                    .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
             }
         } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
             to_x *= ratio;
@@ -1669,7 +1692,7 @@ impl Tool for MouseDragTool {
                 "mouse_drag window_id {xid} does not match held window {}.",
                 hold.xid
             ))
-            .with_structured(mouse_hold_json(Some(&hold)));
+            .with_structured(mouse_hold_json(&cursor_id, Some(&hold)));
         }
 
         let from_x = hold.x;
@@ -1700,21 +1723,21 @@ impl Tool for MouseDragTool {
             Ok(Ok(())) => {
                 hold.x = to_x;
                 hold.y = to_y;
-                *self.state.mouse_hold.lock().unwrap() = Some(hold.clone());
+                self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
                 if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
                     overlay_glide_to(sx, sy).await;
                     crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
                 }
                 ToolResult::text(format!(
-                    "✅ Dragged held {} button to ({to_x:.1}, {to_y:.1}).",
-                    mouse_button_name(hold.button)
+                    "✅ Cursor '{cursor_id}' dragged held {} button to ({to_x:.1}, {to_y:.1}).",
+                    mouse_button_name(hold.button),
                 ))
-                .with_structured(mouse_hold_json(Some(&hold)))
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
             }
             Ok(Err(e)) => ToolResult::error(e.to_string())
-                .with_structured(mouse_hold_json(Some(&hold))),
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
             Err(e) => ToolResult::error(format!("Task error: {e}"))
-                .with_structured(mouse_hold_json(Some(&hold))),
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
         }
     }
 }
@@ -1732,6 +1755,8 @@ impl Tool for MouseButtonUpTool {
             description: "Release a previously-held mouse button via background X11 delivery. \
                 If x/y are omitted, releases at the last held position. Returns the current held-button state.".into(),
             input_schema: json!({"type":"object","properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1744,9 +1769,10 @@ impl Tool for MouseButtonUpTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().clone() else {
-            return ToolResult::error("No mouse button is currently held.")
-                .with_structured(mouse_hold_json(None));
+        let cursor_id = resolve_cursor_key(&args);
+        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() else {
+            return ToolResult::error(format!("No mouse button is currently held for cursor '{cursor_id}'."))
+                .with_structured(mouse_hold_json(&cursor_id, None));
         };
 
         let xid = args.opt_u64("window_id").unwrap_or(hold.xid);
@@ -1755,7 +1781,7 @@ impl Tool for MouseButtonUpTool {
                 "mouse_button_up window_id {xid} does not match held window {}.",
                 hold.xid
             ))
-            .with_structured(mouse_hold_json(Some(&hold)));
+            .with_structured(mouse_hold_json(&cursor_id, Some(&hold)));
         }
 
         let mut x = args.opt_f64("x").unwrap_or(hold.x);
@@ -1764,7 +1790,7 @@ impl Tool for MouseButtonUpTool {
             match self.state.zoom_registry.get(hold.pid) {
                 Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
                 None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {}. Call zoom first.", hold.pid))
-                    .with_structured(mouse_hold_json(Some(&hold))),
+                    .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
             }
         } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
             x *= ratio;
@@ -1784,18 +1810,18 @@ impl Tool for MouseButtonUpTool {
             Ok(Ok(())) => {
                 hold.x = x;
                 hold.y = y;
-                *self.state.mouse_hold.lock().unwrap() = None;
-                let cleared = mouse_hold_json(None);
+                self.state.mouse_hold.lock().unwrap().remove(&cursor_id);
+                let cleared = mouse_hold_json(&cursor_id, None);
                 ToolResult::text(format!(
-                    "✅ Released held {} button at ({x:.1}, {y:.1}).",
-                    mouse_button_name(button)
+                    "✅ Cursor '{cursor_id}' released held {} button at ({x:.1}, {y:.1}).",
+                    mouse_button_name(button),
                 ))
                 .with_structured(cleared)
             }
             Ok(Err(e)) => ToolResult::error(e.to_string())
-                .with_structured(mouse_hold_json(Some(&hold))),
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
             Err(e) => ToolResult::error(format!("Task error: {e}"))
-                .with_structured(mouse_hold_json(Some(&hold))),
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
         }
     }
 }
@@ -1894,7 +1920,7 @@ impl Tool for MoveCursorTool {
             name: "move_cursor".into(),
             description: "Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}
+                "x":{"type":"number"},"y":{"type":"number"},"session":{"type":"string"},"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -1903,7 +1929,7 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
@@ -1930,7 +1956,7 @@ impl Tool for SetAgentCursorEnabledTool {
             name: "set_agent_cursor_enabled".into(),
             description: "Show or hide the agent cursor overlay.".into(),
             input_schema: json!({"type":"object","required":["enabled"],"properties":{
-                "enabled":{"type":"boolean"},"cursor_id":{"type":"string"}
+                "enabled":{"type":"boolean"},"session":{"type":"string"},"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -1938,7 +1964,7 @@ impl Tool for SetAgentCursorEnabledTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.set_enabled(&cursor_id, enabled);
         crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
         ToolResult::text(format!("Agent cursor '{cursor_id}' {}.", if enabled { "enabled" } else { "disabled" }))
@@ -1967,6 +1993,7 @@ impl Tool for SetAgentCursorMotionTool {
                 - cursor_opacity: 0.0–1.0 (default=0.85)".into(),
             input_schema: json!({
                 "type":"object","properties":{
+                    "session":{"type":"string"},
                     "cursor_id":{"type":"string"},
                     "cursor_icon":{"type":"string"},
                     "cursor_color":{"type":"string"},
@@ -1980,7 +2007,7 @@ impl Tool for SetAgentCursorMotionTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.opt_str("cursor_icon") { cfg.cursor_icon = Some(v); }
             if let Some(v) = args.opt_str("cursor_color") { cfg.cursor_color = Some(v); }
@@ -2006,12 +2033,17 @@ impl Tool for GetAgentCursorStateTool {
         GCSTATE_DEF.get_or_init(|| ToolDef {
             name: "get_agent_cursor_state".into(),
             description: "Return the current state of all agent cursor instances.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"session":{"type":"string"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let states = self.state.cursor_registry.all_states();
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let cursor_id = resolve_cursor_key(&args);
+        let states = if args.get("session").is_some() || args.get("cursor_id").is_some() {
+            vec![self.state.cursor_registry.get_or_create(&cursor_id)]
+        } else {
+            self.state.cursor_registry.all_states()
+        };
         let json = serde_json::to_value(&states).unwrap_or_default();
         ToolResult::text(format!("{} cursor instance(s).", states.len()))
             .with_structured(json!({ "cursors": json }))
@@ -2046,6 +2078,10 @@ impl Tool for SetAgentCursorStyleTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "session": {
+                        "type": "string",
+                        "description": "Optional multi-cursor session id; takes precedence over cursor_id."
+                    },
                     "cursor_id": {
                         "type": "string",
                         "description": "Cursor instance. Default: 'default'."
@@ -2072,7 +2108,7 @@ impl Tool for SetAgentCursorStyleTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
 
         // image_path
         let image_path = args.get("image_path").and_then(|v| v.as_str());

@@ -106,8 +106,17 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 // `CUA_DRIVER_RS_DEDUP_AUDIT.md`. RGBA-encoding callers below now go
 // through `cua_driver_core::image_utils::encode_rgba_to_png`.
 
-/// Capture the primary display (root window) as raw PNG bytes.
+/// Capture the primary display as raw PNG bytes.
+///
+/// Under Wayland the X11 root only shows XWayland content, so grim (all
+/// outputs composited) is tried first; X11 paths remain the fallback and
+/// the only path on pure-X11 sessions.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if let Ok(png) = crate::hyprland::screenshot_display_bytes_grim() {
+            return Ok(png);
+        }
+    }
     // Try `import -window root png:-` (ImageMagick).
     let out = Command::new("import")
         .args(["-window", "root", "png:-"])

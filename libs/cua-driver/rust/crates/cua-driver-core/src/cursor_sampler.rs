@@ -8,8 +8,9 @@
 //! Per-platform polling:
 //! - **Windows:** `GetCursorPos` (returns physical screen coords)
 //! - **macOS:** `CGEventCreate` + `CGEventGetLocation`
-//! - **Linux X11:** `XQueryPointer` against the root window
-//! - **Linux Wayland:** no portable API exists; sampler runs but logs
+//! - **Linux (Hyprland):** `cursorpos` over the Hyprland IPC socket
+//!   (global logical coordinates)
+//! - **Linux (other):** no portable API exists; sampler runs but logs
 //!   no samples — the resulting cursor.jsonl is empty and the zoom
 //!   renderer falls back to the click-point-only path.
 
@@ -132,15 +133,92 @@ fn sample_cursor() -> Option<(f64, f64)> {
 
 #[cfg(target_os = "linux")]
 fn sample_cursor() -> Option<(f64, f64)> {
-    // Wayland has no equivalent portable poll; on X11 use XQueryPointer.
-    // We try the X11 path via the `x11` crate if available; otherwise
-    // return None and the sampler writes an empty cursor.jsonl.
+    // Wayland has no portable cursor poll, but Hyprland exposes one over
+    // its IPC socket (`cursorpos` — the same query `hyprctl cursorpos`
+    // runs). One short-lived unix-socket connect per sample is the
+    // protocol's request model and is cheap at 30 Hz.
     //
-    // The X11 dep isn't always present in cua-driver's Linux build
-    // (Wayland-only hosts), so this fallback is "no-op when X11 isn't
-    // wired up" — the renderer copes by falling back to click-point-
-    // only zoom (no cursor-follow between actions).
-    None
+    // cursorpos is global LOGICAL layout coordinates, but the screencopy
+    // video records the focused-at-start monitor in PHYSICAL pixels — so
+    // samples are translated by that monitor's origin and multiplied by
+    // its scale, and samples while the cursor is on another monitor are
+    // dropped (the recorded screen doesn't show the cursor then anyway).
+    // The monitor snapshot is per sampler thread, i.e. per recording
+    // session — the same focused-monitor choice the video backend makes.
+    //
+    // Non-Hyprland sessions return None and the sampler writes an empty
+    // cursor.jsonl — the renderer falls back to click-point-only zoom.
+    thread_local! {
+        static MONITOR: std::cell::OnceCell<Option<FocusedMonitor>> =
+            const { std::cell::OnceCell::new() };
+    }
+    MONITOR.with(|m| {
+        let mon = (*m.get_or_init(hyprland_focused_monitor))?;
+        let (cx, cy) = hyprland_cursorpos()?;
+        let px = (cx - mon.x) * mon.scale;
+        let py = (cy - mon.y) * mon.scale;
+        if px < 0.0 || py < 0.0 || px > mon.width_px || py > mon.height_px {
+            return None;
+        }
+        Some((px, py))
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+struct FocusedMonitor {
+    /// Logical layout origin.
+    x: f64,
+    y: f64,
+    scale: f64,
+    /// Mode size in physical pixels.
+    width_px: f64,
+    height_px: f64,
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_focused_monitor() -> Option<FocusedMonitor> {
+    let raw = hyprland_query("j/monitors")?;
+    let monitors: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let mon = monitors
+        .as_array()?
+        .iter()
+        .find(|m| m.get("focused").and_then(|f| f.as_bool()).unwrap_or(false))?;
+    let num = |k: &str| mon.get(k).and_then(|v| v.as_f64());
+    let scale = num("scale").filter(|s| *s > 0.0).unwrap_or(1.0);
+    Some(FocusedMonitor {
+        x: num("x")?,
+        y: num("y")?,
+        scale,
+        width_px: num("width")?,
+        height_px: num("height")?,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_query(command: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    let runtime = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let path = PathBuf::from(runtime).join("hypr").join(sig).join(".socket.sock");
+
+    let mut stream = UnixStream::connect(path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(200))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_millis(200))).ok()?;
+    stream.write_all(command.as_bytes()).ok()?;
+    let mut buf = String::new();
+    stream.read_to_string(&mut buf).ok()?;
+    Some(buf)
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_cursorpos() -> Option<(f64, f64)> {
+    // Response shape: "1234, 567"
+    let buf = hyprland_query("cursorpos")?;
+    let (x, y) = buf.trim().split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]

@@ -449,8 +449,8 @@ subcommands:
   registers it (idempotent — replaces existing). `kick` runs it
   immediately without waiting for a fresh logon.
 - **`cua-driver recording start|stop|status`** — see `RECORDING.md`.
-  **Note: recording is currently macOS-only on the Rust port. The
-  command is registered but returns "not yet supported" on Windows.**
+  Recording works on Windows via ffmpeg + `gdigrab`; ffmpeg must be
+  on PATH (`winget install Gyan.FFmpeg`).
 
 Canonical multi-step workflow:
 
@@ -895,11 +895,8 @@ registered to auto-start at logon AND whether it's currently running:
 
 ## Recording
 
-Screen recording is **not yet supported on Windows** in
-cua-driver-rs. The `recording start|stop|status` subcommands are
-registered but return "Recording is currently macOS-only" on
-Windows. Tracking: see the cua-driver-rs roadmap in the main repo.
-
-For now, capture state via `screenshot` (per-window or full-desktop)
-or `get_window_state` (returns a screenshot embedded alongside the
-UIA tree).
+Screen recording **works on Windows** in cua-driver-rs via an ffmpeg
+subprocess (`gdigrab`). ffmpeg must be on PATH — install with
+`winget install Gyan.FFmpeg`. When ffmpeg is missing, per-turn
+capture continues without video and `last_error` carries the install
+hint. See `RECORDING.md` for the full recording / replay surface.

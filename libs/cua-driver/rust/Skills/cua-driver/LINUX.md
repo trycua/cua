@@ -26,14 +26,18 @@ behaviors that the macOS / Windows skills consider table-stakes are
   KDE-KWin with `org.freedesktop.portal.RemoteDesktop` enabled, some
   click and key paths work. Under most other compositors, input
   synthesis is denied by the security model and the tool surface
-  degrades to "passive" (snapshot, screenshot) only.
+  degrades to "passive" (snapshot, screenshot) only. Hyprland is the
+  exception: it is fully supported for background element-index
+  workflows — see the Hyprland section below.
 - **UIA / AX-tree equivalent**: AT-SPI when available, otherwise
   empty. Many GTK4 / Qt6 apps populate AT-SPI lazily; agents should
   expect partial trees and re-snapshot.
 - **launch_app**: backed by `xdg-open` / `gtk-launch` / `dbus-send`
   with display-environment scrubbing to avoid stealing the user's
   workspace. Not yet equivalent to macOS `FocusRestoreGuard`.
-- **Recording**: not supported.
+- **Recording**: supported. Per-turn screenshots + `app_state.json`
+  (AT-SPI tree) + video. Video uses wlr-screencopy on Wayland and
+  `x11grab` on X11; requires ffmpeg on PATH.
 
 See `SKILL.md` (macOS) and `WINDOWS.md` (Windows) for the full
 patterns. This file will grow as the Linux backend reaches GA. For
@@ -54,6 +58,36 @@ If you're agent-driving on Linux and a tool call surprises you:
    org.freedesktop.portal.Desktop --object-path
    /org/freedesktop/portal/desktop`). Without it, input synthesis
    is denied.
+
+## Hyprland
+
+Hyprland is the exception to the "passive-only under Wayland" rule —
+background element-index workflows are fully supported. What's
+specific to it:
+
+- **Window ids**: `window_id` values come from hyprctl window
+  addresses and exceed `u32::MAX`. That's expected — pass them
+  through verbatim, don't truncate.
+- **Per-window screenshots**: captured via the
+  `hyprland-toplevel-export-v1` protocol — true surface capture, so
+  the screenshot shows the correct content even for occluded /
+  background windows and windows on other workspaces. This is what
+  makes background computer use verifiable on Hyprland. grim
+  region-crop is the fallback when the protocol is unavailable.
+- **Input**: native-Wayland windows accept `element_index` actions
+  (AT-SPI) but not pixel input.
+- **launch_app**: if a newly launched window steals focus, the driver
+  restores the previously active window. Best-effort, watches for
+  ~2 s after launch.
+- **Recording**: video captures the focused monitor via
+  wlr-screencopy frames piped to ffmpeg. `cursor.jsonl` sampling
+  works via the Hyprland IPC `cursorpos` query (global logical
+  coords; empty on other Linux sessions).
+- **Permission caveat**: if `ecosystem:enforce_permissions` is
+  enabled in the Hyprland config and screencopy is denied, captures
+  silently return black "permission denied" frames — no error is
+  raised. Add an allow rule for the cua-driver binary to the
+  Hyprland permission config.
 
 ## Forbidden vectors
 
@@ -78,10 +112,10 @@ ask the user.
 | Element-indexed click | ⚠️ AT-SPI `accDoDefaultAction` when supported |
 | Type text | ⚠️ XTest, focus-sensitive |
 | Hotkey | ⚠️ XTest, focus-sensitive |
-| Screenshot full-display | ✅ X11 (xshm); ⚠️ Wayland (portal-gated) |
-| Screenshot per-window | ⚠️ X11 with composite extension; Wayland TBD |
-| launch_app | ⚠️ xdg-open / gtk-launch; no FocusRestoreGuard yet |
-| Recording | ❌ not implemented |
+| Screenshot full-display | ✅ X11 (xshm); ✅ Wayland via grim (no portal) |
+| Screenshot per-window | ✅ X11; ✅ Hyprland via toplevel-export (correct even when occluded); other Wayland TBD |
+| launch_app | ✅ direct exec / xdg-open; focus-restore guard on Hyprland (see Hyprland section) |
+| Recording | ✅ wlr-screencopy on Wayland / `x11grab` on X11; ffmpeg required |
 
 Until Linux reaches GA, treat this doc as a planning placeholder
 rather than a contract.

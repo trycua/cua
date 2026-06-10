@@ -30,3 +30,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Wayland capture (Linux): hyprland-toplevel-export per-window capture +
+# wlr-screencopy video frames. wayland-backend and bitflags must be direct
+# deps of any crate running wayland-scanner macros (generated code references
+# both by crate-root path).
+wayland-client = "0.31"
+wayland-backend = "0.3"
+wayland-scanner = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+bitflags = "2"

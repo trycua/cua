@@ -198,7 +198,10 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     if p.exists() { Some(p) } else { None }
 }
 
-pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
+/// Locate the ffmpeg binary (PATH first, then well-known install dirs).
+/// Public so platform video backends (e.g. the Linux Wayland screencopy
+/// pipeline) can reuse the same resolution logic.
+pub fn find_ffmpeg() -> Option<PathBuf> {
     if Command::new("ffmpeg").arg("-version")
         .stdout(Stdio::null()).stderr(Stdio::null())
         .status().map(|s| s.success()).unwrap_or(false)

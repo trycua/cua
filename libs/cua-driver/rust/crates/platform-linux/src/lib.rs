@@ -23,6 +23,15 @@ pub mod x11;
 pub mod hyprland;
 
 #[cfg(target_os = "linux")]
+pub mod wayland_capture;
+
+#[cfg(target_os = "linux")]
+pub mod video;
+
+#[cfg(target_os = "linux")]
+pub mod recording_hooks;
+
+#[cfg(target_os = "linux")]
 pub mod input;
 
 #[cfg(target_os = "linux")]

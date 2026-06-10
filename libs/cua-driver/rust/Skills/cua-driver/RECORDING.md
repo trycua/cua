@@ -1,9 +1,9 @@
 # Recording & replaying trajectories
 
 > **Cross-platform.** Recording is available on macOS (native
-> ScreenCaptureKit), Windows (ffmpeg + `gdigrab`), and Linux (ffmpeg +
-> `x11grab`). Replay is cross-platform as long as the recorded artifacts
-> are present.
+> ScreenCaptureKit), Windows (ffmpeg + `gdigrab`), and Linux (ffmpeg;
+> wlr-screencopy frames on Wayland, `x11grab` on X11). Replay is
+> cross-platform as long as the recorded artifacts are present.
 
 Session-scoped capture of action sequences + pre/post state, suitable
 for demos, regression diffs, and training data. Invoked only when the
@@ -17,10 +17,10 @@ turn folder under a caller-chosen output directory. Read-only tools
 permission probes, agent-cursor getters / setters, and the recording
 controls themselves) are not recorded.
 
-**Video on by default.** `start_recording` also captures the main
-display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
-lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
-out with `record_video: false` when you don't want video.
+**Video off by default.** Pass `record_video: true` to also capture
+the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for
+the lifetime of the session. The mp4 is finalized on
+`stop_recording`.
 
 **macOS — native ScreenCaptureKit, zero-config.** On macOS the
 recorder uses an in-process `SCStream` + `SCRecordingOutput`, so it
@@ -29,7 +29,8 @@ subprocess prompt, no fast-fail, no second TCC dance. Requires macOS
 15.0+ (SCRecordingOutput introduced in macOS 15). No ffmpeg needed.
 
 **Windows / Linux — ffmpeg subprocess.** Outside macOS the recorder
-shells to ffmpeg with `gdigrab` (Windows) or `x11grab` (Linux). The
+shells to ffmpeg with `gdigrab` (Windows), wlr-screencopy frames
+piped to ffmpeg (Linux Wayland), or `x11grab` (Linux X11). The
 binary needs to be on PATH (`winget install Gyan.FFmpeg` /
 `apt install ffmpeg`); when missing, the per-turn capture continues
 without video and `last_error` carries the install hint. ffmpeg
@@ -73,8 +74,10 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   screenshot fields — those live in `screenshot.png`). On macOS the
   recorder resolves a frontmost window internally when the action's
   args don't carry one; on Windows it uses the first window of the
-  target pid. **Omitted on Linux** — ATSPI doesn't expose a cheap
-  whole-tree snapshot, and the file is left out rather than faked.
+  target pid. On Linux the snapshot is the AT-SPI tree (same shape as
+  macOS); editable / text widgets surface their Text-interface
+  content as `value="…"` even when the widget has a name, so typed /
+  set text is verifiable from the tree.
 - `screenshot.png` — post-action capture of the target window.
   Omitted when the pid has no visible window.
 - `action.json` — the tool name, full input arguments, result
@@ -102,8 +105,8 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 This skill does **not** auto-enable recording. The client invokes
 `start_recording` explicitly when the user asks to capture a session.
 If the user says "record this session" or similar, call
-`start_recording({output_dir:…})` before the first action (video on
-by default; pass `record_video: false` to opt out), and
+`start_recording({output_dir:…})` before the first action (video off
+by default; pass `record_video: true` to capture it), and
 `stop_recording({})` when done.
 
 ## Replaying a recorded trajectory

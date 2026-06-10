@@ -29,3 +29,13 @@ libc = "0.2"
 # typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
 # re-exports the bus types we need (fdo::DBusProxy for pid resolution).
 atspi = { version = "0.30", features = ["tokio", "zbus"] }
+# Wayland capture: hyprland-toplevel-export-v1 (vendored XML, per-window
+# capture that works for occluded/background windows) + wlr-screencopy
+# (full-output frames for video recording). wayland-backend and bitflags
+# are direct deps because wayland-scanner's generated code references them
+# by crate-root path.
+wayland-client = { workspace = true }
+wayland-backend = { workspace = true }
+wayland-scanner = { workspace = true }
+wayland-protocols-wlr = { workspace = true }
+bitflags = { workspace = true }

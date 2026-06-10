@@ -267,9 +267,21 @@ async fn collect_visited<'a>(
             }
         }
 
-        // Surface Text content as the display name when the widget has no name.
+        // Surface Text content as the display name when the widget has no
+        // name. When an EDITABLE widget has a name (GTK entries name
+        // themselves after their label/prompt), surface the Text content
+        // as the value instead — otherwise the typed text is invisible in
+        // snapshots and a background set_value can't be verified from the
+        // tree. Restricted to editables so read-only text nodes (labels,
+        // documents) keep their pre-existing snapshot shape.
         if name.trim().is_empty() && !text_content.trim().is_empty() {
             name = text_content;
+        } else if value.is_none()
+            && has_editable
+            && !text_content.trim().is_empty()
+            && text_content != name
+        {
+            value = Some(text_content);
         }
 
         // Children inherit web-document context, plus this node's own role.
@@ -313,8 +325,14 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
         let indent = "  ".repeat(v.depth);
         if !v.actions.is_empty() {
             let act_str = v.actions.join(",");
+            // Escape newlines/quotes: entry text is user-controlled and the
+            // tree markdown is line-oriented — a literal newline or quote
+            // would corrupt the node line for downstream parsers.
             let val_part = match &v.value {
-                Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
+                Some(val) if !val.is_empty() => {
+                    let escaped = val.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "");
+                    format!(" value=\"{escaped}\"")
+                }
                 _ => String::new(),
             };
             md.push_str(&format!(

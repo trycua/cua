@@ -495,6 +495,11 @@ impl Tool for LaunchAppTool {
         }
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            // Hyprland focuses newly mapped windows; the driver's
+            // no-foreground contract says the user's active window must not
+            // change, so watch for a focus steal over the next ~2s and undo
+            // it (no-op outside Hyprland sessions).
+            crate::hyprland::spawn_focus_restore_guard();
             // Open URLs via xdg-open.
             if !urls.is_empty() {
                 for url in &urls {

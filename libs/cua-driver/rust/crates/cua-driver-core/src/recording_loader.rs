@@ -193,20 +193,21 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
 
     // Coordinate recovery, in priority order:
     //   1. `arguments.{x,y}` — pixel-addressed clicks pass coords directly.
-    //   2. `click_point.{x,y}` — recorded by the session for some click paths.
-    //   3. `result_summary` text scan — for element-indexed clicks the
-    //      recorder doesn't yet write click_point but the tool result
-    //      surfaces the screen coords like "Performed UIA Invoke on [28]
-    //      (screen (745,679))". Parsing that out keeps zoom working for
-    //      the element_index workflow until the session is updated to
-    //      record click_point for that path too.
+    //   2. `result_summary` text scan — element-indexed clicks whose tool
+    //      result surfaces screen coords like "Performed UIA Invoke on [28]
+    //      (screen (745,679))".
+    //
+    // `click_point` is deliberately NOT a zoom source: the element-bounds
+    // hook records it in window-local screenshot pixels (the click.png
+    // marker space), while zoompan x/y are full-video-frame coordinates —
+    // treating one as the other zooms onto the wrong region for any
+    // non-maximized window. Translating would require per-turn window
+    // bounds, which the recorder doesn't write yet.
     let (x, y) = if let Some(args) = v.get("arguments") {
         let ax = double_value(args.get("x"));
         let ay = double_value(args.get("y"));
         if let (Some(x), Some(y)) = (ax, ay) {
             (x, y)
-        } else if let Some(cp) = v.get("click_point") {
-            (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
         } else if let Some(screen) = parse_screen_from_summary(
             v.get("result_summary").and_then(|s| s.as_str()).unwrap_or("")
         ) {
@@ -214,8 +215,6 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
         } else {
             return None;
         }
-    } else if let Some(cp) = v.get("click_point") {
-        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     } else {
         return None;
     };

@@ -818,6 +818,71 @@ fn test_recording_session() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn test_recording_session_linux() {
+    //! Linux recording parity: enable recording, invoke launch_app (non-read-only,
+    //! headless-safe with a trivial command), verify next_turn advances and
+    //! turn-00001/action.json lands on disk. Video off (no compositor in CI).
+    let binary = binary_path();
+    if !binary.exists() { return; }
+
+    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-rec-test-linux-{}", std::process::id()));
+    let tmp_str = tmp_dir.to_string_lossy().to_string();
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"start_recording","arguments":{"output_dir":tmp_str,"record_video":false}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["isError"].as_bool().unwrap_or(false), "start_recording failed: {resp:?}");
+    assert!(resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(false));
+
+    // launch_app with a trivial command — recordable and headless-safe.
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"launch_app","arguments":{"name":"true"}}
+    }));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
+        "params":{"name":"get_recording_state","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    let next_turn = resp["result"]["structuredContent"]["next_turn"].as_u64().unwrap_or(0);
+    assert!(next_turn >= 2, "expected next_turn >= 2, got {next_turn}");
+
+    send_request(stdin, &serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"tools/call",
+        "params":{"name":"stop_recording","arguments":{}}
+    }));
+    let resp = read_response(&mut stdout);
+    assert!(!resp["result"]["structuredContent"]["enabled"].as_bool().unwrap_or(true));
+    child.kill().ok();
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    let action_path = tmp_dir.join("turn-00001").join("action.json");
+    assert!(action_path.exists(), "Expected {action_path:?} to exist");
+    let content: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&action_path).unwrap()
+    ).unwrap();
+    assert_eq!(content["tool"].as_str().unwrap_or(""), "launch_app");
+    assert_eq!(content["arguments"]["name"].as_str().unwrap_or(""), "true");
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
 #[cfg(target_os = "macos")]
 fn test_recording_screenshot_capture() {
     //! When recording is active and a tool call includes a window_id, a screenshot.png

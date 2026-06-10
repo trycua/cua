@@ -768,8 +768,16 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_linux::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        // Wayland sessions record via wlr-screencopy (x11grab only sees the
+        // XWayland root); pure-X11 sessions keep the core ffmpeg backend.
         cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+            Box::new(platform_linux::video::LinuxVideoBackendFactory),
         );
         { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
@@ -840,8 +848,16 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
         cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
             platform_linux::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
         });
+        cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+            platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+        });
+        cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+            platform_linux::recording_hooks::element_window_local_xy(wid, pid, idx)
+        });
+        // Wayland sessions record via wlr-screencopy (x11grab only sees the
+        // XWayland root); pure-X11 sessions keep the core ffmpeg backend.
         cua_driver_core::video::set_video_backend_factory(
-            Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+            Box::new(platform_linux::video::LinuxVideoBackendFactory),
         );
         {
             let mut r = platform_linux::register_tools_with_cursor(

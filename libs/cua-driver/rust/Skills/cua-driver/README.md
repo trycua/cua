@@ -36,7 +36,8 @@ platform: no focus steal, no cursor warp.
   `set_value` workaround). Windows web-apps coverage lives in
   `WINDOWS.md`'s "Web apps on Windows" section.
 - Trajectory recording (`RECORDING.md`) — optional per-session
-  recording + replay for demos and regressions. macOS-only today.
+  recording + replay for demos and regressions. Cross-platform
+  (macOS / Windows / Linux).
 - Canvas/viewport apps (Blender, Unity, GHOST, Qt, wxWidgets) —
   fallback paths when the AX/UIA/AT-SPI tree is empty.
 
@@ -169,8 +170,8 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
   Electron, Tauri, minimized-Chrome keyboard-commit caveat).
   Loaded on demand from `SKILL.md`. **Note**: Windows web-apps
   coverage lives in `WINDOWS.md`'s "Web apps on Windows" section.
-- `RECORDING.md` — trajectory recording / replay (macOS-only
-  today; Windows / Linux not yet supported).
+- `RECORDING.md` — trajectory recording / replay (cross-platform:
+  macOS / Windows / Linux).
 - `TESTS.md` — manual test scripts for end-to-end skill verification.
 
 ## Troubleshooting

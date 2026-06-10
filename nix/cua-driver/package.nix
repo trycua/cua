@@ -34,13 +34,20 @@ pkgs.rustPlatform.buildRustPackage {
   cargoBuildFlags = [ "-p" "cua-driver" ];
   cargoTestFlags = [ "-p" "cua-driver" ];
 
-  # The entire Linux dependency chain is pure Rust:
+  # Mostly pure Rust:
   #   x11rb     -> RustConnection (no libxcb C binding)
   #   ureq      -> rustls (no openssl)
   #   tiny-skia -> pure Rust 2D graphics
   #   ring      -> compiles own C/asm via stdenv's cc
-  nativeBuildInputs = [ ];
-  buildInputs = [ ];
+  # Except the `x11` crate (raw Xlib FFI for MPX multi-cursor drags), whose
+  # build.rs locates libX11/libXi/libXtst via pkg-config.
+  nativeBuildInputs = [ pkgs.pkg-config ];
+  buildInputs = with pkgs; [
+    libx11
+    libxi
+    libxtst
+    libxext
+  ];
 
   # Skip tests that require a running X11 display or AT-SPI bus
   doCheck = false;

@@ -131,23 +131,20 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
 unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
-    use windows::Win32::UI::HiDpi::GetDpiForWindow;
 
     let mut rect = RECT::default();
     GetWindowRect(hwnd, &mut rect)?;
 
-    // With permonitorv2 DPI awareness, GetWindowRect returns logical coordinates.
-    // BitBlt needs physical pixel coordinates, so scale by the window's DPI.
-    let dpi = GetDpiForWindow(hwnd);
-    let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+    // Under Per-Monitor V2 DPI awareness, GetWindowRect already returns
+    // PHYSICAL pixels (coordinate virtualization only applies to
+    // DPI-unaware/system-aware processes), and BitBlt operates in physical
+    // pixels too — use the rect as-is. Scaling by DPI/96 here would shift
+    // and oversize the captured screen region (issue #1879).
+    let physical_left = rect.left;
+    let physical_top = rect.top;
 
-    let physical_left = (rect.left as f64 * scale).round() as i32;
-    let physical_top = (rect.top as f64 * scale).round() as i32;
-    let physical_right = (rect.right as f64 * scale).round() as i32;
-    let physical_bottom = (rect.bottom as f64 * scale).round() as i32;
-
-    let w = physical_right - physical_left;
-    let h = physical_bottom - physical_top;
+    let w = rect.right - rect.left;
+    let h = rect.bottom - rect.top;
     if w <= 0 || h <= 0 {
         bail!("screen-region fallback: window has zero/negative bounds: {w}x{h}");
     }
@@ -285,22 +282,20 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // Window-sized buffer captures title bar + body + non-client trim
     // correctly.
     //
-    // With permonitorv2 DPI awareness, GetWindowRect returns logical dimensions
-    // but GetWindowDC and PrintWindow/BitBlt operate in physical pixels.
-    // Scale to physical dimensions for the bitmap.
+    // Under Per-Monitor V2 DPI awareness, GetWindowRect returns PHYSICAL
+    // pixels — the same unit GetWindowDC and PrintWindow/BitBlt work in.
+    // Use the dimensions as-is; scaling by DPI/96 would allocate an
+    // oversized bitmap with the content in its top-left corner and a
+    // black margin around it (issue #1879). It also kept the
+    // DWMWA_EXTENDED_FRAME_BOUNDS crop below (physical pixels) from
+    // matching the bitmap.
     let mut win_rect = RECT::default();
     GetWindowRect(hwnd, &mut win_rect)?;
-    let logical_w = (win_rect.right - win_rect.left) as i32;
-    let logical_h = (win_rect.bottom - win_rect.top) as i32;
-    if logical_w <= 0 || logical_h <= 0 {
-        bail!("Window has zero/negative size: {}x{}", logical_w, logical_h);
+    let w = win_rect.right - win_rect.left;
+    let h = win_rect.bottom - win_rect.top;
+    if w <= 0 || h <= 0 {
+        bail!("Window has zero/negative size: {}x{}", w, h);
     }
-
-    use windows::Win32::UI::HiDpi::GetDpiForWindow;
-    let dpi = GetDpiForWindow(hwnd);
-    let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
-    let w = (logical_w as f64 * scale).round() as i32;
-    let h = (logical_h as f64 * scale).round() as i32;
 
     let screen_dc = GetWindowDC(hwnd);
     let mem_dc = CreateCompatibleDC(screen_dc);
@@ -476,17 +471,13 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
-        use windows::Win32::UI::HiDpi::GetDpiForSystem;
-        // With permonitorv2 DPI awareness, GetSystemMetrics returns logical pixels.
-        // BitBlt captures physical pixels, so we must scale by DPI factor.
-        let logical_w = GetSystemMetrics(SM_CXSCREEN);
-        let logical_h = GetSystemMetrics(SM_CYSCREEN);
-        if logical_w <= 0 || logical_h <= 0 { bail!("Could not get screen metrics"); }
-
-        let dpi = GetDpiForSystem();
-        let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
-        let w = (logical_w as f64 * scale).round() as i32;
-        let h = (logical_h as f64 * scale).round() as i32;
+        // Under Per-Monitor V2 DPI awareness, GetSystemMetrics returns
+        // PHYSICAL pixels — the same unit BitBlt captures in. Scaling by
+        // DPI/96 would allocate an oversized bitmap with black margins
+        // (issue #1879).
+        let w = GetSystemMetrics(SM_CXSCREEN);
+        let h = GetSystemMetrics(SM_CYSCREEN);
+        if w <= 0 || h <= 0 { bail!("Could not get screen metrics"); }
         let screen_dc = GetDC(HWND::default());
         let mem_dc = CreateCompatibleDC(screen_dc);
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);

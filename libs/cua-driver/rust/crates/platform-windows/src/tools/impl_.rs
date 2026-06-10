@@ -3883,7 +3883,8 @@ impl Tool for GetScreenSizeTool {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         use windows::Win32::UI::HiDpi::GetDpiForSystem;
         // With permonitorv2 DPI awareness (set in cua-driver.manifest),
-        // SM_CXSCREEN/SM_CYSCREEN already return logical points (DPI-scaled).
+        // SM_CXSCREEN/SM_CYSCREEN return PHYSICAL pixels — the same
+        // coordinate space screenshots and pixel clicks use on Windows.
         // Report these as-is, along with the scale factor for reference.
         // Matches Swift's NSScreen.frame behavior on macOS.
         let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };

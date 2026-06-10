@@ -209,6 +209,10 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
         let add = change.add();
         (*add)._type = x11::xinput2::XIAddMaster;
         (*add).name = name.as_ptr() as *mut _;
+        // Core events stay on so core-only apps (xterm, Tk, …) receive the
+        // drags too. Note this is not what makes the WM focus the dragged
+        // window — XI2-aware WMs grab buttons for XIAllMasterDevices — see
+        // the active-window save/restore in send_parallel_virtual_pointer_drags.
         (*add).send_core = 1;
         (*add).enable = 1;
     }
@@ -431,30 +435,81 @@ fn warp_master_pointer(display: *mut x11::xlib::Display, ids: MasterPointerIds, 
     Ok(())
 }
 
-fn focus_master_pointer_target(
-    display: *mut x11::xlib::Display,
-    ids: MasterPointerIds,
-    target_window: x11::xlib::Window,
-) -> Result<()> {
-    let rc = unsafe { x11::xinput2::XISetClientPointer(display, target_window, ids.pointer_id) };
-    if rc != 0 {
-        bail!("XISetClientPointer failed with status {rc}");
-    }
-
-    let rc = unsafe {
-        x11::xinput2::XISetFocus(
+fn ewmh_active_window(display: *mut x11::xlib::Display) -> Option<x11::xlib::Window> {
+    unsafe {
+        let atom = x11::xlib::XInternAtom(
             display,
-            ids.keyboard_id,
-            target_window,
-            x11::xlib::CurrentTime,
-        )
-    };
-    if rc != 0 {
-        bail!("XISetFocus failed with status {rc}");
+            c"_NET_ACTIVE_WINDOW".as_ptr(),
+            x11::xlib::True,
+        );
+        if atom == 0 {
+            return None;
+        }
+        let root = x11::xlib::XDefaultRootWindow(display);
+        let mut type_ret: x11::xlib::Atom = 0;
+        let mut format_ret: std::os::raw::c_int = 0;
+        let mut nitems: std::os::raw::c_ulong = 0;
+        let mut bytes_after: std::os::raw::c_ulong = 0;
+        let mut data: *mut std::os::raw::c_uchar = std::ptr::null_mut();
+        let rc = x11::xlib::XGetWindowProperty(
+            display,
+            root,
+            atom,
+            0,
+            1,
+            x11::xlib::False,
+            x11::xlib::XA_WINDOW,
+            &mut type_ret,
+            &mut format_ret,
+            &mut nitems,
+            &mut bytes_after,
+            &mut data,
+        );
+        if rc != x11::xlib::Success as i32 || data.is_null() {
+            return None;
+        }
+        let window = if nitems >= 1 && format_ret == 32 {
+            Some(*(data as *const std::os::raw::c_ulong) as x11::xlib::Window)
+        } else {
+            None
+        };
+        x11::xlib::XFree(data as *mut _);
+        window.filter(|w| *w != 0)
     }
+}
 
-    unsafe { x11::xlib::XFlush(display) };
-    Ok(())
+fn ewmh_activate_window(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+    current_active: x11::xlib::Window,
+) {
+    unsafe {
+        let atom = x11::xlib::XInternAtom(
+            display,
+            c"_NET_ACTIVE_WINDOW".as_ptr(),
+            x11::xlib::True,
+        );
+        if atom == 0 {
+            return;
+        }
+        let root = x11::xlib::XDefaultRootWindow(display);
+        let mut ev: x11::xlib::XClientMessageEvent = std::mem::zeroed();
+        ev.type_ = x11::xlib::ClientMessage;
+        ev.window = window;
+        ev.message_type = atom;
+        ev.format = 32;
+        ev.data.set_long(0, 2); // source indication: pager/tool
+        ev.data.set_long(1, 0);
+        ev.data.set_long(2, current_active as std::os::raw::c_long);
+        x11::xlib::XSendEvent(
+            display,
+            root,
+            x11::xlib::False,
+            x11::xlib::SubstructureRedirectMask | x11::xlib::SubstructureNotifyMask,
+            &mut ev as *mut _ as *mut x11::xlib::XEvent,
+        );
+        x11::xlib::XSync(display, 0);
+    }
 }
 
 fn button_code(button: u8) -> Result<Key> {
@@ -509,6 +564,12 @@ pub fn send_parallel_virtual_pointer_drags(
     let start_at = std::time::Instant::now() + Duration::from_millis(120);
     let mut active = Vec::with_capacity(drags.len());
 
+    // Click-to-focus WMs grab buttons for XIAllMasterDevices, so the drag's
+    // press activates the target window exactly like a user click would.
+    // Remember the focus state and hand it back afterwards so parallel
+    // drags don't steal it.
+    let saved_focus = save_focus_state(display);
+
     let result = (|| -> Result<()> {
         for (cursor_id, drag) in drags {
             let ids = ensure_master_pointer(cursor_id)?;
@@ -542,11 +603,6 @@ pub fn send_parallel_virtual_pointer_drags(
         }
 
         for item in &active {
-            focus_master_pointer_target(
-                display,
-                item.ids,
-                item.drag.target_window as x11::xlib::Window,
-            )?;
             warp_master_pointer(display, item.ids, item.drag.from_x, item.drag.from_y)?;
             let mut device = item.device.lock().unwrap();
             emit_button(&mut device, item.drag.button, true)?;
@@ -613,10 +669,89 @@ pub fn send_parallel_virtual_pointer_drags(
         }
         Ok(())
     })();
+    restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
     }
     result
+}
+
+/// Pre-drag focus snapshot: the EWMH active window when a conforming WM is
+/// running, plus the core input focus as a WM-agnostic fallback.
+struct SavedFocus {
+    ewmh_active: Option<x11::xlib::Window>,
+    core_focus: x11::xlib::Window,
+    core_revert_to: std::os::raw::c_int,
+}
+
+fn save_focus_state(display: *mut x11::xlib::Display) -> SavedFocus {
+    let mut core_focus: x11::xlib::Window = 0;
+    let mut core_revert_to: std::os::raw::c_int = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut core_focus, &mut core_revert_to);
+    }
+    SavedFocus {
+        ewmh_active: ewmh_active_window(display),
+        core_focus,
+        core_revert_to,
+    }
+}
+
+fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
+    // Let the release/focus events from the drag settle before reading the
+    // post-drag state, so we don't race the WM's own focus update.
+    unsafe { x11::xlib::XSync(display, 0) };
+
+    if let Some(prev) = saved.ewmh_active {
+        // EWMH path: ask the WM to re-activate, so its active-window
+        // bookkeeping (decorations, stacking) stays consistent. The WM
+        // applies its own click-to-focus while it works through the drag's
+        // release (sync-grab replay), which can land after a one-shot
+        // request — give it a moment to settle, then verify and retry.
+        sleep(Duration::from_millis(250));
+        for attempt in 0..6 {
+            let now = ewmh_active_window(display);
+            if now == Some(prev) {
+                return;
+            }
+            tracing::debug!("focus restore attempt {attempt}: prev=0x{prev:x} now={now:x?}");
+            ewmh_activate_window(display, prev, now.unwrap_or(0));
+            sleep(Duration::from_millis(150));
+        }
+        tracing::warn!("focus restore: WM did not re-activate 0x{prev:x}");
+        return;
+    }
+
+    // No EWMH WM (bare X / minimal WM): restore the core input focus
+    // directly. The saved window may have been destroyed meanwhile, and
+    // Xlib's default error handler exits the process on BadWindow, so the
+    // restore runs under a scoped ignore-errors handler.
+    if saved.core_focus == 0 {
+        return;
+    }
+    unsafe extern "C" fn ignore_x_error(
+        _display: *mut x11::xlib::Display,
+        _event: *mut x11::xlib::XErrorEvent,
+    ) -> std::os::raw::c_int {
+        0
+    }
+    unsafe {
+        let mut now_focus: x11::xlib::Window = 0;
+        let mut now_revert: std::os::raw::c_int = 0;
+        x11::xlib::XGetInputFocus(display, &mut now_focus, &mut now_revert);
+        if now_focus == saved.core_focus {
+            return;
+        }
+        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XSetInputFocus(
+            display,
+            saved.core_focus,
+            saved.core_revert_to,
+            x11::xlib::CurrentTime,
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(prev_handler);
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

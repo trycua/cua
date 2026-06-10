@@ -3872,9 +3872,9 @@ impl Tool for GetScreenSizeTool {
     fn def(&self) -> &ToolDef {
         GSS_DEF.get_or_init(|| ToolDef {
             name: "get_screen_size".into(),
-            description: "Return the logical size of the main display in points plus its backing \
-                scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
-                Requires no TCC permissions.".into(),
+            description: "Return the size of the main display in physical pixels plus its display \
+                scale factor. On Windows, screenshots and pixel clicks use this same physical-pixel \
+                coordinate space. Requires no special permissions.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -3886,12 +3886,10 @@ impl Tool for GetScreenSizeTool {
         // SM_CXSCREEN/SM_CYSCREEN return PHYSICAL pixels — the same
         // coordinate space screenshots and pixel clicks use on Windows.
         // Report these as-is, along with the scale factor for reference.
-        // Matches Swift's NSScreen.frame behavior on macOS.
         let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
         let dpi = unsafe { GetDpiForSystem() };
         let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
-        // Matches Swift text format 1:1.
-        ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
+        ToolResult::text(format!("✅ Main display: {w}x{h} pixels @ {scale}x"))
             .with_structured(json!({ "width": w, "height": h, "scale_factor": scale }))
     }
 }

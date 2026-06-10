@@ -478,6 +478,45 @@ fn ewmh_active_window(display: *mut x11::xlib::Display) -> Option<x11::xlib::Win
     }
 }
 
+/// Current X server time via the standard PropertyNotify round-trip.
+/// EWMH activation requests stamped CurrentTime(0) lose to the WM's
+/// focus-stealing prevention whenever any newer input exists.
+fn x_server_time(display: *mut x11::xlib::Display) -> x11::xlib::Time {
+    unsafe {
+        let root = x11::xlib::XDefaultRootWindow(display);
+        let win = x11::xlib::XCreateSimpleWindow(display, root, -1, -1, 1, 1, 0, 0, 0);
+        x11::xlib::XSelectInput(display, win, x11::xlib::PropertyChangeMask);
+        let atom = x11::xlib::XInternAtom(display, c"CUA_TIME_PROBE".as_ptr(), x11::xlib::False);
+        x11::xlib::XChangeProperty(
+            display,
+            win,
+            atom,
+            x11::xlib::XA_STRING,
+            8,
+            x11::xlib::PropModeReplace,
+            [0u8].as_ptr(),
+            0,
+        );
+        x11::xlib::XSync(display, 0);
+        let mut time: x11::xlib::Time = x11::xlib::CurrentTime;
+        let mut ev: x11::xlib::XEvent = std::mem::zeroed();
+        while x11::xlib::XCheckWindowEvent(
+            display,
+            win,
+            x11::xlib::PropertyChangeMask,
+            &mut ev,
+        ) != 0
+        {
+            if ev.get_type() == x11::xlib::PropertyNotify {
+                time = ev.property.time;
+            }
+        }
+        x11::xlib::XDestroyWindow(display, win);
+        x11::xlib::XFlush(display);
+        time
+    }
+}
+
 fn ewmh_activate_window(
     display: *mut x11::xlib::Display,
     window: x11::xlib::Window,
@@ -499,7 +538,7 @@ fn ewmh_activate_window(
         ev.message_type = atom;
         ev.format = 32;
         ev.data.set_long(0, 2); // source indication: pager/tool
-        ev.data.set_long(1, 0);
+        ev.data.set_long(1, x_server_time(display) as std::os::raw::c_long);
         ev.data.set_long(2, current_active as std::os::raw::c_long);
         x11::xlib::XSendEvent(
             display,

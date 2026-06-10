@@ -435,6 +435,138 @@ fn warp_master_pointer(display: *mut x11::xlib::Display, ids: MasterPointerIds, 
     Ok(())
 }
 
+/// XIAnyModifier (1u32 << 31). The x11 crate doesn't export it.
+const XI_ANY_MODIFIER: std::os::raw::c_int = 0x8000_0000u32 as std::os::raw::c_int;
+
+fn xi_mask_len() -> usize {
+    (x11::xinput2::XI_LASTEVENT as usize >> 3) + 1
+}
+
+/// Look up the XInputExtension major opcode so we can recognise its
+/// GenericEvent cookies on the display connection.
+fn xinput_opcode(display: *mut x11::xlib::Display) -> Option<std::os::raw::c_int> {
+    let name = match CString::new("XInputExtension") {
+        Ok(n) => n,
+        Err(_) => return None,
+    };
+    let mut opcode = 0;
+    let mut event = 0;
+    let mut error = 0;
+    let present = unsafe {
+        x11::xlib::XQueryExtension(display, name.as_ptr(), &mut opcode, &mut event, &mut error)
+    };
+    if present != 0 {
+        Some(opcode)
+    } else {
+        None
+    }
+}
+
+/// Install a device-specific XI2 synchronous passive button grab on `window`
+/// for `device_id`. This shields the drag: the grab is newer than (and thus
+/// checked before) the window manager's click-to-focus grab on the same
+/// window, and being device-specific it does not conflict with the WM's
+/// core/all-master grabs. The matching press freezes the device and is
+/// delivered to us; replaying it (XIReplayDevice) re-checks grabs only
+/// *below* this window and then delivers the event normally to the app, so
+/// the WM never sees the press and never steals focus.
+fn install_shield_grab(
+    display: *mut x11::xlib::Display,
+    device_id: i32,
+    window: x11::xlib::Window,
+    button: u8,
+) -> Result<()> {
+    let mut mask_bits = vec![0u8; xi_mask_len()];
+    x11::xinput2::XISetMask(&mut mask_bits, x11::xinput2::XI_ButtonPress);
+    let mut evmask = x11::xinput2::XIEventMask {
+        deviceid: device_id,
+        mask_len: mask_bits.len() as std::os::raw::c_int,
+        mask: mask_bits.as_mut_ptr(),
+    };
+    let mut mods = x11::xinput2::XIGrabModifiers {
+        modifiers: XI_ANY_MODIFIER,
+        status: 0,
+    };
+    let rc = unsafe {
+        x11::xinput2::XIGrabButton(
+            display,
+            device_id,
+            button as std::os::raw::c_int,
+            window,
+            0, // cursor: None
+            x11::xinput2::XIGrabModeSync,  // freeze the pointer on press
+            x11::xinput2::XIGrabModeAsync, // leave the paired keyboard alone
+            x11::xlib::False,              // owner_events: deliver to us
+            &mut evmask,
+            1,
+            &mut mods,
+        )
+    };
+    unsafe { x11::xlib::XSync(display, 0) };
+    if rc != 0 {
+        bail!("XIGrabButton(shield) failed with status {rc}");
+    }
+    Ok(())
+}
+
+fn remove_shield_grab(display: *mut x11::xlib::Display, device_id: i32, window: x11::xlib::Window, button: u8) {
+    let mut mods = x11::xinput2::XIGrabModifiers {
+        modifiers: XI_ANY_MODIFIER,
+        status: 0,
+    };
+    unsafe {
+        let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xinput2::XIUngrabButton(display, device_id, button as std::os::raw::c_int, window, 1, &mut mods);
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(prev);
+    }
+}
+
+/// Drain the frozen shield presses for `pending_devices` and replay each so
+/// it continues to the application. Returns the set of device ids we failed
+/// to see within the timeout (their drags still proceed; the focus-restore
+/// safety net covers any leak).
+fn replay_shielded_presses(
+    display: *mut x11::xlib::Display,
+    xi_opcode: std::os::raw::c_int,
+    pending_devices: &mut std::collections::HashSet<i32>,
+    timeout: Duration,
+) {
+    let deadline = std::time::Instant::now() + timeout;
+    while !pending_devices.is_empty() && std::time::Instant::now() < deadline {
+        // Only block on XNextEvent when something is queued, so a missing
+        // press can't hang us past the deadline.
+        if unsafe { x11::xlib::XPending(display) } == 0 {
+            sleep(Duration::from_millis(2));
+            continue;
+        }
+        let mut ev: x11::xlib::XEvent = unsafe { std::mem::zeroed() };
+        unsafe { x11::xlib::XNextEvent(display, &mut ev) };
+        if unsafe { ev.type_ } != x11::xlib::GenericEvent {
+            continue;
+        }
+        let mut cookie = unsafe { ev.generic_event_cookie };
+        if cookie.extension != xi_opcode || cookie.evtype != x11::xinput2::XI_ButtonPress {
+            continue;
+        }
+        if unsafe { x11::xlib::XGetEventData(display, &mut cookie) } == 0 {
+            continue;
+        }
+        let de = cookie.data as *const x11::xinput2::XIDeviceEvent;
+        if !de.is_null() {
+            let device_id = unsafe { (*de).deviceid };
+            let time = unsafe { (*de).time };
+            if pending_devices.remove(&device_id) {
+                unsafe {
+                    x11::xinput2::XIAllowEvents(display, device_id, x11::xinput2::XIReplayDevice, time);
+                    x11::xlib::XFlush(display);
+                }
+            }
+        }
+        unsafe { x11::xlib::XFreeEventData(display, &mut cookie) };
+    }
+}
+
 fn ewmh_active_window(display: *mut x11::xlib::Display) -> Option<x11::xlib::Window> {
     unsafe {
         let atom = x11::xlib::XInternAtom(
@@ -586,6 +718,7 @@ pub fn send_parallel_virtual_pointer_drags(
 ) -> Result<()> {
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
+    let xi_opcode = xinput_opcode(display);
 
     struct ActiveDrag {
         cursor_id: String,
@@ -641,10 +774,42 @@ pub fn send_parallel_virtual_pointer_drags(
             std::thread::sleep(start_at - now);
         }
 
+        // Shield each drag from the WM's click-to-focus grab: install a
+        // device-specific sync grab on the target window, warp, then press.
+        // The press freezes on our grab; we replay it past the WM below.
+        // If a shield fails to install we still press — the drag works, only
+        // focus protection is lost (the restore safety net covers it).
+        let mut shielded = std::collections::HashSet::new();
         for item in &active {
+            if xi_opcode.is_some() {
+                match install_shield_grab(
+                    display,
+                    item.ids.pointer_id,
+                    item.drag.target_window as x11::xlib::Window,
+                    item.drag.button,
+                ) {
+                    Ok(()) => {
+                        shielded.insert(item.ids.pointer_id);
+                    }
+                    Err(e) => tracing::warn!("shield grab failed for '{}': {e}", item.cursor_id),
+                }
+            }
             warp_master_pointer(display, item.ids, item.drag.from_x, item.drag.from_y)?;
             let mut device = item.device.lock().unwrap();
             emit_button(&mut device, item.drag.button, true)?;
+        }
+
+        // Replay the frozen presses so they reach the app while the WM stays
+        // blind to them. Bounded wait: a press that never arrives must not
+        // hang the drag.
+        if let Some(opcode) = xi_opcode {
+            if !shielded.is_empty() {
+                let mut pending = shielded.clone();
+                replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
+                if !pending.is_empty() {
+                    tracing::warn!("shield replay: {} press(es) not seen before timeout", pending.len());
+                }
+            }
         }
 
         while active.iter().any(|item| item.current_step < item.steps) {
@@ -705,6 +870,20 @@ pub fn send_parallel_virtual_pointer_drags(
         for item in &active {
             let mut device = item.device.lock().unwrap();
             emit_button(&mut device, item.drag.button, false)?;
+        }
+
+        // Remove the shields now that the drag is done. The button is only
+        // grabbed for ButtonPress, so the shield is dormant during motion and
+        // release; this just stops it matching the next gesture's press.
+        for item in &active {
+            if shielded.contains(&item.ids.pointer_id) {
+                remove_shield_grab(
+                    display,
+                    item.ids.pointer_id,
+                    item.drag.target_window as x11::xlib::Window,
+                    item.drag.button,
+                );
+            }
         }
         Ok(())
     })();

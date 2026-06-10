@@ -79,6 +79,15 @@
                   services.cua-driver.package = cuaDriverPackage;
                 };
               };
+
+              cua-driver-linux-parallel-drag-gif = import ./nix/cua-driver/tests/linux-parallel-drag-gif.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
             }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
               # Background GUI input coverage — one independent matrix job per

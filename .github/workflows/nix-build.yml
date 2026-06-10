@@ -55,6 +55,12 @@ jobs:
             visual: true
             result_link: result-linux-background-terminal-gif
             artifact_name: cua-driver-linux-background-terminal-gif
+          - name: Linux parallel multi-cursor drag GIF test
+            check_attr: cua-driver-linux-parallel-drag-gif
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-parallel-drag-gif
+            artifact_name: cua-driver-linux-parallel-drag-gif
           # Full entries (CDP / Tk focus-free-write overrides) — kept as-is.
           - name: Linux background GUI test (chromium)
             check_attr: cua-driver-linux-background-gui-chromium
@@ -278,6 +284,7 @@ jobs:
             const artifactNames = [
               'cua-driver-linux-cursor-click-gif',
               'cua-driver-linux-background-terminal-gif',
+              'cua-driver-linux-parallel-drag-gif',
               'cua-driver-linux-background-gui-chromium',
               'cua-driver-linux-background-gui-tk',
               'cua-driver-linux-background-gui-gtk3-gedit',

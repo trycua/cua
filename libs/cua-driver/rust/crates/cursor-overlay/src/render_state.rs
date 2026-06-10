@@ -9,7 +9,7 @@
 //!
 //! - [`RenderStateCore`] — the platform-agnostic animation fields
 //!   (`cfg`, `palette`, `motion`, `pos`, `heading`, `path`, `dist`, `spring`,
-//!   `spring_tgt`, `click_t`, `shape`, `visible`, `idle_secs`, `idle_alpha`,
+//!   `spring_tgt`, `click_t`, `pressed`, `shape`, `visible`, `idle_secs`, `idle_alpha`,
 //!   `pinned_wid`, `gradient_colors`, `bloom_override`).
 //! - [`RenderStateCore::tick_motion`] — speed-profile + spring physics +
 //!   click-pulse + idle-fade using runtime [`MotionConfig`] (Windows + Linux).
@@ -68,6 +68,8 @@ pub struct RenderStateCore {
     pub spring_tgt: Option<(f64, f64, f64)>,
     /// Click-pulse phase 0..1; `None` = no pulse in flight.
     pub click_t: Option<f64>,
+    /// Whether a button is currently being held for this cursor.
+    pub pressed: bool,
     /// Custom cursor shape; `None` = built-in gradient arrow.
     pub shape: Option<CursorShape>,
     /// User-controlled visibility.
@@ -108,6 +110,7 @@ impl RenderStateCore {
             spring: None,
             spring_tgt: None,
             click_t: None,
+            pressed: false,
             visible: true,
             idle_secs: 0.0,
             idle_alpha: 1.0,
@@ -417,6 +420,23 @@ impl RenderStateCore {
                 self.idle_alpha = 1.0;
                 true
             }
+            OverlayCommand::SnapTo {
+                x,
+                y,
+                heading_radians,
+            } => {
+                self.pos = (x, y);
+                if let Some(heading) = heading_radians {
+                    self.heading = heading;
+                }
+                self.path = None;
+                self.dist = 0.0;
+                self.spring = None;
+                self.spring_tgt = None;
+                self.idle_secs = 0.0;
+                self.idle_alpha = 1.0;
+                true
+            }
             OverlayCommand::ClickPulse { x, y } => {
                 if click_pulse_sentinel_only {
                     // macOS: only snap position on first placement (sentinel state).
@@ -434,6 +454,12 @@ impl RenderStateCore {
                     self.pos = (x, y);
                 }
                 self.click_t = Some(0.0);
+                self.idle_secs = 0.0;
+                self.idle_alpha = 1.0;
+                true
+            }
+            OverlayCommand::SetPressed(v) => {
+                self.pressed = v;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
                 true
@@ -534,7 +560,7 @@ pub fn paint_cursor(
     let alpha_scale = core.idle_alpha as f32;
 
     // --- Bloom (radial gradient behind the arrow) ---
-    let bloom_r: f32 = 22.0;
+    let bloom_r: f32 = if core.pressed { 34.0 } else { 22.0 };
     // Use runtime bloom_override if set, otherwise fall back to palette.
     let (br, bg, bb) = if let Some([r, g, b, _]) = core.bloom_override {
         (r, g, b)
@@ -578,6 +604,46 @@ pub fn paint_cursor(
         bloom_r * 2.0,
     ) {
         pm.fill_rect(r, &bloom_paint, tiny_skia::Transform::identity(), None);
+    }
+
+    if core.pressed {
+        let [pr, pg, pb, _] = core.palette.cursor_mid;
+        let ring_color =
+            tiny_skia::Color::from_rgba8(pr, pg, pb, (210.0 * alpha_scale) as u8);
+        let mut ring_paint = tiny_skia::Paint::default();
+        ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
+        ring_paint.anti_alias = true;
+        let stroke = tiny_skia::Stroke {
+            width: 3.0,
+            ..Default::default()
+        };
+        let core_fill =
+            tiny_skia::Color::from_rgba8(pr, pg, pb, (110.0 * alpha_scale) as u8);
+        let mut fill_paint = tiny_skia::Paint::default();
+        fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
+        fill_paint.anti_alias = true;
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(px as f32, py as f32, 6.5);
+        if let Some(path) = pb.finish() {
+            pm.fill_path(
+                &path,
+                &fill_paint,
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
+        let mut pb = tiny_skia::PathBuilder::new();
+        pb.push_circle(px as f32, py as f32, 13.0);
+        if let Some(path) = pb.finish() {
+            pm.stroke_path(
+                &path,
+                &ring_paint,
+                &stroke,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
     }
 
     // --- Focus rect highlight (macOS only — others pass None) ---

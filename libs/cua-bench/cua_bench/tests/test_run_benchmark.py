@@ -5,16 +5,20 @@ which use the gym interface (make, reset, step, evaluate) directly.
 """
 
 from pathlib import Path
+import json
 
 import pytest
 from cua_bench import (
+    BenchmarkRunConfig,
     BenchmarkResult,
     DoneAction,
     Task,
     TaskResult,
+    build_benchmark_manifest,
     run_benchmark,
     run_interactive,
     run_single_task,
+    write_benchmark_artifacts,
 )
 
 # Simple HTML for test tasks
@@ -120,6 +124,114 @@ class TestBenchmarkResult:
         )
         assert result.success_count == 0
         assert result.failed_count == result.total_tasks
+
+
+class TestBenchmarkArtifacts:
+    """Tests for replay-friendly benchmark artifacts."""
+
+    def test_build_benchmark_manifest_includes_replay_command(self):
+        result = BenchmarkResult(
+            run_id="run-abc123",
+            task_results=[
+                {"task_path": "dataset/click", "variant_id": 0, "success": True, "reward": 1.0, "steps": 3},
+                {
+                    "task_path": "dataset/type",
+                    "variant_id": 1,
+                    "success": False,
+                    "reward": 0.0,
+                    "steps": 2,
+                    "error": "timed out",
+                },
+            ],
+            total_tasks=2,
+            success_count=1,
+            failed_count=1,
+            avg_reward=0.5,
+            duration_seconds=12.5,
+        )
+        config = BenchmarkRunConfig(
+            dataset_path="dataset",
+            split="test",
+            max_steps=25,
+            max_parallel=3,
+            oracle=True,
+            max_variants=2,
+            task_filter="type-*",
+        )
+
+        manifest = build_benchmark_manifest(
+            result,
+            config,
+            started_at="2026-06-10T12:00:00+00:00",
+            completed_at="2026-06-10T12:00:12+00:00",
+        )
+
+        assert manifest["schema_version"] == 1
+        assert manifest["summary"]["failed_count"] == 1
+        assert manifest["failed_tasks"][0]["task_path"] == "dataset/type"
+        assert manifest["replay"]["command"] == [
+            "cb",
+            "run",
+            "dataset",
+            "dataset",
+            "--oracle",
+            "--split",
+            "test",
+            "--task-filter",
+            "type-*",
+            "--max-variants",
+            "2",
+            "--max-steps",
+            "25",
+            "--max-parallel",
+            "3",
+        ]
+
+    def test_write_benchmark_artifacts_writes_manifest_and_failures(self, tmp_path):
+        result = BenchmarkResult(
+            run_id="run-failed",
+            task_results=[
+                {"task_path": "dataset/a", "variant_id": 0, "success": False, "reward": 0.0, "steps": 0, "error": "boom"},
+                {"task_path": "dataset/b", "variant_id": 0, "success": True, "reward": 1.0, "steps": 1},
+            ],
+            total_tasks=2,
+            success_count=1,
+            failed_count=1,
+            avg_reward=0.5,
+            duration_seconds=3.0,
+        )
+
+        manifest_path = write_benchmark_artifacts(
+            result,
+            tmp_path,
+            BenchmarkRunConfig(dataset_path="dataset"),
+            started_at="2026-06-10T12:00:00+00:00",
+            completed_at="2026-06-10T12:00:03+00:00",
+        )
+
+        manifest = json.loads(manifest_path.read_text())
+        failures = (tmp_path / "failures.jsonl").read_text().strip().splitlines()
+        assert manifest["run_id"] == "run-failed"
+        assert manifest["summary"]["avg_reward"] == 0.5
+        assert len(failures) == 1
+        assert json.loads(failures[0])["error"] == "boom"
+
+    @pytest.mark.asyncio
+    async def test_run_benchmark_writes_artifacts_for_failed_task(self, tmp_path):
+        dataset_path = tmp_path / "dataset"
+        task_dir = dataset_path / "broken-task"
+        task_dir.mkdir(parents=True)
+        (task_dir / "main.py").write_text("raise RuntimeError('broken import for artifact test')\n")
+
+        output_dir = tmp_path / "artifacts"
+        result = await run_benchmark(dataset_path, max_parallel=1, output_dir=output_dir)
+
+        manifest = json.loads((output_dir / "manifest.json").read_text())
+        failures = (output_dir / "failures.jsonl").read_text().strip().splitlines()
+        assert result.output_dir == str(output_dir)
+        assert manifest["summary"]["failed_count"] == 1
+        assert manifest["failed_tasks"][0]["task_path"] == str(task_dir)
+        assert json.loads(failures[0])["success"] is False
 
 
 class TestRunSingleTaskE2E:

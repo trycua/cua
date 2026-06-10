@@ -708,6 +708,12 @@ pub fn send_parallel_virtual_pointer_drags(
         }
         Ok(())
     })();
+    // Remove the per-session masters before handing focus back: non-MPX-aware
+    // WMs (xfwm4, openbox) desync their focus bookkeeping while foreign
+    // master keyboards linger, and the next call recreates masters cheaply.
+    for (cursor_id, _) in drags {
+        forget_master_pointer(cursor_id);
+    }
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -736,6 +742,13 @@ fn save_focus_state(display: *mut x11::xlib::Display) -> SavedFocus {
     }
 }
 
+unsafe extern "C" fn ignore_x_error(
+    _display: *mut x11::xlib::Display,
+    _event: *mut x11::xlib::XErrorEvent,
+) -> std::os::raw::c_int {
+    0
+}
+
 fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
     // Let the release/focus events from the drag settle before reading the
     // post-drag state, so we don't race the WM's own focus update.
@@ -744,20 +757,53 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
     if let Some(prev) = saved.ewmh_active {
         // EWMH path: ask the WM to re-activate, so its active-window
         // bookkeeping (decorations, stacking) stays consistent. The WM
-        // applies its own click-to-focus while it works through the drag's
-        // release (sync-grab replay), which can land after a one-shot
-        // request — give it a moment to settle, then verify and retry.
-        sleep(Duration::from_millis(250));
-        for attempt in 0..6 {
+        // processes its own click-to-focus for the drag asynchronously and
+        // can re-activate the dragged window even after one re-activation of
+        // ours has landed — so don't stop at first success: require the
+        // active window to hold stable for consecutive checks, re-sending on
+        // every regression, within a bounded budget.
+        sleep(Duration::from_millis(300));
+        let mut stable = 0;
+        for attempt in 0..15 {
             let now = ewmh_active_window(display);
             if now == Some(prev) {
-                return;
+                stable += 1;
+                if stable >= 3 {
+                    return;
+                }
+            } else {
+                stable = 0;
+                // MPX clicks can leave a core-protocol WM believing the
+                // dragged window is focused while the core focus never moved
+                // there: its XSetInputFocus for our activation is then a
+                // no-op, no FocusIn arrives, and its bookkeeping never
+                // updates. Bounce the core focus onto the window the WM
+                // believes active so the activation produces a real focus
+                // transition the WM can observe.
+                if attempt >= 2 {
+                    if let Some(now_win) = now {
+                        unsafe {
+                            let prev_handler =
+                                x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+                            x11::xlib::XSetInputFocus(
+                                display,
+                                now_win,
+                                x11::xlib::RevertToParent,
+                                x11::xlib::CurrentTime,
+                            );
+                            x11::xlib::XSync(display, 0);
+                            x11::xlib::XSetErrorHandler(prev_handler);
+                        }
+                        sleep(Duration::from_millis(100));
+                    }
+                }
+                ewmh_activate_window(display, prev, now.unwrap_or(0));
             }
-            tracing::debug!("focus restore attempt {attempt}: prev=0x{prev:x} now={now:x?}");
-            ewmh_activate_window(display, prev, now.unwrap_or(0));
-            sleep(Duration::from_millis(150));
+            sleep(Duration::from_millis(200));
         }
-        tracing::warn!("focus restore: WM did not re-activate 0x{prev:x}");
+        if stable == 0 {
+            tracing::warn!("focus restore: WM did not re-activate 0x{prev:x}");
+        }
         return;
     }
 
@@ -767,12 +813,6 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
     // restore runs under a scoped ignore-errors handler.
     if saved.core_focus == 0 {
         return;
-    }
-    unsafe extern "C" fn ignore_x_error(
-        _display: *mut x11::xlib::Display,
-        _event: *mut x11::xlib::XErrorEvent,
-    ) -> std::os::raw::c_int {
-        0
     }
     unsafe {
         let mut now_focus: x11::xlib::Window = 0;

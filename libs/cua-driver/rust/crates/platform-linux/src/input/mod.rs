@@ -782,40 +782,33 @@ pub fn send_parallel_virtual_pointer_drags(
         // X server drops replayed presses when several devices are frozen on
         // the same window and replayed together. The few-ms stagger this adds
         // to the presses is invisible; the concurrency that matters is motion.
-        // If a shield fails to install we still press (the drag works, only
-        // focus protection is lost — the restore safety net covers it).
+        // Shielding is mandatory: if install/replay fails, abort instead of
+        // continuing with a drag that could steal focus and rely on restore.
         let mut shielded = std::collections::HashSet::new();
         for item in &active {
-            let did_shield = if xi_opcode.is_some() {
-                match install_shield_grab(
-                    display,
-                    item.ids.pointer_id,
-                    item.drag.target_window as x11::xlib::Window,
-                    item.drag.button,
-                ) {
-                    Ok(()) => {
-                        shielded.insert(item.ids.pointer_id);
-                        true
-                    }
-                    Err(e) => {
-                        tracing::warn!("shield grab failed for '{}': {e}", item.cursor_id);
-                        false
-                    }
-                }
-            } else {
-                false
-            };
+            let opcode = xi_opcode.ok_or_else(|| {
+                anyhow!("parallel_mouse_drag requires XInput/XI2 shield grabs for no-focus-steal operation")
+            })?;
+            install_shield_grab(
+                display,
+                item.ids.pointer_id,
+                item.drag.target_window as x11::xlib::Window,
+                item.drag.button,
+            )
+            .with_context(|| format!("shield grab failed for '{}'", item.cursor_id))?;
+            shielded.insert(item.ids.pointer_id);
             warp_master_pointer(display, item.ids, item.drag.from_x, item.drag.from_y)?;
             {
                 let mut device = item.device.lock().unwrap();
                 emit_button(&mut device, item.drag.button, true)?;
             }
-            if let (true, Some(opcode)) = (did_shield, xi_opcode) {
-                let mut pending = std::collections::HashSet::from([item.ids.pointer_id]);
-                replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
-                if !pending.is_empty() {
-                    tracing::warn!("shield replay: press for '{}' not seen before timeout", item.cursor_id);
-                }
+            let mut pending = std::collections::HashSet::from([item.ids.pointer_id]);
+            replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
+            if !pending.is_empty() {
+                return Err(anyhow!(
+                    "shield replay timed out before XI_ButtonPress arrived for '{}'",
+                    item.cursor_id
+                ));
             }
         }
 

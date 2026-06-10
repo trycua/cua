@@ -11,7 +11,7 @@
 //! them, because XTest delivers to the *focused* window and would break the
 //! no-focus-steal contract.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;

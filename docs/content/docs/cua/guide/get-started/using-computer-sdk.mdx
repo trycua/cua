@@ -344,6 +344,10 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
 
 ## Common Operations
 
+TypeScript examples below use the cloud `Computer` shape. If you connected with a host desktop
+interface, call the same TypeScript methods directly on `computer`, such as
+`await computer.screenshot()` or `await computer.leftClick(x, y)`.
+
 | Operation    | Python                                          | TypeScript                                      |
 | ------------ | ----------------------------------------------- | ----------------------------------------------- |
 | Screenshot   | `await computer.interface.screenshot()`         | `await computer.interface.screenshot()`         |
@@ -351,8 +355,8 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
 | Right click  | `await computer.interface.right_click(x, y)`    | `await computer.interface.rightClick(x, y)`     |
 | Double click | `await computer.interface.double_click(x, y)`   | `await computer.interface.doubleClick(x, y)`    |
 | Type text    | `await computer.interface.type_text("text")`    | `await computer.interface.typeText("text")`     |
-| Press key    | `await computer.interface.key("Enter")`         | `await computer.interface.key("Enter")`         |
-| Scroll       | `await computer.interface.scroll(x, y, clicks)` | `await computer.interface.scroll(x, y, clicks)` |
+| Press key    | `await computer.interface.key("Enter")`         | `await computer.interface.pressKey("Enter")`    |
+| Scroll       | `await computer.interface.scroll(x, y, clicks)` | `await computer.interface.scroll(x, y)`         |
 
 ## Lifecycle Methods
 

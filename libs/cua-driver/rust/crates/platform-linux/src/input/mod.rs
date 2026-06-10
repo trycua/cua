@@ -559,7 +559,7 @@ fn replay_shielded_presses(
             if pending_devices.remove(&device_id) {
                 unsafe {
                     x11::xinput2::XIAllowEvents(display, device_id, x11::xinput2::XIReplayDevice, time);
-                    x11::xlib::XFlush(display);
+                    x11::xlib::XSync(display, 0);
                 }
             }
         }
@@ -774,14 +774,19 @@ pub fn send_parallel_virtual_pointer_drags(
             std::thread::sleep(start_at - now);
         }
 
-        // Shield each drag from the WM's click-to-focus grab: install a
-        // device-specific sync grab on the target window, warp, then press.
-        // The press freezes on our grab; we replay it past the WM below.
-        // If a shield fails to install we still press — the drag works, only
-        // focus protection is lost (the restore safety net covers it).
+        // Shield each drag from the WM's click-to-focus grab, then press.
+        // Per item: install a device-specific sync grab on the target window,
+        // warp, press, and immediately replay the frozen press so it reaches
+        // the app while the WM stays blind to it. We replay each press before
+        // emitting the next so only ONE device is ever frozen at a time — the
+        // X server drops replayed presses when several devices are frozen on
+        // the same window and replayed together. The few-ms stagger this adds
+        // to the presses is invisible; the concurrency that matters is motion.
+        // If a shield fails to install we still press (the drag works, only
+        // focus protection is lost — the restore safety net covers it).
         let mut shielded = std::collections::HashSet::new();
         for item in &active {
-            if xi_opcode.is_some() {
+            let did_shield = if xi_opcode.is_some() {
                 match install_shield_grab(
                     display,
                     item.ids.pointer_id,
@@ -790,24 +795,26 @@ pub fn send_parallel_virtual_pointer_drags(
                 ) {
                     Ok(()) => {
                         shielded.insert(item.ids.pointer_id);
+                        true
                     }
-                    Err(e) => tracing::warn!("shield grab failed for '{}': {e}", item.cursor_id),
+                    Err(e) => {
+                        tracing::warn!("shield grab failed for '{}': {e}", item.cursor_id);
+                        false
+                    }
                 }
-            }
+            } else {
+                false
+            };
             warp_master_pointer(display, item.ids, item.drag.from_x, item.drag.from_y)?;
-            let mut device = item.device.lock().unwrap();
-            emit_button(&mut device, item.drag.button, true)?;
-        }
-
-        // Replay the frozen presses so they reach the app while the WM stays
-        // blind to them. Bounded wait: a press that never arrives must not
-        // hang the drag.
-        if let Some(opcode) = xi_opcode {
-            if !shielded.is_empty() {
-                let mut pending = shielded.clone();
+            {
+                let mut device = item.device.lock().unwrap();
+                emit_button(&mut device, item.drag.button, true)?;
+            }
+            if let (true, Some(opcode)) = (did_shield, xi_opcode) {
+                let mut pending = std::collections::HashSet::from([item.ids.pointer_id]);
                 replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
                 if !pending.is_empty() {
-                    tracing::warn!("shield replay: {} press(es) not seen before timeout", pending.len());
+                    tracing::warn!("shield replay: press for '{}' not seen before timeout", item.cursor_id);
                 }
             }
         }

@@ -148,35 +148,35 @@ fn supports_parallel_pointer_injection(display: *mut x11::xlib::Display) -> Resu
 }
 
 fn is_xtigervnc_process_running() -> bool {
-    let display_name = std::env::var("DISPLAY").ok();
-    let Ok(proc_entries) = fs::read_dir("/proc") else {
+    let display = std::env::var("DISPLAY").unwrap_or_default();
+    // Extract display number from DISPLAY (e.g., ":0" -> "0", "host:1.0" -> "1")
+    let display_num = display
+        .rsplit(':')
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if display_num.is_empty() {
+        return false;
+    }
+    // The X server writes its PID to the standard lock file /tmp/.X{N}-lock
+    let lock_path = format!("/tmp/.X{display_num}-lock");
+    let Ok(contents) = fs::read_to_string(&lock_path) else {
         return false;
     };
-    for entry in proc_entries.flatten() {
-        let file_name = entry.file_name();
-        let Some(pid) = file_name.to_str() else {
-            continue;
-        };
-        if !pid.bytes().all(|b| b.is_ascii_digit()) {
-            continue;
-        }
-        let Ok(cmdline) = fs::read(entry.path().join("cmdline")) else {
-            continue;
-        };
-        if cmdline.is_empty() {
-            continue;
-        }
-        let cmd = String::from_utf8_lossy(&cmdline).replace('\0', " ");
-        if !cmd.contains("Xtigervnc") {
-            continue;
-        }
-        if let Some(display_name) = &display_name {
-            if cmd.contains(display_name) {
-                return true;
-            }
-        } else {
-            return true;
-        }
+    let pid = contents.trim();
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    // Check the executable path of the X server process directly
+    if let Ok(exe) = fs::read_link(format!("/proc/{pid}/exe")) {
+        return exe.file_name().and_then(|n| n.to_str()) == Some("Xtigervnc");
+    }
+    // Fallback: check the process name via comm (limited to 15 chars, but "Xtigervnc" fits)
+    if let Ok(comm) = fs::read_to_string(format!("/proc/{pid}/comm")) {
+        return comm.trim() == "Xtigervnc";
     }
     false
 }

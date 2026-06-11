@@ -55,11 +55,17 @@ jobs:
             visual: true
             result_link: result-linux-background-terminal-gif
             artifact_name: cua-driver-linux-background-terminal-gif
-          # NOTE: "Linux parallel multi-cursor drag GIF test" is intentionally
-          # not in this matrix — it needs a real Xorg (dummy+libinput) that
-          # doesn't start reliably in the emulated nixos-test VM. The feature
-          # is covered by platform-linux unit tests; the scenario file is kept
-          # for local/real-X runs.
+          - name: Linux parallel multi-cursor drag test
+            check_attr: cua-driver-linux-parallel-drag-xserver
+            timeout_minutes: 20
+            visual: true
+            result_link: result-linux-parallel-drag-xserver
+            artifact_name: cua-driver-linux-parallel-drag-xserver
+          # NOTE: the older "parallel multi-cursor drag GIF" scenario
+          # (linux-parallel-drag-gif.nix) is intentionally not in this matrix —
+          # it hand-launches Xorg, which can't get a VT/seat in the emulated
+          # nixos-test VM. The services.xserver entry above supersedes it; the
+          # old scenario file is kept for local/real-X runs.
           # Full entries (CDP / Tk focus-free-write overrides) — kept as-is.
           - name: Linux background GUI test (chromium)
             check_attr: cua-driver-linux-background-gui-chromium
@@ -283,6 +289,7 @@ jobs:
             const artifactNames = [
               'cua-driver-linux-cursor-click-gif',
               'cua-driver-linux-background-terminal-gif',
+              'cua-driver-linux-parallel-drag-xserver',
               'cua-driver-linux-background-gui-chromium',
               'cua-driver-linux-background-gui-tk',
               'cua-driver-linux-background-gui-gtk3-gedit',

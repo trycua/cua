@@ -90,7 +90,7 @@ def build_benchmark_manifest(
     manifest = {
         "schema_version": 1,
         "run_id": result.run_id,
-        "created_at": completed_at or _utc_now(),
+        "manifest_created_at": _utc_now(),
         "started_at": started_at,
         "completed_at": completed_at,
         "config": asdict(config),
@@ -104,11 +104,6 @@ def build_benchmark_manifest(
         "tasks": result.task_results,
         "failed_tasks": failed_tasks,
         "replay": {
-            "dataset_path": config.dataset_path,
-            "split": config.split,
-            "task_filter": config.task_filter,
-            "max_variants": config.max_variants,
-            "oracle": config.oracle,
             "command": _build_replay_command(config),
         },
     }
@@ -122,7 +117,7 @@ def write_benchmark_artifacts(
     *,
     started_at: Optional[str] = None,
     completed_at: Optional[str] = None,
-) -> Path:
+) -> Tuple[Path, Path]:
     """Write manifest and failure index artifacts for a benchmark run.
 
     The files are intentionally plain JSON so failed computer-use runs can be
@@ -144,7 +139,7 @@ def write_benchmark_artifacts(
         for task in manifest["failed_tasks"]:
             f.write(json.dumps(task, sort_keys=True) + "\n")
 
-    return manifest_path
+    return manifest_path, failures_path
 
 
 async def run_single_task(

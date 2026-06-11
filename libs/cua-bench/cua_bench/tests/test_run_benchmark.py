@@ -167,8 +167,10 @@ class TestBenchmarkArtifacts:
         )
 
         assert manifest["schema_version"] == 1
+        assert manifest["manifest_created_at"]
         assert manifest["summary"]["failed_count"] == 1
         assert manifest["failed_tasks"][0]["task_path"] == "dataset/type"
+        assert list(manifest["replay"].keys()) == ["command"]
         assert manifest["replay"]["command"] == [
             "cb",
             "run",
@@ -201,7 +203,7 @@ class TestBenchmarkArtifacts:
             duration_seconds=3.0,
         )
 
-        manifest_path = write_benchmark_artifacts(
+        manifest_path, failures_path = write_benchmark_artifacts(
             result,
             tmp_path,
             BenchmarkRunConfig(dataset_path="dataset"),
@@ -210,7 +212,7 @@ class TestBenchmarkArtifacts:
         )
 
         manifest = json.loads(manifest_path.read_text())
-        failures = (tmp_path / "failures.jsonl").read_text().strip().splitlines()
+        failures = failures_path.read_text().strip().splitlines()
         assert manifest["run_id"] == "run-failed"
         assert manifest["summary"]["avg_reward"] == 0.5
         assert len(failures) == 1

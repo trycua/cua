@@ -85,6 +85,7 @@ impl ToolRegistry {
         self.register(Box::new(StopRecordingTool::new(session.clone())));
         self.register(Box::new(GetRecordingStateTool::new(session)));
         self.register(Box::new(ReplayTrajectoryTool));
+        self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
     }
 
     /// Register the platform-independent session-lifecycle tools

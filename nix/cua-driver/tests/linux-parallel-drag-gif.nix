@@ -155,10 +155,15 @@ let
 
   # Manually-launched Xorg needs an explicit module path covering the server's
   # own modules plus the separately-packaged dummy video + libinput drivers.
+  # Each entry must be the PARENT `lib/xorg/modules` directory, not a `drivers`
+  # or `input` subdir: Xorg's loader appends the standard subdir itself (e.g.
+  # `drivers/` for video drivers), so pointing at `.../modules/drivers` makes it
+  # search `.../modules/drivers/drivers/dummy_drv.so` and find nothing — leaving
+  # the server with no screens, which it abandons right after opening its socket.
   xorgModulePath = lib.concatStringsSep "," [
     "${pkgs.xorg.xorgserver}/lib/xorg/modules"
-    "${pkgs.xorg.xf86videodummy}/lib/xorg/modules/drivers"
-    "${pkgs.xorg.xf86inputlibinput}/lib/xorg/modules/input"
+    "${pkgs.xorg.xf86videodummy}/lib/xorg/modules"
+    "${pkgs.xorg.xf86inputlibinput}/lib/xorg/modules"
   ];
 
   mcpDragTest = pkgs.writeText "mcp-parallel-drag-test.py" ''
@@ -320,7 +325,15 @@ pkgs.testers.nixosTest {
             "-logfile /tmp/xorg.log >/tmp/xorg.out 2>&1 &"
         )
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=30)
-        machine.wait_until_succeeds("DISPLAY=:99 xdpyinfo >/dev/null 2>&1", timeout=30)
+        try:
+            machine.wait_until_succeeds("DISPLAY=:99 xdpyinfo >/dev/null 2>&1", timeout=30)
+        except Exception:
+            # Xorg opens its socket before completing screen/driver setup, so a
+            # missing video/input driver shows up here as an unreachable server.
+            # Surface the server log (and stderr) so the failure is diagnosable.
+            machine.log(machine.succeed("cat /tmp/xorg.log 2>/dev/null || echo '(no /tmp/xorg.log)'"))
+            machine.log(machine.succeed("cat /tmp/xorg.out 2>/dev/null || echo '(no /tmp/xorg.out)'"))
+            raise
         machine.execute("DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &")
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
 

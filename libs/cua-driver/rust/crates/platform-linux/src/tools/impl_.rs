@@ -2071,19 +2071,27 @@ impl Tool for ParallelMouseDragTool {
     fn def(&self) -> &ToolDef {
         PMDRAG_DEF.get_or_init(|| ToolDef {
             name: "parallel_mouse_drag".into(),
-            description: "Run multiple mouse press-drag-release gestures concurrently via Linux MPX/XI2 virtual master pointers. \
-                Each drag item is executed on its own session-scoped master pointer, allowing true same-window concurrent line draws on X11.".into(),
+            description: "Run multiple mouse drag gestures concurrently via Linux MPX/XI2 virtual master pointers. \
+                Each drag item runs on its own session-scoped master pointer (true same-window concurrent draws on X11). \
+                Each item presses once, glides continuously through its whole path, and releases once — one smooth held \
+                drag, not a chain of clicks. A path is given either as a straight segment (from_x/from_y → to_x/to_y) or \
+                as a function `fn` = y(x) sampled over [x_from, x_to] in window-local pixels (e.g. fn:\"x\" is a diagonal, \
+                fn:\"300+120*sin(x/40)\" a sine wave). Functions support + - * / ^, sin/cos/tan, sqrt, abs, exp, ln, pi, e.".into(),
             input_schema: json!({"type":"object","required":["drags"],"properties":{
-                "drags":{"type":"array","minItems":2,"items":{"type":"object","required":["session","window_id","from_x","from_y","to_x","to_y"],"properties":{
+                "drags":{"type":"array","minItems":2,"items":{"type":"object","required":["session","window_id"],"properties":{
                     "session":{"type":"string","description":"Session/cursor id; also keys the virtual master pointer."},
                     "window_id":{"type":"integer"},
+                    "fn":{"type":"string","description":"Expression y(x) in window-local pixels; sampled over [x_from,x_to]. Mutually exclusive with from_x/to_x."},
+                    "x_from":{"type":"number","description":"Domain start (window-local x) when `fn` is used."},
+                    "x_to":{"type":"number","description":"Domain end (window-local x) when `fn` is used."},
+                    "samples":{"type":"integer","minimum":2,"maximum":400,"description":"Waypoints sampled along `fn`. Default: 80."},
                     "from_x":{"type":"number"},
                     "from_y":{"type":"number"},
                     "to_x":{"type":"number"},
                     "to_y":{"type":"number"},
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Default: left."},
-                    "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Default: 500."},
-                    "steps":{"type":"integer","minimum":1,"maximum":300,"description":"Default: 20."}
+                    "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Default: 1500 for fn paths, 500 for straight."},
+                    "steps":{"type":"integer","minimum":1,"maximum":300,"description":"Motion sub-steps along the whole path. Default: scaled to path length."}
                 },"additionalProperties":false}}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -2112,39 +2120,75 @@ impl Tool for ParallelMouseDragTool {
             let Some(xid) = item.get("window_id").and_then(|v| v.as_u64()) else {
                 return ToolResult::error("each drag item requires window_id.");
             };
-            let Some(from_x) = item.get("from_x").and_then(|v| v.as_f64()) else {
-                return ToolResult::error("each drag item requires from_x.");
-            };
-            let Some(from_y) = item.get("from_y").and_then(|v| v.as_f64()) else {
-                return ToolResult::error("each drag item requires from_y.");
-            };
-            let Some(to_x) = item.get("to_x").and_then(|v| v.as_f64()) else {
-                return ToolResult::error("each drag item requires to_x.");
-            };
-            let Some(to_y) = item.get("to_y").and_then(|v| v.as_f64()) else {
-                return ToolResult::error("each drag item requires to_y.");
+
+            // Build the window-local waypoint path from either `fn` (y = f(x)
+            // sampled over [x_from, x_to]) or a straight from→to segment.
+            let is_fn = item.get("fn").and_then(|v| v.as_str()).is_some();
+            let local: Vec<(f64, f64)> = if let Some(expr_str) = item.get("fn").and_then(|v| v.as_str()) {
+                let Some(x_from) = item.get("x_from").and_then(|v| v.as_f64()) else {
+                    return ToolResult::error("`fn` requires x_from.");
+                };
+                let Some(x_to) = item.get("x_to").and_then(|v| v.as_f64()) else {
+                    return ToolResult::error("`fn` requires x_to.");
+                };
+                let samples = item.get("samples").and_then(|v| v.as_u64()).unwrap_or(80).clamp(2, 400);
+                let expr: meval::Expr = match expr_str.parse() {
+                    Ok(e) => e,
+                    Err(e) => return ToolResult::error(format!("invalid fn '{expr_str}': {e}")),
+                };
+                let f = match expr.bind("x") {
+                    Ok(f) => f,
+                    Err(e) => return ToolResult::error(format!("fn must be in terms of x: {e}")),
+                };
+                let mut pts = Vec::with_capacity(samples as usize);
+                for i in 0..samples {
+                    let x = x_from + (x_to - x_from) * (i as f64) / ((samples - 1).max(1) as f64);
+                    let y = f(x);
+                    if x.is_finite() && y.is_finite() {
+                        pts.push((x, y));
+                    }
+                }
+                if pts.len() < 2 {
+                    return ToolResult::error("`fn` produced fewer than 2 finite points over the domain.");
+                }
+                pts
+            } else {
+                let coerce = |k: &str| item.get(k).and_then(|v| v.as_f64());
+                match (coerce("from_x"), coerce("from_y"), coerce("to_x"), coerce("to_y")) {
+                    (Some(fx), Some(fy), Some(tx), Some(ty)) => vec![(fx, fy), (tx, ty)],
+                    _ => return ToolResult::error("each drag item requires either `fn`+x_from+x_to, or from_x/from_y/to_x/to_y."),
+                }
             };
 
             let button = parse_mouse_button(item.get("button").and_then(|v| v.as_str()).unwrap_or("left"));
-            let duration_ms = item.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(500);
-            let steps = item.get("steps").and_then(|v| v.as_u64()).unwrap_or(20).max(1) as usize;
+            let duration_ms = item.get("duration_ms").and_then(|v| v.as_u64())
+                .unwrap_or(if is_fn { 1500 } else { 500 });
 
-            let from = match tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await {
-                Ok(Ok(coords)) => coords,
+            // One translate gives the window origin; the path is a pure offset.
+            let origin = match tokio::task::spawn_blocking(move || window_local_to_screen(xid, 0.0, 0.0)).await {
+                Ok(Ok(o)) => o,
                 Ok(Err(e)) => return ToolResult::error(e.to_string()),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             };
-            let to = match tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
-                Ok(Ok(coords)) => coords,
-                Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
-            };
+            let path: Vec<(i32, i32)> = local.iter()
+                .map(|(lx, ly)| ((origin.0 + lx).round() as i32, (origin.1 + ly).round() as i32))
+                .collect();
 
-            self.state.cursor_registry.update_position(session, from.0, from.1);
+            // Default sub-step count scaled to path length (smooth glide),
+            // overridable via `steps`.
+            let total_len: f64 = path.windows(2)
+                .map(|w| (((w[1].0 - w[0].0) as f64).powi(2) + ((w[1].1 - w[0].1) as f64).powi(2)).sqrt())
+                .sum();
+            let steps = item.get("steps").and_then(|v| v.as_u64())
+                .map(|s| (s as usize).clamp(1, 300))
+                .unwrap_or_else(|| ((total_len / 3.0).round() as usize).clamp(24, 300));
+
+            let start = path[0];
+            self.state.cursor_registry.update_position(session, start.0 as f64, start.1 as f64);
             crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::PinAbove(xid));
             crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SnapTo {
-                x: from.0,
-                y: from.1,
+                x: start.0 as f64,
+                y: start.1 as f64,
                 heading_radians: None,
             });
             crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(true));
@@ -2154,10 +2198,7 @@ impl Tool for ParallelMouseDragTool {
                 crate::input::VirtualPointerDrag {
                     target_window: xid,
                     button,
-                    from_x: from.0.round() as i32,
-                    from_y: from.1.round() as i32,
-                    to_x: to.0.round() as i32,
-                    to_y: to.1.round() as i32,
+                    path,
                     duration_ms,
                     steps,
                 },
@@ -2169,16 +2210,19 @@ impl Tool for ParallelMouseDragTool {
         match result {
             Ok(Ok(())) => {
                 for (session, drag) in &drags {
-                    self.state.cursor_registry.update_position(session, drag.to_x as f64, drag.to_y as f64);
+                    let n = drag.path.len();
+                    let end = drag.path[n - 1];
+                    let prev = drag.path[n.saturating_sub(2)];
+                    self.state.cursor_registry.update_position(session, end.0 as f64, end.1 as f64);
                     crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SnapTo {
-                        x: drag.to_x as f64,
-                        y: drag.to_y as f64,
-                        heading_radians: Some(((drag.to_y - drag.from_y) as f64).atan2((drag.to_x - drag.from_x) as f64)),
+                        x: end.0 as f64,
+                        y: end.1 as f64,
+                        heading_radians: Some(((end.1 - prev.1) as f64).atan2((end.0 - prev.0) as f64)),
                     });
                     crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
                     crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::ClickPulse {
-                        x: drag.to_x as f64,
-                        y: drag.to_y as f64,
+                        x: end.0 as f64,
+                        y: end.1 as f64,
                     });
                 }
                 ToolResult::text(format!("✅ Ran {} MPX drag gesture(s) concurrently.", drags.len()))

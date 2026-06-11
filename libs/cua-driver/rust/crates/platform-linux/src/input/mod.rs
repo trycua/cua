@@ -29,16 +29,52 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const KEY_DELAY_MS: u64 = 10;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct VirtualPointerDrag {
     pub target_window: u64,
     pub button: u8,
-    pub from_x: i32,
-    pub from_y: i32,
-    pub to_x: i32,
-    pub to_y: i32,
+    /// Screen-coordinate waypoints. The pointer presses once at `path[0]`,
+    /// glides through every waypoint (arc-length interpolated), and releases
+    /// once at the last point — a single continuous held drag, so a curved
+    /// path (e.g. a sampled y = f(x)) draws as one smooth stroke rather than
+    /// a chain of press/release dabs. Must contain >= 2 points.
+    pub path: Vec<(i32, i32)>,
     pub duration_ms: u64,
     pub steps: usize,
+}
+
+/// Cumulative segment lengths along `path` and its total length.
+fn path_cumulative(path: &[(i32, i32)]) -> (Vec<f64>, f64) {
+    let mut cum = Vec::with_capacity(path.len());
+    let mut total = 0.0;
+    cum.push(0.0);
+    for w in path.windows(2) {
+        let dx = (w[1].0 - w[0].0) as f64;
+        let dy = (w[1].1 - w[0].1) as f64;
+        total += (dx * dx + dy * dy).sqrt();
+        cum.push(total);
+    }
+    (cum, total)
+}
+
+/// Point at arc-length fraction `t` (0..1) along `path`.
+fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, i32) {
+    if path.len() == 1 || total <= 0.0 {
+        return *path.last().unwrap();
+    }
+    let d = t.clamp(0.0, 1.0) * total;
+    let mut i = match cum.binary_search_by(|v| v.partial_cmp(&d).unwrap_or(std::cmp::Ordering::Less)) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    };
+    if i >= path.len() - 1 {
+        i = path.len() - 2;
+    }
+    let seg = cum[i + 1] - cum[i];
+    let f = if seg > 0.0 { (d - cum[i]) / seg } else { 0.0 };
+    let x = path[i].0 as f64 + (path[i + 1].0 - path[i].0) as f64 * f;
+    let y = path[i].1 as f64 + (path[i + 1].1 - path[i].1) as f64 * f;
+    (x.round() as i32, y.round() as i32)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -725,6 +761,8 @@ pub fn send_parallel_virtual_pointer_drags(
         ids: MasterPointerIds,
         device: Arc<Mutex<VirtualDevice>>,
         drag: VirtualPointerDrag,
+        cum: Vec<f64>,
+        total: f64,
         steps: usize,
         step_delay: Duration,
         current_step: usize,
@@ -751,11 +789,15 @@ pub fn send_parallel_virtual_pointer_drags(
                 .get(cursor_id)
                 .cloned()
                 .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
+            let (cum, total) = path_cumulative(&drag.path);
+            let start = *drag.path.first().unwrap_or(&(0, 0));
             active.push(ActiveDrag {
                 cursor_id: cursor_id.clone(),
                 ids,
                 device,
-                drag: *drag,
+                drag: drag.clone(),
+                cum,
+                total,
                 steps: drag.steps.max(1),
                 step_delay: if drag.steps.max(1) > 1 {
                     Duration::from_millis(drag.duration_ms / drag.steps.max(1) as u64)
@@ -764,8 +806,8 @@ pub fn send_parallel_virtual_pointer_drags(
                 },
                 current_step: 0,
                 next_at: start_at,
-                last_x: drag.from_x,
-                last_y: drag.from_y,
+                last_x: start.0,
+                last_y: start.1,
             });
         }
 
@@ -797,7 +839,8 @@ pub fn send_parallel_virtual_pointer_drags(
             )
             .with_context(|| format!("shield grab failed for '{}'", item.cursor_id))?;
             shielded.insert(item.ids.pointer_id);
-            warp_master_pointer(display, item.ids, item.drag.from_x, item.drag.from_y)?;
+            let start = *item.drag.path.first().unwrap_or(&(0, 0));
+            warp_master_pointer(display, item.ids, start.0, start.1)?;
             {
                 let mut device = item.device.lock().unwrap();
                 emit_button(&mut device, item.drag.button, true)?;
@@ -824,10 +867,7 @@ pub fn send_parallel_virtual_pointer_drags(
                 if now >= item.next_at {
                     item.current_step += 1;
                     let t = item.current_step as f64 / item.steps as f64;
-                    let ix = item.drag.from_x
-                        + ((item.drag.to_x - item.drag.from_x) as f64 * t).round() as i32;
-                    let iy = item.drag.from_y
-                        + ((item.drag.to_y - item.drag.from_y) as f64 * t).round() as i32;
+                    let (ix, iy) = point_on_path(&item.drag.path, &item.cum, item.total, t);
                     let dx = ix - item.last_x;
                     let dy = iy - item.last_y;
                     if dx != 0 || dy != 0 {

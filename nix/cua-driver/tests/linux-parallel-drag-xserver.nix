@@ -209,7 +209,12 @@ pkgs.testers.nixosTest {
         # the lightest. (lightdm.enable still lives under xserver.displayManager;
         # autoLogin/defaultSession moved to the top-level services.displayManager.)
         displayManager.lightdm.enable = true;
-        # Open :0 to local connections so the root-run driver/clients reach it.
+        # Disable X access control outright: this is a throwaway single-user
+        # test VM, and the root-run cua-driver / clients must reach :0. Relying
+        # on the session's `xhost +local:` proved unreliable across uids (the
+        # server's auth ACL only lists the autologin user), so `-ac` is the
+        # bulletproof grant. `xhost +local:` is kept as belt-and-suspenders.
+        displayManager.xserverArgs = [ "-ac" ];
         displayManager.sessionCommands = ''
           ${pkgs.xorg.xhost}/bin/xhost +local: || true
         '';
@@ -248,17 +253,17 @@ pkgs.testers.nixosTest {
     with subtest("Real Xorg up via the display manager"):
         try:
             machine.wait_for_x()
+            # With `-ac` the root-run clients can connect to :0 immediately.
+            machine.wait_until_succeeds("DISPLAY=:0 xdpyinfo >/dev/null 2>&1", timeout=30)
         except Exception:
-            # First-run diagnostics: surface why X/lightdm did not come up so we
-            # don't burn a CI round-trip guessing (dummy driver cfg, VT/seat, etc.).
+            # Diagnostics: surface why X/lightdm did not come up or why root
+            # can't reach :0, so we don't burn a CI round-trip guessing.
             machine.log(machine.execute("systemctl status display-manager.service --no-pager || true")[1])
             machine.log(machine.execute("journalctl -u display-manager.service --no-pager | tail -n 200 || true")[1])
+            machine.log(machine.execute("ls -la /tmp/.X11-unix/ || true")[1])
             machine.log(machine.execute("cat /var/log/X.0.log 2>/dev/null | tail -n 200 || true")[1])
-            machine.log(machine.execute("cat /home/cua/.local/share/xorg/Xorg.0.log 2>/dev/null | tail -n 200 || true")[1])
+            machine.log(machine.execute("find / -name 'Xorg.0.log' 2>/dev/null | head; cat $(find / -name 'Xorg.0.log' 2>/dev/null | head -1) 2>/dev/null | tail -n 120 || true")[1])
             raise
-        # The autologin session runs `xhost +local:`; retry until root can
-        # connect to :0 (session/xhost may land a moment after X).
-        machine.wait_until_succeeds("DISPLAY=:0 xdpyinfo >/dev/null 2>&1", timeout=60)
         machine.log(machine.succeed("DISPLAY=:0 xinput list --short || true"))
 
     with subtest("Launch XI2 paint target + a control window that holds focus"):

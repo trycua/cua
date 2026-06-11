@@ -235,6 +235,7 @@ pkgs.testers.nixosTest {
       environment.systemPackages = with pkgs; [
         xorg.xinput
         xorg.xhost
+        xorg.xdpyinfo # the :0 connectivity probe in the test script
         xi2paint
         xterm
         xdotool

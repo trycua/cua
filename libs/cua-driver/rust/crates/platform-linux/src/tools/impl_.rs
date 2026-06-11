@@ -2081,6 +2081,7 @@ impl Tool for ParallelMouseDragTool {
                 "drags":{"type":"array","minItems":2,"items":{"type":"object","required":["session","window_id"],"properties":{
                     "session":{"type":"string","description":"Session/cursor id; also keys the virtual master pointer."},
                     "window_id":{"type":"integer"},
+                    "path":{"type":"array","items":{"type":"array","items":{"type":"number"}},"description":"Explicit window-local waypoints [[x,y],...] (>=2); pressed once, glided through, released once. Takes precedence over fn/from-to."},
                     "fn":{"type":"string","description":"Expression y(x) in window-local pixels; sampled over [x_from,x_to]. Mutually exclusive with from_x/to_x."},
                     "x_from":{"type":"number","description":"Domain start (window-local x) when `fn` is used."},
                     "x_to":{"type":"number","description":"Domain end (window-local x) when `fn` is used."},
@@ -2121,10 +2122,27 @@ impl Tool for ParallelMouseDragTool {
                 return ToolResult::error("each drag item requires window_id.");
             };
 
-            // Build the window-local waypoint path from either `fn` (y = f(x)
-            // sampled over [x_from, x_to]) or a straight from→to segment.
+            // Build the window-local waypoint path from one of: an explicit
+            // `path` of [x,y] points, a function `fn` (y = f(x) sampled over
+            // [x_from, x_to]), or a straight from→to segment.
             let is_fn = item.get("fn").and_then(|v| v.as_str()).is_some();
-            let local: Vec<(f64, f64)> = if let Some(expr_str) = item.get("fn").and_then(|v| v.as_str()) {
+            let local: Vec<(f64, f64)> = if let Some(pts) = item.get("path").and_then(|v| v.as_array()) {
+                let mut out = Vec::with_capacity(pts.len());
+                for p in pts {
+                    let a = p.as_array();
+                    let (Some(px), Some(py)) = (
+                        a.and_then(|a| a.first()).and_then(|v| v.as_f64()),
+                        a.and_then(|a| a.get(1)).and_then(|v| v.as_f64()),
+                    ) else {
+                        return ToolResult::error("each `path` entry must be [x, y].");
+                    };
+                    out.push((px, py));
+                }
+                if out.len() < 2 {
+                    return ToolResult::error("`path` needs at least 2 points.");
+                }
+                out
+            } else if let Some(expr_str) = item.get("fn").and_then(|v| v.as_str()) {
                 let Some(x_from) = item.get("x_from").and_then(|v| v.as_f64()) else {
                     return ToolResult::error("`fn` requires x_from.");
                 };
@@ -2132,26 +2150,10 @@ impl Tool for ParallelMouseDragTool {
                     return ToolResult::error("`fn` requires x_to.");
                 };
                 let samples = item.get("samples").and_then(|v| v.as_u64()).unwrap_or(80).clamp(2, 400);
-                let expr: meval::Expr = match expr_str.parse() {
-                    Ok(e) => e,
-                    Err(e) => return ToolResult::error(format!("invalid fn '{expr_str}': {e}")),
-                };
-                let f = match expr.bind("x") {
-                    Ok(f) => f,
-                    Err(e) => return ToolResult::error(format!("fn must be in terms of x: {e}")),
-                };
-                let mut pts = Vec::with_capacity(samples as usize);
-                for i in 0..samples {
-                    let x = x_from + (x_to - x_from) * (i as f64) / ((samples - 1).max(1) as f64);
-                    let y = f(x);
-                    if x.is_finite() && y.is_finite() {
-                        pts.push((x, y));
-                    }
+                match crate::input::sample_function(expr_str, x_from, x_to, samples) {
+                    Ok(pts) => pts,
+                    Err(e) => return ToolResult::error(e.to_string()),
                 }
-                if pts.len() < 2 {
-                    return ToolResult::error("`fn` produced fewer than 2 finite points over the domain.");
-                }
-                pts
             } else {
                 let coerce = |k: &str| item.get(k).and_then(|v| v.as_f64());
                 match (coerce("from_x"), coerce("from_y"), coerce("to_x"), coerce("to_y")) {

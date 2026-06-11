@@ -57,6 +57,32 @@ fn path_cumulative(path: &[(i32, i32)]) -> (Vec<f64>, f64) {
     (cum, total)
 }
 
+/// Sample `y = f(x)` over `[x_from, x_to]` into `samples` window-local
+/// waypoints. Evaluated with meval (sin/cos/^/etc.); non-finite outputs
+/// (ln of a negative, 1/0, …) are dropped. Errors on a bad expression or
+/// fewer than 2 finite points.
+pub fn sample_function(expr: &str, x_from: f64, x_to: f64, samples: u64) -> Result<Vec<(f64, f64)>> {
+    let parsed: meval::Expr = expr
+        .parse()
+        .map_err(|e| anyhow!("invalid fn '{expr}': {e}"))?;
+    let f = parsed
+        .bind("x")
+        .map_err(|e| anyhow!("fn must be in terms of x: {e}"))?;
+    let n = samples.max(2);
+    let mut pts = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let x = x_from + (x_to - x_from) * (i as f64) / ((n - 1) as f64);
+        let y = f(x);
+        if x.is_finite() && y.is_finite() {
+            pts.push((x, y));
+        }
+    }
+    if pts.len() < 2 {
+        bail!("fn produced fewer than 2 finite points over the domain");
+    }
+    Ok(pts)
+}
+
 /// Point at arc-length fraction `t` (0..1) along `path`.
 fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, i32) {
     if path.len() == 1 || total <= 0.0 {
@@ -1614,5 +1640,94 @@ exit 0"#,
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::{path_cumulative, point_on_path, sample_function};
+
+    #[test]
+    fn sample_linear_function() {
+        let pts = sample_function("x", 0.0, 10.0, 11).unwrap();
+        assert_eq!(pts.len(), 11);
+        assert_eq!(pts.first().unwrap(), &(0.0, 0.0));
+        assert_eq!(pts.last().unwrap(), &(10.0, 10.0));
+        assert!((pts[5].0 - 5.0).abs() < 1e-9 && (pts[5].1 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sample_affine_and_trig() {
+        let pts = sample_function("2*x+1", 0.0, 4.0, 5).unwrap();
+        for (x, y) in pts {
+            assert!((y - (2.0 * x + 1.0)).abs() < 1e-9);
+        }
+        // sin(x) parses and yields finite, bounded values.
+        let s = sample_function("100+50*sin(x)", 0.0, 6.28, 40).unwrap();
+        assert!(s.iter().all(|(_, y)| (49.9..=150.1).contains(y)));
+    }
+
+    #[test]
+    fn invalid_expression_errors() {
+        assert!(sample_function("x +", 0.0, 1.0, 4).is_err());
+        assert!(sample_function("3*z", 0.0, 1.0, 4).is_err()); // unknown var
+    }
+
+    #[test]
+    fn non_finite_points_are_dropped() {
+        // ln(x) is -inf/NaN for x<=0; the finite tail must still sample.
+        let pts = sample_function("ln(x)", -2.0, 5.0, 50).unwrap();
+        assert!(pts.iter().all(|(_, y)| y.is_finite()));
+        assert!(pts.len() >= 2);
+    }
+
+    #[test]
+    fn cumulative_lengths_and_total() {
+        // 3-4-5 triangle then a zero-length repeat.
+        let path = [(0, 0), (3, 4), (3, 4)];
+        let (cum, total) = path_cumulative(&path);
+        assert_eq!(cum.len(), 3);
+        assert!((cum[0] - 0.0).abs() < 1e-9);
+        assert!((cum[1] - 5.0).abs() < 1e-9);
+        assert!((cum[2] - 5.0).abs() < 1e-9);
+        assert!((total - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn straight_segment_interpolates_by_fraction() {
+        let path = [(0, 0), (10, 0)];
+        let (cum, total) = path_cumulative(&path);
+        assert_eq!(point_on_path(&path, &cum, total, 0.0), (0, 0));
+        assert_eq!(point_on_path(&path, &cum, total, 0.5), (5, 0));
+        assert_eq!(point_on_path(&path, &cum, total, 1.0), (10, 0));
+    }
+
+    #[test]
+    fn multi_segment_follows_arc_length() {
+        // L-shape: (0,0)->(10,0)->(10,10), total length 20.
+        let path = [(0, 0), (10, 0), (10, 10)];
+        let (cum, total) = path_cumulative(&path);
+        assert!((total - 20.0).abs() < 1e-9);
+        // Halfway by arc length lands exactly on the corner.
+        assert_eq!(point_on_path(&path, &cum, total, 0.5), (10, 0));
+        // 3/4 of the way is 5px down the second segment.
+        assert_eq!(point_on_path(&path, &cum, total, 0.75), (10, 5));
+    }
+
+    #[test]
+    fn fraction_is_clamped_and_endpoints_exact() {
+        let path = [(2, 2), (8, 2), (8, 8)];
+        let (cum, total) = path_cumulative(&path);
+        // t past the ends clamps to the terminal points (no overshoot).
+        assert_eq!(point_on_path(&path, &cum, total, -0.5), (2, 2));
+        assert_eq!(point_on_path(&path, &cum, total, 2.0), (8, 8));
+    }
+
+    #[test]
+    fn degenerate_path_returns_last_point() {
+        let path = [(5, 5), (5, 5)];
+        let (cum, total) = path_cumulative(&path);
+        assert!((total - 0.0).abs() < 1e-9);
+        assert_eq!(point_on_path(&path, &cum, total, 0.3), (5, 5));
     }
 }

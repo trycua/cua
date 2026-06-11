@@ -1,5 +1,15 @@
 # Linux parallel multi-cursor drag GIF test
 #
+# NOT WIRED INTO CI (flake checks / nix-build.yml). It needs a real Xorg
+# (dummy video + libinput) so the MPX path's uinput slaves enumerate as X
+# input devices, and that server does not start reliably in the emulated
+# GHA nixos-test VM (the hand-launched Xorg times out before the socket
+# appears). The feature's logic is covered by unit tests in
+# platform-linux/src/input/mod.rs (arc-length path glide + fn sampling);
+# this scenario is kept for local / real-X manual runs:
+#   nix build .#checks.x86_64-linux.cua-driver-linux-parallel-drag-gif
+# (re-add the flake check + matrix entry to run it where a real Xorg works).
+#
 # Pilots cua-driver through its Linux MPX `parallel_mouse_drag` path: two
 # per-session master pointers drawing concurrent strokes into the SAME window,
 # while a separate control window keeps the input focus. Proves the three

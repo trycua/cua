@@ -38,3 +38,46 @@ class TestServerInitialization:
         except Exception as e:
             # Some initialization errors are acceptable in unit tests
             pytest.skip(f"Server initialization requires specific setup: {e}")
+
+
+class TestMcpBarePathRewrite:
+    """Test the ASGI shim that serves MCP at both /mcp and /mcp/ (SRP:
+    Only tests the path rewrite). The class is pure ASGI with no
+    dependencies, so it is tested standalone against a recording stub."""
+
+    @pytest.mark.asyncio
+    async def test_bare_mcp_path_is_rewritten(self):
+        try:
+            from computer_server.main import McpBarePathRewrite
+        except ImportError:
+            pytest.skip("computer_server module not installed")
+        except Exception as e:
+            pytest.skip(f"Server initialization requires specific setup: {e}")
+
+        seen = {}
+
+        async def inner(scope, receive, send):
+            seen.update(scope)
+
+        shim = McpBarePathRewrite(inner)
+        await shim({"type": "http", "path": "/mcp"}, None, None)
+        assert seen["path"] == "/mcp/"
+
+    @pytest.mark.asyncio
+    async def test_other_paths_untouched(self):
+        try:
+            from computer_server.main import McpBarePathRewrite
+        except ImportError:
+            pytest.skip("computer_server module not installed")
+        except Exception as e:
+            pytest.skip(f"Server initialization requires specific setup: {e}")
+
+        seen = {}
+
+        async def inner(scope, receive, send):
+            seen.update(scope)
+
+        shim = McpBarePathRewrite(inner)
+        for path in ("/mcp/", "/mcpx", "/status", "/"):
+            await shim({"type": "http", "path": path}, None, None)
+            assert seen["path"] == path

@@ -188,9 +188,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class McpBarePathRewrite:
+    """Serve the MCP app at both /mcp and /mcp/.
+
+    Starlette's Mount only matches "/mcp/..." — a bare "/mcp" resolves
+    to inner path "" and 404s, and redirect_slashes=False on the outer
+    app disables the 307 rescue. Most MCP clients (claude.ai included)
+    POST to the bare path, so rewrite it before routing. A rewrite
+    (not a redirect) keeps POST bodies and SSE streaming intact; pure
+    ASGI (not BaseHTTPMiddleware) so responses aren't buffered.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/mcp":
+            scope = dict(scope, path="/mcp/")
+        await self.app(scope, receive, send)
+
+
 # Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
 if _mcp_http_app:
     app.mount("/mcp", _mcp_http_app)
+    app.add_middleware(McpBarePathRewrite)
 
 protocol_version = 1
 try:

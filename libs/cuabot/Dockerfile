@@ -54,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jdk-headless \
     unzip \
     libpulse0 \
-    libgl1-mesa-glx \
+    libgl1 \
     libnss3 \
     libxcomposite1 \
     libxcursor1 \

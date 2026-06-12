@@ -6,15 +6,13 @@ Verifies that single printable characters are routed through type_text
 
 import unicodedata
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 
 def _is_printable_char(key: str) -> bool:
     """Mirror of the routing logic in DirectComputer.keypress()."""
-    return (
-        len(key) == 1
-        and unicodedata.category(key) not in ("Cc", "Cs", "Cn")
-    )
+    return len(key) == 1 and unicodedata.category(key) not in ("Cc", "Cs", "Cn")
 
 
 class TestPrintableCharDetection:
@@ -50,7 +48,7 @@ class TestPrintableCharDetection:
         # Cc category — should go through press_key, not type_text.
         assert _is_printable_char("\x00") is False
         assert _is_printable_char("\x1b") is False  # ESC
-        assert _is_printable_char("\n") is False     # newline
+        assert _is_printable_char("\n") is False  # newline
 
     def test_empty_string_is_not_printable(self):
         assert _is_printable_char("") is False
@@ -62,7 +60,7 @@ async def test_keypress_single_printable_uses_type_text():
     auto = MagicMock()
     auto.type_text = AsyncMock()
     auto.press_key = AsyncMock()
-    auto.hotkey   = AsyncMock()
+    auto.hotkey = AsyncMock()
 
     # Simulate the routing logic directly.
     key = "a"
@@ -96,7 +94,7 @@ async def test_keypress_special_key_uses_press_key():
 async def test_keypress_combo_uses_hotkey():
     """Multi-key combos must still call hotkey."""
     auto = MagicMock()
-    auto.hotkey   = AsyncMock()
+    auto.hotkey = AsyncMock()
     auto.type_text = AsyncMock()
     auto.press_key = AsyncMock()
 

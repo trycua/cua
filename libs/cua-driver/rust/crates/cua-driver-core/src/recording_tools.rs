@@ -137,7 +137,13 @@ impl Tool for StartRecordingTool {
                     " (video → recording.mp4)".to_string()
                 } else if video_failed {
                     let err = state.last_error.clone().unwrap_or_else(|| "unknown".into());
-                    format!("\n\n⚠️ Video capture failed (per-turn JSON+screenshot still running):\n{err}")
+                    let hint = if crate::video_ffmpeg::find_ffmpeg().is_none() {
+                        "\n\nffmpeg was not found. Call install_ffmpeg (then again with \
+                         confirm=true) to install it, then restart recording."
+                    } else {
+                        ""
+                    };
+                    format!("\n\n⚠️ Video capture failed (per-turn JSON+screenshot still running):\n{err}{hint}")
                 } else { String::new() };
                 let msg = format!("✅ Recording started -> {}{}",
                     state.output_dir.as_deref().unwrap_or("?"),
@@ -474,4 +480,92 @@ fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> 
         .to_owned();
     let tool_args = obj.get("arguments").cloned().unwrap_or(Value::Object(Default::default()));
     Ok((tool, tool_args))
+}
+
+// ── install_ffmpeg ────────────────────────────────────────────────────────────
+//
+// Confirmation-gated installer for the ffmpeg binary that the Linux/Windows
+// video backend shells out to. Called without `confirm` it only REPORTS the
+// command it would run (read-only preview); `confirm: true` runs it. Marked
+// destructive + open_world so conforming MCP clients also gate it behind a
+// human approval. ffmpeg is invoked as a separate process, never linked.
+
+pub struct InstallFfmpegTool;
+static INSTALL_FFMPEG_DEF: OnceLock<ToolDef> = OnceLock::new();
+
+#[async_trait]
+impl Tool for InstallFfmpegTool {
+    fn def(&self) -> &ToolDef {
+        INSTALL_FFMPEG_DEF.get_or_init(|| ToolDef {
+            name: "install_ffmpeg".into(),
+            description: "Install the ffmpeg binary used by start_recording's video \
+                capture (Linux/Windows; macOS records natively and needs no ffmpeg). \
+                Two-step and confirmed: called without `confirm` it only REPORTS the \
+                exact install command for this platform's package manager; pass \
+                `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. \
+                ffmpeg is run as a separate process, never linked into the driver."
+                .into(),
+            input_schema: json!({"type":"object","properties":{
+                "confirm":{"type":"boolean","description":"Run the install command. Without it, only the planned command is reported."}
+            },"additionalProperties":false}),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use crate::tool_args::ArgsExt;
+
+        if let Some(path) = crate::video_ffmpeg::find_ffmpeg() {
+            return ToolResult::text(format!(
+                "✅ ffmpeg already available ({}). Nothing to install.",
+                path.display()
+            ))
+            .with_structured(json!({
+                "installed": true, "ran": false, "path": path.display().to_string()
+            }));
+        }
+
+        let Some(plan) = crate::ffmpeg_install::install_plan() else {
+            return ToolResult::error(
+                "ffmpeg is not installed and no supported package manager was found to \
+                 install it automatically. Install ffmpeg manually and put it on PATH \
+                 (Linux: apt/dnf/pacman/zypper/apk/snap; macOS: `brew install ffmpeg`; \
+                 Windows: `winget install Gyan.FFmpeg`).",
+            );
+        };
+
+        if !args.bool_or("confirm", false) {
+            return ToolResult::text(format!(
+                "ffmpeg is not installed. To install it via {}, re-call install_ffmpeg \
+                 with confirm=true.\n\nCommand that will run:\n  {}",
+                plan.manager,
+                plan.display()
+            ))
+            .with_structured(json!({
+                "installed": false, "ran": false,
+                "manager": plan.manager, "command": plan.display()
+            }));
+        }
+
+        let display = plan.display();
+        let result = tokio::task::spawn_blocking(move || crate::ffmpeg_install::run_install(&plan)).await;
+        match result {
+            Ok(Ok((cmd_ok, output))) => match crate::video_ffmpeg::find_ffmpeg() {
+                Some(path) => ToolResult::text(format!("✅ ffmpeg installed via `{display}`."))
+                    .with_structured(json!({
+                        "installed": true, "ran": true,
+                        "command": display, "path": path.display().to_string()
+                    })),
+                None => ToolResult::error(format!(
+                    "Ran the install command but ffmpeg is still not found.\n\
+                     Command: {display}\ncommand_succeeded={cmd_ok}\nOutput tail:\n{output}"
+                )),
+            },
+            Ok(Err(e)) => ToolResult::error(format!("ffmpeg install failed: {e}\nCommand: {display}")),
+            Err(e) => ToolResult::error(format!("install task error: {e}")),
+        }
+    }
 }

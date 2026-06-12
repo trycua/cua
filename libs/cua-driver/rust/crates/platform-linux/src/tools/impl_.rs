@@ -1,7 +1,11 @@
 //! Real Linux tool implementations (compiled only on Linux).
 
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef, ToolRegistry}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef, ToolRegistry},
+    tool_args::ArgsExt,
+};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -65,7 +69,18 @@ pub struct ToolState {
     pub cursor_registry: Arc<CursorRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
+    pub mouse_hold: std::sync::Mutex<std::collections::HashMap<String, MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MouseHoldState {
+    pub cursor_id: String,
+    pub pid: u32,
+    pub xid: u64,
+    pub button: u8,
+    pub x: f64,
+    pub y: f64,
 }
 
 impl ToolState {
@@ -75,6 +90,7 @@ impl ToolState {
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
+            mouse_hold: std::sync::Mutex::new(Default::default()),
             config: Arc::new(RwLock::new(DriverConfig::default())),
         })
     }
@@ -565,16 +581,122 @@ fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)
     Ok((reply.dst_x as f64 + x, reply.dst_y as f64 + y))
 }
 
+fn parse_mouse_button(name: &str) -> u8 {
+    match name {
+        "right" => 3,
+        "middle" => 2,
+        _ => 1,
+    }
+}
+
+fn mouse_button_name(button: u8) -> &'static str {
+    match button {
+        3 => "right",
+        2 => "middle",
+        _ => "left",
+    }
+}
+
+fn resolve_cursor_key(args: &Value) -> String {
+    for key in ["session", "cursor_id"] {
+        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
+            if !v.is_empty() {
+                return v.to_owned();
+            }
+        }
+    }
+    "default".to_owned()
+}
+
+fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
+    match hold {
+        Some(hold) => json!({
+            "cursor_id": cursor_id,
+            "held": true,
+            "pid": hold.pid,
+            "window_id": hold.xid,
+            "button": mouse_button_name(hold.button),
+            "x": hold.x,
+            "y": hold.y,
+        }),
+        None => json!({
+            "cursor_id": cursor_id,
+            "held": false,
+            "pid": Value::Null,
+            "window_id": Value::Null,
+            "button": Value::Null,
+            "x": Value::Null,
+            "y": Value::Null,
+        }),
+    }
+}
+
+fn held_target_mismatch(args: &Value, cursor_id: &str, hold: &MouseHoldState) -> Option<ToolResult> {
+    match args.opt_u32("pid") {
+        Ok(Some(pid)) if pid != hold.pid => {
+            return Some(
+                ToolResult::error(format!(
+                    "Cursor '{cursor_id}' is holding a button for pid {}, not pid {pid}.",
+                    hold.pid
+                ))
+                .with_structured(mouse_hold_json(cursor_id, Some(hold))),
+            );
+        }
+        Err(err) => return Some(err.with_structured(mouse_hold_json(cursor_id, Some(hold)))),
+        _ => {}
+    }
+
+    match args.opt_u64("window_id") {
+        Some(xid) if xid != hold.xid => Some(
+            ToolResult::error(format!(
+                "Cursor '{cursor_id}' is holding a button for window_id {}, not {xid}.",
+                hold.xid
+            ))
+            .with_structured(mouse_hold_json(cursor_id, Some(hold))),
+        ),
+        _ => None,
+    }
+}
+
 async fn overlay_glide_to(sx: f64, sy: f64) {
-    if !crate::overlay::is_enabled() {
+    overlay_glide_to_for("default", sx, sy).await;
+}
+
+fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
+    crate::overlay::send_command_for(
+        cursor_id.to_owned(),
+        cursor_overlay::OverlayCommand::SnapTo {
+            x: sx,
+            y: sy,
+            heading_radians: heading,
+        },
+    );
+}
+
+fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
+    crate::overlay::send_command_for(
+        cursor_id.to_owned(),
+        cursor_overlay::OverlayCommand::MoveTo {
+            x: sx,
+            y: sy,
+            end_heading_radians: heading.unwrap_or(std::f64::consts::FRAC_PI_4),
+        },
+    );
+}
+
+async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
+    if !crate::overlay::is_enabled_for(cursor_id) {
         return;
     }
-    let pos = crate::overlay::current_position();
+    let pos = crate::overlay::current_position_for(cursor_id);
     if pos.0 < 0.0 && pos.1 < 0.0 {
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+        crate::overlay::send_command_for(
+            cursor_id.to_owned(),
+            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+        );
         return;
     }
-    crate::overlay::animate_cursor_to(sx, sy).await;
+    crate::overlay::animate_cursor_to_for(cursor_id.to_owned(), sx, sy).await;
 }
 
 fn process_name(pid: u32) -> Option<String> {
@@ -721,6 +843,8 @@ impl Tool for ClickTool {
                 back to full-window space.".into(),
             input_schema: json!({
                 "type":"object","required":["pid"],"properties":{
+                    "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                    "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "x":{"type":"number"},
@@ -736,14 +860,10 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;
-        let button: u8 = match args.str_or("button", "left").as_str() {
-            "right" => 3,
-            "middle" => 2,
-            _ => 1,
-        };
+        let button = parse_mouse_button(args.str_or("button", "left").as_str());
 
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -770,10 +890,16 @@ impl Tool for ClickTool {
             return match result {
                 Ok(Ok((xid, x, y))) => {
                     if xid != 0 {
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(xid),
+                        );
                     }
-                    overlay_glide_to(x, y).await;
-                    crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x, y });
+                    overlay_glide_to_for(&cursor_id, x, y).await;
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::ClickPulse { x, y },
+                    );
                     ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AT-SPI element click failed: {e}")),
@@ -801,12 +927,18 @@ impl Tool for ClickTool {
             y *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
         {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
 
         let (xi, yi) = (x as i32, y as i32);
@@ -1225,6 +1357,8 @@ impl Tool for DoubleClickTool {
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1237,6 +1371,7 @@ impl Tool for DoubleClickTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1247,9 +1382,15 @@ impl Tool for DoubleClickTool {
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
                     if let Ok((sx, sy)) = element_screen_center(pid, idx) {
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
-                        overlay_glide_to(sx, sy).await;
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(xid),
+                        );
+                        overlay_glide_to_for(&cursor_id, sx, sy).await;
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+                        );
                     }
                     match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 2, 1)).await {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked element [{idx}].")),
@@ -1278,12 +1419,18 @@ impl Tool for DoubleClickTool {
             x *= ratio;
             y *= ratio;
         }
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
         {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 2, 1)).await;
@@ -1311,6 +1458,8 @@ impl Tool for RightClickTool {
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
@@ -1324,6 +1473,7 @@ impl Tool for RightClickTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         if let Some(idx) = args.opt_u64("element_index") {
             let idx = idx as usize;
@@ -1334,9 +1484,15 @@ impl Tool for RightClickTool {
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
                     if let Ok((sx, sy)) = element_screen_center(pid, idx) {
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
-                        overlay_glide_to(sx, sy).await;
-                        crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::PinAbove(xid),
+                        );
+                        overlay_glide_to_for(&cursor_id, sx, sy).await;
+                        crate::overlay::send_command_for(
+                            cursor_id.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+                        );
                     }
                     match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 1, 3)).await {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked element [{idx}].")),
@@ -1365,12 +1521,18 @@ impl Tool for RightClickTool {
             x *= ratio;
             y *= ratio;
         }
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx, sy))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
         {
-            overlay_glide_to(sx, sy).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
         }
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 1, 3)).await;
@@ -1398,6 +1560,8 @@ impl Tool for DragTool {
                           window-local screenshot pixels via XSendEvent (ButtonPress + MotionNotify × steps + ButtonRelease). \
                           duration_ms (default 500), steps (default 20). No focus steal.".into(),
             input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"Target window XID. Required."},
                 "from_x":{"type":"number"},
@@ -1414,7 +1578,7 @@ impl Tool for DragTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let xid = match args.opt_u64("window_id") {
             Some(v) => v, None => return ToolResult::error("window_id is required on Linux."),
@@ -1431,7 +1595,7 @@ impl Tool for DragTool {
         let duration_ms = args.u64_or("duration_ms", 500);
         let steps       = args.u64_or("steps", 20) as usize;
         let button_str  = args.str_or("button", "left");
-        let button: u8  = match button_str.as_str() { "right" => 3, "middle" => 2, _ => 1 };
+        let button = parse_mouse_button(button_str.as_str());
         let from_zoom   = args.bool_or("from_zoom", false);
 
         if from_zoom {
@@ -1448,46 +1612,636 @@ impl Tool for DragTool {
             to_x   *= ratio; to_y   *= ratio;
         }
 
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
         if let Ok(Ok((sx_from, sy_from))) =
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await
         {
-            overlay_glide_to(sx_from, sy_from).await;
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                x: sx_from,
-                y: sy_from,
-            });
+            overlay_glide_to_for(&cursor_id, sx_from, sy_from).await;
+            self.state.cursor_registry.update_position(&cursor_id, sx_from, sy_from);
+            overlay_snap_to_for(&cursor_id, sx_from, sy_from, None);
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx_from, y: sy_from },
+            );
+        }
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(true),
+        );
+
+        let press_result = tokio::task::spawn_blocking(move || {
+            crate::input::send_button_down(xid, from_x.round() as i32, from_y.round() as i32, button)
+        }).await;
+        let mut result: anyhow::Result<()> = match press_result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(anyhow::anyhow!("Task error: {e}")),
+        };
+
+        if result.is_ok() {
+            let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+            let mut prev_x = from_x;
+            let mut prev_y = from_y;
+            for i in 1..=steps {
+                let t = i as f64 / steps.max(1) as f64;
+                let ix = from_x + (to_x - from_x) * t;
+                let iy = from_y + (to_y - from_y) * t;
+                let motion_result = tokio::task::spawn_blocking(move || {
+                    crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
+                }).await;
+                match motion_result {
+                    Ok(Ok(())) => {
+                        if let Ok(Ok((sx, sy))) =
+                            tokio::task::spawn_blocking(move || window_local_to_screen(xid, ix, iy)).await
+                        {
+                        let heading = if (ix - prev_x).abs() > f64::EPSILON
+                            || (iy - prev_y).abs() > f64::EPSILON
+                        {
+                            Some((iy - prev_y).atan2(ix - prev_x))
+                        } else {
+                            None
+                        };
+                        self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                        overlay_move_to_for(&cursor_id, sx, sy, heading);
+                    }
+                    prev_x = ix;
+                    prev_y = iy;
+                    if step_delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        result = Err(e);
+                        break;
+                    }
+                    Err(e) => {
+                        result = Err(anyhow::anyhow!("Task error: {e}"));
+                        break;
+                    }
+                }
+            }
         }
 
-        let result = tokio::task::spawn_blocking(move || {
-            crate::input::send_drag(
-                xid,
-                from_x as i32, from_y as i32,
-                to_x   as i32, to_y   as i32,
-                duration_ms, steps, button,
-            )
+        let release_result = tokio::task::spawn_blocking(move || {
+            crate::input::send_button_up(xid, to_x.round() as i32, to_y.round() as i32, button)
         }).await;
+        if result.is_ok() {
+            result = match release_result {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(e),
+                Err(e) => Err(anyhow::anyhow!("Task error: {e}")),
+            };
+        }
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(false),
+        );
 
-        if matches!(&result, Ok(Ok(()))) {
+        if result.is_ok() {
             if let Ok(Ok((sx_to, sy_to))) =
                 tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await
             {
-                overlay_glide_to(sx_to, sy_to).await;
-                crate::overlay::send_command(cursor_overlay::OverlayCommand::ClickPulse {
-                    x: sx_to,
-                    y: sy_to,
-                });
+                self.state.cursor_registry.update_position(&cursor_id, sx_to, sy_to);
+                overlay_snap_to_for(
+                    &cursor_id,
+                    sx_to,
+                    sy_to,
+                    Some((to_y - from_y).atan2(to_x - from_x)),
+                );
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::ClickPulse { x: sx_to, y: sy_to },
+                );
             }
         }
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
+            Ok(()) => ToolResult::text(format!(
                 "✅ Posted drag ({button_str}) to pid {pid} \
                  from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
                  in {duration_ms}ms / {steps} steps."
             )),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(e.to_string()),
+        }
+    }
+}
+
+// ── mouse_button_down / mouse_drag / mouse_button_up ────────────────────────
+
+pub struct MouseButtonDownTool {
+    state: Arc<ToolState>,
+}
+static MDOWN_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for MouseButtonDownTool {
+    fn def(&self) -> &ToolDef {
+        MDOWN_DEF.get_or_init(|| ToolDef {
+            name: "mouse_button_down".into(),
+            description: "Press and hold a mouse button at (x,y) via background X11 delivery. \
+                Does not release the button; pair with mouse_drag / mouse_button_up. \
+                Returns the current held-button state.".into(),
+            input_schema: json!({"type":"object","required":["pid","window_id","x","y"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
+                "pid":{"type":"integer"},
+                "window_id":{"type":"integer"},
+                "x":{"type":"number"},
+                "y":{"type":"number"},
+                "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: left."},
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let cursor_id = resolve_cursor_key(&args);
+        if let Some(held) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() {
+            return ToolResult::error(format!(
+                "Cursor '{cursor_id}' already has a held mouse button. Call mouse_button_up first."
+            ))
+            .with_structured(mouse_hold_json(&cursor_id, Some(&held)));
+        }
+
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let xid = match args.opt_u64("window_id") {
+            Some(v) => v,
+            None => return ToolResult::error("window_id is required on Linux."),
+        };
+        let button_name = args.str_or("button", "left");
+        let button = parse_mouse_button(button_name.as_str());
+        let mut x = args.f64_or("x", 0.0);
+        let mut y = args.f64_or("y", 0.0);
+        if args.bool_or("from_zoom", false) {
+            match self.state.zoom_registry.get(pid) {
+                Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
+                None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {pid}. Call zoom first.")),
+            }
+        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            x *= ratio;
+            y *= ratio;
+        }
+
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
+        if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await {
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
+        }
+
+        let xi = x as i32;
+        let yi = y as i32;
+        let result = tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await;
+        match result {
+            Ok(Ok(())) => {
+                let hold = MouseHoldState { cursor_id: cursor_id.clone(), pid, xid, button, x, y };
+                self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
+                if let Ok(Ok((sx, sy))) =
+                    tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+                {
+                    self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                    overlay_snap_to_for(&cursor_id, sx, sy, None);
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::SetPressed(true),
+                    );
+                }
+                ToolResult::text(format!(
+                    "✅ Cursor '{cursor_id}' held {} button down at ({x:.1}, {y:.1}).",
+                    mouse_button_name(button),
+                ))
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
+            }
+            Ok(Err(e)) => ToolResult::error(e.to_string())
+                .with_structured(mouse_hold_json(&cursor_id, self.state.mouse_hold.lock().unwrap().get(&cursor_id))),
+            Err(e) => ToolResult::error(format!("Task error: {e}"))
+                .with_structured(mouse_hold_json(&cursor_id, self.state.mouse_hold.lock().unwrap().get(&cursor_id))),
+        }
+    }
+}
+
+pub struct MouseDragTool {
+    state: Arc<ToolState>,
+}
+static MDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for MouseDragTool {
+    fn def(&self) -> &ToolDef {
+        MDRAG_DEF.get_or_init(|| ToolDef {
+            name: "mouse_drag".into(),
+            description: "Move a previously-held mouse button to a new point via background X11 delivery. \
+                Requires an active mouse_button_down state; does not release the button. \
+                Returns the updated held-button state.".into(),
+            input_schema: json!({"type":"object","required":["x","y"],"properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
+                "pid":{"type":"integer"},
+                "window_id":{"type":"integer"},
+                "x":{"type":"number"},
+                "y":{"type":"number"},
+                "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Total drag duration. Default: 500."},
+                "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Intermediate MotionNotify events. Default: 20."},
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let cursor_id = resolve_cursor_key(&args);
+        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() else {
+            return ToolResult::error(format!(
+                "No mouse button is currently held for cursor '{cursor_id}'. Call mouse_button_down first."
+            ))
+            .with_structured(mouse_hold_json(&cursor_id, None));
+        };
+        if let Some(err) = held_target_mismatch(&args, &cursor_id, &hold) {
+            return err;
+        }
+
+        let mut to_x = args.f64_or("x", 0.0);
+        let mut to_y = args.f64_or("y", 0.0);
+        if args.bool_or("from_zoom", false) {
+            match self.state.zoom_registry.get(hold.pid) {
+                Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(to_x, to_y); to_x = wx; to_y = wy; }
+                None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {}. Call zoom first.", hold.pid))
+                    .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
+            }
+        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+            to_x *= ratio;
+            to_y *= ratio;
+        }
+
+        let xid = hold.xid;
+
+        let from_x = hold.x;
+        let from_y = hold.y;
+        let duration_ms = args.u64_or("duration_ms", 500);
+        let steps = args.u64_or("steps", 20).max(1) as usize;
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
+        if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y)).await {
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+            overlay_snap_to_for(&cursor_id, sx, sy, None);
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(true),
+            );
+        }
+
+        let button = hold.button;
+        let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+        let mut result: anyhow::Result<()> = Ok(());
+        let mut prev_x = from_x;
+        let mut prev_y = from_y;
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let ix = from_x + (to_x - from_x) * t;
+            let iy = from_y + (to_y - from_y) * t;
+            let move_result = tokio::task::spawn_blocking(move || {
+                crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
+            }).await;
+            match move_result {
+                Ok(Ok(())) => {
+                    if let Ok(Ok((sx, sy))) =
+                        tokio::task::spawn_blocking(move || window_local_to_screen(xid, ix, iy)).await
+                    {
+                        let heading = if (ix - prev_x).abs() > f64::EPSILON || (iy - prev_y).abs() > f64::EPSILON {
+                            Some((iy - prev_y).atan2(ix - prev_x))
+                        } else {
+                            None
+                        };
+                        self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                        overlay_move_to_for(&cursor_id, sx, sy, heading);
+                    }
+                    prev_x = ix;
+                    prev_y = iy;
+                    if step_delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(step_delay_ms)).await;
+                    }
+                }
+                Ok(Err(e)) => {
+                    result = Err(e);
+                    break;
+                }
+                Err(e) => {
+                    result = Err(anyhow::anyhow!("Task error: {e}"));
+                    break;
+                }
+            }
+        }
+
+        match result {
+            Ok(()) => {
+                hold.x = to_x;
+                hold.y = to_y;
+                self.state.mouse_hold.lock().unwrap().insert(cursor_id.clone(), hold.clone());
+                if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, to_x, to_y)).await {
+                    self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                    overlay_snap_to_for(&cursor_id, sx, sy, Some((to_y - from_y).atan2(to_x - from_x)));
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+                    );
+                }
+                ToolResult::text(format!(
+                    "✅ Cursor '{cursor_id}' dragged held {} button to ({to_x:.1}, {to_y:.1}).",
+                    mouse_button_name(hold.button),
+                ))
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
+            }
+            Err(e) => ToolResult::error(e.to_string())
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
+        }
+    }
+}
+
+pub struct MouseButtonUpTool {
+    state: Arc<ToolState>,
+}
+static MUP_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for MouseButtonUpTool {
+    fn def(&self) -> &ToolDef {
+        MUP_DEF.get_or_init(|| ToolDef {
+            name: "mouse_button_up".into(),
+            description: "Release a previously-held mouse button via background X11 delivery. \
+                If x/y are omitted, releases at the last held position. Returns the current held-button state.".into(),
+            input_schema: json!({"type":"object","properties":{
+                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
+                "pid":{"type":"integer"},
+                "window_id":{"type":"integer"},
+                "x":{"type":"number"},
+                "y":{"type":"number"},
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let cursor_id = resolve_cursor_key(&args);
+        let Some(mut hold) = self.state.mouse_hold.lock().unwrap().get(&cursor_id).cloned() else {
+            return ToolResult::error(format!("No mouse button is currently held for cursor '{cursor_id}'."))
+                .with_structured(mouse_hold_json(&cursor_id, None));
+        };
+        if let Some(err) = held_target_mismatch(&args, &cursor_id, &hold) {
+            return err;
+        }
+
+        let xid = hold.xid;
+
+        let mut x = args.opt_f64("x").unwrap_or(hold.x);
+        let mut y = args.opt_f64("y").unwrap_or(hold.y);
+        if args.bool_or("from_zoom", false) {
+            match self.state.zoom_registry.get(hold.pid) {
+                Some(ctx) => { let (wx, wy) = ctx.zoom_to_window(x, y); x = wx; y = wy; }
+                None => return ToolResult::error(format!("from_zoom=true but no zoom context for pid {}. Call zoom first.", hold.pid))
+                    .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
+            }
+        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+            x *= ratio;
+            y *= ratio;
+        }
+
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(xid),
+        );
+        if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await {
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+        }
+
+        let button = hold.button;
+        let xi = x as i32;
+        let yi = y as i32;
+        let result = tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button)).await;
+        match result {
+            Ok(Ok(())) => {
+                hold.x = x;
+                hold.y = y;
+                if let Ok(Ok((sx, sy))) =
+                    tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
+                {
+                    self.state.cursor_registry.update_position(&cursor_id, sx, sy);
+                    overlay_snap_to_for(&cursor_id, sx, sy, None);
+                }
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::SetPressed(false),
+                );
+                self.state.mouse_hold.lock().unwrap().remove(&cursor_id);
+                let cleared = mouse_hold_json(&cursor_id, None);
+                ToolResult::text(format!(
+                    "✅ Cursor '{cursor_id}' released held {} button at ({x:.1}, {y:.1}).",
+                    mouse_button_name(button),
+                ))
+                .with_structured(cleared)
+            }
+            Ok(Err(e)) => ToolResult::error(e.to_string())
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
+            Err(e) => ToolResult::error(format!("Task error: {e}"))
+                .with_structured(mouse_hold_json(&cursor_id, Some(&hold))),
+        }
+    }
+}
+
+pub struct ParallelMouseDragTool {
+    state: Arc<ToolState>,
+}
+static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for ParallelMouseDragTool {
+    fn def(&self) -> &ToolDef {
+        PMDRAG_DEF.get_or_init(|| ToolDef {
+            name: "parallel_mouse_drag".into(),
+            description: "Run multiple mouse drag gestures concurrently via Linux MPX/XI2 virtual master pointers. \
+                Each drag item runs on its own session-scoped master pointer (true same-window concurrent draws on X11). \
+                Each item presses once, glides continuously through its whole path, and releases once — one smooth held \
+                drag, not a chain of clicks. A path is given either as a straight segment (from_x/from_y → to_x/to_y) or \
+                as a function `fn` = y(x) sampled over [x_from, x_to] in window-local pixels (e.g. fn:\"x\" is a diagonal, \
+                fn:\"300+120*sin(x/40)\" a sine wave). Functions support + - * / ^, sin/cos/tan, sqrt, abs, exp, ln, pi, e.".into(),
+            input_schema: json!({"type":"object","required":["drags"],"properties":{
+                "drags":{"type":"array","minItems":2,"items":{"type":"object","required":["session","window_id"],"properties":{
+                    "session":{"type":"string","description":"Session/cursor id; also keys the virtual master pointer."},
+                    "window_id":{"type":"integer"},
+                    "path":{"type":"array","items":{"type":"array","items":{"type":"number"}},"description":"Explicit window-local waypoints [[x,y],...] (>=2); pressed once, glided through, released once. Takes precedence over fn/from-to."},
+                    "fn":{"type":"string","description":"Expression y(x) in window-local pixels; sampled over [x_from,x_to]. Mutually exclusive with from_x/to_x."},
+                    "x_from":{"type":"number","description":"Domain start (window-local x) when `fn` is used."},
+                    "x_to":{"type":"number","description":"Domain end (window-local x) when `fn` is used."},
+                    "samples":{"type":"integer","minimum":2,"maximum":400,"description":"Waypoints sampled along `fn`. Default: 80."},
+                    "from_x":{"type":"number"},
+                    "from_y":{"type":"number"},
+                    "to_x":{"type":"number"},
+                    "to_y":{"type":"number"},
+                    "button":{"type":"string","enum":["left","right","middle"],"description":"Default: left."},
+                    "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Default: 1500 for fn paths, 500 for straight."},
+                    "steps":{"type":"integer","minimum":1,"maximum":300,"description":"Motion sub-steps along the whole path. Default: scaled to path length."}
+                },"additionalProperties":false}}
+            },"additionalProperties":false}),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        match tokio::task::spawn_blocking(crate::input::check_parallel_pointer_support).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return ToolResult::error(e.to_string()),
+            Err(e) => return ToolResult::error(format!("Task error: {e}")),
+        }
+
+        let Some(items) = args.get("drags").and_then(|v| v.as_array()) else {
+            return ToolResult::error("drags[] is required.");
+        };
+        if items.len() < 2 {
+            return ToolResult::error("parallel_mouse_drag requires at least two drag items.");
+        }
+
+        let mut drags = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(session) = item.get("session").and_then(|v| v.as_str()) else {
+                return ToolResult::error("each drag item requires session.");
+            };
+            let Some(xid) = item.get("window_id").and_then(|v| v.as_u64()) else {
+                return ToolResult::error("each drag item requires window_id.");
+            };
+
+            // Build the window-local waypoint path from one of: an explicit
+            // `path` of [x,y] points, a function `fn` (y = f(x) sampled over
+            // [x_from, x_to]), or a straight from→to segment.
+            let is_fn = item.get("fn").and_then(|v| v.as_str()).is_some();
+            let local: Vec<(f64, f64)> = if let Some(pts) = item.get("path").and_then(|v| v.as_array()) {
+                let mut out = Vec::with_capacity(pts.len());
+                for p in pts {
+                    let a = p.as_array();
+                    let (Some(px), Some(py)) = (
+                        a.and_then(|a| a.first()).and_then(|v| v.as_f64()),
+                        a.and_then(|a| a.get(1)).and_then(|v| v.as_f64()),
+                    ) else {
+                        return ToolResult::error("each `path` entry must be [x, y].");
+                    };
+                    out.push((px, py));
+                }
+                if out.len() < 2 {
+                    return ToolResult::error("`path` needs at least 2 points.");
+                }
+                out
+            } else if let Some(expr_str) = item.get("fn").and_then(|v| v.as_str()) {
+                let Some(x_from) = item.get("x_from").and_then(|v| v.as_f64()) else {
+                    return ToolResult::error("`fn` requires x_from.");
+                };
+                let Some(x_to) = item.get("x_to").and_then(|v| v.as_f64()) else {
+                    return ToolResult::error("`fn` requires x_to.");
+                };
+                let samples = item.get("samples").and_then(|v| v.as_u64()).unwrap_or(80).clamp(2, 400);
+                match crate::input::sample_function(expr_str, x_from, x_to, samples) {
+                    Ok(pts) => pts,
+                    Err(e) => return ToolResult::error(e.to_string()),
+                }
+            } else {
+                let coerce = |k: &str| item.get(k).and_then(|v| v.as_f64());
+                match (coerce("from_x"), coerce("from_y"), coerce("to_x"), coerce("to_y")) {
+                    (Some(fx), Some(fy), Some(tx), Some(ty)) => vec![(fx, fy), (tx, ty)],
+                    _ => return ToolResult::error("each drag item requires either `fn`+x_from+x_to, or from_x/from_y/to_x/to_y."),
+                }
+            };
+
+            let button = parse_mouse_button(item.get("button").and_then(|v| v.as_str()).unwrap_or("left"));
+            let duration_ms = item.get("duration_ms").and_then(|v| v.as_u64())
+                .unwrap_or(if is_fn { 1500 } else { 500 });
+
+            // One translate gives the window origin; the path is a pure offset.
+            let origin = match tokio::task::spawn_blocking(move || window_local_to_screen(xid, 0.0, 0.0)).await {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            let path: Vec<(i32, i32)> = local.iter()
+                .map(|(lx, ly)| ((origin.0 + lx).round() as i32, (origin.1 + ly).round() as i32))
+                .collect();
+
+            // Default sub-step count scaled to path length (smooth glide),
+            // overridable via `steps`.
+            let total_len: f64 = path.windows(2)
+                .map(|w| (((w[1].0 - w[0].0) as f64).powi(2) + ((w[1].1 - w[0].1) as f64).powi(2)).sqrt())
+                .sum();
+            let steps = item.get("steps").and_then(|v| v.as_u64())
+                .map(|s| (s as usize).clamp(1, 300))
+                .unwrap_or_else(|| ((total_len / 3.0).round() as usize).clamp(24, 300));
+
+            let start = path[0];
+            self.state.cursor_registry.update_position(session, start.0 as f64, start.1 as f64);
+            crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::PinAbove(xid));
+            crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SnapTo {
+                x: start.0 as f64,
+                y: start.1 as f64,
+                heading_radians: None,
+            });
+            crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(true));
+
+            drags.push((
+                session.to_owned(),
+                crate::input::VirtualPointerDrag {
+                    target_window: xid,
+                    button,
+                    path,
+                    duration_ms,
+                    steps,
+                },
+            ));
+        }
+
+        let drags_for_task = drags.clone();
+        let result = tokio::task::spawn_blocking(move || crate::input::send_parallel_virtual_pointer_drags(&drags_for_task)).await;
+        match result {
+            Ok(Ok(())) => {
+                for (session, drag) in &drags {
+                    let n = drag.path.len();
+                    let end = drag.path[n - 1];
+                    let prev = drag.path[n.saturating_sub(2)];
+                    self.state.cursor_registry.update_position(session, end.0 as f64, end.1 as f64);
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SnapTo {
+                        x: end.0 as f64,
+                        y: end.1 as f64,
+                        heading_radians: Some(((end.1 - prev.1) as f64).atan2((end.0 - prev.0) as f64)),
+                    });
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::ClickPulse {
+                        x: end.0 as f64,
+                        y: end.1 as f64,
+                    });
+                }
+                ToolResult::text(format!("✅ Ran {} MPX drag gesture(s) concurrently.", drags.len()))
+                    .with_structured(json!({"count": drags.len()}))
+            }
+            Ok(Err(e)) => {
+                for (session, _) in &drags {
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
+                }
+                ToolResult::error(e.to_string())
+            }
+            Err(e) => {
+                for (session, _) in &drags {
+                    crate::overlay::send_command_for(session.to_owned(), cursor_overlay::OverlayCommand::SetPressed(false));
+                }
+                ToolResult::error(format!("Task error: {e}"))
+            }
         }
     }
 }
@@ -1586,7 +2340,7 @@ impl Tool for MoveCursorTool {
             name: "move_cursor".into(),
             description: "Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}
+                "x":{"type":"number"},"y":{"type":"number"},"session":{"type":"string"},"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -1595,14 +2349,19 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::MoveTo {
-            x, y, end_heading_radians: std::f64::consts::FRAC_PI_4,
-        });
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::MoveTo {
+                x,
+                y,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+        );
         ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
     }
 }
@@ -1622,7 +2381,7 @@ impl Tool for SetAgentCursorEnabledTool {
             name: "set_agent_cursor_enabled".into(),
             description: "Show or hide the agent cursor overlay.".into(),
             input_schema: json!({"type":"object","required":["enabled"],"properties":{
-                "enabled":{"type":"boolean"},"cursor_id":{"type":"string"}
+                "enabled":{"type":"boolean"},"session":{"type":"string"},"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -1630,9 +2389,12 @@ impl Tool for SetAgentCursorEnabledTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let enabled = match args.require_bool("enabled") { Ok(v) => v, Err(e) => return e };
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.set_enabled(&cursor_id, enabled);
-        crate::overlay::send_command(cursor_overlay::OverlayCommand::SetEnabled(enabled));
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetEnabled(enabled),
+        );
         ToolResult::text(format!("Agent cursor '{cursor_id}' {}.", if enabled { "enabled" } else { "disabled" }))
     }
 }
@@ -1659,6 +2421,7 @@ impl Tool for SetAgentCursorMotionTool {
                 - cursor_opacity: 0.0–1.0 (default=0.85)".into(),
             input_schema: json!({
                 "type":"object","properties":{
+                    "session":{"type":"string"},
                     "cursor_id":{"type":"string"},
                     "cursor_icon":{"type":"string"},
                     "cursor_color":{"type":"string"},
@@ -1671,8 +2434,7 @@ impl Tool for SetAgentCursorMotionTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use cua_driver_core::tool_args::ArgsExt;
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.opt_str("cursor_icon") { cfg.cursor_icon = Some(v); }
             if let Some(v) = args.opt_str("cursor_color") { cfg.cursor_color = Some(v); }
@@ -1698,12 +2460,17 @@ impl Tool for GetAgentCursorStateTool {
         GCSTATE_DEF.get_or_init(|| ToolDef {
             name: "get_agent_cursor_state".into(),
             description: "Return the current state of all agent cursor instances.".into(),
-            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"session":{"type":"string"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
     }
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        let states = self.state.cursor_registry.all_states();
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let cursor_id = resolve_cursor_key(&args);
+        let states = if args.get("session").is_some() || args.get("cursor_id").is_some() {
+            vec![self.state.cursor_registry.get_or_create(&cursor_id)]
+        } else {
+            self.state.cursor_registry.all_states()
+        };
         let json = serde_json::to_value(&states).unwrap_or_default();
         ToolResult::text(format!("{} cursor instance(s).", states.len()))
             .with_structured(json!({ "cursors": json }))
@@ -1738,6 +2505,10 @@ impl Tool for SetAgentCursorStyleTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "session": {
+                        "type": "string",
+                        "description": "Optional multi-cursor session id; takes precedence over cursor_id."
+                    },
                     "cursor_id": {
                         "type": "string",
                         "description": "Cursor instance. Default: 'default'."
@@ -1764,7 +2535,7 @@ impl Tool for SetAgentCursorStyleTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let cursor_id = args.str_or("cursor_id", "default");
+        let cursor_id = resolve_cursor_key(&args);
 
         // image_path
         let image_path = args.get("image_path").and_then(|v| v.as_str());
@@ -1823,15 +2594,18 @@ impl Tool for SetAgentCursorStyleTool {
 
         // Dispatch to overlay
         if let Some(cmd) = shape_cmd {
-            crate::overlay::send_command(cmd);
+            crate::overlay::send_command_for(cursor_id.clone(), cmd);
         }
         let gradient_provided = args.get("gradient_colors").is_some();
         let bloom_provided = args.get("bloom_color").is_some();
         if gradient_provided || bloom_provided {
-            crate::overlay::send_command(cursor_overlay::OverlayCommand::SetGradient {
-                gradient_colors,
-                bloom_color: bloom_color.flatten(),
-            });
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetGradient {
+                    gradient_colors,
+                    bloom_color: bloom_color.flatten(),
+                },
+            );
         }
 
         let grad_str = args.get("gradient_colors")
@@ -2303,6 +3077,16 @@ impl Tool for BringToFrontTool {
 
 pub fn build_registry(compat: bool) -> ToolRegistry {
     let state = ToolState::new();
+    {
+        let cursor_registry = state.cursor_registry.clone();
+        let state_for_session_end = state.clone();
+        cua_driver_core::session::register_session_end_hook(move |session_id| {
+            cursor_registry.remove(session_id);
+            crate::overlay::remove_cursor(session_id.to_owned());
+            state_for_session_end.mouse_hold.lock().unwrap().remove(session_id);
+            crate::input::forget_master_pointer(session_id);
+        });
+    }
     let mut r = ToolRegistry::new();
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
@@ -2314,6 +3098,10 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(DoubleClickTool { state: state.clone() }));
     r.register(Box::new(RightClickTool { state: state.clone() }));
     r.register(Box::new(DragTool { state: state.clone() }));
+    r.register(Box::new(MouseButtonDownTool { state: state.clone() }));
+    r.register(Box::new(MouseDragTool { state: state.clone() }));
+    r.register(Box::new(MouseButtonUpTool { state: state.clone() }));
+    r.register(Box::new(ParallelMouseDragTool { state: state.clone() }));
     r.register(Box::new(TypeTextTool));
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));

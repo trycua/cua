@@ -25,7 +25,7 @@ pkgs.rustPlatform.buildRustPackage {
   # gracefully via `cargo vendor`.
   # Bumped when the dependency set changes (added `atspi`/zbus for native
   # AT-SPI). If this mismatches, the nix build prints the expected value.
-  cargoHash = "sha256-P+f+ma8ZDWhhk1TTCGgbLTp4zU/uuh4vHYYQMIjlCbU=";
+  cargoHash = "sha256-8e/8inqyEUJA3s9lp/YGU5ckDXV1PnUVTyArwAM1e5g=";
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win
@@ -34,13 +34,20 @@ pkgs.rustPlatform.buildRustPackage {
   cargoBuildFlags = [ "-p" "cua-driver" ];
   cargoTestFlags = [ "-p" "cua-driver" ];
 
-  # The entire Linux dependency chain is pure Rust:
+  # Mostly pure Rust:
   #   x11rb     -> RustConnection (no libxcb C binding)
   #   ureq      -> rustls (no openssl)
   #   tiny-skia -> pure Rust 2D graphics
   #   ring      -> compiles own C/asm via stdenv's cc
-  nativeBuildInputs = [ ];
-  buildInputs = [ ];
+  # Except the `x11` crate (raw Xlib FFI for MPX multi-cursor drags), whose
+  # build.rs locates libX11/libXi/libXtst via pkg-config.
+  nativeBuildInputs = [ pkgs.pkg-config ];
+  buildInputs = with pkgs; [
+    libx11
+    libxi
+    libxtst
+    libxext
+  ];
 
   # Skip tests that require a running X11 display or AT-SPI bus
   doCheck = false;

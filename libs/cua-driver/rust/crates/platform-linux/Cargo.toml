@@ -20,6 +20,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # X11 background input + window enumeration
 x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest"] }
+x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }
 # kill(2) for the kill_app tool — SIGKILL via libc::kill.
@@ -29,3 +30,6 @@ libc = "0.2"
 # typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
 # re-exports the bus types we need (fdo::DBusProxy for pid resolution).
 atspi = { version = "0.30", features = ["tokio", "zbus"] }
+evdev = "0.12"
+# Math-expression evaluator for parallel_mouse_drag `fn` paths (y = f(x)).
+meval = "0.2"

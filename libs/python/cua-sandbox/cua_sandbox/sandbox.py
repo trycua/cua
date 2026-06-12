@@ -185,6 +185,75 @@ def _auto_runtime(image: Image) -> "Runtime":
     return QEMURuntime(mode="docker")
 
 
+# ── Ephemeral SIGTERM cleanup ────────────────────────────────────────────
+#
+# By default, SIGTERM terminates the process without running any Python-level
+# cleanup, which leaks ephemeral sandboxes (cloud VMs in particular cost
+# money). While any ephemeral sandbox is active we install a SIGTERM handler
+# that converts the signal into SystemExit, so the ``async with`` block's
+# ``finally`` runs and calls ``destroy()``. The handler is removed once the
+# last ephemeral exits.
+
+_ACTIVE_EPHEMERAL_COUNT = 0
+_SIGTERM_INSTALLED = False
+_PREV_SIGTERM_HANDLER: Any = None
+
+
+def _sigterm_raise_systemexit(signum: int, frame: Any) -> None:
+    raise SystemExit(128 + signum)
+
+
+def _install_sigterm_handler() -> None:
+    """Install SIGTERM → SystemExit, once, from the main thread only."""
+    global _SIGTERM_INSTALLED, _PREV_SIGTERM_HANDLER
+    if _SIGTERM_INSTALLED:
+        return
+    import signal as _signal
+    import threading as _threading
+
+    if _threading.current_thread() is not _threading.main_thread():
+        return
+    try:
+        _PREV_SIGTERM_HANDLER = _signal.signal(
+            _signal.SIGTERM, _sigterm_raise_systemexit
+        )
+        _SIGTERM_INSTALLED = True
+    except (ValueError, OSError):
+        # Signal handling unavailable (e.g. embedded interpreter). Skip.
+        pass
+
+
+def _uninstall_sigterm_handler() -> None:
+    global _SIGTERM_INSTALLED, _PREV_SIGTERM_HANDLER
+    if not _SIGTERM_INSTALLED:
+        return
+    import signal as _signal
+
+    try:
+        _signal.signal(
+            _signal.SIGTERM,
+            _PREV_SIGTERM_HANDLER if _PREV_SIGTERM_HANDLER is not None else _signal.SIG_DFL,
+        )
+    except (ValueError, OSError):
+        pass
+    _SIGTERM_INSTALLED = False
+    _PREV_SIGTERM_HANDLER = None
+
+
+def _enter_ephemeral_scope() -> None:
+    global _ACTIVE_EPHEMERAL_COUNT
+    _ACTIVE_EPHEMERAL_COUNT += 1
+    if _ACTIVE_EPHEMERAL_COUNT == 1:
+        _install_sigterm_handler()
+
+
+def _exit_ephemeral_scope() -> None:
+    global _ACTIVE_EPHEMERAL_COUNT
+    _ACTIVE_EPHEMERAL_COUNT = max(0, _ACTIVE_EPHEMERAL_COUNT - 1)
+    if _ACTIVE_EPHEMERAL_COUNT == 0:
+        _uninstall_sigterm_handler()
+
+
 def _record_sandbox_create(
     sb: Any,
     *,
@@ -560,29 +629,35 @@ class Sandbox:
                 await sb.shell.run("whoami")
             # sandbox is destroyed here
         """
-        sb = await cls._create(
-            image=image,
-            name=name,
-            ephemeral=True,
-            api_key=api_key,
-            local=local,
-            runtime=runtime,
-            cpu=cpu,
-            memory_mb=memory_mb,
-            disk_gb=disk_gb,
-            region=region,
-            time_to_start=time_to_start,
-            request_timeout=request_timeout,
-            telemetry_enabled=telemetry_enabled,
-        )
+        # Install a SIGTERM handler around the ephemeral so an external kill
+        # runs the finally below instead of leaking the VM.
+        _enter_ephemeral_scope()
         try:
-            yield sb
+            sb = await cls._create(
+                image=image,
+                name=name,
+                ephemeral=True,
+                api_key=api_key,
+                local=local,
+                runtime=runtime,
+                cpu=cpu,
+                memory_mb=memory_mb,
+                disk_gb=disk_gb,
+                region=region,
+                time_to_start=time_to_start,
+                request_timeout=request_timeout,
+                telemetry_enabled=telemetry_enabled,
+            )
+            try:
+                yield sb
+            finally:
+                if sb._has_snapshots and sb.name:
+                    # Stop instead of delete so forks can reference the snapshots.
+                    await cls.suspend(sb.name, local=local, api_key=api_key)
+                else:
+                    await sb.destroy()
         finally:
-            if sb._has_snapshots and sb.name:
-                # Stop instead of delete so forks can reference the snapshots.
-                await cls.suspend(sb.name, local=local, api_key=api_key)
-            else:
-                await sb.destroy()
+            _exit_ephemeral_scope()
 
     # ── Lifecycle management ─────────────────────────────────────────────
 

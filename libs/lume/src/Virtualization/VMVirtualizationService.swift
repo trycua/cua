@@ -93,7 +93,7 @@ class BaseVirtualizationService: VMVirtualizationService {
     func pause() async throws {
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.start { result in
+            virtualMachine.pause { result in
                 switch result {
                 case .success:
                     continuation.resume()
@@ -107,7 +107,7 @@ class BaseVirtualizationService: VMVirtualizationService {
     func resume() async throws {
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.start { result in
+            virtualMachine.resume { result in
                 switch result {
                 case .success:
                     continuation.resume()

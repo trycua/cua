@@ -1,0 +1,11 @@
+{
+  "binary_path": "/usr/bin/psql",
+  "binary_name": "psql",
+  "display_name": "PostgreSQL object-relational SQL database (supported version)",
+  "desktop_entry": "",
+  "icon_paths": [
+    "/usr/share/icons/Humanity/mimes/48/text-x-sql.svg",
+    "/usr/share/icons/elementary-xfce/mimes/22/text-x-sql.png"
+  ],
+  "version": "14.22"
+}

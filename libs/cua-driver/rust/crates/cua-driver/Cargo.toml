@@ -1,0 +1,90 @@
+[package]
+name = "cua-driver"
+version.workspace = true
+edition.workspace = true
+description = "Cross-platform background computer-use automation daemon (MCP server)"
+default-run = "cua-driver"
+
+[[bin]]
+name = "cua-driver"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+cua-driver-core = { path = "../cua-driver-core" }
+cursor-overlay = { path = "../cursor-overlay" }
+pip-preview = { path = "../pip-preview" }
+async-trait = "0.1"
+base64 = { workspace = true }
+uuid = { workspace = true }
+# Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
+# PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
+# rustls (default) so Linux/Windows builds don't require system OpenSSL.
+ureq = { version = "3", features = ["json"] }
+# Strict semver comparison for the startup update-available banner so that
+# pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
+# and we never recommend a pre-release as an "update".
+semver = "1"
+# Bounded `Child::wait_timeout` for the Linux AT-SPI / gdbus probe in
+# `doctor`. We can't rely on `gdbus introspect` returning quickly when the
+# session D-Bus is hung — without a timeout, `doctor` would block forever
+# on a broken accessibility stack. Tiny dep, exactly this use case.
+wait-timeout = "0.2"
+# Tarball extraction for `cua-driver skills install`. The verb fetches a
+# versioned `cua-driver-rs-v<v>-skills.tar.gz` release asset from GitHub
+# and unpacks it under `<HomeDir>/skills/cua-driver-rs/`. `tar` is the
+# canonical streaming TAR reader; `flate2` provides gzip decoding (pulled
+# in transitively by ureq already, but declared explicitly here so the
+# dependency is easy to find).
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
+
+# Used by crate::bundle::parent_is_not_launchd() for the TCC
+# auto-relaunch detection path on Unix (only the macOS heuristic
+# actually fires, but the crate compiles on Linux too).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+platform-macos = { path = "../platform-macos" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-linux = { path = "../platform-linux" }
+
+[build-dependencies]
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+# Embed the Windows manifest for DPI awareness (fixes coordinate mismatches
+# at 125%/150%/200% scaling).
+embed-resource = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+image = { workspace = true }
+base64 = { workspace = true }
+# Isolated HOME / cache directories for `version_check` unit tests so they
+# never touch the developer's real `~/.cua-driver-rs/version_check.json`.
+tempfile = "3"
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+platform-windows = { path = "../platform-windows" }
+windows = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    # Job Object: assign every spawned test child to a KILL_ON_JOB_CLOSE job so
+    # the OS terminates the whole tree when the test process dies for ANY reason
+    # (including SIGKILL / Ctrl-C) — guarantees no orphaned windows or held ports.
+    "Win32_System_JobObjects",
+    # CreateJobObjectW's signature references SECURITY_ATTRIBUTES;
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION embeds IO_COUNTERS (Threading).
+    "Win32_Security",
+    "Win32_System_Threading",
+] }

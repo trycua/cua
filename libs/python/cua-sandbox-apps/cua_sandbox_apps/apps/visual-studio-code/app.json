@@ -1,0 +1,43 @@
+{
+  "id": "visual-studio-code",
+  "name": "Visual Studio Code",
+  "description": "A lightweight but powerful source code editor that runs on your desktop and is available for Windows, macOS and Linux. It comes with built-in support for JavaScript, TypeScript and Node.js, and has a rich ecosystem of extensions for other languages and runtimes. Enhanced with AI capabilities for agentic development workflows.",
+  "website": "https://code.visualstudio.com",
+  "icon_url": "https://code.visualstudio.com/favicon.ico",
+  "categories": [
+    "IDE",
+    "Code Editor",
+    "Developer Tools"
+  ],
+  "tags": [
+    "open-source",
+    "cross-platform",
+    "syntax-highlighting",
+    "debugging",
+    "git-integration",
+    "extensions",
+    "AI-powered",
+    "typescript",
+    "javascript",
+    "python"
+  ],
+  "os_support": [
+    "windows",
+    "macos",
+    "linux"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/microsoft/vscode",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "code",
+    "snap": "code",
+    "flatpak": "com.visualstudio.code",
+    "brew": "visual-studio-code",
+    "choco": "vscode",
+    "winget": "Microsoft.VisualStudioCode"
+  },
+  "download_url": "https://code.visualstudio.com/download"
+}

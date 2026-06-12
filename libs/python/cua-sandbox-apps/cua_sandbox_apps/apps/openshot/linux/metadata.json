@@ -1,0 +1,13 @@
+{
+  "binary_path": "/usr/bin/openshot-qt",
+  "binary_name": "openshot-qt",
+  "display_name": "OpenShot Video Editor",
+  "desktop_entry": "/usr/share/applications/org.openshot.OpenShot.desktop",
+  "icon_paths": [
+    "/usr/share/icons/hicolor/512x512/apps/openshot-qt.png",
+    "/usr/share/icons/hicolor/scalable/apps/openshot-qt.svg",
+    "/usr/share/icons/hicolor/64x64/apps/openshot-qt.png",
+    "/usr/share/pixmaps/openshot-qt.svg"
+  ],
+  "version": "2.5.1+dfsg1-2ubuntu0.1"
+}

@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/bin/puppet",
+  "binary_name": "puppet",
+  "display_name": "configuration management system",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "5.5.22"
+}

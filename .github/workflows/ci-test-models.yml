@@ -1,7 +1,7 @@
 name: "CI: Test Models"
 
 # This workflow tests all supported Cua models with API keys
-# Runs on changes to libs/python or manually via workflow_dispatch
+# Runs weekly on Monday or manually via workflow_dispatch
 
 on:
   workflow_dispatch:
@@ -11,10 +11,8 @@ on:
         required: false
         default: true
         type: boolean
-  pull_request:
-    paths:
-      - "libs/python/**"
-      - ".github/workflows/ci-test-models.yml"
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9:00 UTC
 
 jobs:
   # Test all Cua models - runs on PRs, pushes to main, or when manually triggered

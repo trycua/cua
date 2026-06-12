@@ -1,0 +1,10 @@
+{
+  "binary_path": "/usr/local/bin/jenkins",
+  "binary_name": "jenkins",
+  "display_name": "Jenkins",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/tmp/tmp.DV9H59SEdP/jenkins_icon.svg"
+  ],
+  "version": "2.541.3"
+}

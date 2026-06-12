@@ -27,7 +27,7 @@ sys.modules["computer.providers.cloud.provider"] = mock_computer.providers.cloud
 @pytest.fixture
 def disable_telemetry(monkeypatch):
     """Disable telemetry for tests."""
-    monkeypatch.setenv("CUA_TELEMETRY_DISABLED", "1")
+    monkeypatch.setenv("CUA_TELEMETRY_ENABLED", "false")
 
 
 @pytest.fixture

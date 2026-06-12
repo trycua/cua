@@ -125,37 +125,37 @@ Tell the user: `"Here is the trajectory of my session: {url}"`
 
 ## Quick Reference
 
-| Action              | Command                                        |
-| ------------------- | ---------------------------------------------- |
-| Connect to target   | `cua do switch <provider> [name]`              |
-| Screenshot          | `cua do screenshot`                            |
-| AI-annotated screen | `cua do snapshot ["instructions"]`             |
-| Click               | `cua do click <x> <y> [left\|right\|middle]`   |
-| Double-click        | `cua do dclick <x> <y>`                        |
-| Type text           | `cua do type "text"`                           |
-| Press key           | `cua do key <key>`                             |
-| Hotkey              | `cua do hotkey <combo>` (e.g. `ctrl+c`)        |
-| Scroll              | `cua do scroll <direction> [amount]`           |
-| Drag                | `cua do drag <x1> <y1> <x2> <y2>`             |
-| Move cursor         | `cua do move <x> <y>`                          |
-| Shell command       | `cua do shell "command"`                       |
-| Open URL/file       | `cua do open <url\|path>`                      |
-| List windows        | `cua do window ls [app]`                       |
-| Focus window        | `cua do window focus <id>`                     |
-| Zoom to window      | `cua do zoom "App Name"`                       |
-| Unzoom              | `cua do unzoom`                                |
-| Share trajectory    | `cua trajectory share`                         |
+| Action              | Command                                      |
+| ------------------- | -------------------------------------------- |
+| Connect to target   | `cua do switch <provider> [name]`            |
+| Screenshot          | `cua do screenshot`                          |
+| AI-annotated screen | `cua do snapshot ["instructions"]`           |
+| Click               | `cua do click <x> <y> [left\|right\|middle]` |
+| Double-click        | `cua do dclick <x> <y>`                      |
+| Type text           | `cua do type "text"`                         |
+| Press key           | `cua do key <key>`                           |
+| Hotkey              | `cua do hotkey <combo>` (e.g. `ctrl+c`)      |
+| Scroll              | `cua do scroll <direction> [amount]`         |
+| Drag                | `cua do drag <x1> <y1> <x2> <y2>`            |
+| Move cursor         | `cua do move <x> <y>`                        |
+| Shell command       | `cua do shell "command"`                     |
+| Open URL/file       | `cua do open <url\|path>`                    |
+| List windows        | `cua do window ls [app]`                     |
+| Focus window        | `cua do window focus <id>`                   |
+| Zoom to window      | `cua do zoom "App Name"`                     |
+| Unzoom              | `cua do unzoom`                              |
+| Share trajectory    | `cua trajectory share`                       |
 
 ## Providers
 
-| Provider     | Example                               |
-| ------------ | ------------------------------------- |
-| `cloud`      | `cua do switch cloud my-vm`           |
-| `cloudv2`    | `cua do switch cloudv2 my-vm`         |
-| `docker`     | `cua do switch docker my-container`   |
-| `lume`       | `cua do switch lume my-vm`            |
-| `lumier`     | `cua do switch lumier my-vm`          |
-| `winsandbox` | `cua do switch winsandbox`            |
-| `host`       | `cua do switch host`                  |
+| Provider     | Example                             |
+| ------------ | ----------------------------------- |
+| `cloud`      | `cua do switch cloud my-vm`         |
+| `cloudv2`    | `cua do switch cloudv2 my-vm`       |
+| `docker`     | `cua do switch docker my-container` |
+| `lume`       | `cua do switch lume my-vm`          |
+| `lumier`     | `cua do switch lumier my-vm`        |
+| `winsandbox` | `cua do switch winsandbox`          |
+| `host`       | `cua do switch host`                |
 
 See [references/command-reference.md](references/command-reference.md) for full argument syntax.

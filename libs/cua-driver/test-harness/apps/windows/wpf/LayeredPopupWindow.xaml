@@ -1,0 +1,23 @@
+<Window x:Class="CuaTestHarness.Wpf.LayeredPopupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Harness Layered Popup"
+        Width="380" Height="180"
+        AllowsTransparency="True"
+        WindowStyle="None"
+        Background="#80303030"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Border BorderBrush="#FFFFFF" BorderThickness="2" CornerRadius="8" Padding="16">
+        <StackPanel>
+            <TextBlock Foreground="White" FontWeight="Bold" FontSize="16"
+                       Text="Layered transparent popup"/>
+            <TextBlock Foreground="White" Margin="0,8,0,0" TextWrapping="Wrap"
+                       AutomationProperties.AutomationId="txt-layered-body"
+                       Text="LAYERED_POPUP_MARKER_v1 — WS_EX_LAYERED is implied by AllowsTransparency=True. PrintWindow may capture this as opaque-only black without WGC fallback."/>
+            <Button Width="80" HorizontalAlignment="Right" Margin="0,12,0,0"
+                    AutomationProperties.AutomationId="btn-layered-close"
+                    Content="Close" Click="OnCloseClick"/>
+        </StackPanel>
+    </Border>
+</Window>

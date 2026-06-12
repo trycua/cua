@@ -1,0 +1,39 @@
+{
+  "app_id": "emacs",
+  "os": "linux",
+  "install_exit_code": 0,
+  "install_script": "#!/bin/bash\n# Install script for GNU Emacs on Linux\nset -e\n\necho \"Installing GNU Emacs...\"\n\n# Update package manager cache\nsudo apt-get update -qq\n\n# Install Emacs (includes GTK support for GUI)\nsudo apt-get install -y emacs\n\necho \"\u2713 GNU Emacs installed successfully\"",
+  "launch_script": "#!/usr/bin/env python3\nimport subprocess\nimport os\nimport time\n\nos.environ['DISPLAY'] = ':1'\n\n# Launch Emacs in background\nproc = subprocess.Popen(['emacs'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nprint(f\"Emacs started with PID: {proc.pid}\")\n\n# Wait a moment for it to render\ntime.sleep(3)\n\nprint(\"Done\")",
+  "extract_metadata_script": "#!/bin/bash\n# Extract metadata for GNU Emacs\n\n# Find the binary\nBINARY_PATH=$(which emacs)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get the version\nVERSION=$($BINARY_PATH --version 2>&1 | head -1 | grep -oP 'GNU Emacs \\K[0-9.]+' || echo \"unknown\")\n\n# Find desktop file\nDESKTOP_FILE=$(find /usr/share/applications -name \"*emacs*.desktop\" 2>/dev/null | head -1)\n\n# Extract display name from desktop file or package metadata\nDISPLAY_NAME=\"\"\nif [ -n \"$DESKTOP_FILE\" ] && [ -f \"$DESKTOP_FILE\" ]; then\n    DISPLAY_NAME=$(grep \"^Name=\" \"$DESKTOP_FILE\" | head -1 | cut -d'=' -f2)\nfi\n\n# Fallback to package description if not found in desktop file\nif [ -z \"$DISPLAY_NAME\" ]; then\n    DISPLAY_NAME=$(dpkg -L emacs 2>/dev/null | xargs -I {} cat {} 2>/dev/null | grep -i \"GNU Emacs\" | head -1 || echo \"GNU Emacs\")\n    # If still empty, use default\n    if [ -z \"$DISPLAY_NAME\" ]; then\n        DISPLAY_NAME=\"GNU Emacs\"\n    fi\nfi\n\n# Find icon files\nICON_PATHS=()\n# Check common icon locations\nfor dir in /usr/share/icons /usr/share/pixmaps; do\n    if [ -d \"$dir\" ]; then\n        while IFS= read -r icon; do\n            ICON_PATHS+=(\"$icon\")\n        done < <(find \"$dir\" -name \"*emacs*\" \\( -name \"*.png\" -o -name \"*.svg\" -o -name \"*.xpm\" \\) 2>/dev/null)\n    fi\ndone\n\n# Also check desktop file for icon\nif [ -n \"$DESKTOP_FILE\" ]; then\n    ICON_NAME=$(grep \"^Icon=\" \"$DESKTOP_FILE\" | cut -d'=' -f2)\n    if [ -n \"$ICON_NAME\" ]; then\n        # Try to find the icon file\n        FOUND_ICON=$(find /usr/share/icons /usr/share/pixmaps -name \"${ICON_NAME}*\" 2>/dev/null | head -1)\n        if [ -n \"$FOUND_ICON\" ]; then\n            ICON_PATHS+=(\"$FOUND_ICON\")\n        fi\n    fi\nfi\n\n# Remove duplicates from ICON_PATHS\nICON_PATHS=($(printf '%s\\n' \"${ICON_PATHS[@]}\" | sort -u))\n\n# Format icon paths as JSON array\nICON_JSON=\"[\"\nfor icon in \"${ICON_PATHS[@]}\"; do\n    ICON_JSON=\"$ICON_JSON\\\"$icon\\\",\"\ndone\nICON_JSON=\"${ICON_JSON%,}]\"\n\n# Output JSON\ncat <<EOF\n{\n  \"binary_path\": \"$BINARY_PATH\",\n  \"binary_name\": \"$BINARY_NAME\",\n  \"display_name\": \"$DISPLAY_NAME\",\n  \"desktop_entry\": \"$DESKTOP_FILE\",\n  \"icon_paths\": $ICON_JSON,\n  \"version\": \"$VERSION\"\n}\nEOF",
+  "install_stdout": "Installing GNU Emacs...\nReading package lists...\nBuilding dependency tree...\nReading state information...\nThe following additional packages will be installed:\n  emacs-bin-common emacs-common emacs-el emacs-gtk install-info libgif7\n  libjansson4 libm17n-0 libotf1 m17n-db\nSuggested packages:\n  mailutils emacs-common-non-dfsg ncurses-term m17n-docs gawk\nThe following NEW packages will be installed:\n  emacs emacs-bin-common emacs-common emacs-el emacs-gtk install-info libgif7\n  libjansson4 libm17n-0 libotf1 m17n-db\n0 upgraded, 11 newly installed, 0 to remove and 42 not upgraded.\nNeed to get 36.5 MB of archives.\nAfter this operation, 117 MB of additional disk space will be used.\n\u2713 GNU Emacs installed successfully",
+  "sandbox_name": "linux-7c550944",
+  "metadata": {
+    "binary_path": "/usr/bin/emacs",
+    "binary_name": "emacs",
+    "display_name": "Emacs (Terminal)",
+    "desktop_entry": "/usr/share/applications/emacs-term.desktop",
+    "icon_paths": [
+      "/usr/share/icons/hicolor/128x128/apps/emacs.png",
+      "/usr/share/icons/hicolor/16x16/apps/emacs.png",
+      "/usr/share/icons/hicolor/24x24/apps/emacs.png",
+      "/usr/share/icons/hicolor/32x32/apps/emacs.png",
+      "/usr/share/icons/hicolor/48x48/apps/emacs.png",
+      "/usr/share/icons/hicolor/scalable/apps/emacs.svg",
+      "/usr/share/icons/hicolor/scalable/mimetypes/emacs-document.svg"
+    ],
+    "version": "27.1"
+  },
+  "download_available": true,
+  "notes": "GNU Emacs 27.1 successfully installed and launched. The application includes GTK+ support for a full graphical interface.",
+  "screenshot_verification": "PASS: GNU Emacs 27.1 is visibly open with two windows displaying the welcome screen, showing the GNU Emacs logo and documentation links.",
+  "verification_passed": true,
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-128x128.png",
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-16x16.png",
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-24x24.png",
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-32x32.png",
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-48x48.png",
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-unknownxunknown.svg",
+    "cua_sandbox_apps\\apps\\emacs\\linux\\logs\\icon-unknownxunknown.svg"
+  ]
+}

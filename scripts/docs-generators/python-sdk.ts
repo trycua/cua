@@ -143,6 +143,16 @@ const SDK_CONFIGS: Record<string, SDKConfig> = {
     outputDir: 'cli',
     tagPrefix: 'cli-v',
   },
+  sandbox: {
+    packageDir: 'libs/python/cua-sandbox/cua_sandbox',
+    packageName: 'cua_sandbox',
+    outputPath: 'docs/content/docs/cua/reference/sandbox-sdk/index.mdx',
+    displayName: 'Sandbox SDK',
+    description: 'Python API reference for cua-sandbox — creating and controlling sandboxes',
+    outputDir: 'sandbox-sdk',
+    tagPrefix: 'sandbox-v',
+    includeSubmodules: ['sandbox', 'image', 'localhost', 'interfaces', 'builder'],
+  },
   bench: {
     packageDir: 'libs/cua-bench/cua_bench',
     packageName: 'cua_bench',
@@ -199,10 +209,7 @@ async function main() {
     let docs: PythonPackage;
     try {
       // Prefer uv run --with griffe python (works cross-platform), fall back to python3
-      const pythonCmd =
-        process.platform === 'win32'
-          ? `uv run --with griffe python`
-          : `python3`;
+      const pythonCmd = process.platform === 'win32' ? `uv run --with griffe python` : `python3`;
       const output = execSync(
         `${pythonCmd} "${PYTHON_SCRIPT}" "${packagePath}" "${config.packageName}"`,
         {

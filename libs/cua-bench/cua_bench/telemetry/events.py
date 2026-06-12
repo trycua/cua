@@ -19,9 +19,9 @@ import platform
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from core.telemetry import is_telemetry_enabled as _core_is_telemetry_enabled
-from core.telemetry import record_event as _core_record_event
-from core.telemetry.posthog import PostHogTelemetryClient
+from cua_core.telemetry import is_telemetry_enabled as _core_is_telemetry_enabled
+from cua_core.telemetry import record_event as _core_record_event
+from cua_core.telemetry.posthog import PostHogTelemetryClient
 
 logger = logging.getLogger("cua_bench.telemetry")
 

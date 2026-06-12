@@ -1,0 +1,31 @@
+{
+  "id": "gin",
+  "name": "Gin",
+  "description": "Gin is a high-performance HTTP web framework written in Go. It provides a Martini-like API but with significantly better performance\u2014up to 40 times faster\u2014thanks to httprouter. Gin is designed for building REST APIs, web applications, and microservices.",
+  "website": "https://gin-gonic.com",
+  "icon_url": "https://raw.githubusercontent.com/gin-gonic/logo/master/color.png",
+  "categories": [
+    "Web Framework"
+  ],
+  "tags": [
+    "go",
+    "web-framework",
+    "rest-api",
+    "microservices",
+    "http",
+    "high-performance"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/gin-gonic/gin",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {},
+  "download_url": "https://github.com/gin-gonic/gin/releases",
+  "app_type": "standalone"
+}

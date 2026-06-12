@@ -1,0 +1,9 @@
+{
+  "app_id": "featurewiz",
+  "os": "linux",
+  "install_exit_code": -1,
+  "app_type_detected": "library",
+  "download_available": null,
+  "notes": "FeatureWiz is a Python library/package for feature selection and engineering, distributed via pip and conda. It is not a standalone application or CLI tool, but rather a development dependency imported and used in Python scripts. No executable or GUI to launch.",
+  "verification_passed": false
+}

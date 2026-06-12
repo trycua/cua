@@ -22,6 +22,11 @@ export interface BaseComputerConfig {
    * @default "macos"
    */
   osType: OSType;
+
+  /**
+   * The VM provider type
+   */
+  vmProvider?: VMProviderType;
 }
 
 export interface CloudComputerConfig extends BaseComputerConfig {

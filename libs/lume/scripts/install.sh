@@ -701,12 +701,12 @@ EOF
       cleanup_legacy_updater
 
       # Setup cron job for daily update check (doesn't show in Login Items)
-      CRON_ENTRY="0 10 * * * $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
+      CRON_ENTRY="0 10 * * 1 $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
       EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
       NEW_CRON=$(echo "$EXISTING_CRON" | grep -v "lume-update" || echo "")
       echo "${NEW_CRON}${NEW_CRON:+
 }${CRON_ENTRY}" | crontab -
-      echo "${GREEN}Auto-updater installed. Checks daily at 10am via cron.${NORMAL}"
+      echo "${GREEN}Auto-updater installed. Checks weekly on Mondays at 10am via cron.${NORMAL}"
     fi
 
     # Run updater once after installation

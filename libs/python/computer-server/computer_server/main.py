@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import aiohttp
 import uvicorn
-from core.telemetry import record_event
+from cua_core.telemetry import record_event
 from fastapi import (
     FastAPI,
     Header,
@@ -37,11 +37,41 @@ try:
 except ImportError:
     HAS_MCP = False
 
-# Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
-AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
+# Status code returned when UNAVAILABLE_WITHOUT_CONTAINER_NAME is set and CONTAINER_NAME is missing.
+DEFAULT_UNAVAILABLE_STATUS_CODE: int = 503
+
+
+def _parse_bool_env(name: str) -> bool:
+    return os.environ.get(name, "").lower().strip() in ("1", "true", "yes", "y", "on")
+
+
+def _unavailable_status_code() -> Optional[int]:
+    """Return the HTTP status code to use when CONTAINER_NAME is required but unset.
+
+    When ``UNAVAILABLE_WITHOUT_CONTAINER_NAME`` is truthy and ``CONTAINER_NAME`` is not
+    set, the server should reject requests with the configured status code
+    (``UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE``, default 503) rather
+    than passing through to local dev mode. Returns ``None`` when the server should
+    proceed normally (either because ``CONTAINER_NAME`` is set, or because the
+    unavailable-without-container flag is not enabled).
+    """
+    if os.environ.get("CONTAINER_NAME"):
+        return None
+    if not _parse_bool_env("UNAVAILABLE_WITHOUT_CONTAINER_NAME"):
+        return None
+    try:
+        return int(
+            os.environ.get(
+                "UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE",
+                str(DEFAULT_UNAVAILABLE_STATUS_CODE),
+            )
+        )
+    except ValueError:
+        return DEFAULT_UNAVAILABLE_STATUS_CODE
+
 
 try:
-    from agent import ComputerAgent
+    from cua_agent import ComputerAgent
 
     HAS_AGENT = True
 except ImportError:
@@ -75,6 +105,78 @@ app = FastAPI(
     lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
     redirect_slashes=False,
 )
+
+
+class UnavailableWithoutContainerMiddleware:
+    """ASGI middleware that rejects all requests when CONTAINER_NAME is required but unset.
+
+    Controlled by env vars (read per-request so tests and dynamic config work):
+    - ``UNAVAILABLE_WITHOUT_CONTAINER_NAME``: if truthy and ``CONTAINER_NAME`` is unset,
+      every HTTP and WebSocket request is rejected.
+    - ``UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE``: HTTP status code for
+      rejections (default 503).
+
+    When disabled (either env var not set), requests pass through unchanged, preserving
+    the original "local development mode" behavior for backwards compatibility.
+    """
+
+    _DETAIL = "Service unavailable: CONTAINER_NAME is required but not configured"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        scope_type = scope.get("type")
+        if scope_type in ("http", "websocket"):
+            status_code = _unavailable_status_code()
+            if status_code is not None:
+                if scope_type == "http":
+                    await self._reject_http(send, status_code)
+                else:
+                    await self._reject_websocket(receive, send, status_code)
+                return
+        await self.app(scope, receive, send)
+
+    @classmethod
+    async def _reject_http(cls, send, status_code):
+        body = json.dumps({"detail": cls._DETAIL}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    @classmethod
+    async def _reject_websocket(cls, receive, send, status_code):
+        # Accept first so we can send a structured JSON error before closing — this
+        # preserves the existing error shape that clients already handle.
+        event = await receive()
+        if event.get("type") != "websocket.connect":
+            return
+        await send({"type": "websocket.accept"})
+        await send(
+            {
+                "type": "websocket.send",
+                "text": json.dumps(
+                    {
+                        "success": False,
+                        "error": cls._DETAIL,
+                        "status_code": status_code,
+                    }
+                ),
+            }
+        )
+        # 1008 = Policy Violation
+        await send({"type": "websocket.close", "code": 1008})
+
+
+app.add_middleware(UnavailableWithoutContainerMiddleware)
 
 # CORS configuration
 origins = ["*"]
@@ -219,27 +321,29 @@ handlers = {
     "set_clipboard": automation_handler.set_clipboard,
 }
 
+# Android-only commands — registered only when the Android handler is active
+# so non-Android server instances don't fail at startup with AttributeError.
+if hasattr(automation_handler, "multitouch_gesture"):
+    handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
 
 class AuthenticationManager:
     def __init__(self):
-        self.sessions: Dict[str, Dict[str, Any]] = {}
         self.container_name = os.environ.get("CONTAINER_NAME")
-
-    def _hash_credentials(self, container_name: str, api_key: str) -> str:
-        """Create a hash of container name and API key for session identification"""
-        combined = f"{container_name}:{api_key}"
-        return hashlib.sha256(combined.encode()).hexdigest()
-
-    def _is_session_valid(self, session_data: Dict[str, Any]) -> bool:
-        """Check if a session is still valid based on expiration time"""
-        if not session_data.get("valid", False):
-            return False
-
-        expires_at = session_data.get("expires_at", 0)
-        return time.time() < expires_at
+        self.api_base_url = os.environ.get("CUA_BASE_URL_AUTH", "https://www.cua.ai").rstrip("/")
 
     async def auth(self, container_name: str, api_key: str) -> bool:
-        """Authenticate container name and API key, using cached sessions when possible"""
+        """Authenticate container name and API key against the TryCUA API.
+
+        Every call hits the API directly — results are not cached.  The
+        previous implementation cached both successes and failures with a
+        60 s TTL (``CUA_AUTH_TTL_SECONDS``), but that caused transient
+        network/DNS errors immediately after VM boot to lock out legitimate
+        clients for the full TTL window.  Since the gate sits in front of
+        every SDK request on a freshly provisioned VM, a single cold-start
+        DNS hiccup would flip the VM into a perpetually-401 state until
+        the TTL expired.
+        """
         # If no CONTAINER_NAME is set, always allow access (local development)
         if not self.container_name:
             logger.info(
@@ -254,39 +358,19 @@ class AuthenticationManager:
             )
             return False
 
-        # Create hash for session lookup
-        session_hash = self._hash_credentials(container_name, api_key)
-
-        # Check if we have a valid cached session
-        if session_hash in self.sessions:
-            session_data = self.sessions[session_hash]
-            if self._is_session_valid(session_data):
-                logger.info(f"Using cached authentication for container: {container_name}")
-                return session_data["valid"]
-            else:
-                # Remove expired session
-                del self.sessions[session_hash]
-
-        # No valid cached session, authenticate with API
         logger.info(f"Authenticating with TryCUA API for container: {container_name}")
 
         try:
-            from core.http import cua_version_headers
+            from cua_core.http import cua_version_headers
 
             async with aiohttp.ClientSession() as session:
                 headers = {"Authorization": f"Bearer {api_key}", **cua_version_headers()}
 
                 async with session.get(
-                    f"https://www.cua.ai/api/vm/auth?container_name={container_name}",
+                    f"{self.api_base_url}/api/vm/auth?container_name={container_name}",
                     headers=headers,
                 ) as resp:
                     is_valid = resp.status == 200 and bool((await resp.text()).strip())
-
-                    # Cache the result with configurable expiration
-                    self.sessions[session_hash] = {
-                        "valid": is_valid,
-                        "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
-                    }
 
                     if is_valid:
                         logger.info(f"Authentication successful for container: {container_name}")
@@ -299,19 +383,9 @@ class AuthenticationManager:
 
         except aiohttp.ClientError as e:
             logger.error(f"Failed to validate API key with TryCUA API: {str(e)}")
-            # Cache failed result to avoid repeated requests
-            self.sessions[session_hash] = {
-                "valid": False,
-                "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
-            }
             return False
         except Exception as e:
             logger.error(f"Unexpected error during authentication: {str(e)}")
-            # Cache failed result to avoid repeated requests
-            self.sessions[session_hash] = {
-                "valid": False,
-                "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
-            }
             return False
 
 
@@ -687,8 +761,14 @@ async def pty_create(
         body = await request.json()
     except Exception:
         body = {}
+    # On Android, always use adb shell regardless of any caller-supplied command,
+    # so that PTY sessions run inside the emulator rather than on the host.
+    if os.environ.get("IS_CUA_ANDROID") == "true":
+        command = "adb shell"
+    else:
+        command = body.get("command")
     info = await pty_manager.create(
-        command=body.get("command"),
+        command=command,
         cols=int(body.get("cols", 80)),
         rows=int(body.get("rows", 24)),
         cwd=body.get("cwd"),
@@ -968,7 +1048,7 @@ async def agent_response_endpoint(
 
     # Define a direct computer tool that implements the AsyncComputerHandler protocol
     # and delegates to our existing automation/file/accessibility handlers.
-    from agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
+    from cua_agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
     class DirectComputerInterface:
         """Interface wrapper providing BrowserTool compatibility.
@@ -1074,7 +1154,30 @@ async def agent_response_endpoint(
             parts = [normalize_key(p) for p in parts]
 
             if len(parts) == 1:
-                await self._auto.press_key(parts[0])
+                key = parts[0]
+                # Route single printable characters through type_text so the
+                # insertion is layout-independent. press_key uses a physical-key
+                # path (pynput keyboard.press/release) that follows the active
+                # input source — under a Russian or CJK layout it inserts the
+                # layout-mapped character instead of the intended ASCII one.
+                # type_text uses pynput keyboard.type() which bypasses the
+                # layout and inserts the literal Unicode codepoint.
+                #
+                # A key is "printable" when it is exactly one character long
+                # and unicodedata.category is not a control category (Cc/Cs).
+                # Special keys (return, tab, escape, arrows, f1-f12, …) are
+                # multi-character strings or map to a Key enum — those still
+                # go through press_key unchanged.
+                #
+                # See: https://github.com/trycua/cua/issues/1605
+                import unicodedata
+                if (
+                    len(key) == 1
+                    and unicodedata.category(key) not in ("Cc", "Cs", "Cn")
+                ):
+                    await self._auto.type_text(key)
+                else:
+                    await self._auto.press_key(key)
             else:
                 await self._auto.hotkey(parts)
 

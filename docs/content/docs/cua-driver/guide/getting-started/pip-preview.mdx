@@ -1,0 +1,94 @@
+---
+title: PiP Preview (Experimental)
+description: Always-on-top picture-in-picture window showing the agent's per-action screenshots and a one-line action label.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn">
+**Experimental — opt-in, default OFF.** macOS only today; Windows and Linux ship as compile-clean stubs that print a "not yet implemented" notice when `--experimental-pip` is on argv. The flag, geometry, and frame schema may change before the feature is promoted out of `experimental`. Don't build production tooling against it yet.
+</Callout>
+
+`--experimental-pip` opens a small always-on-top window next to your work that shows what the cua-driver agent is doing in real time: the post-action screenshot of the target window, plus a one-line label describing the tool call that produced it (`click element_index=2`, `type_text "hello world"`, etc.).
+
+It's intended as a live "agent's-eye view" — a passive observation surface, not a debugger. The window updates on every action tool call; it doesn't continuously capture the desktop.
+
+## Enabling it
+
+Two ways. The persistent path uses the same `~/.cua-driver/config.json`
+file that the `set_config` MCP tool writes to, so PiP survives across
+daemon restarts without re-running `claude mcp add` with the flag in
+the args list.
+
+### A. Persistent — edit `~/.cua-driver/config.json` (recommended)
+
+```json
+{
+  "experimental_pip": true,
+  "experimental_pip_geometry": "320x200+24+24"
+}
+```
+
+Both keys are optional; `experimental_pip_geometry` defaults to
+`480x360` in the top-right corner. Restart your MCP client (or kill
+the running `cua-driver` daemon) for the new config to take effect.
+
+### B. One-off — CLI flag
+
+```bash
+# MCP server (stdio)
+cua-driver mcp --experimental-pip
+
+# HTTP / Unix-socket serve daemon
+cua-driver serve --experimental-pip
+
+# Override geometry
+cua-driver serve --experimental-pip --experimental-pip-geometry 640x400
+cua-driver serve --experimental-pip --experimental-pip-geometry 480x300+24+24
+```
+
+The geometry string is the standard X11 `WxH+X+Y` form. `+X+Y` is the
+top-left origin of the window in screen points (AppKit's bottom-left
+convention is hidden inside the backend). **CLI flags override
+`config.json`** — they're not additive.
+
+On startup you'll see:
+
+```
+⚗️  PiP preview enabled (experimental — macOS only today; see https://github.com/trycua/cua/issues for follow-up)
+```
+
+## What gets pushed
+
+PiP receives a frame for the same set of tool calls the recording pipeline writes a `turn-NNNNN/screenshot.png` for — every non-read-only, non-meta call: `click`, `double_click`, `right_click`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `set_value`, `launch_app`, plus the get/refresh AX tools that take a fresh screenshot anyway.
+
+The PNG bytes themselves come from the same `SCREENSHOT_FN` callback the recorder uses, so the live view always matches what a replay would show for that turn.
+
+## Window properties (macOS)
+
+- **Always-on-top:** `NSFloatingWindowLevel` — above your normal apps, below menus / accessibility overlays.
+- **Never key:** `setBecomesKeyOnlyIfNeeded(true)` plus a transient / no-cycle collection behavior — the window never steals keyboard focus from your frontmost app.
+- **Visible across all spaces:** `CanJoinAllSpaces | FullScreenAuxiliary | Stationary` — survives space switches and full-screen apps.
+- **Closeable:** the red traffic-light button dismisses the window and decouples it from the session. Re-enabling means restarting the daemon with the flag.
+
+## Platform support
+
+| Platform | Status | Notes |
+|---|---|---|
+| macOS | Working | NSWindow + NSImageView, frame updates via `dispatch_async` to the main queue |
+| Windows | Stub | `--experimental-pip` is accepted; backend logs "not yet implemented" and the daemon continues without a window |
+| Linux | Stub | Same as Windows |
+
+Track Win + Linux follow-up work via the [trycua/cua issue tracker](https://github.com/trycua/cua/issues).
+
+## Non-goals (today)
+
+- **Continuous capture.** PiP follows tool calls, not a frame rate. If you need a video, use `start_recording`.
+- **Click-to-drag repositioning.** Window position is static for the session; use `--experimental-pip-geometry` if you need to move it.
+- **Audio / recording-to-disk from PiP.** The recording feature already handles those; PiP is a live view only.
+
+## Troubleshooting
+
+- **Window never appears.** Make sure the cursor overlay is enabled (the AppKit event loop is shared) — if you passed `--no-overlay`, the main thread is parked and AppKit doesn't run. Workaround: drop `--no-overlay`.
+- **Window appears but no frames.** Confirm a real tool call is landing — bare reads (`get_window_state`, `list_windows`) skip the push path. Try `cua-driver call launch_app '{"bundle_id":"com.apple.calculator"}'` against a running daemon.
+- **Label is truncated.** Increase the width via `--experimental-pip-geometry 720x400`.

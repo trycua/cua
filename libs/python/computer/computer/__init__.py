@@ -11,7 +11,7 @@ logger = logging.getLogger("computer")
 # Initialize telemetry when the package is imported
 try:
     # Import from core telemetry
-    from core.telemetry import (
+    from cua_core.telemetry import (
         is_telemetry_enabled,
         record_event,
     )

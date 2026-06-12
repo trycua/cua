@@ -1,0 +1,11 @@
+{
+  "binary_path": "/usr/local/bin/pycharm",
+  "binary_name": "pycharm",
+  "display_name": "PyCharm Community Edition",
+  "desktop_entry": "/usr/share/applications/pycharm.desktop",
+  "icon_paths": [
+    "/opt/pycharm/bin/pycharm.png",
+    "/opt/pycharm/bin/pycharm.svg"
+  ],
+  "version": "2024.1"
+}

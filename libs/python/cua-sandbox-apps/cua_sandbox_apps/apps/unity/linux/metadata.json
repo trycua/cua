@@ -1,0 +1,16 @@
+{
+  "binary_path": "/usr/local/bin/unity-hub",
+  "binary_name": "unity-hub",
+  "display_name": "Unity Hub",
+  "desktop_entry": "/home/cua/.local/bin/UnityHub/squashfs-root/unityhub.desktop",
+  "icon_paths": [
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/128x128/apps/unityhub.png",
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/16x16/apps/unityhub.png",
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/256x256/apps/unityhub.png",
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/32x32/apps/unityhub.png",
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/512x512/apps/unityhub.png",
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/64x64/apps/unityhub.png",
+    "/home/cua/.local/bin/UnityHub/squashfs-root/usr/share/icons/hicolor/48x48/apps/unityhub.png"
+  ],
+  "version": "3.11.1"
+}

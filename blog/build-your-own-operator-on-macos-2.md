@@ -211,7 +211,7 @@ With the `cua-agent` framework, creating a Computer-Use Agent becomes remarkably
 ```python
 import asyncio
 from computer import Computer
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def run_simple_task():
     async with Computer() as macos_computer:
@@ -263,7 +263,7 @@ Another advantage of the cua-agent framework is easily chaining multiple tasks. 
 ```python
 import asyncio
 from computer import Computer
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def run_multi_task_workflow():
     async with Computer() as macos_computer:
@@ -355,7 +355,7 @@ One of the most powerful features of the framework is the ability to use local m
 ```python
 import asyncio
 from computer import Computer
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def run_with_local_model():
     async with Computer() as macos_computer:
@@ -481,7 +481,7 @@ For a visual interface to your agent, the package also includes a Gradio UI:
 1. Create a file named `launch_ui.py` with the following code:
 
 ```python
-from agent.ui.gradio.app import create_gradio_ui
+from cua_agent.ui.gradio.app import create_gradio_ui
 
 # Create and launch the UI
 if __name__ == "__main__":
@@ -575,7 +575,7 @@ Let's look at a more complex example that automates a GitHub workflow:
 import asyncio
 import logging
 from computer import Computer
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def github_workflow():
     async with Computer(verbosity=logging.INFO) as macos_computer:

@@ -1,0 +1,153 @@
+---
+title: Claude Code
+description: Run Claude Code inside a Cua cloud sandbox
+icon: claude-code
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+Hand off coding tasks to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) running in an isolated Cua cloud sandbox with full filesystem, terminal, and git access.
+
+## Setup
+
+<Steps>
+
+<Step>
+
+### Install the SDK
+
+```bash
+pip install cua-sandbox
+```
+
+</Step>
+
+<Step>
+
+### Set your keys
+
+```bash
+export CUA_API_KEY="your-cua-key"
+export ANTHROPIC_API_KEY="your-anthropic-key"
+```
+
+</Step>
+
+</Steps>
+
+## Run Claude Code in a cloud sandbox
+
+This spins up an ephemeral cloud VM via the Cua API. You'll need a `CUA_API_KEY` — get one from [cua.ai/dashboard](https://cua.ai/dashboard) if you don't have one yet.
+
+```python
+import asyncio, os
+from cua_sandbox import Sandbox, Image
+
+async def main():
+    api_key = os.environ["ANTHROPIC_API_KEY"]
+
+    # CUA_API_KEY is read from your environment automatically
+    async with Sandbox.ephemeral(Image.linux("ubuntu", "24.04")) as sb:
+        # Install Node.js + Claude Code
+        await sb.shell.run("sudo apt-get update && sudo apt-get install -y curl", timeout=60)
+        await sb.shell.run("curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -", timeout=60)
+        await sb.shell.run("sudo apt-get install -y nodejs", timeout=60)
+        await sb.shell.run("sudo npm install -g @anthropic-ai/claude-code", timeout=120)
+
+        # Hand off a task
+        result = await sb.shell.run(
+            f"ANTHROPIC_API_KEY='{api_key}' claude -p 'Create a hello world index.html' "
+            f"--dangerously-skip-permissions --output-format stream-json --verbose",
+            timeout=300,
+        )
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+<Callout type="info">
+  `--dangerously-skip-permissions` is required for headless execution. `-p` passes the task as a prompt.
+</Callout>
+
+## Connect to an existing sandbox
+
+Skip provisioning by connecting to a sandbox that's already running.
+
+```python
+sb = await Sandbox.connect("my-sandbox")
+async with sb:
+    result = await sb.shell.run(
+        f"ANTHROPIC_API_KEY='{api_key}' claude -p 'List all TODO comments' "
+        f"--dangerously-skip-permissions",
+        timeout=300,
+    )
+    print(result.stdout)
+```
+
+## Work on a repository
+
+Clone a repo, run a task, and inspect the diff.
+
+```python
+await sb.shell.run("git clone https://github.com/user/repo.git /tmp/repo", timeout=60)
+
+result = await sb.shell.run(
+    f"cd /tmp/repo && ANTHROPIC_API_KEY='{api_key}' claude -p 'Fix the failing tests' "
+    f"--dangerously-skip-permissions --output-format stream-json --verbose",
+    timeout=300,
+)
+print(result.stdout)
+
+diff = await sb.shell.run("cd /tmp/repo && git diff", timeout=30)
+print(diff.stdout)
+```
+
+## Structured output
+
+`--output-format stream-json --verbose` emits one JSON object per line.
+
+| Event type | Description |
+|------------|-------------|
+| `system` | Session init — tools, model, config |
+| `assistant` | Claude's responses and tool calls |
+| `result` | Final summary — cost, duration, tokens |
+
+```python
+import json
+
+for line in result.stdout.strip().splitlines():
+    event = json.loads(line)
+    if event["type"] == "result":
+        print(f"Cost: ${event['total_cost_usd']:.4f}")
+        print(f"Result: {event['result']}")
+```
+
+## Resume a session
+
+Extract the `session_id` from the init event and pass it back.
+
+```python
+init = json.loads(result.stdout.strip().splitlines()[0])
+session_id = init["session_id"]
+
+followup = await sb.shell.run(
+    f"ANTHROPIC_API_KEY='{api_key}' claude -p 'Now add CSS styling' "
+    f"--dangerously-skip-permissions --output-format stream-json --verbose "
+    f"--session-id {session_id}",
+    timeout=300,
+)
+```
+
+## Custom system prompt
+
+Write a `CLAUDE.md` into the repo before running Claude Code.
+
+```python
+await sb.shell.run(
+    "echo '# Rules\n- Use TypeScript\n- Write tests for all changes' > /tmp/repo/CLAUDE.md",
+    timeout=10,
+)
+```
+
+Claude Code automatically reads `CLAUDE.md` from the working directory.

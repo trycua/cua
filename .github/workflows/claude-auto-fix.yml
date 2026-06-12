@@ -222,7 +222,7 @@ jobs:
         if: steps.context.outputs.has_failed_run == 'true'
         run: |
           cat > /tmp/claude-prompt.txt << 'PROMPT_EOF'
-          You are Claude, an AI assistant that fixes CI failures in the CUA (Computer Use Agent) monorepo.
+          You are Claude, an AI assistant that fixes CI failures in the Cua (Computer Use Agent) monorepo.
 
           CONTEXT:
           - Repository: ${{ github.repository }}
@@ -277,7 +277,7 @@ jobs:
           FIXING TEST FAILURES:
           For Python test failures:
             - Run the specific failing test: uv run python -m pytest libs/python/<package>/tests/ -v --tb=long
-            - The test environment uses CUA_TELEMETRY_DISABLED=1
+            - The test environment uses CUA_TELEMETRY_ENABLED=false
             - Tests use pytest-asyncio with asyncio_mode=auto
           For TypeScript build/type failures:
             - Check types: node ./scripts/typescript-typecheck.js
@@ -311,7 +311,7 @@ jobs:
           ANTHROPIC_BEDROCK_BASE_URL: "https://bedrock-runtime.us-west-2.amazonaws.com"
           AWS_REGION: us-west-2
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CUA_TELEMETRY_DISABLED: "1"
+          CUA_TELEMETRY_ENABLED: "false"
           CLAUDE_CODE_ENABLE_TELEMETRY: "1"
           OTEL_METRICS_EXPORTER: otlp
           OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf

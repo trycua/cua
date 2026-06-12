@@ -18,7 +18,7 @@ import asyncio
 import os
 
 import aiohttp
-from core.http import cua_version_headers
+from cua_core.http import cua_version_headers
 
 DEFAULT_API_BASE = os.getenv("CUA_API_BASE", "https://api.cua.ai")
 

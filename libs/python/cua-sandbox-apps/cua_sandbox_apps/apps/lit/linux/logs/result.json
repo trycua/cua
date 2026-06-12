@@ -1,0 +1,9 @@
+{
+  "app_id": "lit",
+  "os": "linux",
+  "install_exit_code": -1,
+  "app_type_detected": "library",
+  "download_available": null,
+  "notes": "Development library, not end-user software. Lit is a JavaScript web components framework installed via npm as a development dependency, not a standalone executable application.",
+  "verification_passed": false
+}

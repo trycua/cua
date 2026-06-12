@@ -56,9 +56,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      - name: Select Xcode 16.3
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.app
+          sudo xcode-select -s /Applications/Xcode_16.3.app
           xcodebuild -version
 
       - name: Install dependencies
@@ -193,6 +193,14 @@ jobs:
           # Output paths for later use
           echo "tarball_path=.release/lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" >> $GITHUB_OUTPUT
           echo "pkg_path=.release/lume-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" >> $GITHUB_OUTPUT
+
+      - name: Upload build log on failure
+        if: failure() && steps.build_notarize.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-build-log
+          path: ./libs/lume/build.log
+          retention-days: 7
 
       - name: Generate SHA256 Checksums
         id: generate_checksums

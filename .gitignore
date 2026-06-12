@@ -12,6 +12,9 @@ node_modules/*
 .Python
 build/
 !libs/lume/scripts/build/
+!libs/cua-driver/scripts/build/
+!libs/cua-driver/test-harness/build/
+!libs/cua-driver/test-harness/build/**
 develop-eggs/
 dist/
 downloads/
@@ -161,6 +164,7 @@ playground.xcworkspace
 # hence it is not needed unless you have added a package configuration file to your project
 .swiftpm/
 .build/
+/Package.resolved
 # CocoaPods
 #
 # We recommend against adding the Pods directory to your .gitignore. However
@@ -214,3 +218,5 @@ scripts/check-repo-md-links.py
 docs/scripts/check-links.py
 docs/scripts/check-all-links.py
 docs/scripts/check-mdx-links.py
+# Local Windows RE scratch (downloaded PDBs, disassembly scripts)
+.re-windows/

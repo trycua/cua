@@ -1,0 +1,41 @@
+name: "CI: Cold Start Benchmark"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          rm -rf .venv
+          uv venv --python 3.12
+          uv pip install -e libs/python/core -e libs/python/computer -e libs/python/cua-sandbox
+
+      - name: Run cold start benchmark
+        id: benchmark
+        timeout-minutes: 10
+        run: uv run python tests/cold_start_benchmark.py
+        env:
+          CUA_API_KEY: ${{ secrets.CUA_API_KEY }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Send results to Slack
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          SLACK_TITLE: "Cloud Sandbox Cold Start Benchmark"
+          SLACK_COLOR: ${{ env.SLACK_COLOR }}
+          SLACK_MESSAGE: |
+            ${{ env.SLACK_MESSAGE }}

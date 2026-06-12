@@ -1,0 +1,39 @@
+{
+  "id": "docker",
+  "name": "Docker",
+  "description": "Docker is a containerization platform that helps developers build, share, and run container applications. It provides accelerated container application development by handling tedious setup, allowing developers to focus on code. Docker enables packaging applications and dependencies into isolated containers that can run consistently across different environments.",
+  "website": "https://www.docker.com",
+  "icon_url": "https://www.docker.com/wp-content/uploads/2023/04/Docker-Logo-08-2023.svg",
+  "categories": [
+    "Containerization"
+  ],
+  "tags": [
+    "containers",
+    "DevOps",
+    "virtualization",
+    "application-deployment",
+    "microservices",
+    "orchestration",
+    "docker-engine",
+    "docker-desktop"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/moby/moby",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "docker.io",
+    "snap": "docker",
+    "brew": "docker",
+    "choco": "docker-desktop",
+    "winget": "Docker.Docker"
+  },
+  "download_url": "https://www.docker.com/products/docker-desktop/",
+  "app_type": "standalone"
+}

@@ -1,0 +1,41 @@
+{
+  "id": "sqlite",
+  "name": "SQLite",
+  "description": "SQLite is a lightweight, self-contained, serverless SQL database engine that is the most widely deployed database in the world. It is an in-process, zero-configuration database library that reads and writes directly to ordinary disk files. A complete SQL database with multiple tables, indices, triggers, and views is contained in a single disk file. SQLite offers full-featured SQL support, ACID transactions, and is ideal for embedded applications, application file formats, local data storage, and systems with memory constraints.",
+  "website": "https://www.sqlite.org",
+  "icon_url": "https://www.sqlite.org/images/sqlite370.png",
+  "categories": [
+    "Database"
+  ],
+  "tags": [
+    "database",
+    "sql",
+    "embedded",
+    "serverless",
+    "public-domain",
+    "cross-platform",
+    "lightweight",
+    "zero-configuration",
+    "in-process",
+    "transactional"
+  ],
+  "os_support": [
+    "android",
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/sqlite/sqlite",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "sqlite3",
+    "brew": "sqlite",
+    "choco": "SQLite",
+    "winget": "SQLite.SQLite"
+  },
+  "download_url": "https://www.sqlite.org/download.html",
+  "app_type": "standalone"
+}

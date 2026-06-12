@@ -12,7 +12,7 @@ After running a task with an agent, traces are saved to `~/.local/share/cua-benc
 ```
 ~/.local/share/cua-bench/runs/96d41b51/slack_env_v0/
 ├── run.log                     # Execution logs
-├── task_0_agent_logs/          # CUA Agent SDK trajectories (if using cua-agent)
+├── task_0_agent_logs/          # Cua Agent SDK trajectories (if using cua-agent)
 │   └── trajectories/
 │       └── 2026-01-07_claudesonnet4_210819_2a23/
 │           ├── metadata.json   # Agent turns, model responses, usage
@@ -96,21 +96,17 @@ Opens an interactive viewer showing:
 - Action details and metadata
 - Agent reasoning (if available)
 
-### View All Traces in a Run
+### View Agent Trajectories from a Run
 
 ```bash
-# View all task traces in a grid
-cb trace grid <run_id>
+# Open agent trajectories in the cua.ai trajectory viewer
+cb trace traj <run_id>
 
 # Example
-cb trace grid 96d41b51
+cb trace traj 96d41b51
 ```
 
-Shows a grid view of all task traces in the run, useful for:
-
-- Comparing agent performance across variants
-- Quickly identifying failures
-- Reviewing oracle solutions
+Zips and serves the cua-agent trajectory recordings from the run artifacts folder, then opens [cua.ai/trajectory-viewer](https://cua.ai/trajectory-viewer). For runs with multiple tasks, an index page is shown so you can open each session individually.
 
 ## Recording Custom Events
 

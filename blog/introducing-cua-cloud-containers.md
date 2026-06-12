@@ -45,7 +45,7 @@ export CUA_CONTAINER_NAME=my-agent-container
 ```python
 import asyncio
 from computer import Computer, VMProviderType
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def run_cloud_agent():
     # Create a remote Linux computer with Cua Cloud
@@ -92,7 +92,7 @@ Let's automate a complete GitHub workflow:
 import asyncio
 import os
 from computer import Computer, VMProviderType
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def github_automation():
     """Automate GitHub repository management tasks."""
@@ -143,7 +143,7 @@ Run multiple agents in parallel to scrape different websites:
 ```python
 import asyncio
 from computer import Computer, VMProviderType
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 async def scrape_website(site_name, url):
     """Scrape a website using a cloud agent."""

@@ -9,8 +9,44 @@ reference .net file, relative to the task directory).
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+
+_VALUE_RE = re.compile(
+    r"""
+    ^\s*
+    (?P<number>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)
+    \s*
+    (?P<prefix>[pnumkKMGgµμ]|[mM][eE][gG])?
+    \s*
+    (?P<unit>
+        Ω
+        |[oO][hH][mM][sS]?
+        |[fF](?:[aA][rR][aA][dD][sS]?)?
+        |[vV](?:[oO][lL][tT][sS]?)?
+        |[hH](?:[eE][nN][rR][yY][sS]?)?
+        |[rR]
+    )?
+    \s*$
+    """,
+    re.VERBOSE,
+)
+
+_SI_MULTIPLIERS = {
+    "": Decimal("1"),
+    "p": Decimal("1e-12"),
+    "n": Decimal("1e-9"),
+    "u": Decimal("1e-6"),
+    "µ": Decimal("1e-6"),
+    "μ": Decimal("1e-6"),
+    "m": Decimal("1e-3"),
+    "k": Decimal("1e3"),
+    "K": Decimal("1e3"),
+    "M": Decimal("1e6"),
+    "g": Decimal("1e9"),
+    "G": Decimal("1e9"),
+}
 
 
 def _tokenize_sexpr(text: str) -> list[str]:
@@ -159,13 +195,26 @@ def parse_kicad_netlist(content: str) -> dict[str, Any]:
 
 
 def _normalize_value(value: str) -> str:
-    """Normalize component value for comparison (e.g. '100' vs '100Ω')."""
+    """Normalize component value for comparison (e.g. '2.80kOhm' vs '2800')."""
     if not value:
         return ""
-    # Strip common suffixes and whitespace
     v = value.strip()
-    v = re.sub(r"\s*[ΩohmOHM]\s*$", "", v, flags=re.IGNORECASE)
-    return v
+    match = _VALUE_RE.match(v)
+    if not match:
+        return v
+
+    try:
+        number = Decimal(match.group("number"))
+    except InvalidOperation:
+        return v
+
+    prefix = match.group("prefix") or ""
+    multiplier = Decimal("1e6") if prefix.lower() == "meg" else _SI_MULTIPLIERS[prefix]
+    normalized = (number * multiplier).normalize()
+    result = format(normalized, "f")
+    if "." in result:
+        result = result.rstrip("0").rstrip(".")
+    return result or "0"
 
 
 def _component_key(c: dict[str, Any]) -> tuple[str, str, str]:

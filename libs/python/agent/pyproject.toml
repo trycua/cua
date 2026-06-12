@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.7.30"
+version = "0.8.2"
 description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
 authors = [
@@ -19,14 +19,17 @@ dependencies = [
     "pydantic>=2.6.4",
     "rich>=13.7.1",
     "python-dotenv>=1.0.1",
-    "cua-computer>=0.5.0,<0.6.0",
-    "cua-core>=0.1.18,<0.2.0",
+    "cua-core>=0.3.0,<0.4.0",
     "certifi>=2024.2.2",
-    "litellm>=1.74.12"
+    "litellm==1.80.0",
+    "Pillow>=10.0.0"
 ]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
+computer = [
+    "cua-computer>=0.5.0,<0.6.0",
+]
 openai = []
 anthropic = []
 qwen = [
@@ -83,6 +86,18 @@ hud = [
 gemini = [
     "google-genai>=1.41.0",
 ]
+# API-only extras for cloud/container deployments — excludes torch/transformers/local models.
+# Supports: openai, anthropic, gemini, uitars (API mode).
+cloud = [
+    # gemini API SDK
+    "google-genai>=1.41.0",
+    # cli spinner
+    "yaspin>=3.1.0",
+    # qwen tool-call formatting (used by generic_vlm.py for API-based Qwen calls)
+    "qwen-agent",
+    "qwen-vl-utils",
+    "Pillow>=10.0.0",
+]
 all = [
     # uitars requirements
     "mlx-vlm>=0.1.27; sys_platform == 'darwin'",
@@ -115,4 +130,4 @@ constraint-dependencies = ["fastrtc>0.43.0", "mlx-audio>0.2.3"]
 distribution = true
 
 [tool.pdm.build]
-includes = ["agent/"]
+includes = ["cua_agent/"]

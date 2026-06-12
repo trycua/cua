@@ -1,0 +1,14 @@
+.env
+searxng/settings.yml
+cua_sandbox_apps/data/
+cua_sandbox_apps/tasks/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.venv/
+# Prevent cloned repos from agents
+vehicles_repo/
+Pytorch-UNet/
+pycdc_repo/
+difftaichi/

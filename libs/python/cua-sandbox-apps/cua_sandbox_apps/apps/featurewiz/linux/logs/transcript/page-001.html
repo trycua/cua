@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code transcript - page 1</title>
+    <style>
+:root { --bg-color: #f5f5f5; --card-bg: #ffffff; --user-bg: #e3f2fd; --user-border: #1976d2; --assistant-bg: #f5f5f5; --assistant-border: #9e9e9e; --thinking-bg: #fff8e1; --thinking-border: #ffc107; --thinking-text: #666; --tool-bg: #f3e5f5; --tool-border: #9c27b0; --tool-result-bg: #e8f5e9; --tool-error-bg: #ffebee; --text-color: #212121; --text-muted: #757575; --code-bg: #263238; --code-text: #aed581; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-color); color: var(--text-color); margin: 0; padding: 16px; line-height: 1.6; }
+.container { max-width: 800px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin-bottom: 24px; padding-bottom: 8px; border-bottom: 2px solid var(--user-border); }
+.header-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 2px solid var(--user-border); padding-bottom: 8px; margin-bottom: 24px; }
+.header-row h1 { border-bottom: none; padding-bottom: 0; margin-bottom: 0; flex: 1; min-width: 200px; }
+.message { margin-bottom: 16px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.message.user { background: var(--user-bg); border-left: 4px solid var(--user-border); }
+.message.assistant { background: var(--card-bg); border-left: 4px solid var(--assistant-border); }
+.message.tool-reply { background: #fff8e1; border-left: 4px solid #ff9800; }
+.tool-reply .role-label { color: #e65100; }
+.tool-reply .tool-result { background: transparent; padding: 0; margin: 0; }
+.tool-reply .tool-result .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff8e1); }
+.message-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(0,0,0,0.03); font-size: 0.85rem; }
+.role-label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.user .role-label { color: var(--user-border); }
+time { color: var(--text-muted); font-size: 0.8rem; }
+.timestamp-link { color: inherit; text-decoration: none; }
+.timestamp-link:hover { text-decoration: underline; }
+.message:target { animation: highlight 2s ease-out; }
+@keyframes highlight { 0% { background-color: rgba(25, 118, 210, 0.2); } 100% { background-color: transparent; } }
+.message-content { padding: 16px; }
+.message-content p { margin: 0 0 12px 0; }
+.message-content p:last-child { margin-bottom: 0; }
+.thinking { background: var(--thinking-bg); border: 1px solid var(--thinking-border); border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 0.9rem; color: var(--thinking-text); }
+.thinking-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: #f57c00; margin-bottom: 8px; }
+.thinking p { margin: 8px 0; }
+.assistant-text { margin: 8px 0; }
+.tool-use { background: var(--tool-bg); border: 1px solid var(--tool-border); border-radius: 8px; padding: 12px; margin: 12px 0; }
+.tool-header { font-weight: 600; color: var(--tool-border); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.tool-icon { font-size: 1.1rem; }
+.tool-description { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 8px; font-style: italic; }
+.tool-result { background: var(--tool-result-bg); border-radius: 8px; padding: 12px; margin: 12px 0; }
+.tool-result.tool-error { background: var(--tool-error-bg); }
+.file-tool { border-radius: 8px; padding: 12px; margin: 12px 0; }
+.write-tool { background: linear-gradient(135deg, #e3f2fd 0%, #e8f5e9 100%); border: 1px solid #4caf50; }
+.edit-tool { background: linear-gradient(135deg, #fff3e0 0%, #fce4ec 100%); border: 1px solid #ff9800; }
+.file-tool-header { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
+.write-header { color: #2e7d32; }
+.edit-header { color: #e65100; }
+.file-tool-icon { font-size: 1rem; }
+.file-tool-path { font-family: monospace; background: rgba(0,0,0,0.08); padding: 2px 8px; border-radius: 4px; }
+.file-tool-fullpath { font-family: monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; word-break: break-all; }
+.file-content { margin: 0; }
+.edit-section { display: flex; margin: 4px 0; border-radius: 4px; overflow: hidden; }
+.edit-label { padding: 8px 12px; font-weight: bold; font-family: monospace; display: flex; align-items: flex-start; }
+.edit-old { background: #fce4ec; }
+.edit-old .edit-label { color: #b71c1c; background: #f8bbd9; }
+.edit-old .edit-content { color: #880e4f; }
+.edit-new { background: #e8f5e9; }
+.edit-new .edit-label { color: #1b5e20; background: #a5d6a7; }
+.edit-new .edit-content { color: #1b5e20; }
+.edit-content { margin: 0; flex: 1; background: transparent; font-size: 0.85rem; }
+.edit-replace-all { font-size: 0.75rem; font-weight: normal; color: var(--text-muted); }
+.write-tool .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #e6f4ea); }
+.edit-tool .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff0e5); }
+.todo-list { background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border: 1px solid #81c784; border-radius: 8px; padding: 12px; margin: 12px 0; }
+.todo-header { font-weight: 600; color: #2e7d32; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
+.todo-items { list-style: none; margin: 0; padding: 0; }
+.todo-item { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.06); font-size: 0.9rem; }
+.todo-item:last-child { border-bottom: none; }
+.todo-icon { flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-weight: bold; border-radius: 50%; }
+.todo-completed .todo-icon { color: #2e7d32; background: rgba(46, 125, 50, 0.15); }
+.todo-completed .todo-content { color: #558b2f; text-decoration: line-through; }
+.todo-in-progress .todo-icon { color: #f57c00; background: rgba(245, 124, 0, 0.15); }
+.todo-in-progress .todo-content { color: #e65100; font-weight: 500; }
+.todo-pending .todo-icon { color: #757575; background: rgba(0,0,0,0.05); }
+.todo-pending .todo-content { color: #616161; }
+pre { background: var(--code-bg); color: var(--code-text); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
+pre.json { color: #e0e0e0; }
+code { background: rgba(0,0,0,0.08); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+pre code { background: none; padding: 0; }
+.user-content { margin: 0; }
+.truncatable { position: relative; }
+.truncatable.truncated .truncatable-content { max-height: 200px; overflow: hidden; }
+.truncatable.truncated::after { content: ''; position: absolute; bottom: 32px; left: 0; right: 0; height: 60px; background: linear-gradient(to bottom, transparent, var(--card-bg)); pointer-events: none; }
+.message.user .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--user-bg)); }
+.message.tool-reply .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, #fff8e1); }
+.tool-use .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--tool-bg)); }
+.tool-result .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--tool-result-bg)); }
+.expand-btn { display: none; width: 100%; padding: 8px 16px; margin-top: 4px; background: rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.1); border-radius: 6px; cursor: pointer; font-size: 0.85rem; color: var(--text-muted); }
+.expand-btn:hover { background: rgba(0,0,0,0.1); }
+.truncatable.truncated .expand-btn, .truncatable.expanded .expand-btn { display: block; }
+.pagination { display: flex; justify-content: center; gap: 8px; margin: 24px 0; flex-wrap: wrap; }
+.pagination a, .pagination span { padding: 5px 10px; border-radius: 6px; text-decoration: none; font-size: 0.85rem; }
+.pagination a { background: var(--card-bg); color: var(--user-border); border: 1px solid var(--user-border); }
+.pagination a:hover { background: var(--user-bg); }
+.pagination .current { background: var(--user-border); color: white; }
+.pagination .disabled { color: var(--text-muted); border: 1px solid #ddd; }
+.pagination .index-link { background: var(--user-border); color: white; }
+details.continuation { margin-bottom: 16px; }
+details.continuation summary { cursor: pointer; padding: 12px 16px; background: var(--user-bg); border-left: 4px solid var(--user-border); border-radius: 12px; font-weight: 500; color: var(--text-muted); }
+details.continuation summary:hover { background: rgba(25, 118, 210, 0.15); }
+details.continuation[open] summary { border-radius: 12px 12px 0 0; margin-bottom: 0; }
+.index-item { margin-bottom: 16px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); background: var(--user-bg); border-left: 4px solid var(--user-border); }
+.index-item a { display: block; text-decoration: none; color: inherit; }
+.index-item a:hover { background: rgba(25, 118, 210, 0.1); }
+.index-item-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(0,0,0,0.03); font-size: 0.85rem; }
+.index-item-number { font-weight: 600; color: var(--user-border); }
+.index-item-content { padding: 16px; }
+.index-item-stats { padding: 8px 16px 12px 32px; font-size: 0.85rem; color: var(--text-muted); border-top: 1px solid rgba(0,0,0,0.06); }
+.index-item-commit { margin-top: 6px; padding: 4px 8px; background: #fff3e0; border-radius: 4px; font-size: 0.85rem; color: #e65100; }
+.index-item-commit code { background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 3px; font-size: 0.8rem; margin-right: 6px; }
+.commit-card { margin: 8px 0; padding: 10px 14px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 6px; }
+.commit-card a { text-decoration: none; color: #5d4037; display: block; }
+.commit-card a:hover { color: #e65100; }
+.commit-card-hash { font-family: monospace; color: #e65100; font-weight: 600; margin-right: 8px; }
+.index-commit { margin-bottom: 12px; padding: 10px 16px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+.index-commit a { display: block; text-decoration: none; color: inherit; }
+.index-commit a:hover { background: rgba(255, 152, 0, 0.1); margin: -10px -16px; padding: 10px 16px; border-radius: 8px; }
+.index-commit-header { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; margin-bottom: 4px; }
+.index-commit-hash { font-family: monospace; color: #e65100; font-weight: 600; }
+.index-commit-msg { color: #5d4037; }
+.index-item-long-text { margin-top: 8px; padding: 12px; background: var(--card-bg); border-radius: 8px; border-left: 3px solid var(--assistant-border); }
+.index-item-long-text .truncatable.truncated::after { background: linear-gradient(to bottom, transparent, var(--card-bg)); }
+.index-item-long-text-content { color: var(--text-color); }
+#search-box { display: none; align-items: center; gap: 8px; }
+#search-box input { padding: 6px 12px; border: 1px solid var(--assistant-border); border-radius: 6px; font-size: 16px; width: 180px; }
+#search-box button, #modal-search-btn, #modal-close-btn { background: var(--user-border); color: white; border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+#search-box button:hover, #modal-search-btn:hover { background: #1565c0; }
+#modal-close-btn { background: var(--text-muted); margin-left: 8px; }
+#modal-close-btn:hover { background: #616161; }
+#search-modal[open] { border: none; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); padding: 0; width: 90vw; max-width: 900px; height: 80vh; max-height: 80vh; display: flex; flex-direction: column; }
+#search-modal::backdrop { background: rgba(0,0,0,0.5); }
+.search-modal-header { display: flex; align-items: center; gap: 8px; padding: 16px; border-bottom: 1px solid var(--assistant-border); background: var(--bg-color); border-radius: 12px 12px 0 0; }
+.search-modal-header input { flex: 1; padding: 8px 12px; border: 1px solid var(--assistant-border); border-radius: 6px; font-size: 16px; }
+#search-status { padding: 8px 16px; font-size: 0.85rem; color: var(--text-muted); border-bottom: 1px solid rgba(0,0,0,0.06); }
+#search-results { flex: 1; overflow-y: auto; padding: 16px; }
+.search-result { margin-bottom: 16px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.search-result a { display: block; text-decoration: none; color: inherit; }
+.search-result a:hover { background: rgba(25, 118, 210, 0.05); }
+.search-result-page { padding: 6px 12px; background: rgba(0,0,0,0.03); font-size: 0.8rem; color: var(--text-muted); border-bottom: 1px solid rgba(0,0,0,0.06); }
+.search-result-content { padding: 12px; }
+.search-result mark { background: #fff59d; padding: 1px 2px; border-radius: 2px; }
+@media (max-width: 600px) { body { padding: 8px; } .message, .index-item { border-radius: 8px; } .message-content, .index-item-content { padding: 12px; } pre { font-size: 0.8rem; padding: 8px; } #search-box input { width: 120px; } #search-modal[open] { width: 95vw; height: 90vh; } }
+</style>
+</head>
+<body>
+    <div class="container">
+        <h1><a href="index.html" style="color: inherit; text-decoration: none;">Claude Code transcript</a> - page 1/1</h1>
+        
+
+<div class="pagination"><a href="index.html" class="index-link">Index</a></div>
+
+        
+<div class="message user" id="msg-2026-04-13T00-29-33-749Z"><div class="message-header"><span class="role-label">User</span><a href="#msg-2026-04-13T00-29-33-749Z" class="timestamp-link"><time datetime="2026-04-13T00:29:33.749Z" data-timestamp="2026-04-13T00:29:33.749Z">2026-04-13T00:29:33.749Z</time></a></div><div class="message-content">
+<div class="user-content"><p>Create install and launch scripts for: FeatureWiz
+Target OS: linux
+App metadata: {"id": "featurewiz", "name": "FeatureWiz", "description": "An automated feature selection and engineering library powered by the Minimum Redundancy Maximum Relevance (MRMR) algorithm. Enables users to select optimal features and create engineered variables with minimal code, supporting deep learning-based transformations.", "website": "https://github.com/AutoViML/featurewiz", "icon_url": "", "categories": ["Feature Engineering", "Machine Learning", "Data Science"], "tags": ["feature-selection", "feature-engineering", "machine-learning", "mrmr-algorithm", "automl", "data-science", "xgboost", "python"], "os_support": ["linux", "windows", "macos"], "requires_payment": false, "foss": true, "gh_repo": "https://github.com/AutoViML/featurewiz", "self_hostable": true, "requires_hardware": false, "package_managers": {"pip": "featurewiz", "conda": "featurewiz"}, "download_url": "https://pypi.org/project/featurewiz/"}</p>
+<p>Research the official install method, create scripts, test them in a sandbox, LAUNCH the app, take a screenshot showing it running, and submit your result.
+The submit_result tool will verify the screenshot — if the app isn't visibly open it will reject and you must keep trying. Remember to delete the sandbox when done.</p></div></div></div>
+<div class="message assistant" id="msg-2026-04-13T00-29-41-621Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-04-13T00-29-41-621Z" class="timestamp-link"><time datetime="2026-04-13T00:29:41.621Z" data-timestamp="2026-04-13T00:29:41.621Z">2026-04-13T00:29:41.621Z</time></a></div><div class="message-content">
+<div class="thinking"><div class="thinking-label">Thinking</div><p>Alright, let me break down what I need to do:</p>
+<ol>
+<li>Research FeatureWiz install instructions</li>
+<li>Create a sandbox VM for Linux</li>
+<li>Write an install script</li>
+<li>Run the install script</li>
+<li>Create a launch script</li>
+<li>Run the launch script and start the app</li>
+<li>Take a screenshot showing the app running</li>
+<li>Write an extract_metadata.sh script to extract app metadata</li>
+<li>Submit the result with all deliverables</li>
+</ol>
+<p>Now, FeatureWiz is a Python library for feature selection and engineering. It's listed as:
+- pip package: <code>featurewiz</code>
+- conda package: <code>featurewiz</code>
+- GitHub: https://github.com/AutoViML/featurewiz
+- FOSS: true
+- No payment required</p>
+<p>Let me think about what "launching" this app means. FeatureWiz is a Python library, not a GUI application. It's used as a library in Python scripts. However, looking at the metadata, it says this is a library/package.</p>
+<p>Wait, let me re-read the instructions:</p>
+<p>"EARLY EXIT CONDITIONS — call submit_result immediately without creating a sandbox:</p>
+<ol>
+<li>LIBRARY/SDK: If app_type is "library" or the software is a development
+   dependency (pip/npm/cargo package, SDK, framework) — submit with:
+   install_exit_code: -1, app_type_detected: "library", notes: "Development library, not end-user software""</li>
+</ol>
+<p>So FeatureWiz is a Python library. It's not a standalone application with a GUI. It's a pip/conda package that you use in your Python scripts.</p>
+<p>However, let me look more carefully. The instructions say to create install and launch scripts. For a library, we could still create an install script (pip install), but there's no "launch" in the traditional sense.</p>
+<p>Looking at GitHub repos for FeatureWiz:
+- https://github.com/AutoViML/featurewiz</p>
+<p>It's a Python library that you import and use in code. </p>
+<p>This is a development dependency without a standalone executable or GUI interface. The categories listed—Feature Engineering, Machine Learning, Data Science—all confirm this is library-style tooling. I should trigger the early exit condition and submit with install_exit_code: -1, app_type_detected: "library", and note that it's development software, not end-user facing.</p></div></div></div>
+<div class="message assistant" id="msg-2026-04-13T00-29-41-686Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-04-13T00-29-41-686Z" class="timestamp-link"><time datetime="2026-04-13T00:29:41.686Z" data-timestamp="2026-04-13T00:29:41.686Z">2026-04-13T00:29:41.686Z</time></a></div><div class="message-content">
+<div class="assistant-text"><p>Looking at the metadata provided, FeatureWiz is a <strong>Python library</strong> for feature selection and engineering. It's distributed via pip and conda as a development dependency, not as a standalone application with a GUI or CLI interface.</p>
+<p>According to the early exit conditions in my instructions, this falls under:
+- <strong>LIBRARY/SDK</strong>: Development dependency (pip/conda package)</p>
+<p>FeatureWiz is used as an imported library in Python scripts, like:</p>
+<pre><code class="language-python">from featurewiz import FeatureWiz
+fw = FeatureWiz(...)
+</code></pre>
+<p>There is no standalone executable, GUI, or CLI tool to "launch" in the traditional sense. This is development software, not end-user software.</p>
+<p>Let me submit with the appropriate early exit code:</p></div></div></div>
+<div class="message assistant" id="msg-2026-04-13T00-29-42-400Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-04-13T00-29-42-400Z" class="timestamp-link"><time datetime="2026-04-13T00:29:42.400Z" data-timestamp="2026-04-13T00:29:42.400Z">2026-04-13T00:29:42.400Z</time></a></div><div class="message-content">
+<div class="tool-use" data-tool-id="toolu_bdrk_01WuazprM222twu78U84AafW"><div class="tool-header"><span class="tool-icon">⚙</span> mcp__sandbox__submit_result</div><div class="truncatable"><div class="truncatable-content"><pre class="json">{
+  &#34;result&#34;: {
+    &#34;app_id&#34;: &#34;featurewiz&#34;,
+    &#34;os&#34;: &#34;linux&#34;,
+    &#34;install_exit_code&#34;: -1,
+    &#34;app_type_detected&#34;: &#34;library&#34;,
+    &#34;download_available&#34;: true,
+    &#34;notes&#34;: &#34;FeatureWiz is a Python library/package for feature selection and engineering, distributed via pip and conda. It is not a standalone application or CLI tool, but rather a development dependency imported and used in Python scripts. No executable or GUI to launch.&#34;
+  }
+}</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message tool-reply" id="msg-2026-04-13T00-29-42-419Z"><div class="message-header"><span class="role-label">Tool reply</span><a href="#msg-2026-04-13T00-29-42-419Z" class="timestamp-link"><time datetime="2026-04-13T00:29:42.419Z" data-timestamp="2026-04-13T00:29:42.419Z">2026-04-13T00:29:42.419Z</time></a></div><div class="message-content"><div class="tool-result"><div class="truncatable"><div class="truncatable-content"><pre>OK: recorded for featurewiz on linux. Type: library. Reason: FeatureWiz is a Python library/package for feature selection and engineering, distributed via pip and conda. It is not a standalone application or CLI tool, but rather a development dependency imported and used in Python scripts. No executable or GUI to launch.</pre></div><button class="expand-btn">Show more</button></div></div></div></div>
+<div class="message assistant" id="msg-2026-04-13T00-29-43-946Z"><div class="message-header"><span class="role-label">Assistant</span><a href="#msg-2026-04-13T00-29-43-946Z" class="timestamp-link"><time datetime="2026-04-13T00:29:43.946Z" data-timestamp="2026-04-13T00:29:43.946Z">2026-04-13T00:29:43.946Z</time></a></div><div class="message-content">
+<div class="assistant-text"><p>Done! ✅ </p>
+<p><strong>Summary</strong>: FeatureWiz has been correctly identified as a <strong>Python library</strong>, not an end-user application. It's a pip/conda package used for feature selection and engineering tasks within Python workflows, with no standalone executable or user interface to launch.</p></div></div></div>
+        
+
+<div class="pagination"><a href="index.html" class="index-link">Index</a></div>
+
+    </div>
+    <script>
+document.querySelectorAll('time[data-timestamp]').forEach(function(el) {
+    const timestamp = el.getAttribute('data-timestamp');
+    const date = new Date(timestamp);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    if (isToday) { el.textContent = timeStr; }
+    else { el.textContent = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + timeStr; }
+});
+document.querySelectorAll('pre.json').forEach(function(el) {
+    let text = el.textContent;
+    text = text.replace(/"([^"]+)":/g, '<span style="color: #ce93d8">"$1"</span>:');
+    text = text.replace(/: "([^"]*)"/g, ': <span style="color: #81d4fa">"$1"</span>');
+    text = text.replace(/: (\d+)/g, ': <span style="color: #ffcc80">$1</span>');
+    text = text.replace(/: (true|false|null)/g, ': <span style="color: #f48fb1">$1</span>');
+    el.innerHTML = text;
+});
+document.querySelectorAll('.truncatable').forEach(function(wrapper) {
+    const content = wrapper.querySelector('.truncatable-content');
+    const btn = wrapper.querySelector('.expand-btn');
+    if (content.scrollHeight > 250) {
+        wrapper.classList.add('truncated');
+        btn.addEventListener('click', function() {
+            if (wrapper.classList.contains('truncated')) { wrapper.classList.remove('truncated'); wrapper.classList.add('expanded'); btn.textContent = 'Show less'; }
+            else { wrapper.classList.remove('expanded'); wrapper.classList.add('truncated'); btn.textContent = 'Show more'; }
+        });
+    }
+});
+</script>
+</body>
+</html>

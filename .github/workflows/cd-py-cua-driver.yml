@@ -1,0 +1,161 @@
+name: "CD: Python cua-driver"
+
+# Triggered after cua-driver-rs releases to build platform-specific wheels
+# with bundled binaries and publish to PyPI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "cua-driver-rs version to package (without v prefix)"
+        required: true
+        default: "0.5.1"
+  # Auto-trigger when cua-driver-rs releases (after CD workflow completes)
+  workflow_run:
+    workflows: ["CD: Cua Driver (cross-platform)"]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  # Extract version from the triggering workflow or input
+  get-version:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_publish: ${{ steps.version.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            SHOULD_PUBLISH="true"
+          else
+            # Extract from the tag that triggered the workflow_run
+            # Validate SHA format to prevent injection
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "Invalid SHA format: $HEAD_SHA"
+              VERSION="0.0.0"
+              SHOULD_PUBLISH="false"
+            else
+              git fetch --tags
+              TAG=$(git tag --points-at "$HEAD_SHA" | grep '^cua-driver-rs-v' | head -1 || echo "")
+              if [ -n "$TAG" ]; then
+                VERSION="${TAG#cua-driver-rs-v}"
+                SHOULD_PUBLISH="true"
+              else
+                # No matching tag, skip
+                VERSION="0.0.0"
+                SHOULD_PUBLISH="false"
+              fi
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION (publish: $SHOULD_PUBLISH)"
+
+  # Build wheels for each platform (with bundled binaries)
+  build-wheels:
+    needs: get-version
+    if: needs.get-version.outputs.should_publish == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+            arch: universal
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86_64
+          - os: windows-latest
+            platform: windows
+            arch: x86_64
+          - os: windows-latest
+            platform: windows
+            arch: arm64
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build hatchling
+
+      - name: Update version in pyproject.toml and __init__.py
+        shell: bash
+        run: |
+          VERSION="${{ needs.get-version.outputs.version }}"
+          cd libs/cua-driver/python
+          # Portable sed: use temp file approach for all platforms
+          sed "s/^version = .*/version = \"$VERSION\"/" pyproject.toml > pyproject.toml.tmp
+          mv pyproject.toml.tmp pyproject.toml
+          sed "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua_driver/__init__.py > __init__.py.tmp
+          mv __init__.py.tmp src/cua_driver/__init__.py
+          echo "Updated versions:"
+          grep "^version = " pyproject.toml
+          grep "^__version__ = " src/cua_driver/__init__.py
+
+      - name: Build wheel with bundled binary
+        shell: bash
+        run: |
+          cd libs/cua-driver/python
+          python build_wheel.py --version "${{ needs.get-version.outputs.version }}" --arch "${{ matrix.arch }}"
+
+      - name: List built artifacts
+        shell: bash
+        run: |
+          ls -lh libs/cua-driver/python/dist/
+
+      - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: wheel-${{ matrix.platform }}-${{ matrix.arch }}
+          path: libs/cua-driver/python/dist/*.whl
+          if-no-files-found: error
+
+  # Publish all wheels to PyPI
+  publish-pypi:
+    needs: [get-version, build-wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: List wheels to publish
+        run: |
+          ls -lh dist/
+
+      - name: Install twine
+        run: |
+          python -m pip install --upgrade pip
+          pip install twine
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          python -m twine upload --skip-existing --verbose dist/*

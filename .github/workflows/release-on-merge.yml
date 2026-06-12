@@ -61,6 +61,7 @@ jobs:
             ["libs/python/cua-cli/"]="pypi/cli"
             ["libs/python/cua-auto/"]="pypi/auto"
             ["libs/python/agent/"]="pypi/agent"
+            ["libs/python/cua-sandbox/"]="pypi/sandbox"
             ["libs/python/computer/"]="pypi/computer"
             ["libs/python/core/"]="pypi/core"
             ["libs/python/som/"]="pypi/som"

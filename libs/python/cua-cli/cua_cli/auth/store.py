@@ -1,4 +1,4 @@
-"""SQLite-based credential storage for CUA CLI."""
+"""SQLite-based credential storage for Cua CLI."""
 
 import os
 import sqlite3
@@ -11,6 +11,9 @@ CREDENTIALS_DB = CUA_DIR / "credentials.db"
 
 # Key names
 API_KEY_NAME = "api_key"
+
+# Workspace key patterns
+ACTIVE_WORKSPACE_KEY = "active_workspace"
 
 
 class CredentialStore:
@@ -98,6 +101,39 @@ class CredentialStore:
         finally:
             conn.close()
 
+    def delete_by_prefix(self, prefix: str) -> int:
+        """Delete all keys matching a prefix.
+
+        Args:
+            prefix: The key prefix to match (uses LIKE prefix%)
+
+        Returns:
+            Number of rows deleted
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.execute("DELETE FROM kv WHERE key LIKE ?", (prefix + "%",))
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def list_by_prefix(self, prefix: str) -> list[tuple[str, str]]:
+        """List all key-value pairs matching a prefix.
+
+        Args:
+            prefix: The key prefix to match (uses LIKE prefix%)
+
+        Returns:
+            List of (key, value) tuples
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.execute("SELECT key, value FROM kv WHERE key LIKE ?", (prefix + "%",))
+            return cursor.fetchall()
+        finally:
+            conn.close()
+
     def clear(self) -> None:
         """Clear all stored credentials."""
         conn = sqlite3.connect(self.db_path)
@@ -120,10 +156,89 @@ def _get_store() -> CredentialStore:
     return _store
 
 
+def save_workspace(slug: str, api_key: str, name: str, org: str) -> None:
+    """Save workspace credentials and metadata."""
+    store = _get_store()
+    store.set(f"workspace:{slug}:api_key", api_key)
+    store.set(f"workspace:{slug}:name", name)
+    store.set(f"workspace:{slug}:org", org)
+
+
+def get_active_workspace() -> Optional[str]:
+    """Get the slug of the currently active workspace."""
+    return _get_store().get(ACTIVE_WORKSPACE_KEY)
+
+
+def set_active_workspace(slug: str) -> None:
+    """Set the active workspace by slug."""
+    _get_store().set(ACTIVE_WORKSPACE_KEY, slug)
+
+
+def list_workspaces() -> list[dict]:
+    """List all authenticated workspaces.
+
+    Returns:
+        List of dicts with keys: slug, name, org, is_active
+    """
+    store = _get_store()
+    active = store.get(ACTIVE_WORKSPACE_KEY)
+    rows = store.list_by_prefix("workspace:")
+
+    # Group by slug — extract from keys like workspace:<slug>:api_key
+    slugs: dict[str, dict] = {}
+    for key, value in rows:
+        parts = key.split(":")
+        if len(parts) != 3:
+            continue
+        slug = parts[1]
+        field = parts[2]
+        if slug not in slugs:
+            slugs[slug] = {"slug": slug, "name": "", "org": "", "is_active": False}
+        if field == "name":
+            slugs[slug]["name"] = value
+        elif field == "org":
+            slugs[slug]["org"] = value
+
+    # Only include workspaces that have an api_key stored
+    result = []
+    for key, _value in rows:
+        parts = key.split(":")
+        if len(parts) == 3 and parts[2] == "api_key" and parts[1] in slugs:
+            ws = slugs[parts[1]]
+            ws["is_active"] = ws["slug"] == active
+            result.append(ws)
+
+    result.sort(key=lambda ws: ws["slug"])
+    return result
+
+
+def get_workspace_api_key(slug: str) -> Optional[str]:
+    """Get the API key for a specific workspace."""
+    return _get_store().get(f"workspace:{slug}:api_key")
+
+
+def delete_workspace(slug: str) -> None:
+    """Delete all stored data for a workspace."""
+    store = _get_store()
+    store.delete(f"workspace:{slug}:api_key")
+    store.delete(f"workspace:{slug}:name")
+    store.delete(f"workspace:{slug}:org")
+
+
+def clear_all_workspaces() -> None:
+    """Delete all workspace keys and the active workspace marker."""
+    store = _get_store()
+    store.delete_by_prefix("workspace:")
+    store.delete(ACTIVE_WORKSPACE_KEY)
+
+
 def get_api_key() -> Optional[str]:
     """Get the stored API key.
 
-    First checks CUA_API_KEY environment variable, then falls back to stored credentials.
+    Priority:
+    1. CUA_API_KEY environment variable
+    2. Active workspace's API key
+    3. Legacy 'api_key' key (backward compat)
 
     Returns:
         The API key, or None if not found
@@ -133,21 +248,33 @@ def get_api_key() -> Optional[str]:
     if env_key:
         return env_key
 
-    return _get_store().get(API_KEY_NAME)
+    # Active workspace
+    store = _get_store()
+    active_slug = store.get(ACTIVE_WORKSPACE_KEY)
+    if active_slug:
+        ws_key = store.get(f"workspace:{active_slug}:api_key")
+        if ws_key:
+            return ws_key
+
+    # Legacy fallback
+    return store.get(API_KEY_NAME)
 
 
 def save_api_key(api_key: str) -> None:
-    """Save an API key to the credential store.
-
-    Args:
-        api_key: The API key to save
-    """
+    """Save an API key to the credential store (legacy path)."""
     _get_store().set(API_KEY_NAME, api_key)
 
 
 def clear_credentials() -> None:
-    """Clear all stored credentials."""
-    _get_store().clear()
+    """Clear all stored credentials including workspaces and legacy key."""
+    store = _get_store()
+    clear_all_workspaces()
+    store.delete(API_KEY_NAME)
+
+
+def clear_legacy_credentials() -> None:
+    """Clear only the legacy API key (not workspace data)."""
+    _get_store().delete(API_KEY_NAME)
 
 
 def require_api_key() -> str:

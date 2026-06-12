@@ -1,0 +1,17 @@
+{
+  "binary_path": "/opt/netbeans/netbeans/bin/netbeans",
+  "binary_name": "netbeans",
+  "display_name": "Apache NetBeans IDE 29",
+  "desktop_entry": "",
+  "icon_paths": [
+    "/opt/netbeans/netbeans/platform/modules/org-netbeans-core.jar",
+    "/opt/netbeans/netbeans/nb/netbeans.png",
+    "/opt/netbeans/netbeans/nb/apache-netbeans48.png",
+    "/opt/netbeans/netbeans/nb/apache-netbeans.svg",
+    "/opt/netbeans/netbeans/nb/apache-netbeans256.png",
+    "/opt/netbeans/netbeans/nb/apache-netbeans512.png",
+    "/opt/netbeans/netbeans/nb/apache-netbeans.ico",
+    "/opt/netbeans/netbeans/nb/apache-netbeans1024.png"
+  ],
+  "version": "29"
+}

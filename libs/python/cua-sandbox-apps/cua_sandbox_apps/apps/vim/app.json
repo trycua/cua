@@ -1,0 +1,38 @@
+{
+  "id": "vim",
+  "name": "Vim",
+  "description": "Vim is a highly configurable text editor built to make creating and changing any kind of text very efficient. It provides multi-level undo, syntax highlighting, command line history, on-line help, spell checking, filename completion, block operations, and powerful search functionality. Available in both terminal and graphical (gVim) interfaces.",
+  "website": "https://www.vim.org",
+  "icon_url": "https://www.vim.org/images/vim-icon.png",
+  "categories": [
+    "Code Editor",
+    "Text Editor"
+  ],
+  "tags": [
+    "terminal",
+    "editor",
+    "lightweight",
+    "configurable",
+    "vi-compatible",
+    "cross-platform",
+    "developer-tools"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/vim/vim",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "vim",
+    "brew": "vim",
+    "choco": "vim",
+    "winget": "vim.vim"
+  },
+  "download_url": "https://www.vim.org/download.php",
+  "app_type": "standalone"
+}

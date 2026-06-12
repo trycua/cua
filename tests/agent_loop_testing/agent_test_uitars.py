@@ -115,7 +115,7 @@ async def test_cua_agent(model_name: str):
 
     try:
         # Import the real CUA agent
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         # Create mock computer
         mock_computer = MockComputer()

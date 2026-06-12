@@ -60,8 +60,7 @@ Install the required dependencies:
 Create a `requirements.txt` file:
 
 ```text
-cua-agent
-cua-computer
+cua
 python-dotenv>=1.0.0
 ```
 
@@ -151,8 +150,7 @@ Create a Python file (e.g., `hr_automation.py`):
 import asyncio
 import logging
 import os
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -172,9 +170,8 @@ async def automate_hr_workflow():
     """
     try:
         # Connect to Windows Cloud Sandbox with VPN
-        async with Computer(
-            os_type="windows",
-            provider_type=VMProviderType.CLOUD,
+        async with Sandbox.create(
+            Image.windows(),
             name=os.environ["CUA_SANDBOX_NAME"],
             api_key=os.environ["CUA_API_KEY"],
             verbosity=logging.INFO,
@@ -264,8 +261,7 @@ if __name__ == "__main__":
 import asyncio
 import logging
 import os
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -276,9 +272,9 @@ load_dotenv()
 async def automate_hr_workflow():
     try:
         # Connect to Windows Sandbox
-        async with Computer(
-            os_type="windows",
-            provider_type=VMProviderType.WINDOWS_SANDBOX,
+        async with Sandbox.create(
+            Image.windows(),
+            local=True,
             verbosity=logging.INFO,
         ) as computer:
 
@@ -343,8 +339,7 @@ if __name__ == "__main__":
 import asyncio
 import logging
 import os
-from agent import ComputerAgent
-from computer import Computer
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -355,7 +350,7 @@ load_dotenv()
 async def automate_hr_workflow():
     try:
         # Connect to self-hosted Windows VM running computer-server
-        async with Computer(
+        async with Sandbox.create(
             use_host_computer_server=True,
             base_url="http://your-windows-vm-ip:5757",  # Update with your VM IP
             verbosity=logging.INFO,

@@ -1,0 +1,3 @@
+# Large test assets — Electron app bundle exceeds GitHub's 100 MB file limit.
+# Download separately for local integration testing.
+tests/integration/v2/assets/electron/

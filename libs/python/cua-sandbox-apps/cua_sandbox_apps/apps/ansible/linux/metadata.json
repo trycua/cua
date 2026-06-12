@@ -1,0 +1,14 @@
+{
+  "binary_path": "/usr/bin/ansible",
+  "binary_name": "ansible",
+  "display_name": "Configuration management, deployment, and task execution system",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/usr/lib/python3/dist-packages/ansible_collections/amazon/aws/tests/integration/targets/aws_s3/files/test.png",
+    "/usr/lib/python3/dist-packages/ansible_collections/azure/azcollection/tests/integration/targets/azure_rm_storageblob/files/Ratings.png",
+    "/usr/lib/python3/dist-packages/ansible_collections/dellemc/os10/playbooks/vxlan_evpn/vxlan_evpn_topology.png",
+    "/usr/lib/python3/dist-packages/ansible_collections/netbox/netbox/docs/getting_started/how-to-use/media/advanced_dict.png",
+    "/usr/lib/python3/dist-packages/ansible_collections/netbox/netbox/docs/getting_started/how-to-use/media/advanced_dns_name.png"
+  ],
+  "version": "2.10.8"
+}

@@ -14,7 +14,7 @@ from .interface.base import BaseComputerInterface
 
 # Import OTEL functions - available when cua-core[telemetry] is installed
 try:
-    from core.telemetry import (
+    from cua_core.telemetry import (
         create_span,
         is_otel_enabled,
         record_error,

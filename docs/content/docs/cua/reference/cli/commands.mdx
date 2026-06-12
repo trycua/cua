@@ -4,41 +4,179 @@ description: Complete reference for all Cua CLI commands
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-import { VersionBadge } from '@/components/version-selector';
 
-<VersionBadge version="0.1.0" />
+**Package:** `cua-cli` | **Install:** `pip install cua-cli`
 
-## Overview
+## Command Groups
 
-The Cua CLI provides commands for authentication, sandbox management, image management, skills recording, and MCP server.
+| Group | Alias | Description |
+|-------|-------|-------------|
+| `cua sandbox` | `cua sb` | Sandbox lifecycle management |
+| `cua auth` | | Authentication |
+| `cua image` | `cua img` | Local image management |
+| `cua skills` | | Skills recording and playback |
+| `cua serve-mcp` | | Start MCP server |
 
-### Command Groups
+---
 
-| Group           | Alias     | Description                        |
-| --------------- | --------- | ---------------------------------- |
-| `cua auth`      |           | Authentication management          |
-| `cua sandbox`   | `cua sb`  | Sandbox lifecycle management       |
-| `cua image`     | `cua img` | Cloud image management             |
-| `cua skills`    |           | Skills recording and playback      |
-| `cua serve-mcp` |           | Start MCP server for AI assistants |
+## Sandbox Commands
+
+All sandbox commands support the `cua sb` alias (e.g. `cua sb launch`).
+
+### `cua sb launch <image>`
+
+Launch a new sandbox. The image is a positional argument; resource specs are options.
+
+```bash
+cua sb launch ubuntu:24.04
+cua sb launch macos
+cua sb launch windows:11
+cua sb launch android:14
+
+# Local (Docker / Lume / QEMU) — no API key needed
+cua sb launch ubuntu:24.04 --local
+cua sb launch macos --local
+
+# Specify resources (cloud only)
+cua sb launch ubuntu:24.04 --cpu 4 --memory 8GB --disk 50GB
+cua sb launch ubuntu:24.04 --region europe
+
+# Give it a name and get JSON output (useful in scripts)
+cua sb launch ubuntu:24.04 --local --name my-sandbox --json
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `image` | Image to run: `macos`, `ubuntu:24.04`, `windows:11`, `android:14`, or a registry ref like `ghcr.io/org/img:tag` |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--local` | Run locally (Docker/Lume/QEMU) instead of Cua Cloud |
+| `--name` | Sandbox name (auto-generated if omitted) |
+| `--vm` | Force VM kind for Linux images (default: container) |
+| `--cpu N` | Number of vCPUs (cloud only) |
+| `--memory SIZE` | Memory — e.g. `8GB`, `4096MB` (cloud only) |
+| `--disk SIZE` | Disk size — e.g. `50GB` (cloud only) |
+| `--region NAME` | Cloud region (cloud only) |
+| `--json` | Output `{"name": "...", "status": "ready"}` |
+
+**Image shorthands:**
+
+| String | Resolves to |
+|--------|-------------|
+| `macos` | `Image.macos("26")` |
+| `macos:sequoia` | `Image.macos("sequoia")` |
+| `ubuntu:24.04` | `Image.linux("ubuntu", "24.04")` |
+| `linux` | `Image.linux("ubuntu", "24.04")` |
+| `windows:11` | `Image.windows("11")` |
+| `android:14` | `Image.android("14")` |
+| `ghcr.io/org/img` | `Image.from_registry("ghcr.io/org/img")` |
+
+### `cua sb ls`
+
+List running sandboxes.
+
+```bash
+cua sb ls                  # cloud sandboxes (requires API key)
+cua sb ls --local          # local sandboxes only
+cua sb ls --all            # both cloud and local
+cua sb ls --json           # JSON output
+```
+
+Aliases: `cua sb list`
+
+### `cua sb info <name>`
+
+Get details for a sandbox.
+
+```bash
+cua sb info my-sandbox
+cua sb info my-sandbox --local
+cua sb info my-sandbox --json
+```
+
+Alias: `cua sb get <name>`
+
+### `cua sb delete <name>`
+
+Delete a sandbox permanently.
+
+```bash
+cua sb delete my-sandbox
+cua sb delete my-sandbox --local
+cua sb delete my-sandbox --force    # skip confirmation
+```
+
+<Callout type="warn">
+  Irreversible. All data on the sandbox is permanently lost.
+</Callout>
+
+### `cua sb vnc <name>`
+
+Open the sandbox desktop in your browser.
+
+```bash
+cua sb vnc my-sandbox
+cua sb vnc my-sandbox --local
+```
+
+### `cua sb shell <name>`
+
+Open an interactive shell session.
+
+```bash
+cua sb shell my-sandbox
+cua sb shell my-sandbox --local
+
+# Run a single command
+cua sb shell my-sandbox ls -la /
+cua sb shell my-sandbox --cols 120 --rows 40
+```
+
+### `cua sb exec <name> <command>`
+
+Execute a command non-interactively (useful for scripts).
+
+```bash
+cua sb exec my-sandbox echo hello
+cua sb exec my-sandbox --json uname -a
+```
+
+### `cua sb suspend <name>` / `cua sb resume <name>`
+
+Suspend a sandbox (preserves memory state) and resume it.
+
+```bash
+cua sb suspend my-sandbox
+cua sb resume my-sandbox
+```
+
+### `cua sb restart <name>`
+
+Restart a sandbox.
+
+```bash
+cua sb restart my-sandbox
+```
+
+---
 
 ## Authentication Commands
 
 ### `cua auth login`
 
-Authenticate with your Cua account.
-
 ```bash
-# Browser-based login
-cua auth login
-
-# Direct API key login
-cua auth login --api-key sk_cua-api01_...
+cua auth login                            # browser-based OAuth
+cua auth login --api-key sk_cua-...       # direct API key
 ```
 
 ### `cua auth env`
 
-Export your API key to a `.env` file in the current directory.
+Write `CUA_API_KEY` to a `.env` file in the current directory.
 
 ```bash
 cua auth env
@@ -46,293 +184,14 @@ cua auth env
 
 ### `cua auth logout`
 
-Remove the stored API key.
-
 ```bash
 cua auth logout
 ```
 
-## Sandbox Commands
-
-All sandbox commands support the `cua sb` alias (e.g., `cua sb list`).
-
-### `cua sandbox list`
-
-List all sandboxes.
-
-```bash
-cua sandbox list
-
-# With JSON output
-cua sandbox list --json
-
-# Show passwords
-cua sandbox list --show-passwords
-```
-
-**Aliases:** `cua sb ls`, `cua sb ps`
-
-### `cua sandbox create`
-
-Create a new sandbox.
-
-```bash
-cua sandbox create --os <OS> --size <SIZE> --region <REGION>
-```
-
-**Required options:**
-
-| Option     | Values                                                     |
-| ---------- | ---------------------------------------------------------- |
-| `--os`     | `linux`, `windows`, `macos`                                |
-| `--size`   | `small`, `medium`, `large`                                 |
-| `--region` | `north-america`, `europe`, `asia-pacific`, `south-america` |
-
-**Example:**
-
-```bash
-cua sandbox create --os linux --size small --region north-america
-```
-
-### `cua sandbox get`
-
-Get details for a specific sandbox.
-
-```bash
-cua sandbox get <name>
-
-# With options
-cua sandbox get <name> --json
-cua sandbox get <name> --show-passwords
-cua sandbox get <name> --show-vnc-url
-```
-
-### `cua sandbox start`
-
-Start a stopped sandbox.
-
-```bash
-cua sandbox start <name>
-```
-
-### `cua sandbox stop`
-
-Stop a running sandbox.
-
-```bash
-cua sandbox stop <name>
-```
-
-### `cua sandbox restart`
-
-Restart a sandbox.
-
-```bash
-cua sandbox restart <name>
-```
-
-### `cua sandbox suspend`
-
-Suspend a sandbox (preserves memory state).
-
-```bash
-cua sandbox suspend <name>
-```
-
-### `cua sandbox delete`
-
-Delete a sandbox permanently.
-
-```bash
-cua sandbox delete <name>
-```
-
-<Callout type="warn">
-  This action is irreversible. All data on the sandbox will be permanently lost.
-</Callout>
-
-### `cua sandbox vnc`
-
-Open the sandbox desktop in your browser.
-
-```bash
-cua sandbox vnc <name>
-```
-
-**Alias:** `cua sb open <name>`
-
-## Image Commands
-
-All image commands support the `cua img` alias.
-
-### `cua image list`
-
-List cloud images.
-
-```bash
-cua image list
-
-# JSON output
-cua image list --json
-
-# List local images instead
-cua image list --local
-```
-
-**Alias:** `cua img ls`
-
-### `cua image push`
-
-Upload a local image to the cloud.
-
-```bash
-cua image push <name> --file <path> --tag <tag>
-```
-
-### `cua image pull`
-
-Download an image from the cloud.
-
-```bash
-cua image pull <name> --tag <tag> --output <path>
-```
-
-### `cua image delete`
-
-Delete a cloud image.
-
-```bash
-cua image delete <name> --tag <tag>
-
-# Skip confirmation
-cua image delete <name> --tag <tag> --force
-```
-
-## Skills Commands
-
-Skills are recorded demonstrations that guide agent behavior.
-
-### `cua skills list`
-
-List all saved skills.
-
-```bash
-cua skills list
-
-# JSON output
-cua skills list --json
-```
-
-### `cua skills record`
-
-Record a new skill from a sandbox.
-
-```bash
-cua skills record --sandbox <name>
-
-# With options
-cua skills record --sandbox <name> --name "my-skill" --description "Does something"
-cua skills record --sandbox <name> --provider anthropic --model claude-sonnet-4-5-20250514
-```
-
-**Options:**
-
-| Option          | Description                                         |
-| --------------- | --------------------------------------------------- |
-| `--sandbox`     | Sandbox to record from                              |
-| `--name`        | Skill name (skips prompt)                           |
-| `--description` | Skill description (skips prompt)                    |
-| `--provider`    | LLM provider for captioning (`anthropic`, `openai`) |
-| `--model`       | Model to use for captioning                         |
-
-### `cua skills read`
-
-Display a skill's instructions.
-
-```bash
-cua skills read <name>
-
-# JSON format with trajectory data
-cua skills read <name> --format json
-```
-
-### `cua skills replay`
-
-Open the recorded video for a skill.
-
-```bash
-cua skills replay <name>
-```
-
-### `cua skills delete`
-
-Delete a skill.
-
-```bash
-cua skills delete <name>
-```
-
-### `cua skills clean`
-
-Delete all skills (with confirmation).
-
-```bash
-cua skills clean
-```
-
-## MCP Server
-
-Run the CLI as an MCP (Model Context Protocol) server for AI assistants like Claude.
-
-### `cua serve-mcp`
-
-Start the MCP server.
-
-```bash
-cua serve-mcp
-
-# With specific sandbox
-cua serve-mcp --sandbox <name>
-
-# With permission restrictions
-cua serve-mcp --permissions sandbox:readonly
-```
-
-**Options:**
-
-| Option          | Description                           |
-| --------------- | ------------------------------------- |
-| `--sandbox`     | Default sandbox for computer commands |
-| `--permissions` | Permission groups (see below)         |
-
-**Permission groups:**
-
-| Group               | Description                  |
-| ------------------- | ---------------------------- |
-| `all`               | All permissions (default)    |
-| `sandbox:all`       | Full sandbox management      |
-| `sandbox:readonly`  | List and view sandboxes only |
-| `computer:all`      | Full computer control        |
-| `computer:readonly` | Screenshots only             |
-| `skills:all`        | Full skills management       |
-| `skills:readonly`   | List and read skills only    |
-
-**Example with multiple permissions:**
-
-```bash
-cua serve-mcp --permissions "sandbox:all,computer:readonly,skills:list"
-```
+---
 
 ## Environment Variables
 
-| Variable              | Description                |
-| --------------------- | -------------------------- |
-| `CUA_API_KEY`         | API key for authentication |
-| `CUA_SANDBOX`         | Default sandbox name       |
-| `CUA_MCP_PERMISSIONS` | Default MCP permissions    |
-
-## Next Steps
-
-- [Quickstart Guide](/cua/guide/get-started/quickstart)
-- [Computer SDK Reference](/cua/reference/computer-sdk)
-- [Agent SDK Reference](/cua/reference/agent-sdk)
+| Variable | Description |
+|----------|-------------|
+| `CUA_API_KEY` | API key for cloud authentication |

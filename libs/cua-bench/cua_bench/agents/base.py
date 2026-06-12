@@ -17,6 +17,7 @@ class FailureMode(Enum):
     NONE = "none"
     UNKNOWN = "unknown"
     MAX_STEPS_EXCEEDED = "max_steps_exceeded"
+    API_ERROR = "api_error"
 
 
 @dataclass

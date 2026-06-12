@@ -1,0 +1,14 @@
+{
+  "binary_path": "/usr/bin/redis-server",
+  "binary_name": "redis-server",
+  "display_name": "Redis",
+  "desktop_entry": "",
+  "icon_paths": [
+    "/usr/share/icons/Humanity/places/64/network-server.svg",
+    "/usr/share/icons/Humanity/places/22/network-server.svg",
+    "/usr/share/icons/Humanity/places/48/network-server.svg",
+    "/usr/share/icons/Humanity/places/24/network-server.svg",
+    "/usr/share/icons/Humanity/mimes/32/libreoffice-oasis-database.svg"
+  ],
+  "version": "6.0.16"
+}

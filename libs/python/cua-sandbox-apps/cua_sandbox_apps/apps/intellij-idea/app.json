@@ -1,0 +1,39 @@
+{
+  "id": "intellij-idea",
+  "name": "IntelliJ IDEA",
+  "description": "A professional integrated development environment (IDE) designed for Java and Kotlin development with support for multiple programming languages. Features comprehensive code assistance, static analysis, debugging, version control integration, and enhanced developer productivity tools.",
+  "website": "https://www.jetbrains.com/idea",
+  "icon_url": "https://www.jetbrains.com/idea/img/idea_192.png",
+  "categories": [
+    "IDE"
+  ],
+  "tags": [
+    "Java",
+    "Kotlin",
+    "Development",
+    "IDE",
+    "JetBrains",
+    "Code Editor",
+    "Debugger",
+    "Profiler",
+    "Version Control"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/JetBrains/intellij-community",
+  "self_hostable": true,
+  "requires_hardware": true,
+  "package_managers": {
+    "snap": "intellij-idea",
+    "brew": "intellij-idea",
+    "choco": "intellij-idea",
+    "winget": "JetBrains.IntelliJIDEA.Community"
+  },
+  "download_url": "https://www.jetbrains.com/idea/download",
+  "app_type": "standalone"
+}

@@ -1,0 +1,17 @@
+# Pre-built test app binaries are downloaded by run-tests-in-sandbox.ps1
+# Run: .\sandbox\run-tests-in-sandbox.ps1 to auto-download before testing
+*.exe
+*.app
+*.dmg
+*.zip
+*.AppImage
+*.deb
+
+# Locally-built .NET test harness output (see ../../test-harness/build.ps1).
+# These dirs are produced by `dotnet publish -o ...` and contain the
+# CuaTestHarness.{Wpf,WinUI3} binaries + their self-contained runtime
+# (several thousand files, ~150 MB). Always rebuilt locally.
+harness-wpf/
+harness-winui3/
+harness-webview/
+harness-electron/

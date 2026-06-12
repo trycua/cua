@@ -1,0 +1,9 @@
+{
+  "app_id": "genie3",
+  "os": "linux",
+  "install_exit_code": -1,
+  "app_type_detected": "library",
+  "download_available": null,
+  "notes": "GENIE3 is an R/Bioconductor package library for gene network inference, not a standalone GUI application. It is installed as an R package dependency and used programmatically within R scripts. No launchable application exists\u2014only an importable library for computational bioinformatics workflows.",
+  "verification_passed": false
+}

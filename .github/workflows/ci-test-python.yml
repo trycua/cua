@@ -65,7 +65,7 @@ jobs:
           fi
         shell: bash
         env:
-          CUA_TELEMETRY_DISABLED: "1" # Disable telemetry during tests
+          CUA_TELEMETRY_ENABLED: "false" # Disable telemetry during tests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

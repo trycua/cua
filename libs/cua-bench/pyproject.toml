@@ -61,7 +61,7 @@ dependencies = [
 [project.optional-dependencies]
 # Full installation with all features
 all = [
-    "cua-bench[browser,agents,cloud,otel]",
+    "cua-bench[browser,agents,cloud,otel,spice]",
 ]
 
 # Daytona cloud sandbox execution
@@ -100,6 +100,11 @@ cloud = [
     "gcloud-aio-storage>=9.0.0",
     "grpcio>=1.60.0",
     "cua-bench[otel]",
+]
+
+# SPICE circuit simulation (for KiCad netlist evaluation)
+spice = [
+    "PySpice>=1.5",
 ]
 
 # API server (for custom environments)
@@ -184,3 +189,9 @@ testpaths = ["cua_bench/tests"]
 
 [tool.uv.sources]
 cua-agent = { path = "../python/agent", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.3.0",
+]

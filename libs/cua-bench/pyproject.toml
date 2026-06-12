@@ -54,6 +54,7 @@ dependencies = [
     # CUA SDK
     "cua-computer>=0.4.19",
     "cua-core>=0.3.0,<0.4.0",
+    "cua-agent",
     "playwright>=1.55.0",
 ]
 
@@ -61,6 +62,16 @@ dependencies = [
 # Full installation with all features
 all = [
     "cua-bench[browser,agents,cloud,otel,spice]",
+]
+
+# Daytona cloud sandbox execution
+daytona = [
+    "daytona-sdk>=0.1.0",
+]
+
+# Packaging scripts (e.g. package_kicad_submission.py)
+packaging = [
+    "boto3>=1.26.0",
 ]
 
 # Browser automation (for simulated environments)
@@ -175,6 +186,9 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["cua_bench/tests"]
+
+[tool.uv.sources]
+cua-agent = { path = "../python/agent", editable = true }
 
 [dependency-groups]
 dev = [

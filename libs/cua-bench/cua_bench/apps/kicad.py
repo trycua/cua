@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -193,8 +192,9 @@ def _parse_kicad_netlist(content: str) -> Dict[str, Any]:
 
 def _normalize_value(value: str) -> str:
     """Normalize component value for loose comparison (e.g. '100' vs '100Ω')."""
-    v = value.strip()
-    return re.sub(r"\s*[ΩohmOHM]\s*$", "", v, flags=re.IGNORECASE)
+    from cua_bench.netlist_compare import _normalize_value as normalize
+
+    return normalize(value)
 
 
 def _component_key(c: dict) -> Tuple[str, str, str]:
@@ -262,18 +262,22 @@ class KiCad(App):
         *,
         with_shortcut: bool = True,
     ) -> None:
-        """Install KiCad on Linux via PPA."""
-        result = await self.session.run_command(
-            "sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases && "
-            "sudo apt update && "
-            "sudo apt install -y --install-recommends kicad",
-            check=False,
-        )
-
+        """Ensure KiCad is available on Linux and optionally create a shortcut."""
         verify = await self.session.run_command(
             "command -v kicad >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND",
             check=False,
         )
+        if _stdout(verify) != "FOUND":
+            result = await self.session.run_command(
+                "sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases && "
+                "sudo apt update && "
+                "sudo apt install -y --install-recommends kicad",
+                check=False,
+            )
+            verify = await self.session.run_command(
+                "command -v kicad >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND",
+                check=False,
+            )
         if _stdout(verify) != "FOUND":
             raise RuntimeError(
                 f"KiCad install failed: {_stdout(result)}"
@@ -304,20 +308,21 @@ class KiCad(App):
         project_path: Optional[str] = None,
     ) -> None:
         """Launch KiCad on Linux."""
-        cmd = "kicad"
+        kicad_args = ["/usr/bin/kicad"]
         if project_path:
-            cmd += f" '{project_path}'"
-        done, pending = await asyncio.wait(
-            [
-                asyncio.ensure_future(
-                    self.session.run_command(f"{cmd} &", check=False)
-                ),
-                asyncio.ensure_future(asyncio.sleep(3)),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
+            kicad_args.append(project_path)
+        kicad_args_repr = repr(kicad_args)
+        launch_script = (
+            "import subprocess, os; "
+            f"subprocess.Popen({kicad_args_repr}, "
+            "env={**os.environ, 'DISPLAY': ':1'}, "
+            "close_fds=True, start_new_session=True, "
+            "stdin=open('/dev/null'), "
+            "stdout=open('/dev/null', 'w'), "
+            "stderr=open('/dev/null', 'w'))"
         )
-        for task in pending:
-            task.cancel()
+        await self.session.run_command(f"python3 -c \"{launch_script}\"", check=False)
+        await asyncio.sleep(15)
 
     @uninstall("linux")
     async def uninstall_linux(self: "BoundApp", **kwargs) -> None:
@@ -472,7 +477,9 @@ class KiCad(App):
         """
         netlist = await self.read_netlist(netlist_path=netlist_path)
         if netlist_path.rstrip("/").endswith(".net"):
-            return _parse_kicad_netlist(netlist)["components"]
+            from cua_bench.netlist_compare import parse_kicad_netlist
+
+            return parse_kicad_netlist(netlist)["components"]
         return _parse_spice_components(netlist)
 
     async def compare_netlist(
@@ -501,13 +508,16 @@ class KiCad(App):
         Returns:
             Score 0.0 (no match) to 1.0 (exact match).
         """
+        from cua_bench.netlist_compare import compare_kicad_netlists
+
         candidate = await self.read_netlist(netlist_path=candidate_path)
         reference = Path(reference_path).read_text(encoding="utf-8", errors="replace")
-        return _compare_kicad_netlists(
+        return compare_kicad_netlists(
             candidate,
             reference,
             require_same_components=require_same_components,
             require_same_nets=require_same_nets,
+            require_same_net_names=False,
         )
 
     async def simulate_operating_point(

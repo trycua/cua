@@ -401,10 +401,14 @@ def create_span(
         yield None
         return
 
+    _yielded = False
     try:
         with _tracer.start_as_current_span(name, attributes=attributes) as span:
+            _yielded = True
             yield span
     except Exception as e:
+        if _yielded:
+            raise
         logger.debug(f"Failed to create span: {e}")
         yield None
 

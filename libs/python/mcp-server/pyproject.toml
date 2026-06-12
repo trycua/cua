@@ -11,6 +11,10 @@ version = "0.1.16"
 authors = [
     {name = "TryCua", email = "gh@trycua.com"}
 ]
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "mcp>=1.6.0,<2.0.0",
     "cua-agent[all]>=0.8.0",
@@ -22,6 +26,9 @@ cua-mcp-server = "mcp_server.server:main"
 
 [tool.pdm]
 distribution = true
+
+[tool.pdm.build]
+source-includes = ["README.md", "LICENSE"]
 
 [tool.pdm.dev-dependencies]
 dev = [

@@ -24,6 +24,44 @@ final class SharedVM {
     }
 }
 
+// MARK: - Pull Progress Tracker
+
+/// Tracks async pull progress keyed by VM name. Shared singleton used by
+/// handlePullStart (writer) and handleGetVM (reader) across the same process.
+actor PullProgressTracker {
+    static let shared = PullProgressTracker()
+
+    private var progress: [String: Double] = [:]
+    private var errors: [String: String] = [:]
+
+    func setProgress(_ value: Double, for name: String) {
+        progress[name] = value
+        errors.removeValue(forKey: name)
+    }
+
+    func setError(_ message: String, for name: String) {
+        errors[name] = message
+        progress.removeValue(forKey: name)
+    }
+
+    func complete(for name: String) {
+        progress.removeValue(forKey: name)
+        errors.removeValue(forKey: name)
+    }
+
+    func getProgress(for name: String) -> Double? {
+        return progress[name]
+    }
+
+    func getError(for name: String) -> String? {
+        return errors[name]
+    }
+
+    func isPulling(_ name: String) -> Bool {
+        return progress[name] != nil
+    }
+}
+
 /// Entrypoint for Commands and API server
 final class LumeController {
     // MARK: - Properties
@@ -278,8 +316,8 @@ final class LumeController {
                 // VM not found is okay, we'll create it
             }
 
-            // Copy the VM directory
-            try home.copyVMDirectory(
+            // Clone the VM directory (uses APFS clonefile for disk.img)
+            try home.cloneVMDirectory(
                 from: normalizedName,
                 to: normalizedNewName,
                 sourceLocation: sourceLocation,
@@ -400,7 +438,8 @@ final class LumeController {
         debug: Bool = false,
         debugDir: String? = nil,
         noDisplay: Bool = true,
-        vncPort: Int = 0
+        vncPort: Int = 0,
+        networkMode: NetworkMode = .nat
     ) async throws {
         Logger.info(
             "Creating VM",
@@ -437,7 +476,8 @@ final class LumeController {
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
-                display: display
+                display: display,
+                networkMode: networkMode
             )
             try vmDir.saveConfig(config)
 
@@ -467,7 +507,8 @@ final class LumeController {
                 debugDir: debugDir,
                 noDisplay: noDisplay,
                 vncPort: vncPort,
-                vmDir: vmDir
+                vmDir: vmDir,
+                networkMode: networkMode
             )
 
             // Clear provisioning marker on success
@@ -475,8 +516,9 @@ final class LumeController {
             Logger.info("Provisioning marker cleared", metadata: ["name": name])
 
         } catch {
-            // Clear provisioning marker on failure (vmDir may have been deleted by createInternal)
-            vmDir.clearProvisioningMarker()
+            // Clean up the pre-created directory on failure. If deletion fails, keep the
+            // provisioning marker intact so the leftover VM remains discoverable.
+            cleanupFailedCreateVMDirectory(vmDir, context: "creation")
             Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
             throw error
         }
@@ -506,7 +548,8 @@ final class LumeController {
         display: String,
         ipsw: String?,
         storage: String? = nil,
-        unattendedConfig: UnattendedConfig? = nil
+        unattendedConfig: UnattendedConfig? = nil,
+        networkMode: NetworkMode = .nat
     ) throws {
         Logger.info(
             "Starting async VM creation",
@@ -536,7 +579,8 @@ final class LumeController {
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
-                display: display
+                display: display,
+                networkMode: networkMode
             )
             try vmDir.saveConfig(config)
 
@@ -571,7 +615,8 @@ final class LumeController {
                     ipsw: ipsw,
                     storage: storage,
                     unattendedConfig: unattendedConfig,
-                    vmDir: vmDir
+                    vmDir: vmDir,
+                    networkMode: networkMode
                 )
 
                 // Clear marker on success
@@ -579,17 +624,23 @@ final class LumeController {
                 Logger.info("Async VM creation completed successfully", metadata: ["name": name])
 
             } catch {
-                // Clear marker and cleanup on failure
-                vmDir.clearProvisioningMarker()
-                do {
-                    try vmDir.delete()
-                } catch let cleanupError {
-                    Logger.error("Failed to clean up VM directory after async creation failure",
-                               metadata: ["error": cleanupError.localizedDescription])
-                }
+                // Clean up the pre-created directory on failure. If deletion fails, keep the
+                // provisioning marker intact so the leftover VM remains discoverable.
+                controller.cleanupFailedCreateVMDirectory(vmDir, context: "async creation")
                 Logger.error("Async VM creation failed",
                             metadata: ["name": name, "error": error.localizedDescription])
             }
+        }
+    }
+
+    private func cleanupFailedCreateVMDirectory(_ vmDir: VMDirectory, context: String) {
+        do {
+            if vmDir.exists() {
+                try vmDir.delete()
+            }
+        } catch let cleanupError {
+            Logger.error("Failed to clean up VM directory after \(context) failure",
+                       metadata: ["error": cleanupError.localizedDescription])
         }
     }
 
@@ -609,7 +660,8 @@ final class LumeController {
         debugDir: String? = nil,
         noDisplay: Bool = true,
         vncPort: Int = 0,
-        vmDir: VMDirectory? = nil
+        vmDir: VMDirectory? = nil,
+        networkMode: NetworkMode = .nat
     ) async throws {
         Logger.info(
             "Creating VM (internal)",
@@ -624,7 +676,8 @@ final class LumeController {
             cpuCount: cpuCount,
             memorySize: memorySize,
             diskSize: diskSize,
-            display: display
+            display: display,
+            networkMode: networkMode
         )
 
         // Track the temp directory for cleanup on failure
@@ -745,6 +798,57 @@ final class LumeController {
             Logger.info("Unattended setup completed", metadata: ["name": normalizedName])
         } catch {
             Logger.error("Failed to run unattended setup", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+    }
+
+    /// Run agent-based Setup Assistant automation using Claude computer-use API
+    @MainActor
+    public func setupWithAgent(
+        name: String,
+        apiKey: String,
+        model: String = "claude-sonnet-4-6",
+        maxIterations: Int = 100,
+        systemPrompt: String? = nil,
+        storage: String? = nil,
+        vncPort: Int = 0,
+        noDisplay: Bool = false,
+        debug: Bool = false,
+        debugDir: String? = nil
+    ) async throws {
+        let normalizedName = normalizeVMName(name: name)
+        Logger.info(
+            "Running agent-based setup",
+            metadata: [
+                "name": normalizedName,
+                "model": model,
+                "maxIterations": "\(maxIterations)",
+                "debug": "\(debug)"
+            ])
+
+        do {
+            let vm = try get(name: normalizedName, storage: storage)
+
+            guard vm.config.os.lowercased() == "macos" else {
+                throw VMError.unsupportedOS("Unattended setup is only supported for macOS VMs, got: \(vm.config.os)")
+            }
+
+            let installer = UnattendedInstaller()
+            try await installer.installWithAgent(
+                vm: vm,
+                apiKey: apiKey,
+                model: model,
+                maxIterations: maxIterations,
+                systemPrompt: systemPrompt,
+                vncPort: vncPort,
+                noDisplay: noDisplay,
+                debug: debug,
+                debugDir: debugDir
+            )
+
+            Logger.info("Agent-based setup completed", metadata: ["name": normalizedName])
+        } catch {
+            Logger.error("Failed to run agent-based setup", metadata: ["error": error.localizedDescription])
             throw error
         }
     }
@@ -889,9 +993,14 @@ final class LumeController {
         registry: String = "ghcr.io",
         organization: String = "trycua",
         vncPort: Int = 0,
+        vncPassword: String? = nil,
         recoveryMode: Bool = false,
         storage: String? = nil,
-        usbMassStoragePaths: [Path]? = nil
+        diskPath: Path? = nil,
+        nvramPath: Path? = nil,
+        usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
@@ -905,7 +1014,10 @@ final class LumeController {
                 "vnc_port": "\(vncPort)",
                 "recovery_mode": "\(recoveryMode)",
                 "storage_param": storage ?? "home", // Log the original param
+                "disk_path_override": diskPath?.path ?? "none",
+                "nvram_path_override": nvramPath?.path ?? "none",
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
+                "network_override": networkMode?.description ?? "vm-config",
             ])
 
         do {
@@ -941,28 +1053,47 @@ final class LumeController {
             let effectiveStorage: String?
             let vmDir: VMDirectory
 
+            // When disk/nvram path overrides are provided, the VM directory only needs
+            // config.json (not the full disk.img + nvram.bin). This lets external tools
+            // like lumelet store disk images in their own cache and point lume at them.
+            let hasPathOverrides = diskPath != nil || nvramPath != nil
+
             if let storagePath = storage, storagePath.contains("/") || storagePath.contains("\\") {
                 // Storage is a direct path
                 vmDir = try home.getVMDirectoryFromPath(normalizedName, storagePath: storagePath)
-                guard vmDir.initialized() else {
-                    if vmDir.exists() {
-                        throw VMError.notInitialized(normalizedName)
-                    } else {
+                if hasPathOverrides {
+                    // With path overrides, only config.json is required
+                    guard vmDir.configPath.exists() else {
                         throw VMError.notFound(normalizedName)
+                    }
+                } else {
+                    guard vmDir.initialized() else {
+                        if vmDir.exists() {
+                            throw VMError.notInitialized(normalizedName)
+                        } else {
+                            throw VMError.notFound(normalizedName)
+                        }
                     }
                 }
                 effectiveStorage = storagePath // Use the path string
                 Logger.info("Using direct storage path", metadata: ["path": storagePath])
             } else {
                 // Storage is nil or a named location - validate and get the actual name
-                let actualLocationName = try validateVMExists(normalizedName, storage: storage)
-                vmDir = try home.getVMDirectory(normalizedName, storage: actualLocationName) // Get VMDir for named location
-                effectiveStorage = actualLocationName // Use the named location string
+                if hasPathOverrides {
+                    // With overrides, try to find the VM but relax initialized check
+                    let actualLocationName = try? validateVMExists(normalizedName, storage: storage)
+                    vmDir = try home.getVMDirectory(normalizedName, storage: actualLocationName)
+                    effectiveStorage = actualLocationName
+                } else {
+                    let actualLocationName = try validateVMExists(normalizedName, storage: storage)
+                    vmDir = try home.getVMDirectory(normalizedName, storage: actualLocationName) // Get VMDir for named location
+                    effectiveStorage = actualLocationName // Use the named location string
+                }
                 Logger.info(
                     "Using named storage location",
                     metadata: [
                         "requested": storage ?? "home",
-                        "actual": actualLocationName ?? "default",
+                        "actual": effectiveStorage ?? "default",
                     ])
             }
 
@@ -978,7 +1109,7 @@ final class LumeController {
             )
 
             // Load the VM directly using the located VMDirectory and storage context
-            let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage)
+            let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
 
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
             try await vm.run(
@@ -986,8 +1117,11 @@ final class LumeController {
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 vncPort: vncPort,
+                vncPassword: vncPassword,
                 recoveryMode: recoveryMode,
-                usbMassStoragePaths: usbMassStoragePaths)
+                usbMassStoragePaths: usbMassStoragePaths,
+                networkMode: networkMode,
+                clipboard: clipboard)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
@@ -1020,7 +1154,11 @@ final class LumeController {
         name: String?,
         registry: String,
         organization: String,
-        storage: String? = nil
+        storage: String? = nil,
+        username: String? = nil,
+        password: String? = nil,
+        force: Bool = false,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws {
         do {
             // Split the image to get name and tag
@@ -1035,7 +1173,7 @@ final class LumeController {
             // Set default VM name if not provided
             let vmName = name ?? "\(imageName)_\(tag)"
 
-            Logger.info(
+            Logger.debug(
                 "Pulling image",
                 metadata: [
                     "image": image,
@@ -1050,17 +1188,21 @@ final class LumeController {
                 name: vmName,
                 registry: registry,
                 organization: organization,
-                storage: storage
+                storage: storage,
+                force: force
             )
 
             let imageRegistry = try RegistryFactory.createRegistry(
-                registry: registry, organization: organization)
+                registry: registry, organization: organization,
+                username: username, password: password)
             let _ = try await imageRegistry.pull(
                 image: image,
                 name: vmName,
-                locationName: storage)
+                locationName: storage,
+                force: force,
+                progressHandler: progressHandler)
 
-            Logger.info(
+            Logger.debug(
                 "Setting new VM mac address",
                 metadata: [
                     "vm_name": vmName,
@@ -1071,7 +1213,7 @@ final class LumeController {
             let vm = try get(name: vmName, storage: storage)
             try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
 
-            Logger.info(
+            Logger.debug(
                 "Image pulled successfully",
                 metadata: [
                     "image": image,
@@ -1097,10 +1239,12 @@ final class LumeController {
         chunkSizeMb: Int = 512,
         verbose: Bool = false,
         dryRun: Bool = false,
-        reassemble: Bool = false
+        reassemble: Bool = false,
+        singleLayer: Bool = false,
+        legacy: Bool = false
     ) async throws {
         do {
-            Logger.info(
+            Logger.debug(
                 "Pushing VM to registry",
                 metadata: [
                     "name": name,
@@ -1139,7 +1283,9 @@ final class LumeController {
                 chunkSizeMb: chunkSizeMb,
                 verbose: verbose,
                 dryRun: dryRun,
-                reassemble: reassemble
+                reassemble: reassemble,
+                singleLayer: singleLayer,
+                legacy: legacy
             )
 
             Logger.info(
@@ -1309,7 +1455,8 @@ final class LumeController {
         cpuCount: Int,
         memorySize: UInt64,
         diskSize: UInt64,
-        display: String
+        display: String,
+        networkMode: NetworkMode = .nat
     ) async throws -> VM {
         let config = try VMConfig(
             os: os,
@@ -1317,7 +1464,8 @@ final class LumeController {
             memorySize: memorySize,
             diskSize: diskSize,
             macAddress: VZMACAddress.randomLocallyAdministered().string,
-            display: display
+            display: display,
+            networkMode: networkMode
         )
 
         let vmDirContext = VMDirContext(
@@ -1332,17 +1480,21 @@ final class LumeController {
     }
 
     @MainActor
-    private func loadVM(vmDir: VMDirectory, storage: String?) throws -> VM {
-        // vmDir is now passed directly
-        guard vmDir.initialized() else {
-            throw VMError.notInitialized(vmDir.name) // Use name from vmDir
+    private func loadVM(vmDir: VMDirectory, storage: String?, diskPath: Path? = nil, nvramPath: Path? = nil) throws -> VM {
+        // With path overrides, only config.json is required (not full initialized check)
+        let hasPathOverrides = diskPath != nil || nvramPath != nil
+        if !hasPathOverrides {
+            guard vmDir.initialized() else {
+                throw VMError.notInitialized(vmDir.name)
+            }
         }
 
         let config: VMConfig = try vmDir.loadConfig()
-        // Pass the provided storage (which could be a path or named location)
-        let vmDirContext = VMDirContext(
+        var vmDirContext = VMDirContext(
             dir: vmDir, config: config, home: home, storage: storage
         )
+        vmDirContext.diskPathOverride = diskPath
+        vmDirContext.nvramPathOverride = nvramPath
 
         let imageLoader =
             config.os.lowercased() == "macos" ? imageLoaderFactory.createImageLoader() : nil
@@ -1469,7 +1621,8 @@ final class LumeController {
         name: String,
         registry: String,
         organization: String,
-        storage: String? = nil
+        storage: String? = nil,
+        force: Bool = false
     ) throws {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
@@ -1499,15 +1652,15 @@ final class LumeController {
                     throw HomeError.directoryCreationFailed(path: storage)
                 }
             }
-            
+
             // Use getVMDirectoryFromPath for direct paths
             vmDir = try home.getVMDirectoryFromPath(name, storagePath: storage)
         } else {
             // Use getVMDirectory for named storage locations
             vmDir = try home.getVMDirectory(name, storage: storage)
         }
-        
-        if vmDir.exists() {
+
+        if vmDir.exists() && !force {
             throw VMError.alreadyExists(name)
         }
     }

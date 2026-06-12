@@ -210,6 +210,10 @@ class TaskRunner:
         remove_images_after: bool = False,
         # Provider type
         provider_type: Optional[str] = None,
+        # Dev mode: list of local package paths to mount and install
+        dev_paths: Optional[List[str]] = None,
+        # Verbose mode: print full docker command and pip install output
+        verbose: bool = False,
     ) -> TaskResult:
         """Run a task with 2-container architecture.
 
@@ -319,6 +323,8 @@ class TaskRunner:
                 oracle=oracle,
                 output_dir=output_dir,
                 is_simulated=is_simulated,
+                dev_paths=dev_paths,
+                verbose=verbose,
             )
 
             # 3.5. Start streaming agent logs to file if requested
@@ -400,6 +406,7 @@ class TaskRunner:
         # Task configuration
         env_path: Optional[Path] = None,
         task_index: int = 0,
+        setup_config: Optional[dict] = None,
         # Environment configuration
         memory: str = "8G",
         cpus: str = "8",
@@ -501,7 +508,8 @@ class TaskRunner:
         # Create network
         await create_network(network_name)
 
-        # Start environment container
+        # Start environment container with setup_config for display resolution
+        _setup_config = setup_config or {}
         await self._start_env_container(
             task_id=task_id,
             network_name=network_name,
@@ -513,6 +521,8 @@ class TaskRunner:
             vnc_port=vnc_port,
             api_port=api_port,
             overlay_path=overlay_path,
+            width=_setup_config.get("width"),
+            height=_setup_config.get("height"),
         )
 
         # Build URLs
@@ -547,11 +557,18 @@ class TaskRunner:
                             "_task_cfg": task_cfg,  # Store for evaluation
                         }
 
-                        # Create remote session
+                        # Extract setup_config from task if available
+                        setup_config = {}
+                        if hasattr(task_cfg, "computer") and task_cfg.computer:
+                            setup_config = task_cfg.computer.get("setup_config", {})
+
+                        # Create remote session with setup_config values
                         session_obj = RemoteDesktopSession(
                             api_url=api_url,
                             vnc_url=vnc_url or "",
-                            os_type=config.get("os_type", "linux"),
+                            os_type=setup_config.get("os_type", config.get("os_type", "linux")),
+                            width=setup_config.get("width", 1024),
+                            height=setup_config.get("height", 768),
                         )
 
                         # Wait for environment to be ready
@@ -592,6 +609,8 @@ class TaskRunner:
         vnc_port: Optional[int],
         api_port: Optional[int],
         overlay_path: Optional[Path] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
     ) -> ContainerInfo:
         """Start the environment container.
 
@@ -609,6 +628,10 @@ class TaskRunner:
             env_vars["CPU_CORES"] = cpus
             if not os.path.exists("/dev/kvm"):
                 env_vars["KVM"] = "N"
+
+        # Add display resolution if specified
+        if width is not None and height is not None:
+            env_vars["VNC_RESOLUTION"] = f"{width}x{height}"
 
         # Build volumes
         volumes = []
@@ -764,6 +787,8 @@ class TaskRunner:
         oracle: bool,
         output_dir: Optional[str],
         is_simulated: bool = False,
+        dev_paths: Optional[List[str]] = None,
+        verbose: bool = False,
     ) -> ContainerInfo:
         """Start the agent container.
 
@@ -828,6 +853,7 @@ class TaskRunner:
         api_keys = [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
+            "OPENAI_ENDPOINT",
             "GOOGLE_API_KEY",
             "GOOGLE_CLOUD_PROJECT",
             "AZURE_OPENAI_API_KEY",
@@ -852,6 +878,39 @@ class TaskRunner:
         if cua_bench_path.exists() and (cua_bench_path / "computers").exists():
             volumes.append(f"{cua_bench_path}:/app/cua_bench:ro")
 
+        # --with mode: mount and pip install local packages
+        dev_install_cmd = ""
+        if dev_paths:
+            install_parts = []
+            for i, dev_path in enumerate(dev_paths):
+                abs_path = Path(dev_path).resolve()
+                if not abs_path.exists():
+                    raise FileNotFoundError(
+                        f"--with path does not exist: {dev_path} (resolved to {abs_path})"
+                    )
+                if (
+                    not (abs_path / "pyproject.toml").exists()
+                    and not (abs_path / "setup.py").exists()
+                ):
+                    raise FileNotFoundError(
+                        f"--with path is not an installable package (no pyproject.toml or setup.py): {abs_path}"
+                    )
+                container_path = f"/app/dev_{i}"
+                volumes.append(f"{abs_path}:{container_path}:ro")
+                # Copy to tmp first since pip needs a writable source dir to build.
+                # Use --force-reinstall so the local version always replaces an
+                # already-installed package of the same version (e.g. the one
+                # baked into the Docker image).  --no-deps skips re-downloading
+                # transitive dependencies that are already present.
+                if verbose:
+                    pip_cmd = f"pip install --force-reinstall --no-deps /tmp/dev_{i}"
+                else:
+                    pip_cmd = f"pip install --force-reinstall --no-deps /tmp/dev_{i} 2>&1 | tail -1"
+                install_parts.append(
+                    f"(echo '[--with] installing {dev_path}' && cp -r {container_path} /tmp/dev_{i} && {pip_cmd})"
+                )
+            dev_install_cmd = " && ".join(install_parts) + " && "
+
         # Build command
         if agent_command:
             # Custom command for Docker image agents
@@ -873,6 +932,15 @@ class TaskRunner:
                     command.extend(["--model", model])
                 if max_steps:
                     command.extend(["--max-steps", str(max_steps)])
+
+        # In --with mode, wrap command to install local packages first
+        if dev_paths and dev_install_cmd:
+            original_cmd = " ".join(command)
+            command = ["bash", "-c", f"{dev_install_cmd}{original_cmd}"]
+
+        if verbose:
+            print(f"[--verbose] agent container command: {command}")
+            print(f"[--verbose] volumes: {volumes}")
 
         # Start container (not detached - we want to wait for it)
         return await start_container(

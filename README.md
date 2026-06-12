@@ -11,7 +11,7 @@
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
-    <a href="https://discord.com/invite/cua-ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-10b981?logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://discord.gg/mVnXXpdE85" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-10b981?logo=discord&logoColor=white" alt="Discord"></a>
     <a href="https://x.com/trycua" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/trycua?style=social" alt="Twitter"></a>
     <a href="https://cua.ai/docs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Docs-0ea5e9.svg" alt="Documentation"></a>
     <br>
@@ -25,47 +25,83 @@
 <div align="center">
   <table>
     <tr>
-      <td align="center">
-        <a href="#cua---agentic-ui-automation--code-execution">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-dark.png">
-            <source media="(prefers-color-scheme: light)" srcset="img/card-cua-light.png">
-            <img src="img/card-cua-light.png" alt="Cua" width="280">
-          </picture>
-        </a>
-      </td>
-      <td align="center">
-        <a href="#cua-bench---benchmarks--rl-environments">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bench-dark.png">
-            <source media="(prefers-color-scheme: light)" srcset="img/card-cua-bench-light.png">
-            <img src="img/card-cua-bench-light.png" alt="Cua-Bench" width="280">
-          </picture>
-        </a>
-      </td>
-      <td align="center">
-        <a href="#lume---macos-virtualization">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="img/card-lume-dark.png">
-            <source media="(prefers-color-scheme: light)" srcset="img/card-lume-light.png">
-            <img src="img/card-lume-light.png" alt="Lume" width="280">
-          </picture>
+      <td colspan="3" align="center">
+        <a href="#cua-driver---background-computer-use-on-macos-and-windows-with-linux-pre-release">
+          <img src="img/card-cua-driver.png" alt="Cua Driver — The background computer-use agent" width="888">
         </a>
       </td>
     </tr>
     <tr>
-      <td colspan="3" align="center">
-        <a href="https://cua.ai/docs/cuabot/guide/getting-started/introduction">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bot-dark.png">
-            <source media="(prefers-color-scheme: light)" srcset="img/card-cua-bot-light.png">
-            <img src="img/card-cua-bot-light.png" alt="Cua Bot" width="888">
-          </picture>
+      <td align="center">
+        <a href="#cua---agentic-ui-automation--code-execution">
+          <img src="img/card-cua-sandbox.png" alt="Cua &amp; Cua Sandbox" width="280">
+        </a>
+      </td>
+      <td align="center">
+        <a href="#cua-bench---benchmarks--rl-environments">
+          <img src="img/card-cua-bench.png" alt="Cua Bench" width="280">
+        </a>
+      </td>
+      <td align="center">
+        <a href="#lume---macos-virtualization">
+          <img src="img/card-cua-lume.png" alt="Lume" width="280">
         </a>
       </td>
     </tr>
   </table>
 </div>
+
+---
+
+## Cua Driver - Background computer-use on macOS and Windows, with Linux pre-release
+
+Drive native desktop apps **in the background** — agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
+
+**macOS / Linux pre-release**
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+```
+
+Full tool reference, architecture notes, and the optional agent skill pack live here: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+
+---
+
+## Cua - Agent-Ready Sandboxes for Any OS
+
+Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
+
+```sh
+pip install cua
+```
+
+<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
+
+```python
+# Requires Python 3.11 or later
+from cua import Sandbox, Image
+
+# Same API regardless of OS or runtime
+async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()
+    result = await sb.shell.run("echo hello")
+    screenshot = await sb.screenshot()
+    await sb.mouse.click(100, 200)
+    await sb.keyboard.type("Hello from Cua!")
+    await sb.mobile.gesture((100, 500), (100, 200))  # multi-touch gestures
+```
+
+|                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |
+| ------------------ | --------------- | -------- | ----- | ------- | ------- | ------------------- |
+| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      | 🔜 soon             |
+| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      | ✅                  |
+
+**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 
 ---
 
@@ -102,26 +138,6 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 <img height="64" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
 
 </div>
-
-## Cua - Agentic UI Automation & Code Execution
-
-Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
-
-<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
-
-```python
-# Requires Python 3.12 or 3.13
-from computer import Computer
-from agent import ComputerAgent
-
-computer = Computer(os_type="linux", provider_type="cloud")
-agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", computer=computer)
-
-async for result in agent.run([{"role": "user", "content": "Open Firefox and search for Cua"}]):
-    print(result)
-```
-
-**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 
 ---
 
@@ -164,15 +180,15 @@ lume run macos-sequoia-vanilla:latest
 
 ## Packages
 
-| Package                                                               | Description                                                |
-| --------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [cuabot](https://cua.ai/docs/cuabot/cuabot)                           | Multi-agent computer-use sandbox CLI                       |
-| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)              | AI agent framework for computer-use tasks                  |
-| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)        | SDK for controlling desktop environments                   |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk) | Driver for UI interactions and code execution in sandboxes |
-| [cua-bench](https://cua.ai/docs/cuabench)                             | Benchmarks and RL environments for computer-use            |
-| [lume](https://cua.ai/docs/lume)                                      | macOS/Linux VM management on Apple Silicon                 |
-| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)              | Docker-compatible interface for Lume VMs                   |
+| Package                                                                     | Description                                                |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [cuabot](https://docs.trycua.com/cuabot/guide/getting-started/introduction) | Multi-agent computer-use sandbox CLI                       |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
+| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |
+| [cua-bench](https://cua.ai/docs/cuabench)                                   | Benchmarks and RL environments for computer-use            |
+| [lume](https://cua.ai/docs/lume)                                            | macOS/Linux VM management on Apple Silicon                 |
+| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)                    | Docker-compatible interface for Lume VMs                   |
 
 ## Resources
 

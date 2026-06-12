@@ -66,31 +66,73 @@ struct SSH: AsyncParsableCommand {
             throw SSHError.sshNotAvailable(name)
         }
 
-        // Create SSH client
+        // Try NIO SSH first, fall back to system SSH on connection failure
+        do {
+            try await executeWithNIOSSH(host: ipAddress)
+        } catch let error as SSHError {
+            // Only fall back on connection errors (not auth failures, timeouts, etc.)
+            if case .connectionFailed = error {
+                Logger.debug(
+                    "NIO SSH connection failed, falling back to system SSH",
+                    metadata: ["host": "\(ipAddress)"])
+                try executeWithSystemSSH(host: ipAddress)
+            } else {
+                throw error
+            }
+        }
+    }
+
+    /// Execute using the built-in NIO SSH client
+    @MainActor
+    private func executeWithNIOSSH(host: String) async throws {
         let sshClient = SSHClient(
-            host: ipAddress,
+            host: host,
             port: 22,
             user: user,
             password: password
         )
 
         if command.isEmpty {
-            // Interactive mode
             try await sshClient.interactive()
         } else {
-            // Execute command
             let fullCommand = command.joined(separator: " ")
             let result = try await sshClient.execute(
                 command: fullCommand,
                 timeout: TimeInterval(timeout)
             )
 
-            // Print output
             if !result.output.isEmpty {
                 print(result.output)
             }
 
-            // Exit with same code as remote command
+            if result.exitCode != 0 {
+                throw ExitCode(result.exitCode)
+            }
+        }
+    }
+
+    /// Execute using the system /usr/bin/ssh binary (fallback for restricted environments)
+    private func executeWithSystemSSH(host: String) throws {
+        let systemClient = SystemSSHClient(
+            host: host,
+            port: 22,
+            user: user,
+            password: password
+        )
+
+        if command.isEmpty {
+            try systemClient.interactive()
+        } else {
+            let fullCommand = command.joined(separator: " ")
+            let result = try systemClient.execute(
+                command: fullCommand,
+                timeout: TimeInterval(timeout)
+            )
+
+            if !result.output.isEmpty {
+                print(result.output)
+            }
+
             if result.exitCode != 0 {
                 throw ExitCode(result.exitCode)
             }

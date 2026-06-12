@@ -1,0 +1,13 @@
+{
+  "binary_path": "/usr/bin/gvim",
+  "binary_name": "gvim",
+  "display_name": "GVim",
+  "desktop_entry": "/usr/share/applications/gvim.desktop",
+  "icon_paths": [
+    "/usr/share/icons/hicolor/48x48/apps/gvim.png",
+    "/usr/share/icons/hicolor/scalable/apps/gvim.svg",
+    "/usr/share/icons/locolor/16x16/apps/gvim.png",
+    "/usr/share/icons/locolor/32x32/apps/gvim.png"
+  ],
+  "version": "8.2"
+}

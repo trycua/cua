@@ -1,0 +1,18 @@
+[package]
+name = "cursor-overlay"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+# SVG rasterization for --cursor-icon <path.svg>
+resvg = { version = "0.44", default-features = false }
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+usvg = { version = "0.44", default-features = false, features = ["text"] }
+
+# ICO / PNG parsing for --cursor-icon <path.ico|png>
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }

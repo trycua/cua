@@ -8,7 +8,9 @@ on:
         required: true
         type: choice
         options:
+          - pypi/cua
           - pypi/agent
+          - pypi/auto
           - pypi/bench
           - pypi/bench-ui
           - pypi/cli
@@ -16,6 +18,8 @@ on:
           - pypi/computer-server
           - pypi/core
           - pypi/mcp-server
+          - pypi/sandbox
+          - pypi/sandbox-apps
           - pypi/som
           - npm/cli
           - npm/computer
@@ -23,6 +27,8 @@ on:
           - npm/playground
           - npm/cuabot
           - lume
+          - cua-driver
+          - cua-driver-rs
           - docker/cuabot
           - docker/kasm
           - docker/xfce
@@ -38,6 +44,11 @@ on:
           - patch
           - minor
           - major
+      target_branch:
+        description: "Branch to push the bump commit + tag to"
+        required: false
+        type: string
+        default: "main"
 
 permissions:
   contents: write
@@ -50,8 +61,16 @@ jobs:
         id: package
         run: |
           case "${{ inputs.service }}" in
+            "pypi/cua")
+              echo "directory=libs/python/cua" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
             "pypi/agent")
               echo "directory=libs/python/agent" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/auto")
+              echo "directory=libs/python/cua-auto" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/bench")
@@ -82,6 +101,14 @@ jobs:
               echo "directory=libs/python/mcp-server" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
+            "pypi/sandbox")
+              echo "directory=libs/python/cua-sandbox" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/sandbox-apps")
+              echo "directory=libs/python/cua-sandbox-apps" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
             "pypi/som")
               echo "directory=libs/python/som" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
@@ -109,6 +136,14 @@ jobs:
             "lume")
               echo "directory=libs/lume" >> $GITHUB_OUTPUT
               echo "type=lume" >> $GITHUB_OUTPUT
+              ;;
+            "cua-driver")
+              echo "directory=libs/cua-driver" >> $GITHUB_OUTPUT
+              echo "type=cua-driver" >> $GITHUB_OUTPUT
+              ;;
+            "cua-driver-rs")
+              echo "directory=libs/cua-driver/rust" >> $GITHUB_OUTPUT
+              echo "type=cua-driver-rs" >> $GITHUB_OUTPUT
               ;;
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
@@ -149,6 +184,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.target_branch || 'main' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
@@ -203,6 +239,15 @@ jobs:
           echo "Tags to push: $ALL_TAGS"
           echo "tags=$ALL_TAGS" >> $GITHUB_OUTPUT
 
+      - name: Capture bumped cua version
+        if: ${{ inputs.service == 'pypi/cua' }}
+        id: cua_version
+        run: |
+          cd libs/python/cua
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "cua version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped agent version
         if: ${{ inputs.service == 'pypi/agent' }}
         id: agent_version
@@ -210,6 +255,15 @@ jobs:
           cd libs/python/agent
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Agent version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped auto version
+        if: ${{ inputs.service == 'pypi/auto' }}
+        id: auto_version
+        run: |
+          cd libs/python/cua-auto
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Auto version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped bench version
@@ -275,6 +329,24 @@ jobs:
           echo "MCP-server version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Capture bumped sandbox version
+        if: ${{ inputs.service == 'pypi/sandbox' }}
+        id: sandbox_version
+        run: |
+          cd libs/python/cua-sandbox
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Sandbox version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped sandbox-apps version
+        if: ${{ inputs.service == 'pypi/sandbox-apps' }}
+        id: sandbox_apps_version
+        run: |
+          cd libs/python/cua-sandbox-apps
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Sandbox-apps version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped som version
         if: ${{ inputs.service == 'pypi/som' }}
         id: som_version
@@ -324,6 +396,22 @@ jobs:
           echo "lume version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Capture bumped cua-driver version
+        if: ${{ inputs.service == 'cua-driver' }}
+        id: cua_driver_version
+        run: |
+          VERSION=$(grep -oP 'public static let version = "\K[^"]+' libs/cua-driver/Sources/CuaDriverCore/CuaDriverCore.swift)
+          echo "cua-driver version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped cua-driver-rs version
+        if: ${{ inputs.service == 'cua-driver-rs' }}
+        id: cua_driver_rs_version
+        run: |
+          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
+          echo "cua-driver-rs version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped cuabot version
         if: ${{ inputs.service == 'npm/cuabot' }}
         id: cuabot_version
@@ -341,9 +429,10 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
-      - name: Push release to main
+      - name: Push release to target branch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_BRANCH: ${{ inputs.target_branch || 'main' }}
         run: |
           # Configure git to use the app token
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
@@ -370,15 +459,15 @@ jobs:
             echo ""
             echo "=== Attempt $RETRY_COUNT/$MAX_RETRIES ==="
 
-            # Fetch latest main to check if we need to rebase
-            git fetch origin main
+            # Fetch latest target branch to check if we need to rebase
+            git fetch origin "${TARGET_BRANCH}"
 
-            # Check if our HEAD is a descendant of origin/main (fast-forward possible)
-            if ! git merge-base --is-ancestor origin/main HEAD; then
-              echo "Main branch has moved forward, rebasing..."
+            # Check if our HEAD is a descendant of origin/<branch> (fast-forward possible)
+            if ! git merge-base --is-ancestor "origin/${TARGET_BRANCH}" HEAD; then
+              echo "Branch ${TARGET_BRANCH} has moved forward, rebasing..."
 
-              # Rebase our commit(s) onto the latest main
-              git rebase origin/main
+              # Rebase our commit(s) onto the latest branch
+              git rebase "origin/${TARGET_BRANCH}"
 
               # Update the tag to point to the rebased commit
               for tag in $ALL_TAGS; do
@@ -395,13 +484,13 @@ jobs:
             echo "Pushing to temp branch..."
             git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
 
-            # Try to update main branch via API
-            echo "Updating main branch via API..."
-            if gh api -X PATCH /repos/${{ github.repository }}/git/refs/heads/main \
+            # Try to update target branch via API
+            echo "Updating ${TARGET_BRANCH} branch via API..."
+            if gh api -X PATCH "/repos/${{ github.repository }}/git/refs/heads/${TARGET_BRANCH}" \
               -f sha="${COMMIT_SHA}" \
               -F force=false 2>&1; then
 
-              echo "Successfully updated main branch!"
+              echo "Successfully updated ${TARGET_BRANCH} branch!"
 
               # Create tag via API (only after main is successfully updated)
               echo "Creating tag via API..."
@@ -421,11 +510,11 @@ jobs:
               exit 0
             fi
 
-            echo "Failed to update main (not a fast-forward), will retry..."
+            echo "Failed to update ${TARGET_BRANCH} (not a fast-forward), will retry..."
             sleep 2
           done
 
-          echo "ERROR: Failed to update main branch after $MAX_RETRIES attempts"
+          echo "ERROR: Failed to update ${TARGET_BRANCH} branch after $MAX_RETRIES attempts"
           exit 1
 
   # NOTE: Publishing is handled by tag-triggered workflows (cd-py-*.yml, cd-ts-*.yml, cd-swift-lume.yml)

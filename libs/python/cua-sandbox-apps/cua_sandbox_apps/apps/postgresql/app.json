@@ -1,0 +1,39 @@
+{
+  "id": "postgresql",
+  "name": "PostgreSQL",
+  "description": "PostgreSQL is an advanced, open-source object-relational database management system (ORDBMS) with over 35 years of active development. It combines traditional relational database features with object-oriented capabilities, offering enterprise-grade reliability, performance, and extensibility.",
+  "website": "https://www.postgresql.org",
+  "icon_url": "https://www.postgresql.org/favicon.ico",
+  "categories": [
+    "Database"
+  ],
+  "tags": [
+    "relational-database",
+    "sql",
+    "ordbms",
+    "open-source",
+    "enterprise",
+    "cross-platform",
+    "extensible",
+    "json",
+    "full-text-search"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/postgres/postgres",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "postgresql",
+    "snap": "postgresql",
+    "brew": "postgresql",
+    "choco": "postgresql",
+    "winget": "PostgreSQL.PostgreSQL"
+  },
+  "download_url": "https://www.postgresql.org/download/"
+}

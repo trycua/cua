@@ -1,0 +1,10 @@
+{
+  "binary_path": "/usr/bin/nvim",
+  "binary_name": "nvim",
+  "display_name": "Neovim",
+  "desktop_entry": "/usr/share/applications/nvim.desktop",
+  "icon_paths": [
+    "/usr/share/icons/hicolor/128x128/apps/nvim.png"
+  ],
+  "version": "v0.6.1"
+}

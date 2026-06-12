@@ -1,0 +1,41 @@
+{
+  "id": "wazuh",
+  "name": "Wazuh",
+  "description": "Open source unified security platform combining XDR (Extended Detection and Response) and SIEM (Security Information and Event Management) capabilities. Provides threat prevention, detection, and response across endpoints and cloud workloads with log analysis, file integrity monitoring, vulnerability detection, incident response, and regulatory compliance features.",
+  "website": "https://wazuh.com",
+  "icon_url": "https://wazuh.com/favicon.ico",
+  "categories": [
+    "SIEM",
+    "XDR",
+    "Security",
+    "Threat Detection"
+  ],
+  "tags": [
+    "endpoint-security",
+    "cloud-security",
+    "log-analysis",
+    "file-integrity-monitoring",
+    "threat-hunting",
+    "vulnerability-management",
+    "compliance",
+    "incident-response",
+    "container-security",
+    "cloud-posture-management"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/wazuh/wazuh",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "wazuh-agent",
+    "yum": "wazuh-agent",
+    "dnf": "wazuh-agent"
+  },
+  "download_url": "https://github.com/wazuh/wazuh/releases"
+}

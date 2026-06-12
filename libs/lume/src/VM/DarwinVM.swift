@@ -59,7 +59,8 @@ final class DarwinVM: VM {
                 macAddress: DarwinVirtualizationService.generateMacAddress(),
                 display: display,
                 hardwareModel: requirements.hardwareModel,
-                machineIdentifier: DarwinVirtualizationService.generateMachineIdentifier()
+                machineIdentifier: DarwinVirtualizationService.generateMachineIdentifier(),
+                networkMode: vmDirContext.config.networkMode
             )
         )
 

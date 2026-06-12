@@ -14,6 +14,7 @@ from cua_bench.types import (
     DoubleClickAction,
     DragAction,
     HotkeyAction,
+    KeyAction,
     RightClickAction,
     ScrollAction,
     TypeAction,
@@ -133,6 +134,7 @@ class CBEnvWorkerClient:
         "right_single",
         "drag",
         "hotkey",
+        "key",
         "type",
         "scroll",
         "wait",
@@ -270,6 +272,11 @@ class CBEnvWorkerClient:
         elif fn_name == "hotkey":
             args_str = ",".join(args)
             return f"hotkey({args_str})", HotkeyAction(keys=list(args))
+
+        elif fn_name == "key":
+            if not check_type(args, [str]):
+                return "wait()", default_action
+            return f"key({args[0]})", KeyAction(key=args[0])
 
         elif fn_name == "type":
             if not check_type(args, [str]):

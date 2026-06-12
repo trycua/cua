@@ -24,7 +24,11 @@ for path in pythonpath.split(":"):
         sys.path.insert(0, path)  # Insert at beginning to prioritize
         print(f"Added to sys.path: {path}")
 
-from core.telemetry import destroy_telemetry_client, is_telemetry_enabled, record_event
+from cua_core.telemetry import (
+    destroy_telemetry_client,
+    is_telemetry_enabled,
+    record_event,
+)
 
 
 class TestTelemetry:

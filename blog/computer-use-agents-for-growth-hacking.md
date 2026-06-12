@@ -106,7 +106,7 @@ Traditional event marketing at this scale: $5-10K minimum for booth + sponsorshi
 
 Our approach: $200 + scrappy execution.
 
-The automation is reuseable and will save hours of manual work, and the cua-las created more organic conversations than any booth could have.
+The automation is reusable and will save hours of manual work, and the cua-las created more organic conversations than any booth could have.
 
 ## What Didn't Work (Yet)
 

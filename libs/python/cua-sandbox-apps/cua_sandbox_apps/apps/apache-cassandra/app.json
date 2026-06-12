@@ -1,0 +1,35 @@
+{
+  "id": "apache-cassandra",
+  "name": "Apache Cassandra",
+  "description": "Apache Cassandra is a highly scalable, masterless NoSQL distributed database designed for managing massive amounts of data across multiple datacenters. It offers linear scalability, fault tolerance with multi-datacenter replication, and zero downtime node replacement. With a hybrid architecture enabling survival of entire data center outages, Cassandra provides high availability and consistently strong performance for read/write operations.",
+  "website": "https://cassandra.apache.org",
+  "icon_url": "https://cassandra.apache.org/assets/img/logo-white-r.png",
+  "categories": [
+    "Database"
+  ],
+  "tags": [
+    "NoSQL",
+    "distributed-database",
+    "key-value-store",
+    "scalable",
+    "high-availability",
+    "multi-datacenter",
+    "Apache"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/apache/cassandra",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "cassandra",
+    "brew": "cassandra",
+    "snap": "cassandra"
+  },
+  "download_url": "https://www.apache.org/dyn/closer.lua/cassandra/5.0.7/apache-cassandra-5.0.7-bin.tar.gz"
+}

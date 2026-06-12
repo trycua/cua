@@ -1,0 +1,120 @@
+---
+title: Android Sandboxes
+description: Run Android 14 VMs with touch, gesture, and hardware key controls
+# test-sources:
+#   examples/sandboxes/test_android_cloud_vm.py
+#   examples/sandboxes/test_android_local_vm.py
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Android sandboxes expose the `sb.mobile` interface for touch input, gestures, and hardware keys. Cloud Android works on any host OS. Local Android uses the Android SDK emulator.
+
+---
+
+## Cloud Android VM
+
+<Callout type="info">Requires `CUA_API_KEY`. No Android SDK or emulator needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_android_cloud_vm.py
+import asyncio
+from cua import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.android("14"),
+        name="example-android-cloud-vm",
+    ) as sb:
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+        w, h = await sb.screen.size()
+        print(f"Screen: {w}x{h}")
+
+        # Touch controls
+        await sb.mobile.tap(w // 2, h // 2)
+        await sb.mobile.home()
+
+
+asyncio.run(main())
+```
+
+## Local Android VM
+
+<Callout type="info">Requires Android SDK with `emulator` and `adb` installed. No API key needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_android_local_vm.py
+import asyncio
+from cua import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.android("14"),
+        local=True,
+        name="example-android-local-vm",
+    ) as sb:
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+        w, h = await sb.screen.size()
+        print(f"Screen: {w}x{h}")
+
+        await sb.mobile.tap(w // 2, h // 2)
+        await sb.mobile.home()
+
+
+asyncio.run(main())
+```
+
+---
+
+## `sb.mobile` interface
+
+All touch and hardware key operations go through `sb.mobile`:
+
+```python
+# Tap, long press, double tap
+await sb.mobile.tap(x, y)
+await sb.mobile.long_press(x, y, duration_ms=1000)
+await sb.mobile.double_tap(x, y)
+
+# Swipe and scroll
+await sb.mobile.swipe(x1, y1, x2, y2, duration_ms=300)
+await sb.mobile.scroll_up()
+await sb.mobile.scroll_down()
+
+# Hardware keys
+await sb.mobile.home()
+await sb.mobile.back()
+await sb.mobile.recents()
+
+# Text input
+await sb.mobile.type_text("hello world")
+```
+
+## Multi-touch gestures
+
+Use `sb.mobile.gesture()` for pinch-to-zoom and other multi-finger inputs. Pass alternating start/end `(x, y)` pairs — one pair per finger:
+
+```python
+w, h = await sb.screen.size()
+cx, cy = w // 2, h // 2
+
+# Pinch open (zoom in)
+await sb.mobile.gesture(
+    (cx - 20, cy), (cx - 200, cy),   # finger 0
+    (cx + 20, cy), (cx + 200, cy),   # finger 1
+)
+
+# Pinch close (zoom out)
+await sb.mobile.gesture(
+    (cx - 200, cy), (cx - 20, cy),
+    (cx + 200, cy), (cx + 20, cy),
+)
+```

@@ -8,7 +8,7 @@ We’re bringing something new to [Hack the North](https://hackthenorth.com), Ca
 
 ## Track A: On-site @ Hack the North
 
-There’s one global leaderboard: **Cua - Best State-of-the-Art Computer-Use Agent**. Use any model setup you like (cloud or local). After projects are submitted, [HUD](https://www.hud.so) runs the official benchmark; the top team earns a **guaranteed YC partner interview (W26 batch)**. We’ll also feature winners on our blog and socials and kit the team out with swag.
+There’s one global leaderboard: **Cua - Best State-of-the-Art Computer-Use Agent**. Use any model setup you like (cloud or local). After projects are submitted, [HUD](https://www.hud.ai) runs the official benchmark; the top team earns a **guaranteed YC partner interview (W26 batch)**. We’ll also feature winners on our blog and socials and kit the team out with swag.
 
 ## Track B: Cua Global Online Hackathon
 

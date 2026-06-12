@@ -26,6 +26,29 @@ extension Server {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
 
+        // Check if an async pull is in progress for this VM name
+        let pullProgress = await PullProgressTracker.shared.getProgress(for: name)
+        let pullError = await PullProgressTracker.shared.getError(for: name)
+
+        if let errorMsg = pullError {
+            // Pull failed — surface the error
+            return .badRequest(message: "Pull failed for '\(name)': \(errorMsg)")
+        }
+
+        if let progress = pullProgress {
+            // Pull in progress — return a synthetic "pulling" status without hitting disk
+            let responseBody: [String: AnyEncodable] = [
+                "name": AnyEncodable(name),
+                "status": AnyEncodable("pulling"),
+                "downloadProgress": AnyEncodable(progress),
+            ]
+            return try HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: JSONEncoder().encode(responseBody)
+            )
+        }
+
         do {
             let vmController = LumeController()
             // Use getDetails() for consistent status including provisioning state
@@ -34,6 +57,57 @@ extension Server {
         } catch {
             return .badRequest(message: error.localizedDescription)
         }
+    }
+
+    func handlePullStart(_ body: Data?) async throws -> HTTPResponse {
+        guard let body = body,
+            let request = try? JSONDecoder().decode(PullRequest.self, from: body)
+        else {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
+            )
+        }
+
+        let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
+            "image_name": imageName
+        ])
+
+        let vmName = request.name ?? imageName
+        await PullProgressTracker.shared.setProgress(0.0, for: vmName)
+
+        Task.detached { @MainActor @Sendable in
+            do {
+                let vmController = LumeController()
+                try await vmController.pullImage(
+                    image: request.image,
+                    name: request.name,
+                    registry: request.registry,
+                    organization: request.organization,
+                    storage: request.storage,
+                    progressHandler: { pct in
+                        Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                    }
+                )
+                await PullProgressTracker.shared.complete(for: vmName)
+                Logger.info("Async pull completed", metadata: ["name": vmName])
+            } catch {
+                await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
+                Logger.error("Async pull failed", metadata: ["name": vmName, "error": error.localizedDescription])
+            }
+        }
+
+        return HTTPResponse(
+            statusCode: .accepted,
+            headers: ["Content-Type": "application/json"],
+            body: try JSONEncoder().encode([
+                "message": AnyEncodable("Pull started"),
+                "name": AnyEncodable(vmName),
+                "image": AnyEncodable(request.image),
+            ])
+        )
     }
 
     func handleCreateVM(_ body: Data?) async throws -> HTTPResponse {
@@ -65,6 +139,8 @@ extension Server {
                 unattendedConfig = try UnattendedConfig.load(from: unattendedArg)
             }
 
+            let networkMode = try request.parseNetworkMode()
+
             // Use async create - returns immediately while VM is provisioned in background
             try vmController.createAsync(
                 name: request.name,
@@ -75,7 +151,8 @@ extension Server {
                 display: request.display,
                 ipsw: request.ipsw,
                 storage: request.storage,
-                unattendedConfig: unattendedConfig
+                unattendedConfig: unattendedConfig,
+                networkMode: networkMode
             )
 
             // Return 202 Accepted - VM creation is in progress
@@ -336,7 +413,8 @@ extension Server {
             let request =
                 body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
                 ?? RunVMRequest(
-                    noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil)
+                    noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil,
+                    diskPath: nil, nvramPath: nil, network: nil, clipboard: nil)
 
             // Record telemetry
             TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
@@ -358,6 +436,8 @@ extension Server {
                 "Successfully parsed shared directories",
                 metadata: ["name": name, "count": "\(dirs.count)"])
 
+            let networkMode = try request.parseNetworkMode()
+
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
             startVM(
@@ -365,7 +445,11 @@ extension Server {
                 noDisplay: request.noDisplay ?? false,
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
-                storage: request.storage
+                storage: request.storage,
+                diskPath: request.diskPath.map { Path($0) },
+                nvramPath: request.nvramPath.map { Path($0) },
+                networkMode: networkMode,
+                clipboard: request.clipboard ?? false
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -432,14 +516,20 @@ extension Server {
         ])
 
         do {
+            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
+            await PullProgressTracker.shared.setProgress(0.0, for: vmName)
             let vmController = LumeController()
             try await vmController.pullImage(
                 image: request.image,
                 name: request.name,
                 registry: request.registry,
                 organization: request.organization,
-                storage: request.storage
+                storage: request.storage,
+                progressHandler: { pct in
+                    Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                }
             )
+            await PullProgressTracker.shared.complete(for: vmName)
 
             return HTTPResponse(
                 statusCode: .ok,
@@ -451,6 +541,8 @@ extension Server {
                 ])
             )
         } catch {
+            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
+            await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],
@@ -505,7 +597,8 @@ extension Server {
                     chunkSizeMb: request.chunkSizeMb,
                     verbose: false,  // Verbose typically handled by server logs
                     dryRun: false,  // Default API behavior is likely non-dry-run
-                    reassemble: false  // Default API behavior is likely non-reassemble
+                    reassemble: false,  // Default API behavior is likely non-reassemble
+                    singleLayer: request.singleLayer
                 )
                 print(
                     "Background push completed successfully for image: \(request.imageName):\(request.tags.joined(separator: ","))"
@@ -817,7 +910,11 @@ extension Server {
         noDisplay: Bool,
         sharedDirectories: [SharedDirectory] = [],
         recoveryMode: Bool = false,
-        storage: String? = nil
+        storage: String? = nil,
+        diskPath: Path? = nil,
+        nvramPath: Path? = nil,
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -826,6 +923,7 @@ extension Server {
                 "noDisplay": "\(noDisplay)",
                 "recoveryMode": "\(recoveryMode)",
                 "storage": String(describing: storage),
+                "networkMode": networkMode?.description ?? "vm-config",
             ])
 
         Task.detached { @MainActor @Sendable in
@@ -845,7 +943,11 @@ extension Server {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     recoveryMode: recoveryMode,
-                    storage: storage
+                    storage: storage,
+                    diskPath: diskPath,
+                    nvramPath: nvramPath,
+                    networkMode: networkMode,
+                    clipboard: clipboard
                 )
                 Logger.info("VM started successfully in background task", metadata: ["name": name])
             } catch {

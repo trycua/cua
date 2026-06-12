@@ -1,0 +1,11 @@
+{
+  "binary_path": "/usr/local/bin/idea",
+  "binary_name": "idea",
+  "display_name": "IntelliJ IDEA Community Edition",
+  "desktop_entry": "/usr/share/applications/jetbrains-idea.desktop",
+  "icon_paths": [
+    "/opt/intellij-idea/bin/idea.png",
+    "/opt/intellij-idea/bin/idea.svg"
+  ],
+  "version": "2025.2.6.1"
+}

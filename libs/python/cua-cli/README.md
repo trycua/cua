@@ -14,8 +14,16 @@ pip install cua-cli
 # Authentication
 cua auth login              # Authenticate via browser
 cua auth login --api-key    # Authenticate with API key
-cua auth logout             # Clear credentials
+cua auth list               # List authenticated workspaces
+cua auth status             # Show auth status and credits
+cua auth logout             # Remove active workspace credentials
+cua auth logout --workspace <slug>  # Remove specific workspace
+cua auth logout --all       # Remove all credentials
 cua auth env                # Export API key to .env file
+
+# Workspace Management
+cua ws set <slug>           # Switch active workspace
+cua ws set                  # Interactive workspace picker
 
 # Sandbox Management
 cua sb list                 # List all sandboxes
@@ -94,7 +102,7 @@ Individual permissions: `sandbox:list`, `sandbox:create`, `sandbox:delete`, `san
 ## Environment Variables
 
 - `CUA_API_KEY`: API key for authentication
-- `CUA_API_BASE`: API base URL (default: https://api.cua.ai)
+- `CUA_API_BASE`: API base URL (default: `https://api.cua.ai`)
 - `CUA_WEBSITE_URL`: Website URL for OAuth (default: https://cua.ai)
 - `CUA_MCP_PERMISSIONS`: Default MCP permissions (comma-separated)
 - `CUA_SANDBOX`: Default sandbox name for computer commands

@@ -1,0 +1,67 @@
+[package]
+name = "platform-macos"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+base64 = { workspace = true }
+image = { workspace = true }
+async-trait = "0.1"
+uuid = { workspace = true }
+# Insertion-ordered map for the keyed per-session cursor render collection.
+# IndexMap gives deterministic iteration order = stable cursor z-order frame
+# to frame (a plain HashMap would flicker overlapping cursors).
+indexmap = "2"
+cua-driver-core = { path = "../cua-driver-core" }
+cursor-overlay = { path = "../cursor-overlay" }
+pip-preview = { path = "../pip-preview" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS system bindings
+core-foundation = "0.10"
+core-graphics = { version = "0.24", features = ["highsierra", "elcapitan"] }
+foreign-types = "0.5"
+libc = "0.2"
+block2 = "0.5"
+# objc2 and its AppKit/CoreFoundation bindings
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = [
+    "NSArray", "NSString", "NSDictionary", "NSRunLoop",
+    "NSThread", "NSObject", "NSValue",
+    "NSAppleEventDescriptor", "NSNotification", "NSOperation",
+    "NSURL", "NSDate", "NSError",
+    "block2", "libc",
+] }
+objc2-app-kit = { version = "0.2", features = [
+    "NSApplication", "NSWindow", "NSScreen", "NSColor",
+    "NSEvent", "NSRunningApplication", "NSWorkspace",
+    "NSView", "NSGraphicsContext", "NSResponder",
+    # Picture-in-picture preview window (experimental) — NSImageView /
+    # NSImage for the post-action screenshot, NSTextField for the
+    # one-line action label, NSPanel/NSImageCell are reachable via
+    # transitive deps.
+    "NSImage", "NSImageView", "NSTextField", "NSControl", "NSCell",
+    "block2", "libc",
+] }
+
+# QuartzCore for CALayer
+objc2-quartz-core = { version = "0.2", features = ["CALayer"] }
+
+# Native ScreenCaptureKit bindings — used by `video_sckit` to replace the
+# ffmpeg subprocess on macOS. `macos_15_0` enables the `SCRecordingOutput`
+# convenience that finalises an mp4 in-process, removing the per-binary
+# Screen Recording TCC prompt that subprocess capture would otherwise trip.
+screencapturekit = { version = "6", features = ["macos_15_0"] }
+
+# tiny-skia for cursor rendering
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+
+# WebSocket CDP client (used by browser/cdp_client.rs for the page tool)
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"

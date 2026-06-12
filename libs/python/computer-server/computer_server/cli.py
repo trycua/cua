@@ -3,14 +3,10 @@ Command-line interface for the Computer API server.
 """
 
 import argparse
-import asyncio
 import logging
 import os
 import sys
-import threading
 from typing import List, Optional
-
-from .server import Server
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +51,31 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         type=str,
         help="Path to SSL certificate file (enables HTTPS)",
     )
+    # Backend selection
     parser.add_argument(
-        "--watchdog",
-        action="store_true",
-        help="Enable watchdog monitoring (automatically enabled if CONTAINER_NAME env var is set)",
+        "--backend",
+        choices=["native", "vnc"],
+        default="native",
+        help="Handler backend: 'native' uses OS-specific handlers, 'vnc' uses VNC (default: native)",
+    )
+
+    # VNC backend options
+    parser.add_argument(
+        "--vnc-host",
+        type=str,
+        help="VNC server host (required when --backend=vnc)",
     )
     parser.add_argument(
-        "--watchdog-interval",
+        "--vnc-port",
         type=int,
-        default=30,
-        help="Watchdog ping interval in seconds (default: 30)",
+        default=5900,
+        help="VNC server port (default: 5900)",
     )
     parser.add_argument(
-        "--no-restart",
-        action="store_true",
-        help="Disable automatic server restart in watchdog",
+        "--vnc-password",
+        type=str,
+        default="",
+        help="VNC server password",
     )
 
     return parser.parse_args(args)
@@ -86,50 +92,22 @@ def main() -> None:
         stream=sys.stderr,  # Use stderr for MCP compatibility
     )
 
-    # Check if watchdog should be enabled
-    container_name = os.environ.get("CONTAINER_NAME")
-    enable_watchdog = (args.watchdog or bool(container_name)) and not sys.platform.startswith("win")
-
-    if container_name:
-        logger.info(
-            f"Container environment detected (CONTAINER_NAME={container_name}), enabling watchdog"
-        )
-    elif args.watchdog:
-        logger.info("Watchdog explicitly enabled via --watchdog flag")
-
-    # Start watchdog if enabled
-    if enable_watchdog:
-        logger.info(f"Starting watchdog monitoring with {args.watchdog_interval}s interval")
-
-        def run_watchdog_thread():
-            """Run watchdog in a separate thread."""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                # Create CLI args dict for watchdog
-                cli_args = {
-                    "host": args.host,
-                    "port": args.port,
-                    "log_level": args.log_level,
-                    "ssl_keyfile": args.ssl_keyfile,
-                    "ssl_certfile": args.ssl_certfile,
-                }
-
-                # Create watchdog with restart settings
-                from .watchdog import Watchdog
-
-                watchdog = Watchdog(cli_args=cli_args, ping_interval=args.watchdog_interval)
-                watchdog.restart_enabled = not args.no_restart
-
-                loop.run_until_complete(watchdog.start_monitoring())
-            except Exception as e:
-                logger.error(f"Watchdog error: {e}")
-            finally:
-                loop.close()
-
-        # Start watchdog in background thread
-        watchdog_thread = threading.Thread(target=run_watchdog_thread, daemon=True, name="watchdog")
-        watchdog_thread.start()
+    # Set backend env vars from CLI args before Server import triggers handler creation
+    if args.backend == "vnc" or args.vnc_host:
+        if not args.vnc_host and not os.environ.get("CUA_VNC_HOST"):
+            parser_err = "--vnc-host is required when using --backend=vnc"
+            logger.error(parser_err)
+            sys.exit(1)
+        os.environ["CUA_BACKEND"] = "vnc"
+        if args.vnc_host:
+            os.environ["CUA_VNC_HOST"] = args.vnc_host
+        # Only override env vars from CLI args when explicitly provided
+        if args.vnc_port != 5900 or "CUA_VNC_PORT" not in os.environ:
+            os.environ["CUA_VNC_PORT"] = str(args.vnc_port)
+        if args.vnc_password:
+            os.environ["CUA_VNC_PASSWORD"] = args.vnc_password
+        vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")
+        logger.info(f"VNC backend enabled → {vnc_host}:{args.vnc_port}")
 
     # Create and start the server
     logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")
@@ -150,6 +128,10 @@ def main() -> None:
         )
     else:
         logger.info("HTTP mode (no SSL certificates provided)")
+
+    # Import Server lazily so env vars (e.g. CUA_VNC_HOST) are set before
+    # the module-level handler factory runs in main.py.
+    from .server import Server
 
     server = Server(host=args.host, port=args.port, log_level=args.log_level, **ssl_args)
 

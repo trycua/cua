@@ -1,0 +1,60 @@
+
+Next steps:
+
+  1. Try it:
+       {{BINARY}} --version
+       {{BINARY}} list-tools
+
+  2. Grant permissions (macOS — Accessibility + Screen Recording):
+       {{BINARY}} permissions status   # report status (read-only; tells you which
+                                       # identity the grants belong to)
+       {{BINARY}} permissions grant    # the correct way to grant — launches CuaDriver
+                                       # so the dialog says "Cua Driver" and the grant
+                                       # sticks to the driver, not your terminal.
+                                   # Tip: `--autostart` (above) keeps a launchd daemon
+                                   # running so you grant once and it persists.
+
+  3. Agent skill pack (optional):
+       {{BINARY}} skills install   # fetch + link the cua-driver skill pack
+                                   # into Claude Code / Codex / OpenClaw / OpenCode.
+                                   # The install never touches your agent dirs.
+
+  4. As an MCP server — run the one matching your client. Each is also
+     available via '{{BINARY}} mcp-config --client <name>':
+
+     • Claude Code (computer-use compatibility mode):
+         {{BINARY}} mcp-config --client claude
+       Copy-paste the printed command into your shell — it uses
+       `claude mcp add-json` (not bare `--`) so the long flag travels
+       through PowerShell's arg parser intact. This mode grounds Claude
+       Code's vision/computer-use-style flow on CuaDriver window
+       screenshots — it keeps the normal CuaDriver tools and changes
+       only the screenshot tool.
+
+     • Codex (OpenAI):
+         codex mcp add cua-driver -- {{BINARY}} mcp
+
+     • OpenClaw:
+         {{BINARY}} mcp-config --client openclaw
+
+     • GitHub Copilot CLI (paste into ~/.copilot/mcp-config.json):
+         {
+           "mcpServers": {
+             "cua-driver": {
+               "type": "local",
+               "command": "{{BINARY}}",
+               "args": ["mcp"],
+               "tools": ["*"]
+             }
+           }
+         }
+
+     • Cursor / OpenCode / Hermes (no add CLI — paste config):
+         {{BINARY}} mcp-config --client cursor     # JSON for ~/.cursor/mcp.json
+         {{BINARY}} mcp-config --client opencode   # JSON for opencode.json
+         {{BINARY}} mcp-config --client hermes     # YAML for ~/.hermes/config.yaml
+
+     For other clients accepting the generic mcpServers shape:
+         {{BINARY}} mcp-config
+
+Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust

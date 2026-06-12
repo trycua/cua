@@ -35,6 +35,7 @@ export interface CustomComputer {
   id: string;
   url: string;
   name: string;
+  status?: string;
 }
 
 // VM Status enum
@@ -90,6 +91,10 @@ export function getComputerName(computer: Computer): string {
     return computer.customName || computer.name;
   }
   return computer.name;
+}
+
+export function getComputerStatus(computer: Computer): string | undefined {
+  return computer.status;
 }
 
 // Chat interface

@@ -1,0 +1,29 @@
+{
+  "app_id": "neovim",
+  "os": "linux",
+  "install_exit_code": 0,
+  "download_available": true,
+  "install_script": "#!/bin/bash\nset -e\n\necho \"Updating package manager...\"\napt-get update -qq\n\necho \"Installing Neovim...\"\napt-get install -y neovim\n\necho \"Installation complete!\"\nwhich nvim || echo \"Warning: nvim not found in PATH\"\nnvim --version | head -1\n",
+  "install_stdout": "Updating package manager...\nInstalling Neovim...\nReading package lists...\nBuilding dependency tree...\nReading state information...\nThe following additional packages will be installed:\n  libluajit-5.1-2 libluajit-5.1-common libmsgpackc2 libtermkey1\n  libtree-sitter0 libunibilium4 libvterm0 lua-luv neovim-runtime\n  python3-greenlet python3-msgpack python3-neovim python3-pynvim xxd\nSuggested packages:\n  ctags vim-scripts python-greenlet-dev python-greenlet-doc\nThe following NEW packages will be installed:\n  libluajit-5.1-2 libluajit-5.1-common libmsgpackc2 libtermkey1\n  libtree-sitter0 libunibilium4 libvterm0 lua-luv neovim neovim-runtime\n  python3-greenlet python3-msgpack python3-neovim python3-pynvim xxd\n0 upgraded, 15 newly installed, 0 to remove and 42 not upgraded.\nNeed to get 6684 kB of archives.\nAfter this operation, 27.7 MB of additional disk space will be used.\nInstallation complete!\n/usr/bin/nvim\nNVIM v0.6.1\n",
+  "launch_script": "#!/bin/bash\n\n# Launch Neovim in a terminal with a sample file\n# Neovim is a terminal-based editor, so we need to open it in a terminal\n\n# Create a sample file to edit\nmkdir -p /tmp/neovim_demo\ncat > /tmp/neovim_demo/sample.txt << 'EOF'\nWelcome to Neovim!\n==================\n\nThis is a hyperextensible Vim-based text editor with:\n- Modern enhancements\n- Built-in LSP client\n- Tree-sitter parsing\n- Lua support\n\nYou can navigate with arrow keys or Vim keys (hjkl).\nPress :q to quit without saving, or :wq to save and quit.\nEOF\n\n# Launch Neovim in the terminal with the sample file\nexec nvim /tmp/neovim_demo/sample.txt\n",
+  "extract_metadata_script": "#!/bin/bash\nset -e\n\n# Find the nvim binary\nBINARY_PATH=$(which nvim)\nBINARY_NAME=$(basename \"$BINARY_PATH\")\n\n# Get version\nVERSION=$(nvim --version | head -1 | awk '{print $2}')\n\n# Find .desktop file\nDESKTOP_ENTRY=$(find /usr/share/applications -name \"*neovim*\" -o -name \"*nvim*\" 2>/dev/null | head -1 || echo \"\")\n\n# Extract display_name from .desktop file if it exists\nDISPLAY_NAME=\"Neovim\"\nif [ -n \"$DESKTOP_ENTRY\" ] && [ -f \"$DESKTOP_ENTRY\" ]; then\n  DISPLAY_NAME=$(grep \"^Name=\" \"$DESKTOP_ENTRY\" | cut -d= -f2- | head -1 || echo \"Neovim\")\nfi\n\n# Find and validate icon files\nICON_PATHS=()\n\n# Check for icons in standard locations\nif [ -d /usr/share/icons ]; then\n  while IFS= read -r icon_path; do\n    if [ -f \"$icon_path\" ]; then\n      ICON_PATHS+=(\"$icon_path\")\n    fi\n  done < <(find /usr/share/icons -type f \\( -name \"*neovim*\" -o -name \"*nvim*\" \\) 2>/dev/null | head -5)\nfi\n\n# Check /usr/share/pixmaps\nif [ -d /usr/share/pixmaps ]; then\n  while IFS= read -r icon_path; do\n    if [ -f \"$icon_path\" ]; then\n      ICON_PATHS+=(\"$icon_path\")\n    fi\n  done < <(find /usr/share/pixmaps -type f \\( -name \"*neovim*\" -o -name \"*nvim*\" \\) 2>/dev/null | head -5)\nfi\n\n# Also check for common vim/editor icons that might be used\nif [ -d /usr/share/pixmaps ]; then\n  while IFS= read -r icon_path; do\n    if [ -f \"$icon_path\" ]; then\n      ICON_PATHS+=(\"$icon_path\")\n    fi\n  done < <(find /usr/share/pixmaps -type f -name \"*vim*\" 2>/dev/null | head -3)\nfi\n\n# Validate desktop entry exists\nDESKTOP_JSON=\"\"\nif [ -n \"$DESKTOP_ENTRY\" ] && [ -f \"$DESKTOP_ENTRY\" ]; then\n  DESKTOP_JSON=\"\\\"$DESKTOP_ENTRY\\\"\"\nelse\n  DESKTOP_JSON=\"null\"\nfi\n\n# Format icon paths as JSON array\nICON_JSON=\"[\"\nfor icon in \"${ICON_PATHS[@]}\"; do\n  if [ -n \"$icon\" ] && [ -f \"$icon\" ]; then\n    ICON_JSON=\"$ICON_JSON\\\"$icon\\\",\"\n  fi\ndone\n# Remove trailing comma and close bracket\nICON_JSON=\"${ICON_JSON%,}]\"\n\n# Output JSON with all metadata\ncat << EOF\n{\n  \"binary_path\": \"$BINARY_PATH\",\n  \"binary_name\": \"$BINARY_NAME\",\n  \"display_name\": \"$DISPLAY_NAME\",\n  \"desktop_entry\": $DESKTOP_JSON,\n  \"icon_paths\": $ICON_JSON,\n  \"version\": \"$VERSION\"\n}\nEOF\n",
+  "metadata": {
+    "binary_path": "/usr/bin/nvim",
+    "binary_name": "nvim",
+    "display_name": "Neovim",
+    "desktop_entry": "/usr/share/applications/nvim.desktop",
+    "icon_paths": [
+      "/usr/share/icons/hicolor/128x128/apps/nvim.png"
+    ],
+    "version": "v0.6.1"
+  },
+  "sandbox_name": "linux-43132913",
+  "verification_command": "which nvim && nvim --version",
+  "is_cli": true,
+  "notes": "Neovim v0.6.1 successfully installed via apt-get on Ubuntu. This is a terminal-based text editor that runs in a terminal window. The screenshot shows Neovim running with a sample file open in xfce4-terminal. Display name extracted from .desktop file, all icon paths validated to exist.",
+  "screenshot_verification": "PASS: A terminal window is displaying Neovim's welcome screen with information about the editor, its features, and usage instructions, along with an open sample file at /tmp/neovim_demo/sample.txt.",
+  "verification_passed": true,
+  "extracted_icons": [
+    "cua_sandbox_apps\\apps\\neovim\\linux\\logs\\icon-128x128.png"
+  ]
+}

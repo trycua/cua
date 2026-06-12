@@ -20,16 +20,13 @@ This opens a UI that shows pending completions. Select a completion to take cont
 Use `human/human` as the model:
 
 ```python
-from computer import Computer
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-agent = ComputerAgent(
-    model="human/human",
-    tools=[computer]
-)
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    agent = ComputerAgent(
+        model="human/human",
+        tools=[computer]
+    )
 
 async for result in agent.run("Navigate to settings and enable dark mode"):
     print(result)

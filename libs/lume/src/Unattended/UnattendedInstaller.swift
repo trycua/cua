@@ -5,14 +5,136 @@ import Virtualization
 @MainActor
 final class UnattendedInstaller {
 
-    /// Run unattended setup on a VM
-    /// - Parameters:
-    ///   - vm: The VM to configure
-    ///   - config: Unattended configuration with boot commands
-    ///   - vncPort: VNC port to use (0 for auto-assign)
-    ///   - noDisplay: If true, don't open the VNC client
-    ///   - debug: If true, save screenshots with click coordinates
-    ///   - debugDir: Custom directory for debug screenshots (defaults to unique folder in system temp)
+    /// Run agent-based setup using Claude computer-use API
+    func installWithAgent(
+        vm: VM,
+        apiKey: String,
+        model: String = "claude-sonnet-4-6",
+        maxIterations: Int = 100,
+        systemPrompt: String? = nil,
+        vncPort: Int = 0,
+        noDisplay: Bool = false,
+        debug: Bool = false,
+        debugDir: String? = nil
+    ) async throws {
+        Logger.info("Starting agent-based setup", metadata: [
+            "vm": vm.name,
+            "model": model,
+            "maxIterations": "\(maxIterations)",
+            "debug": "\(debug)"
+        ])
+
+        // Start the VM (same retry logic as preset mode)
+        Logger.info("Starting VM for agent setup (background task)")
+        var vmStartError: Error?
+        let vmTask = Task {
+            var attempts = 0
+            let maxAttempts = 3
+            while attempts < maxAttempts {
+                do {
+                    try await vm.run(
+                        noDisplay: noDisplay,
+                        sharedDirectories: [],
+                        mount: nil,
+                        vncPort: vncPort,
+                        recoveryMode: false,
+                        usbMassStoragePaths: []
+                    )
+                    return
+                } catch {
+                    let errorDescription = error.localizedDescription
+                    if errorDescription.contains("auxiliary storage") || errorDescription.contains("Failed to lock") {
+                        attempts += 1
+                        if attempts < maxAttempts {
+                            Logger.info("VM start failed due to auxiliary storage lock, retrying", metadata: [
+                                "attempt": "\(attempts)/\(maxAttempts)",
+                                "waitTime": "5s"
+                            ])
+                            try await Task.sleep(nanoseconds: 5_000_000_000)
+                            continue
+                        }
+                    }
+                    vmStartError = error
+                    throw error
+                }
+            }
+        }
+
+        // Give the VM a moment to start
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+
+        if let error = vmStartError {
+            Logger.error("VM failed to start", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+
+        // Wait for boot (agent mode uses a fixed 60s boot wait)
+        let bootWait: UInt64 = 60
+        Logger.info("Waiting for VM to boot", metadata: ["bootWait": "\(bootWait)s"])
+        try await Task.sleep(nanoseconds: bootWait * 1_000_000_000)
+
+        // Connect VNC input client
+        Logger.info("Connecting VNC input client for agent automation")
+        try await vm.vncService.connectInputClient()
+
+        // Get display dimensions from VNC framebuffer
+        let framebufferSize = await vm.vncService.getFrameBufferSize() ?? (width: 1920, height: 1440)
+        let displayWidth = Int(framebufferSize.width)
+        let displayHeight = Int(framebufferSize.height)
+
+        Logger.info("VNC framebuffer size", metadata: [
+            "width": "\(displayWidth)",
+            "height": "\(displayHeight)"
+        ])
+
+        // Create SSH reachability check closure
+        let macAddress = vm.vmDirContext.config.macAddress
+        let sshCheck: (() async -> Bool)? = macAddress != nil ? {
+            guard let ip = DHCPLeaseParser.getIPAddress(forMAC: macAddress!) else {
+                return false
+            }
+            Logger.info("Checking SSH reachability", metadata: ["ip": ip])
+            let runner = HealthCheckRunner()
+            let check = HealthCheck(type: "ssh", user: "lume", password: "lume", timeout: 5, retries: 1, retryDelay: 0)
+            return (try? await runner.run(check: check, vmIP: ip)) ?? false
+        } : nil
+
+        // Create and run the agent
+        let debugDirectory: URL? = debugDir.map { URL(fileURLWithPath: $0) }
+        let agent = AgentSetupRunner(
+            vncService: vm.vncService,
+            apiKey: apiKey,
+            model: model,
+            displayWidth: displayWidth,
+            displayHeight: displayHeight,
+            maxIterations: maxIterations,
+            debug: debug,
+            debugDirectory: debugDirectory,
+            sshCheck: sshCheck
+        )
+
+        do {
+            try await agent.run(systemPrompt: systemPrompt)
+            Logger.info("Agent setup completed successfully")
+
+            vm.vncService.disconnectInputClient()
+
+            // Stop the VM
+            Logger.info("Agent setup finished - stopping VM")
+            vmTask.cancel()
+            try? await vm.stop()
+            Logger.info("VM stopped", metadata: ["name": vm.name])
+        } catch {
+            Logger.error("Agent setup failed", metadata: ["error": error.localizedDescription])
+            vm.vncService.disconnectInputClient()
+            vmTask.cancel()
+            try? await vm.stop()
+            Logger.info("VM stopped after failure", metadata: ["name": vm.name])
+            throw error
+        }
+    }
+
+    /// Run unattended setup on a VM using preset commands
     func install(
         vm: VM,
         config: UnattendedConfig,

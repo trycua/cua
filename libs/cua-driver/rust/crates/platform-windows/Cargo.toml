@@ -1,0 +1,80 @@
+[package]
+name = "platform-windows"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"
+cua-driver-core = { path = "../cua-driver-core" }
+cursor-overlay = { path = "../cursor-overlay" }
+pip-preview = { path = "../pip-preview" }
+# IndexMap gives the keyed cursor render collection deterministic
+# insertion-ordered iteration = stable per-session cursor z-order frame to
+# frame (mirrors platform-macos's per-session overlay).
+indexmap = "2"
+# tiny-skia for cross-platform cursor rendering (used in overlay.rs on all targets)
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+image = { workspace = true }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Input_KeyboardAndMouse",
+    # Pointer/touch injection (Track A background-actuation probe):
+    # InitializeTouchInjection / InjectTouchInput / InjectSyntheticPointerInput
+    # live in Win32_UI_Input_Pointer; POINTER_TYPE_INFO / HSYNTHETICPOINTERDEVICE
+    # / CreateSyntheticPointerDevice live in Win32_UI_Controls.
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_OpenGL",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_Storage_Xps",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
+    # IShellItem2::GetString — used by launch_uwp::resolve_aumid_by_name to
+    # read PKEY_AppUserModel_ID off entries enumerated from shell:AppsFolder.
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Media",
+    "Win32_System_Registry",
+    # `cua-driver doctor` interactive-session probe:
+    # - Win32_System_RemoteDesktop → ProcessIdToSessionId
+    # - Win32_System_StationsAndDesktops → OpenWindowStationW
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
+    # WinRT for UWP package enumeration via PackageManager.
+    "Management_Deployment",
+    "ApplicationModel",
+    "Foundation_Collections",
+    # Windows.Graphics.Capture (WGC) - the supported way to capture
+    # UWP / DirectComposition windows even when they're occluded by
+    # another window. PrintWindow returns black for these surfaces,
+    # and the screen-region BitBlt fallback returns the occluding
+    # window's pixels. Min OS: Win10 1903 (~100% of users today).
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+] }
+base64 = { workspace = true }

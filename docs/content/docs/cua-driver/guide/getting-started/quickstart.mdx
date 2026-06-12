@@ -1,0 +1,167 @@
+---
+title: Quickstart
+description: Drive your first desktop app with Cua Driver
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+You'll launch an app in the background, snapshot its accessibility tree, click a button by element index, and verify the action landed.
+
+<Callout type="info">
+  The commands below use macOS (`open -n -g -a CuaDriver`, `⌘Q`). On Windows start the daemon with
+  [`cua-driver autostart`](/cua-driver/guide/getting-started/autostart) and on Linux with `cua-driver serve &`
+  ([Linux guide](/cua-driver/guide/getting-started/linux)); the `cua-driver call <tool>` invocations are identical
+  across platforms.
+</Callout>
+
+## Start the daemon
+
+Element-indexed workflows require a persistent daemon. The per-pid element cache lives in-process, so one-shot CLI invocations lose it between calls.
+
+```bash
+open -n -g -a CuaDriver --args serve
+cua-driver status
+# Cua Driver daemon is running
+#   socket: /Users/you/Library/Caches/cua-driver/cua-driver.sock
+#   pid: 12345
+```
+
+<Callout type="info">
+  `cua-driver serve &` also works. The CLI auto-relaunches itself via LaunchServices when your
+  shell's TCC context is wrong (any IDE terminal).
+</Callout>
+
+Switch to `som` mode so snapshots carry both the AX tree and a screenshot:
+
+```bash
+cua-driver config set capture_mode som
+```
+
+## Launch an app (hidden)
+
+```bash
+cua-driver call launch_app '{"bundle_id":"com.apple.calculator"}'
+```
+
+Output:
+
+```
+✅ Launched Calculator (pid 844) in background.
+
+Windows:
+- "Calculator" [window_id: 10725]
+→ Call get_window_state(pid: 844, window_id) to inspect.
+```
+
+The app's pid and a `windows` array come back in one call. `launch_app` is idempotent: relaunching a running app returns the existing pid with no side effects. The window's AX tree is fully populated (clickable via `element_index`) but not drawn on screen.
+
+## Snapshot the window
+
+```bash
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
+```
+
+Output (trimmed):
+
+```
+✅ Calculator — 34 elements, turn 1 + screenshot
+
+- AXApplication "Calculator"
+  - [0] AXWindow "Calculator" actions=[AXRaise]
+    - [1] AXButton "All Clear"
+    - [2] AXButton "Plus/Minus"
+    - [3] AXButton "Percent"
+    - [4] AXButton "Divide"
+    - [5] AXButton "Seven"
+    ...
+    - [14] AXButton "Three"
+    ...
+```
+
+Every actionable element is tagged with `[N]` — that's the `element_index` you pass to `click`, `type_text`, and friends. The index map is replaced on every snapshot, keyed on `(pid, window_id)`, so always snapshot before acting.
+
+<Callout type="info">
+  Large trees (Finder is ~1600 elements) exceed most LLM context limits. Pass a `query` field to filter
+  the Markdown to matching lines plus their ancestors: `cua-driver call get_window_state '{"pid":844,"window_id":10725,"query":"Three"}'`.
+</Callout>
+
+## Click by element_index
+
+```bash
+cua-driver call click '{"pid":844,"window_id":10725,"element_index":14}'
+# ✅ Performed AXPress on [14] AXButton "Three".
+```
+
+No cursor moved. Calculator never came to the foreground. The click went through `AXUIElementPerformAction` directly.
+
+## Verify the action landed
+
+Re-snapshot and check the AX tree diff:
+
+```bash
+cua-driver call get_window_state '{"pid":844,"window_id":10725}'
+```
+
+Look for the display `AXStaticText` reading `3`. If the tree didn't change, the action failed silently, and you should say so rather than assume success.
+
+## The pixel-click variant
+
+Pixel clicks are for surfaces the AX tree doesn't reach: canvases, video players, WebGL, custom controls. Coordinates are window-local screenshot pixels (same space as the PNG `get_window_state` returns).
+
+```bash
+# Write the screenshot to disk. Works in every capture mode.
+cua-driver call get_window_state '{"pid":844,"window_id":10725}' --screenshot-out-file /tmp/shot.png
+
+# Look at /tmp/shot.png, pick a target pixel, then:
+cua-driver call click '{"pid":844,"window_id":10725,"x":120,"y":240}'
+# ✅ Posted click to pid 844.
+```
+
+The PNG is capped at 1568 px long-side by default (matching Anthropic's multimodal-vision downsampling limit), so the image you reason over and the coordinate space the click tool expects are the same resolution. No scaling math.
+
+<Callout type="warn">
+  The `window_id` field is optional on pixel clicks but recommended. It pins the coordinate
+  conversion to the window whose screenshot produced the pixel, rather than letting the driver pick
+  heuristically.
+</Callout>
+
+## Cleanup
+
+```bash
+# Quit the target app via a hotkey to its pid.
+cua-driver call hotkey '{"pid":844,"keys":["cmd","q"]}'
+
+# Stop the daemon.
+cua-driver stop
+```
+
+## The canonical loop
+
+Every multi-step workflow follows the same shape:
+
+```bash
+open -n -g -a CuaDriver --args serve
+
+# 1. Launch the target (idempotent; returns pid + windows).
+cua-driver call launch_app '{"bundle_id":"..."}'
+
+# 2. Snapshot the window you care about (populates the element cache).
+cua-driver call get_window_state '{"pid":<pid>,"window_id":<wid>}'
+
+# 3. Dispatch an action by element_index or pixel coordinates.
+cua-driver call click '{"pid":<pid>,"window_id":<wid>,"element_index":<n>}'
+
+# 4. Re-snapshot to verify the action landed.
+cua-driver call get_window_state '{"pid":<pid>,"window_id":<wid>}'
+
+cua-driver stop
+```
+
+The snapshot-before-AND-after invariant is not optional. Indices are stale across turns. Actions that silently no-op (disabled buttons, minimized windows that reject keyboard commits, Chromium right-clicks) are indistinguishable from successes without the post-action diff.
+
+## What's next
+
+- Full CLI reference: every subcommand and its flags. See [CLI reference](/cua-driver/reference/cli-reference).
+- MCP tool schemas: the authoritative input shape for every tool. See [MCP tools](/cua-driver/reference/mcp-tools).
+- Known limits: Chromium right-click coercion, canvas apps, off-Space SwiftUI. See [Limits](/cua-driver/reference/limits).
+- Common gotchas: "No cached AX state", minimized windows + keyboard commit, disabling the agent cursor. See the [FAQ](/cua-driver/guide/getting-started/faq).

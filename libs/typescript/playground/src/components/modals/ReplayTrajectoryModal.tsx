@@ -6,8 +6,6 @@ import { inferRuns } from '../../utils/trajectory';
 import type { AgentMessage } from '../../types';
 
 // Memoized wrapper to prevent TrajectoryViewer from re-rendering due to parent state changes
-// This is needed because TrajectoryViewer has a bug where its processZipUrl effect
-// re-runs when its dependencies change (which happens on every state update)
 const MemoizedTrajectoryViewer = memo(TrajectoryViewer);
 
 interface ReplayTrajectoryModalProps {
@@ -30,6 +28,17 @@ interface RunSummary {
   messageCount: number;
 }
 
+interface ReplayTurn {
+  turnName: string;
+  screenshotSignedUrl: string | null;
+  agentResponseJson: string;
+}
+
+interface ReplayResponse {
+  trajectoryFolder: string;
+  turns: ReplayTurn[];
+}
+
 export default function ReplayTrajectoryModal({
   isOpen,
   onClose,
@@ -41,14 +50,15 @@ export default function ReplayTrajectoryModal({
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunIndex, setSelectedRunIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [zipUrl, setZipUrl] = useState<string | null>(null);
-  const [generatingZip, setGeneratingZip] = useState(false);
+  const [trajectoryFiles, setTrajectoryFiles] = useState<File[] | null>(null);
+  const [generatingTrajectory, setGeneratingTrajectory] = useState(false);
+  const [trajectoryKey, setTrajectoryKey] = useState(0);
   const [title, setTitle] = useState(chatTitle || 'Chat Replay');
   const { trackTrajectoryReplayed } = usePlaygroundTelemetry();
 
   // Track if we've already initialized to prevent re-runs
   const hasInitializedRef = useRef(false);
-  // Track the current zipUrl for the selected run to prevent re-generation
+  // Track the current loaded run to prevent re-generation
   const loadedRunIndexRef = useRef<number | null>(null);
 
   // Fetch run information - only run once when modal opens
@@ -119,35 +129,80 @@ export default function ReplayTrajectoryModal({
     }
   }, [isOpen]);
 
-  // Generate ZIP for the selected run
-  const generateZipForRun = useCallback(
+  // Generate trajectory files for the selected run
+  const generateTrajectoryForRun = useCallback(
     async (runIndex: number) => {
       // Prevent re-generating if already loaded for this run
       if (loadedRunIndexRef.current === runIndex) return;
 
-      setGeneratingZip(true);
-      setZipUrl(null);
+      setGeneratingTrajectory(true);
+      setTrajectoryFiles(null);
 
       try {
         const response = await fetch(`/api/chat/${sessionId}/export`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runIndices: [runIndex] }),
+          body: JSON.stringify({ runIndices: [runIndex], format: 'replay' }),
         });
 
         if (!response.ok) {
           throw new Error('Failed to generate trajectory');
         }
 
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
+        const data = await response.json();
+        // withErrorHandling wraps in { result, _meta }
+        const replay: ReplayResponse = data.result ?? data;
+
+        // Fetch all screenshots in parallel from signed URLs
+        const screenshotResults = await Promise.allSettled(
+          replay.turns.map(async (turn) => {
+            if (!turn.screenshotSignedUrl) return null;
+            const imgResponse = await fetch(turn.screenshotSignedUrl);
+            if (!imgResponse.ok) return null;
+            return imgResponse.blob();
+          })
+        );
+
+        // Build File[] array with proper webkitRelativePath
+        const files: File[] = [];
+        for (let i = 0; i < replay.turns.length; i++) {
+          const turn = replay.turns[i];
+          const turnPath = `${replay.trajectoryFolder}/${turn.turnName}`;
+
+          // Add screenshot file if fetched successfully
+          const screenshotResult = screenshotResults[i];
+          if (screenshotResult.status === 'fulfilled' && screenshotResult.value) {
+            const screenshotFile = new File([screenshotResult.value], 'screenshot.png', {
+              type: 'image/png',
+            });
+            Object.defineProperty(screenshotFile, 'webkitRelativePath', {
+              value: `${turnPath}/screenshot.png`,
+              writable: false,
+            });
+            files.push(screenshotFile);
+          }
+
+          // Add agent_response.json file
+          const jsonFile = new File(
+            [turn.agentResponseJson],
+            `${turn.turnName}_agent_response.json`,
+            { type: 'application/json' }
+          );
+          Object.defineProperty(jsonFile, 'webkitRelativePath', {
+            value: `${turnPath}/${turn.turnName}_agent_response.json`,
+            writable: false,
+          });
+          files.push(jsonFile);
+        }
+
         loadedRunIndexRef.current = runIndex;
-        setZipUrl(url);
+        setTrajectoryFiles(files);
+        setTrajectoryKey((prev) => prev + 1);
         trackTrajectoryReplayed({ runIndex });
       } catch (error) {
-        console.error('Failed to generate ZIP:', error);
+        console.error('Failed to generate trajectory:', error);
       } finally {
-        setGeneratingZip(false);
+        setGeneratingTrajectory(false);
       }
     },
     [sessionId, trackTrajectoryReplayed]
@@ -156,26 +211,17 @@ export default function ReplayTrajectoryModal({
   // Load trajectory when run is selected
   useEffect(() => {
     if (selectedRunIndex !== null && !loading && loadedRunIndexRef.current !== selectedRunIndex) {
-      generateZipForRun(selectedRunIndex);
+      generateTrajectoryForRun(selectedRunIndex);
     }
-  }, [selectedRunIndex, loading, generateZipForRun]);
-
-  // Cleanup ZIP URL when it changes and on unmount
-  useEffect(() => {
-    return () => {
-      if (zipUrl) {
-        URL.revokeObjectURL(zipUrl);
-      }
-    };
-  }, [zipUrl]);
+  }, [selectedRunIndex, loading, generateTrajectoryForRun]);
 
   if (!isOpen) return null;
 
   const selectedRun = runs.find((r) => r.index === selectedRunIndex);
 
   // Use compact size for loading, empty, or no-screenshot states
-  const hasScreenshots = selectedRun && selectedRun.screenshotCount > 0 && zipUrl;
-  const isCompactView = loading || runs.length === 0 || generatingZip || !hasScreenshots;
+  const hasScreenshots = selectedRun && selectedRun.screenshotCount > 0 && trajectoryFiles;
+  const isCompactView = loading || runs.length === 0 || generatingTrajectory || !hasScreenshots;
 
   const modalSizeClass = isCompactView ? 'w-full max-w-md' : 'h-[90vh] w-[95vw] max-w-7xl';
 
@@ -209,7 +255,7 @@ export default function ReplayTrajectoryModal({
                 key={run.index}
                 type="button"
                 onClick={() => setSelectedRunIndex(run.index)}
-                disabled={generatingZip}
+                disabled={generatingTrajectory}
                 className={`flex-shrink-0 rounded-md px-3 py-1.5 text-sm transition-colors ${
                   selectedRunIndex === run.index
                     ? 'bg-blue-500 text-white'
@@ -242,7 +288,7 @@ export default function ReplayTrajectoryModal({
                 No trajectory runs found in this chat.
               </p>
             </div>
-          ) : generatingZip ? (
+          ) : generatingTrajectory ? (
             <div className="flex items-center justify-center py-8">
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -263,10 +309,10 @@ export default function ReplayTrajectoryModal({
                 </p>
               </div>
             </div>
-          ) : zipUrl ? (
+          ) : trajectoryFiles ? (
             <MemoizedTrajectoryViewer
-              key={zipUrl}
-              zipUrl={zipUrl}
+              key={trajectoryKey}
+              files={trajectoryFiles}
               showToolbar={true}
               scroll={true}
               scenarioName={selectedRun?.userPromptPreview || 'Replay'}

@@ -1,0 +1,10 @@
+https://cua.ai/
+https://api.cua.ai/
+# Google Cloud Console links have HTTP/2 protocol issues with automated checkers
+https://console.cloud.google.com/*
+# hud.ai rate-limits automated link checkers (429)
+https://www.hud.ai/*
+# openai.com returns 403 to automated checkers but resolves fine in-browser
+https://openai.com/*
+# Self-referential install.sh URL: resolves once this PR merges to main
+https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh

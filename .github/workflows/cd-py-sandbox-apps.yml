@@ -1,0 +1,69 @@
+name: "CD: cua-sandbox-apps (PyPI)"
+
+on:
+  push:
+    tags:
+      - "sandbox-apps-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (without v prefix)"
+        required: true
+        default: "0.1.0"
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: get-version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION=${{ inputs.version }}
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            if [[ "${{ github.ref }}" =~ ^refs/tags/sandbox-apps-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION=${BASH_REMATCH[1]}
+            else
+              echo "Invalid tag format for sandbox-apps"
+              exit 1
+            fi
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION=${{ github.event.inputs.version }}
+          else
+            echo "ERROR: No version found!"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/py-reusable-publish.yml
+    with:
+      package_name: "sandbox-apps"
+      package_dir: "libs/python/cua-sandbox-apps"
+      version: ${{ needs.prepare.outputs.version }}
+      base_package_name: "cua-sandbox-apps"
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/release-github-reusable.yml
+    with:
+      tag_name: "sandbox-apps-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-sandbox-apps v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/python/cua-sandbox-apps"
+      body: ""

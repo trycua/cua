@@ -93,7 +93,7 @@ python -m agent.ui
 ```python
 import asyncio
 from computer import Computer, VMProviderType
-from agent import ComputerAgent, LLM
+from cua_agent import ComputerAgent, LLM
 
 async def test_windows_agent():
     # Create Windows Sandbox computer

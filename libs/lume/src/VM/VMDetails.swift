@@ -44,10 +44,14 @@ struct VMDetails: Codable {
     let sshAvailable: Bool?
     let locationName: String
     let sharedDirectories: [SharedDirectory]?
+    let networkMode: String?
+    /// Pull progress percentage (0–100) when status is "pulling", nil otherwise
+    let downloadProgress: Double?
 
     enum CodingKeys: String, CodingKey {
         case name, os, cpuCount, memorySize, diskSize, display, status
         case provisioningOperation, vncUrl, ipAddress, sshAvailable, locationName, sharedDirectories
+        case networkMode, downloadProgress
     }
 
     init(
@@ -63,7 +67,9 @@ struct VMDetails: Codable {
         ipAddress: String?,
         sshAvailable: Bool? = nil,
         locationName: String,
-        sharedDirectories: [SharedDirectory]? = nil
+        sharedDirectories: [SharedDirectory]? = nil,
+        networkMode: String? = nil,
+        downloadProgress: Double? = nil
     ) {
         self.name = name
         self.os = os
@@ -78,6 +84,8 @@ struct VMDetails: Codable {
         self.sshAvailable = sshAvailable
         self.locationName = locationName
         self.sharedDirectories = sharedDirectories
+        self.networkMode = networkMode
+        self.downloadProgress = downloadProgress
     }
 
     // Custom encoder to always include optional fields (even when nil)
@@ -96,5 +104,7 @@ struct VMDetails: Codable {
         try container.encode(sshAvailable, forKey: .sshAvailable)
         try container.encode(locationName, forKey: .locationName)
         try container.encode(sharedDirectories, forKey: .sharedDirectories)
+        try container.encode(networkMode, forKey: .networkMode)
+        try container.encode(downloadProgress, forKey: .downloadProgress)
     }
 }

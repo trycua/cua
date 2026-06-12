@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.2.4"
+version = "0.2.10"
 description = "Toolkit for computer-use RL environments and benchmarks"
 readme = "README.md"
 license = "MIT"
@@ -53,13 +53,14 @@ dependencies = [
     "docker>=7.0.0",
     # CUA SDK
     "cua-computer>=0.4.19",
-    "cua-core",
+    "cua-core>=0.3.0,<0.4.0",
+    "playwright>=1.55.0",
 ]
 
 [project.optional-dependencies]
 # Full installation with all features
 all = [
-    "cua-bench[browser,agents,cloud,spice]",
+    "cua-bench[browser,agents,cloud,otel,spice]",
 ]
 
 # Browser automation (for simulated environments)
@@ -69,8 +70,15 @@ browser = [
 
 # Agent support
 agents = [
-    "cua-agent>=0.6.2",
+    "cua-agent>=0.8.0",
     "anthropic>=0.26.0",
+]
+
+# OpenTelemetry tracing and metrics export
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
 
 # Cloud batch execution (Google Cloud)
@@ -80,6 +88,7 @@ cloud = [
     "google-cloud-storage>=2.10.0",
     "gcloud-aio-storage>=9.0.0",
     "grpcio>=1.60.0",
+    "cua-bench[otel]",
 ]
 
 # SPICE circuit simulation (for KiCad netlist evaluation)

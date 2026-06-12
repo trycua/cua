@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <!-- com.apple.private.webinspector.remote-inspection-debugger would go here,
+         but AMFI kills any binary claiming it on macOS 15+ unless Apple-provisioned.
+         WebInspectorXPC.swift implements the full protocol; it works if Apple ever
+         grants this entitlement to third-party tooling. -->
+</dict>
+</plist>

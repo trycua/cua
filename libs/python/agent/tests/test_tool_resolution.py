@@ -12,9 +12,9 @@ import warnings
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from agent.computers import is_agent_computer
-from agent.tools.browser_tool import BrowserTool
-from agent.types import AgentConfigInfo
+from cua_agent.computers import is_agent_computer
+from cua_agent.tools.browser_tool import BrowserTool
+from cua_agent.types import AgentConfigInfo
 
 
 # Mock agent config class for testing
@@ -52,7 +52,7 @@ class TestToolResolution:
     @pytest.mark.asyncio
     async def test_fara_auto_wraps_computer_to_browser_tool(self, mock_computer):
         """FARA auto-wraps Computer to BrowserTool with warning."""
-        from agent.agent import ComputerAgent
+        from cua_agent.agent import ComputerAgent
 
         # Patch find_agent_config to return FARA config
         fara_config = AgentConfigInfo(
@@ -66,8 +66,8 @@ class TestToolResolution:
         def mock_is_agent_computer(tool):
             return tool is mock_computer
 
-        with patch("agent.agent.find_agent_config", return_value=fara_config):
-            with patch("agent.agent.is_agent_computer", side_effect=mock_is_agent_computer):
+        with patch("cua_agent.agent.find_agent_config", return_value=fara_config):
+            with patch("cua_agent.agent.is_agent_computer", side_effect=mock_is_agent_computer):
                 agent = ComputerAgent(model="cua/microsoft/fara-7b", tools=[mock_computer])
                 # Tool resolution happens in _resolve_tools, which is async
                 with pytest.warns(UserWarning, match="Auto-wrapping Computer to BrowserTool"):
@@ -79,7 +79,7 @@ class TestToolResolution:
 
     def test_fara_accepts_explicit_browser_tool_no_warning(self, mock_browser_tool):
         """FARA accepts explicit BrowserTool without warning."""
-        from agent.agent import ComputerAgent
+        from cua_agent.agent import ComputerAgent
 
         # Patch find_agent_config to return FARA config
         fara_config = AgentConfigInfo(
@@ -89,7 +89,7 @@ class TestToolResolution:
             tool_type="browser",
         )
 
-        with patch("agent.agent.find_agent_config", return_value=fara_config):
+        with patch("cua_agent.agent.find_agent_config", return_value=fara_config):
             # Should not raise any warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -101,7 +101,7 @@ class TestToolResolution:
 
     def test_claude_accepts_any_tool_no_wrapping(self, mock_computer):
         """Claude (general model) accepts any tool without wrapping."""
-        from agent.agent import ComputerAgent
+        from cua_agent.agent import ComputerAgent
 
         # Patch find_agent_config to return Claude config (no tool_type)
         claude_config = AgentConfigInfo(
@@ -111,7 +111,7 @@ class TestToolResolution:
             tool_type=None,  # General model, no tool type requirement
         )
 
-        with patch("agent.agent.find_agent_config", return_value=claude_config):
+        with patch("cua_agent.agent.find_agent_config", return_value=claude_config):
             with warnings.catch_warnings():
                 warnings.simplefilter("error")  # Fail if any warning
                 agent = ComputerAgent(model="claude-sonnet-4", tools=[mock_computer])
@@ -123,7 +123,7 @@ class TestToolResolution:
     @pytest.mark.asyncio
     async def test_custom_tools_pass_through(self, mock_computer):
         """Custom function tools pass through unchanged."""
-        from agent.agent import ComputerAgent
+        from cua_agent.agent import ComputerAgent
 
         def custom_tool():
             """A custom tool function."""
@@ -141,8 +141,8 @@ class TestToolResolution:
         def mock_is_agent_computer(tool):
             return tool is mock_computer
 
-        with patch("agent.agent.find_agent_config", return_value=fara_config):
-            with patch("agent.agent.is_agent_computer", side_effect=mock_is_agent_computer):
+        with patch("cua_agent.agent.find_agent_config", return_value=fara_config):
+            with patch("cua_agent.agent.is_agent_computer", side_effect=mock_is_agent_computer):
                 agent = ComputerAgent(
                     model="cua/microsoft/fara-7b", tools=[mock_computer, custom_tool]
                 )
@@ -197,7 +197,7 @@ class TestRegisterAgentDecorator:
 
     def test_register_agent_with_tool_type(self):
         """@register_agent accepts tool_type parameter"""
-        from agent.decorators import _agent_configs, register_agent
+        from cua_agent.decorators import _agent_configs, register_agent
 
         # Clear registry for test
         original_configs = _agent_configs.copy()
@@ -217,7 +217,7 @@ class TestRegisterAgentDecorator:
                     return ["step"]
 
             # Find the registered config
-            from agent.decorators import find_agent_config
+            from cua_agent.decorators import find_agent_config
 
             config = find_agent_config("test-model-123")
             assert config is not None
@@ -230,7 +230,7 @@ class TestRegisterAgentDecorator:
 
     def test_register_agent_without_tool_type(self):
         """@register_agent without tool_type defaults to None"""
-        from agent.decorators import _agent_configs, register_agent
+        from cua_agent.decorators import _agent_configs, register_agent
 
         # Clear registry for test
         original_configs = _agent_configs.copy()
@@ -250,7 +250,7 @@ class TestRegisterAgentDecorator:
                     return ["step"]
 
             # Find the registered config
-            from agent.decorators import find_agent_config
+            from cua_agent.decorators import find_agent_config
 
             config = find_agent_config("general-model-123")
             assert config is not None

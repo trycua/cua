@@ -13,11 +13,15 @@
     "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts",
     "docs:generate:python": "tsx ../scripts/docs-generators/python-sdk.ts",
     "docs:generate:changelog": "tsx ../scripts/docs-generators/generate-changelog.ts",
-    "docs:generate:versions": "tsx ../scripts/docs-generators/generate-versioned-docs.ts"
+    "docs:generate:versions": "tsx ../scripts/docs-generators/generate-versioned-docs.ts",
+    "docs:check-links": "tsx scripts/check-links.ts",
+    "docs:check-links:external": "tsx scripts/check-links.ts --external"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.9",
-    "@anthropic-ai/sdk": "^0.71.2",
+    "@ai-sdk/amazon-bedrock": "^3.0.73",
+    "@aws-sdk/credential-provider-web-identity": "^3.609.0",
+    "ai": "^6.0.0",
+    "@vercel/functions": "^2.0.0",
     "@copilotkit/react-core": "1.50.1",
     "@copilotkit/react-ui": "1.50.1",
     "@copilotkit/runtime": "1.50.1",
@@ -48,6 +52,8 @@
     "@types/node": "22.15.28",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
+    "fast-glob": "^3.3.3",
+    "next-validate-link": "^1.6.4",
     "postcss": "^8.5.4",
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.8",

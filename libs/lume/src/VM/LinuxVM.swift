@@ -46,7 +46,8 @@ final class LinuxVM: VM {
             memorySize: memorySize,
             diskSize: diskSize,
             macAddress: linuxService.generateMacAddress(),
-            display: display
+            display: display,
+            networkMode: vmDirContext.config.networkMode
         ))
 
         // Create NVRAM store for EFI

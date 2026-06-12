@@ -1,0 +1,184 @@
+---
+title: Autostart
+description: Keep Cua Driver's daemon running in the user's interactive session across logons, RDP disconnects, and reboots.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua-driver autostart` registers the platform-native "run at logon" mechanism that keeps a `cua-driver serve` daemon alive in the user's interactive session. On Windows this is the difference between GUI tools that work over SSH and GUI tools that return empty arrays — see [Running Cua Driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the full reasoning.
+
+```bash
+cua-driver autostart enable    # register the platform entry
+cua-driver autostart kick      # start it now without waiting for next logon
+cua-driver autostart status    # registered? running?
+cua-driver autostart disable   # remove the entry
+```
+
+## What it does per platform
+
+| Platform | Mechanism                                                                                                                                                                                                     | Where it lives                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Windows  | Scheduled Task `cua-driver-serve` with `LogonType: Interactive`                                                                                                                                          | Task Scheduler (`schtasks /Query /TN cua-driver-serve`) |
+| macOS    | Not yet in the `cua-driver autostart` verb — use `install-local.sh --autostart`, which writes a `RunAtLoad` + `KeepAlive` LaunchAgent running `cua-driver serve` ([`scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh))  | `~/Library/LaunchAgents/com.trycua.cua-driver.plist` |
+| Linux    | Not yet in the `cua-driver autostart` verb — use `install-local.sh --autostart`, which writes a `systemd --user` unit ([`scripts/install-local.sh`](https://github.com/trycua/cua/blob/main/libs/cua-driver/scripts/install-local.sh)) | `~/.config/systemd/user/cua-driver-rs.service`          |
+
+<Callout type="info">
+  **macOS bonus — autostart fixes TCC attribution.** A LaunchAgent daemon is started by `launchd`,
+  so it's attributed to `com.trycua.driver` (not the terminal that would otherwise spawn it). That
+  means permission prompts say "Cua Driver", you grant **Accessibility + Screen Recording once**,
+  and the grants persist across reboots — every `cua-driver call` / `mcp` then routes through the
+  always-on, correctly-attributed daemon. Without autostart, a prompt raised from a terminal
+  attributes to the terminal and the grant never applies to the driver — run
+  `cua-driver permissions status` to read the driver's real grant state (it answers via the daemon,
+  or reports `unknown` when none is running rather than your terminal's grants), or
+  `cua-driver permissions grant` to grant correctly without autostart. Autostart stays opt-in
+  because a standing computer-control daemon with these grants is a deliberate choice, not a default.
+</Callout>
+
+<Callout type="info">
+  **Platform parity status.** `cua-driver autostart` is currently a Windows-only verb in the Rust
+  port — the macOS / Linux cases return an error pointing at the manual recipe. A cross-platform
+  native impl is tracked as a follow-up. The verb is documented as the cross-platform interface so
+  existing scripts and skill-pack instructions land in the right place once parity ships.
+</Callout>
+
+## The four verbs
+
+### `enable`
+
+Registers the Scheduled Task on Windows. Idempotent — any existing task with the same name is replaced, so re-running after a `cua-driver` upgrade picks up the new binary path automatically.
+
+```powershell
+cua-driver autostart enable
+# Registered autostart entry 'cua-driver-serve'.
+#   cua-driver serve will start at every interactive logon.
+```
+
+The registered task pins to `LogonType: Interactive` — load-bearing, because the alternative (`S4U` / `Password`) would land the daemon back in Session 0. The exact PowerShell that gets run is in [`autostart.rs`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/crates/cua-driver/src/autostart.rs) and stays in lock-step with `scripts/install.ps1`.
+
+### `kick`
+
+Runs the registered task immediately, without waiting for the next logon. Use this right after `enable` so the daemon is up in the current session — otherwise `enable` is a "next-logon" change and your current shell still has no daemon to talk to.
+
+```powershell
+cua-driver autostart enable
+cua-driver autostart kick
+cua-driver status    # confirms the daemon's listening
+```
+
+### `status`
+
+Reports the registration + liveness state in three flavours:
+
+```text
+not-registered                  # no Scheduled Task exists
+registered (not running)        # task is there but no daemon process
+registered (running)            # task is there AND a daemon is listening on the socket
+```
+
+The "running" check probes the daemon's named pipe directly (no `tasklist` spawn — that's slow on first run), so it reflects real liveness, not just "Task Scheduler thinks the task is registered".
+
+### `disable`
+
+Removes the Scheduled Task. No-op if nothing's registered, so it's safe to script unconditionally.
+
+```powershell
+cua-driver autostart disable
+# Removed autostart entry 'cua-driver-serve' (no-op if it was already absent).
+```
+
+## Worked example: `enable && kick` from an interactive shell
+
+The canonical first-time recipe — run this once from an interactive shell (RDP, local console, Windows Terminal under your logged-in user) and the daemon is up immediately _and_ will come back after every logon:
+
+```powershell
+cua-driver autostart enable
+cua-driver autostart kick
+cua-driver status
+# Cua Driver daemon is running
+#   socket: \\.\pipe\cua-driver
+#   pid: 12345
+```
+
+After this, you can SSH into the box and `cua-driver mcp` / `cua-driver call <tool>` will proxy through the running daemon — see [Running Cua Driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh).
+
+## The "daemon survives RDP disconnect" property
+
+Scheduled Tasks registered with `LogonType: Interactive` are _session-attached_ — the task and any processes it spawned live and die with the interactive session, not with the RDP client window. Disconnecting the RDP client leaves the session in `Disc` (disconnected) state, which is still a live interactive session as far as Windows is concerned:
+
+```powershell
+query session
+# SESSIONNAME    USERNAME    ID  STATE   TYPE     DEVICE
+# console                     0  Disc
+# rdp-tcp#23     you         2  Disc                                  ← still alive
+```
+
+The daemon keeps running in session `2`. A subsequent SSH connection (which lands in Session 0) can proxy through the still-listening daemon. Reconnecting RDP reattaches to the same session — the daemon was never killed.
+
+The session only dies on explicit logoff (`logoff` / Start menu → Sign out) or reboot. On reboot, the next interactive logon re-triggers the Scheduled Task and a fresh daemon comes back up.
+
+<Callout type="info">
+  **Prerequisite — an active interactive session must exist.** `kick` runs the task in *some*
+  session, but Task Scheduler only triggers it when an interactive logon is present. If you've never
+  logged in via RDP / console on a fresh box, `kick` has nowhere to land the daemon. The fix is to
+  RDP in once (the logon trigger fires `serve` automatically) — after that, even an RDP-disconnect
+  keeps the session alive in `Disc` state and the daemon along with it.
+</Callout>
+
+## UWP automation and the uiAccess worker (Windows)
+
+Modern UWP apps (modern Notepad, Settings, Calculator, the new File Explorer) run inside an AppContainer with **User Interface Privilege Isolation (UIPI)** enabled. UIPI is an integrity-level boundary: a process at Medium integrity (like the regular `cua-driver serve` daemon) cannot inject `SendInput`, read the UI Automation tree, or `PostMessage` across the boundary into an AppContainer'd process. The OS returns `ERROR_ACCESS_DENIED` and the tool call silently fails.
+
+Windows' answer is **`uiAccess="true"`** in the application manifest — a flag that asks the OS to elevate the process to UIAccess integrity at launch, lifting UIPI for that process. The catch: a uiAccess-marked PE can only be launched via `ShellExecute` (not `CreateProcess`), must be Authenticode-signed, and must live in a "secure" location (`\Program Files\` by default, or anywhere if the `EnableSecureUIAPaths` policy is relaxed).
+
+cua-driver-rs satisfies these constraints with a **second sibling binary**, `cua-driver-uia.exe`, that ships alongside `cua-driver.exe` and is the only PE in the project carrying `uiAccess="true"` in its manifest. The main binary (CLI + MCP) stays a normal `asInvoker` process so all the existing CLI / stdio MCP entrypoints continue to work — UWP tool calls just route through the sibling worker over a separate named pipe.
+
+### How it works at runtime
+
+| Component                                      | Integrity | Pipe                      |
+| ---------------------------------------------- | --------- | ------------------------- |
+| `cua-driver.exe serve`                         | Medium    | `\\.\pipe\cua-driver`     |
+| `cua-driver-uia.exe` (auto-spawned by `serve`) | UIAccess  | `\\.\pipe\cua-driver-uia` |
+
+When `cua-driver serve` starts, it checks for `cua-driver-uia.exe` next to its own binary and `ShellExecute`s it as a child. The OS elevates the child to UIAccess integrity (provided the signing + secure-location requirements are met) and the child binds the second pipe. `cua-driver call ...` and `cua-driver mcp` both prefer `\\.\pipe\cua-driver-uia` over the main daemon pipe when both are listening — tool calls land in the uiAccess process, UIPI doesn't block them.
+
+No additional `autostart` configuration is needed: the single `cua-driver-serve` Scheduled Task is the only registered entry. The worker is a child of the daemon, sharing its lifecycle.
+
+### What it unlocks
+
+- Reading the **UI Automation tree** of modern Notepad, Settings, modern File Explorer, and other XAML / UWP apps
+- `type_text` via UIA `ValuePattern.SetValue` against modern Notepad's document area
+- `SendInput`-based interactions that previously failed with `ERROR_ACCESS_DENIED`
+
+### CoreWindow-class apps and the UIA root-walk fallback
+
+Some apps (Calculator, Settings, older UWPs) host their top-level window as a `Windows.UI.Core.CoreWindow`. For these, `IUIAutomation::ElementFromHandle(hwnd)` returns an empty wrapper — the actual XAML tree is registered at the desktop root as a sibling UIA element with the same `ProcessId`, not as a child of the wrapper element. This is the same pattern `inspect.exe` and Accessibility Insights walk.
+
+`get_window_state` already handles this transparently: when the primary `ElementFromHandle` path yields zero actionable nodes, it falls back to `GetRootElement().FindAll(Children, TrueCondition)` filtered by `ProcessId`. Callers don't need to know which path produced the result. See [#1606](https://github.com/trycua/cua/pull/1606) for the fix and [#1601](https://github.com/trycua/cua/issues/1601) for the diagnosis.
+
+### What it does NOT unlock
+
+- **`hotkey` accelerator shortcuts on XAML targets** (Ctrl+S, Ctrl+F, etc.). `hotkey` posts `WM_KEYDOWN`/`WM_KEYUP` via `PostMessage`, but modern Notepad's CoreInput dispatcher only reads from the system input queue. Workaround: walk the UIA tree for the matching menu item and `click` it. Tracked in [#1607](https://github.com/trycua/cua/issues/1607) — the planned fix mirrors the UIA `ValuePattern.SetValue` routing already done for `type_text`.
+- Apps that explicitly opt out of UI Automation
+- Cross-session injection (the worker still has to live in the same interactive session as the target app)
+
+<Callout type="warn">
+  **Signing prerequisite.** `uiAccess` apps must be Authenticode-signed by a cert trusted on the
+  machine — Microsoft does not honor the manifest otherwise. Until the production CD pipeline ships
+  a signed `cua-driver-uia.exe` ([GH #1602](https://github.com/trycua/cua/issues/1602)), the worker
+  fails to elevate on default-policy machines, and UWP automation falls back to the Medium-integrity
+  behavior (UIPI blocking). The main CLI / MCP daemon is unaffected — only the worker depends on the
+  signature. Until then, the daemon logs `uia spawn failed` to stderr and proceeds without it.
+</Callout>
+
+## Why not just `cua-driver serve &` over SSH?
+
+A naively-spawned `cua-driver serve &` over SSH inherits the SSH session — which on Windows OpenSSH is **Session 0**, the non-interactive services session. The daemon comes up, but every GUI tool it answers (`list_windows`, `click`, `screenshot`, ...) bottoms out in Win32 APIs scoped to the calling session's WindowStation + Desktop, which Session 0 doesn't have. Tools silently return empty arrays.
+
+`autostart enable && kick` sidesteps this by running the daemon under the user's interactive logon (Session 1+) instead of inheriting whatever session called `serve`. The daemon then has a real desktop attached and GUI tools work.
+
+See [Running Cua Driver under SSH on Windows](/cua-driver/guide/getting-started/windows-ssh) for the end-to-end SSH workflow.
+
+## Uninstall behaviour
+
+The platform uninstaller (`uninstall.ps1` on Windows, `uninstall.sh` elsewhere) removes the autostart entry automatically as part of its teardown — you don't need to call `autostart disable` explicitly before uninstalling. See the [uninstall removal matrix](/cua-driver/guide/getting-started/installation#uninstall) for the per-platform specifics.

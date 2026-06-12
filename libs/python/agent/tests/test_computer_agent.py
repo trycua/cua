@@ -13,10 +13,10 @@ import pytest
 class TestComputerAgentInitialization:
     """Test ComputerAgent initialization (SRP: Only tests initialization)."""
 
-    @patch("agent.agent.litellm")
+    @patch("cua_agent.agent.litellm")
     def test_agent_initialization_with_model(self, mock_litellm, disable_telemetry):
         """Test that agent can be initialized with a model string."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
@@ -24,20 +24,20 @@ class TestComputerAgentInitialization:
         assert hasattr(agent, "model")
         assert agent.model == "anthropic/claude-sonnet-4-5-20250929"
 
-    @patch("agent.agent.litellm")
+    @patch("cua_agent.agent.litellm")
     def test_agent_initialization_with_tools(self, mock_litellm, disable_telemetry, mock_computer):
         """Test that agent can be initialized with tools."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[mock_computer])
 
         assert agent is not None
         assert hasattr(agent, "tools")
 
-    @patch("agent.agent.litellm")
+    @patch("cua_agent.agent.litellm")
     def test_agent_initialization_with_max_budget(self, mock_litellm, disable_telemetry):
         """Test that agent can be initialized with max trajectory budget."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         budget = 5.0
         agent = ComputerAgent(
@@ -46,10 +46,10 @@ class TestComputerAgentInitialization:
 
         assert agent is not None
 
-    @patch("agent.agent.litellm")
+    @patch("cua_agent.agent.litellm")
     def test_agent_requires_model(self, mock_litellm, disable_telemetry):
         """Test that agent requires a model parameter."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         with pytest.raises(TypeError):
             # Should fail without model parameter - intentionally missing required argument
@@ -60,10 +60,10 @@ class TestComputerAgentRun:
     """Test ComputerAgent.run() method (SRP: Only tests run logic)."""
 
     @pytest.mark.asyncio
-    @patch("agent.agent.litellm")
+    @patch("cua_agent.agent.litellm")
     async def test_agent_run_with_messages(self, mock_litellm, disable_telemetry, sample_messages):
         """Test that agent.run() works with valid messages."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         # Mock liteLLM response
         mock_response = {
@@ -90,7 +90,7 @@ class TestComputerAgentRun:
 
     def test_agent_has_run_method(self, disable_telemetry):
         """Test that agent has run method available."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
@@ -100,7 +100,7 @@ class TestComputerAgentRun:
 
     def test_agent_has_agent_loop(self, disable_telemetry):
         """Test that agent has agent_loop initialized."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
@@ -114,13 +114,13 @@ class TestComputerAgentTypes:
 
     def test_messages_type_exists(self):
         """Test that Messages type is exported."""
-        from agent import Messages
+        from cua_agent import Messages
 
         assert Messages is not None
 
     def test_agent_response_type_exists(self):
         """Test that AgentResponse type is exported."""
-        from agent import AgentResponse
+        from cua_agent import AgentResponse
 
         assert AgentResponse is not None
 
@@ -130,7 +130,7 @@ class TestComputerAgentIntegration:
 
     def test_agent_accepts_computer_tool(self, disable_telemetry, mock_computer):
         """Test that agent can be initialized with Computer tool."""
-        from agent import ComputerAgent
+        from cua_agent import ComputerAgent
 
         agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[mock_computer])
 

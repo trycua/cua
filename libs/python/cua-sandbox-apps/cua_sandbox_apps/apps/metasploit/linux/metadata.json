@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/local/bin/msfconsole",
+  "binary_name": "msfconsole",
+  "display_name": "Metasploit Framework",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "6.4.127"
+}

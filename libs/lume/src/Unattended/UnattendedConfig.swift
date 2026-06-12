@@ -87,7 +87,7 @@ struct UnattendedConfig: Codable, Sendable {
 
     /// Load a built-in preset by name
     static func loadPreset(name: String) throws -> UnattendedConfig {
-        guard let url = Bundle.module.url(
+        guard let url = Bundle.lumeResources.url(
             forResource: name,
             withExtension: "yml",
             subdirectory: "unattended-presets"
@@ -101,7 +101,7 @@ struct UnattendedConfig: Codable, Sendable {
 
     /// Check if a name is a known preset
     static func isPreset(name: String) -> Bool {
-        return Bundle.module.url(
+        return Bundle.lumeResources.url(
             forResource: name,
             withExtension: "yml",
             subdirectory: "unattended-presets"
@@ -110,7 +110,7 @@ struct UnattendedConfig: Codable, Sendable {
 
     /// List all available preset names
     static func availablePresets() -> [String] {
-        guard let resourceURL = Bundle.module.url(forResource: "unattended-presets", withExtension: nil),
+        guard let resourceURL = Bundle.lumeResources.url(forResource: "unattended-presets", withExtension: nil),
               let contents = try? FileManager.default.contentsOfDirectory(at: resourceURL, includingPropertiesForKeys: nil)
         else {
             return []

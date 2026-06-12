@@ -68,7 +68,7 @@ async with provider:
 Run an agent on Windows to automate a workflow:
 
 ```python
-from agent import ComputerAgent
+from cua_agent import ComputerAgent
 
 agent = ComputerAgent(
     model="anthropic/claude-sonnet-4-5-20250929",

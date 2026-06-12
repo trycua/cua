@@ -1,0 +1,9 @@
+{
+  "app_id": "gin",
+  "os": "linux",
+  "install_exit_code": -1,
+  "app_type_detected": "library",
+  "notes": "Gin is a Go web framework library, not a standalone application. It is installed as a development dependency via 'go get github.com/gin-gonic/gin' and used in Go projects to build HTTP services and REST APIs. There is no binary to execute or GUI to launch.",
+  "verification_passed": false,
+  "download_available": null
+}

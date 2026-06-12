@@ -72,6 +72,22 @@ struct Create: AsyncParsableCommand {
         help: "Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign)")
     var vncPort: Int = 0
 
+    @Option(
+        name: .customLong("network"),
+        help: "Network mode: 'nat' (default), 'bridged' (auto-select interface), or 'bridged:<interface>' (e.g. 'bridged:en0')")
+    var network: String = "nat"
+
+    private var parsedNetworkMode: NetworkMode {
+        get throws {
+            guard let mode = NetworkMode.parse(network) else {
+                throw ValidationError(
+                    "Invalid network mode '\(network)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+                )
+            }
+            return mode
+        }
+    }
+
     init() {
     }
 
@@ -124,7 +140,8 @@ struct Create: AsyncParsableCommand {
             debug: debug,
             debugDir: debugDir,
             noDisplay: unattendedConfig != nil ? true : noDisplay,  // Default to no-display for unattended
-            vncPort: vncPort
+            vncPort: vncPort,
+            networkMode: parsedNetworkMode
         )
     }
 }

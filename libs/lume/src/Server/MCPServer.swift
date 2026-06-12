@@ -565,6 +565,7 @@ final class LumeMCPServer {
 
         let storage = args?["storage"]?.stringValue
         let noDisplay = args?["no_display"]?.boolValue ?? true
+        let clipboard = args?["clipboard"]?.boolValue ?? false
 
         var sharedDirectories: [SharedDirectory] = []
         if let sharedDir = args?["shared_dir"]?.stringValue {
@@ -581,7 +582,8 @@ final class LumeMCPServer {
                     name: name,
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
-                    storage: storage
+                    storage: storage,
+                    clipboard: clipboard
                 )
             } catch {
                 Logger.error(

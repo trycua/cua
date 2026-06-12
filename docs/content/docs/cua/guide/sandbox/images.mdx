@@ -1,0 +1,218 @@
+---
+title: Images
+description: Choose and customize the OS image your sandbox runs
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+An `Image` describes the operating system and software environment your sandbox will run. Images are immutable and chainable — each builder method returns a new `Image` value so you can fork and reuse them freely.
+
+## Built-in images
+
+```python
+from cua import Image
+
+Image.linux()                        # Ubuntu 24.04 container (default)
+Image.linux(kind="vm")               # Ubuntu 24.04 full VM
+Image.linux("ubuntu", "22.04")       # Older Ubuntu
+Image.macos()                        # macOS Tahoe (latest)
+Image.macos("15")                    # macOS Sequoia
+Image.windows()                      # Windows 11
+Image.android()                      # Android 14
+```
+
+| Image | Kind | Notes |
+|-------|------|-------|
+| `Image.linux()` | container | Fastest startup, Linux only |
+| `Image.linux(kind="vm")` | VM | Full kernel, supports `/dev/kvm` |
+| `Image.macos()` | VM | Apple Virtualization / Lume |
+| `Image.windows()` | VM | QEMU or Hyper-V |
+| `Image.android()` | VM | QEMU Android emulator |
+
+---
+
+## The Image builder
+
+Use the chainable builder to install packages and configure the environment before your sandbox starts. Each method returns a new `Image` — the original is unchanged.
+
+```python
+img = (
+    Image.linux()
+    .apt_install("curl", "git", "ffmpeg")
+    .pip_install("requests", "Pillow")
+    .env(MY_TOKEN="abc123", DEBUG="1")
+    .run("mkdir -p /app/data")
+    .expose(8080)
+)
+
+async with Sandbox.ephemeral(img) as sb:
+    result = await sb.shell.run("curl --version")
+    print(result.stdout)
+```
+
+### Package installation
+
+**Linux — apt**
+
+```python
+Image.linux().apt_install("curl", "git", "build-essential", "ffmpeg")
+```
+
+**macOS — Homebrew**
+
+```python
+Image.macos().brew_install("ffmpeg", "jq")
+```
+
+**Windows — Chocolatey or winget**
+
+```python
+Image.windows().choco_install("nodejs", "git")
+Image.windows().winget_install("Microsoft.VisualStudioCode")
+```
+
+**Android — APK sideloading**
+
+```python
+Image.android().apk_install("/path/to/app.apk")
+```
+
+**Android — PWA (Trusted Web Activity)**
+
+`pwa_install` builds a signed TWA APK from a Web App Manifest URL using [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap) and installs it into the emulator. The app opens full-screen with no browser chrome.
+
+```python
+Image.android().pwa_install(
+    "https://example.com/manifest.json",
+    package_name="com.example.myapp",   # optional — derived from hostname if omitted
+    keystore="/path/to/android.keystore",  # optional — auto-generated if omitted
+    keystore_alias="android",           # default: "android"
+    keystore_password="android",        # default: "android"
+)
+```
+
+**How signing works.** Chrome will only open the PWA in TWA mode (no browser UI) when the APK's SHA-256 signing certificate matches the fingerprint served by the origin at `/.well-known/assetlinks.json`. To make this reliable across runs:
+
+1. Generate or commit a keystore to your repo.
+2. Extract the SHA-256 fingerprint with `keytool -list -v -keystore android.keystore`.
+3. Serve that fingerprint from `/.well-known/assetlinks.json` on your PWA host.
+4. Pass the keystore path to `pwa_install`.
+
+If you omit `keystore`, a fresh one is generated and cached under `~/.cua/cua-sandbox/pwa-cache/` alongside the built APK — convenient for local development, but the fingerprint will differ between machines.
+
+**System requirements.** Node.js ≥ 18 and Java ≤ 21 must be on `PATH` (Gradle does not support Java 22+). The Android SDK and Bubblewrap CLI are auto-installed on first use.
+
+**Built APKs are cached** by `(manifest_url, package_name)` under `~/.cua/cua-sandbox/pwa-cache/` and reused on subsequent runs.
+
+### Python packages
+
+```python
+Image.linux().pip_install("numpy", "pandas", "playwright")
+
+# or via uv (faster, installs into cua-server project)
+Image.linux().uv_install("numpy", "pandas")
+```
+
+### Environment variables
+
+```python
+Image.linux().env(
+    DATABASE_URL="postgres://localhost/mydb",
+    LOG_LEVEL="debug",
+)
+```
+
+<Callout type="warn">
+Avoid putting real secrets in `.env()` — anyone who can read the `Image` spec can see the values. Use [Secrets](/cua/guide/sandbox/secrets) instead.
+</Callout>
+
+### Shell commands
+
+Run arbitrary shell commands during setup:
+
+```python
+Image.linux().run("curl -fsSL https://deb.nodesource.com/setup_20.x | bash -")
+```
+
+### Copy local files
+
+```python
+Image.linux().copy("./config.json", "/app/config.json")
+```
+
+### Expose ports
+
+Mark ports the sandbox will serve on (used for `sb.tunnel.forward()`):
+
+```python
+Image.linux().expose(8080).expose(5432)
+```
+
+---
+
+## Chaining builder calls
+
+Builder calls are fully composable and can be combined in any order. Each call returns a new `Image`:
+
+```python
+base = Image.linux().apt_install("curl", "git")
+
+# Fork the base for two different use cases
+dev = base.pip_install("ipython", "rich").env(DEBUG="1")
+prod = base.pip_install("gunicorn").run("useradd -m appuser")
+```
+
+---
+
+## Custom OCI images
+
+Pull any image from a public OCI registry:
+
+```python
+Image.from_registry("ghcr.io/trycua/macos-tahoe-cua:latest")
+Image.from_registry("ubuntu:22.04")
+```
+
+You can also chain builder methods on top of a registry image:
+
+```python
+img = Image.from_registry("ubuntu:22.04").apt_install("curl")
+```
+
+---
+
+## Local disk images
+
+Run from a local `.qcow2`, `.vhdx`, `.raw`, or `.iso` file — useful for bring-your-own images or OSWorld tasks:
+
+```python
+Image.from_file("/path/to/disk.qcow2", os_type="linux")
+Image.from_file("/path/to/windows.vhdx", os_type="windows")
+```
+
+URLs are also supported and cached automatically:
+
+```python
+Image.from_file("https://example.com/disk.qcow2", os_type="linux")
+```
+
+Images are cached in `~/.cua/cua-sandbox/image-cache/`.
+
+---
+
+## Inspecting an image
+
+```python
+img = Image.linux().apt_install("curl").pip_install("requests")
+print(img.to_dict())
+# {
+#   "os_type": "linux",
+#   "distro": "ubuntu",
+#   "version": "24.04",
+#   "kind": "container",
+#   "layers": [
+#     {"type": "apt_install", "packages": ["curl"]},
+#     {"type": "pip_install", "packages": ["requests"]}
+#   ]
+# }
+```

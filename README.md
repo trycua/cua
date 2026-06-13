@@ -116,42 +116,6 @@ async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .a
 
 ---
 
-## CuaBot - Co-op computer-use for any agent
-
-<div align="center">
-  <img src="img/cuabot-screenshot.png" alt="cuabot screenshot" width="720">
-</div>
-
-`cuabot` gives any coding agent a seamless sandbox for computer-use. Individual windows appear natively on your desktop with H.265, shared clipboard, and audio.
-
-```bash
-npx cuabot                 # Setup onboarding
-```
-
-```bash
-# Run any agent in a sandbox
-cuabot claude              # Claude Code
-cuabot openclaw            # OpenClaw in the sandbox
-
-# Run any GUI workflow in a sandbox
-cuabot chromium
-cuabot --screenshot
-cuabot --type "hello"
-cuabot --click <x> <y> [button]
-```
-
-Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of the box.
-
-<div align="center">
-
-**[Get Started](https://cua.ai/docs/cuabot/guide/getting-started/introduction)** | **[Installation](https://cua.ai/docs/cuabot/guide/getting-started/installation)** | First spotted at [ClawCon](https://www.claw-con.com/)
-
-<img height="64" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
-
-</div>
-
----
-
 ## Cua-Bench - Benchmarks & RL Environments
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
@@ -192,7 +156,6 @@ lume run macos-sequoia-vanilla:latest
 | Package                                                                     | Description                                                |
 | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | [cua-driver](libs/cua-driver/README.md)                                     | Background computer-use agent for macOS, Windows, and Linux |
-| [cuabot](https://cua.ai/docs/cuabot/guide/getting-started/introduction)     | Multi-agent computer-use sandbox CLI                       |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
 | [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
 | [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |

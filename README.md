@@ -51,7 +51,7 @@
   </table>
   <p>
     <strong>Building your own agent?</strong> Start with <a href="#cua---agent-ready-sandboxes-for-any-os">Cua</a> ·
-    <strong>Giving a coding agent a computer?</strong> <a href="#cuabot---co-op-computer-use-for-any-agent">CuaBot</a> or <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">Cua Drivers</a> ·
+    <strong>Giving a coding agent a computer?</strong> <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">Cua Drivers</a> ·
     <strong>Evaluating or training models?</strong> <a href="#cua-bench---benchmarks--rl-environments">Cua Bench</a> ·
     <strong>Need macOS VMs?</strong> <a href="#lume---macos-virtualization">Lume</a>
   </p>

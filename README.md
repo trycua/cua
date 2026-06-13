@@ -26,14 +26,14 @@
   <table>
     <tr>
       <td colspan="3" align="center">
-        <a href="#cua-driver---background-computer-use-on-macos-and-windows-with-linux-pre-release">
-          <img src="img/card-cua-driver.gif" alt="Cua Driver — The background computer-use agent" width="888">
+        <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">
+          <img src="img/card-cua-driver.gif" alt="Cua Drivers — background computer-use for any agent" width="888">
         </a>
       </td>
     </tr>
     <tr>
       <td align="center">
-        <a href="#cua---agentic-ui-automation--code-execution">
+        <a href="#cua---agent-ready-sandboxes-for-any-os">
           <img src="img/card-cua-sandbox.gif" alt="Cua &amp; Cua Sandbox" width="280">
         </a>
       </td>
@@ -49,13 +49,19 @@
       </td>
     </tr>
   </table>
+  <p>
+    <strong>Building your own agent?</strong> Start with <a href="#cua---agent-ready-sandboxes-for-any-os">Cua</a> ·
+    <strong>Giving a coding agent a computer?</strong> <a href="#cuabot---co-op-computer-use-for-any-agent">CuaBot</a> or <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">Cua Drivers</a> ·
+    <strong>Evaluating or training models?</strong> <a href="#cua-bench---benchmarks--rl-environments">Cua Bench</a> ·
+    <strong>Need macOS VMs?</strong> <a href="#lume---macos-virtualization">Lume</a>
+  </p>
 </div>
 
 ---
 
-## Cua Driver - Background computer-use on macOS and Windows, with Linux pre-release
+## Cua Drivers - Background computer-use on macOS and Windows, with Linux pre-release
 
-Drive native desktop apps **in the background** — agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
+Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
 
 **macOS / Linux pre-release**
 
@@ -67,6 +73,12 @@ Drive native desktop apps **in the background** — agents click, type, and veri
 
 ```powershell
 irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+```
+
+Then wire it into Claude Code as an MCP server and your agent can drive the desktop in the background:
+
+```bash
+claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
 Full tool reference, architecture notes, and the optional agent skill pack live here: [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
@@ -81,7 +93,6 @@ Build agents that see screens, click buttons, and complete tasks autonomously. O
 pip install cua
 ```
 
-<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
 
 ```python
 # Requires Python 3.11 or later
@@ -145,11 +156,10 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
-<!-- <img src="img/cua-bench-architecture.png" alt="Cua-Bench Architecture" width="100%"> -->
 
 ```bash
-# Install and create base image
-cd cua-bench
+# Clone, install, and create base image
+git clone https://github.com/trycua/cua && cd cua/cua-bench
 uv tool install -e . && cb image create linux-docker
 
 # Run benchmark with agent
@@ -164,7 +174,6 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 
 Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
 
-<!-- <img src="img/lume-architecture.png" alt="Lume Architecture" width="100%"> -->
 
 ```bash
 # Install Lume
@@ -182,7 +191,8 @@ lume run macos-sequoia-vanilla:latest
 
 | Package                                                                     | Description                                                |
 | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [cuabot](https://docs.trycua.com/cuabot/guide/getting-started/introduction) | Multi-agent computer-use sandbox CLI                       |
+| [cua-driver](libs/cua-driver/README.md)                                     | Background computer-use agent for macOS, Windows, and Linux |
+| [cuabot](https://cua.ai/docs/cuabot/guide/getting-started/introduction)     | Multi-agent computer-use sandbox CLI                       |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
 | [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
 | [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |
@@ -193,7 +203,7 @@ lume run macos-sequoia-vanilla:latest
 ## Resources
 
 - [Documentation](https://cua.ai/docs) — Guides, examples, and API reference
-- [Blog](https://www.cua.ai/blog) — Tutorials, updates, and research
+- [Blog](https://cua.ai/blog) — Tutorials, updates, and research
 - [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
 - [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
 

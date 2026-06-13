@@ -27,24 +27,24 @@
     <tr>
       <td colspan="3" align="center">
         <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">
-          <img src="img/card-cua-driver.gif" alt="Cua Drivers — background computer-use for any agent" width="888">
+          <img src="img/card-cua-driver.gif" alt="Cua Drivers — background computer-use for any agent" width="790">
         </a>
       </td>
     </tr>
     <tr>
       <td align="center">
         <a href="#cua---agent-ready-sandboxes-for-any-os">
-          <img src="img/card-cua-sandbox.gif" alt="Cua &amp; Cua Sandbox" width="280">
+          <img src="img/card-cua-sandbox.gif" alt="Cua &amp; Cua Sandbox" width="246">
         </a>
       </td>
       <td align="center">
         <a href="#cua-bench---benchmarks--rl-environments">
-          <img src="img/card-cua-bench.gif" alt="Cua Bench" width="280">
+          <img src="img/card-cua-bench.gif" alt="Cua Bench" width="246">
         </a>
       </td>
       <td align="center">
         <a href="#lume---macos-virtualization">
-          <img src="img/card-cua-lume.gif" alt="Lume" width="280">
+          <img src="img/card-cua-lume.gif" alt="Lume" width="246">
         </a>
       </td>
     </tr>

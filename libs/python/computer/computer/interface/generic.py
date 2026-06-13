@@ -1003,48 +1003,61 @@ class GenericComputerInterface(BaseComputerInterface):
         self, command: str, params: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Send command through REST API without retries or connection management."""
-        try:
-            # Prepare the request payload
-            payload = {"command": command, "params": params or {}}
+        max_empty_retries = 3
+        for attempt in range(max_empty_retries):
+            try:
+                # Prepare the request payload
+                payload = {"command": command, "params": params or {}}
 
-            # Prepare headers
-            headers = {"Content-Type": "application/json", **cua_version_headers()}
-            if self.api_key:
-                headers["X-API-Key"] = self.api_key
-            if self.vm_name:
-                headers["X-Container-Name"] = self.vm_name
+                # Prepare headers
+                headers = {"Content-Type": "application/json", **cua_version_headers()}
+                if self.api_key:
+                    headers["X-API-Key"] = self.api_key
+                if self.vm_name:
+                    headers["X-Container-Name"] = self.vm_name
 
-            # Send the request
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.rest_uri, json=payload, headers=headers) as response:
-                    # Get the response text
-                    response_text = await response.text()
+                # Send the request
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(self.rest_uri, json=payload, headers=headers) as response:
+                        # Get the response text
+                        response_text = await response.text()
 
-                    # Trim whitespace
-                    response_text = response_text.strip()
+                        # Trim whitespace
+                        response_text = response_text.strip()
 
-                    # Check if it starts with "data: "
-                    if response_text.startswith("data: "):
-                        # Extract everything after "data: "
-                        json_str = response_text[6:]  # Remove "data: " prefix
-                        try:
-                            return json.loads(json_str)
-                        except json.JSONDecodeError:
+                        # Empty body: proxy cut off the streaming response; retry
+                        if not response_text and attempt < max_empty_retries - 1:
+                            self.logger.warning(f"[REST] empty body for cmd={command} attempt={attempt}, retrying")
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+
+                        # Check if it starts with "data: "
+                        if response_text.startswith("data: "):
+                            # Extract everything after "data: "
+                            json_str = response_text[6:]  # Remove "data: " prefix
+                            try:
+                                return json.loads(json_str)
+                            except json.JSONDecodeError:
+                                self.logger.warning(f"[REST] JSON decode error for cmd={command} body={response_text[:200]!r}")
+                                return {
+                                    "success": False,
+                                    "error": "Server returned malformed response",
+                                    "message": response_text,
+                                }
+                        else:
+                            self.logger.warning(f"[REST] unexpected response cmd={command} status={response.status} body={response_text[:300]!r}")
+                            # Return error response
                             return {
                                 "success": False,
                                 "error": "Server returned malformed response",
                                 "message": response_text,
                             }
-                    else:
-                        # Return error response
-                        return {
-                            "success": False,
-                            "error": "Server returned malformed response",
-                            "message": response_text,
-                        }
 
-        except Exception as e:
-            return {"success": False, "error": "Request failed", "message": str(e)}
+            except Exception as e:
+                self.logger.warning(f"[REST] exception cmd={command} attempt={attempt} {type(e).__name__}: {e}")
+                return {"success": False, "error": "Request failed", "message": str(e)}
+
+        return {"success": False, "error": "Server returned malformed response", "message": ""}
 
     async def _send_command(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """Send command using REST API with WebSocket fallback."""

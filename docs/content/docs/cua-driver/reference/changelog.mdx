@@ -18,6 +18,35 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## 0.5.3 (2026-06-11)
+
+- **Linux: background drag and held-button tools + MPX parallel drags** (#1871).
+  Adds `parallel_mouse_drag`: each session gets its own MPX master pointer (fed
+  by a per-session uinput slave), so multiple agent cursors can drag
+  concurrently in the same window. Drags follow full waypoint paths — a
+  straight from→to segment or a function `fn` = y(x) (e.g. `"300+150*sin(x/40)"`)
+  — as one continuous held glide. A device-specific XI2 shield grab keeps the
+  window manager blind to the drag's button press, so parallel drags no longer
+  steal focus from the user's active window, and drag masters are cleaned up
+  per call. Also adds a confirmation-gated `install_ffmpeg` tool that detects
+  the platform package manager and (only with `confirm: true`) installs the
+  ffmpeg binary the video recording backend shells out to.
+- **Linux: agent cursor in background sessions + background terminal typing**
+  (#1789). The agent cursor overlay now renders for background (unfocused)
+  sessions, and typing reaches background terminals; Linux keyboard input
+  switched from `XSendEvent` to XTEST injection (#1805) so synthetic keys are
+  accepted by apps that ignore sent events.
+
+## 0.5.2 (2026-06-04)
+
+- **Windows: background input without z-raise** — input lands in target
+  windows without raising them, plus multi-cursor demos and agent cursor
+  overlay improvements (#1809).
+- **Windows: DPI awareness manifest** so coordinates are correct on scaled
+  displays (#1821).
+- **Python: `cua-driver` PyPI wrapper with bundled binaries** (#1849), plus
+  Windows ARM64 support and `cua-driver-uia.exe` extraction (#1850).
+
 ## 0.5.1 (2026-06-01)
 
 - **Install home unified on `~/.cua-driver` + collision fix.** The release

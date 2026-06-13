@@ -58,6 +58,12 @@ jobs:
           key: rust-cua-driver-rs-linux-x86_64-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
           restore-keys: |
             rust-cua-driver-rs-linux-x86_64-
+      # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) locates
+      # libX11/libXi/libXtst via pkg-config in its build.rs.
+      - name: Install X11 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build (release)
         working-directory: libs/cua-driver/rust
         run: cargo build -p cua-driver --release --target x86_64-unknown-linux-gnu

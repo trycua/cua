@@ -36,8 +36,10 @@ a `grim`/screencopy capture path, and a `wlr-virtual-pointer` /
 
 ## Matrix
 
-Desktops: `xfce-labwc`, `xfce-wayfire`, `xfce-sway` (XFCE 4.20's Wayland-session
-compositors), `kde` (kwin_wayland), `gnome` (mutter headless).
+Desktops: `xfce-labwc`, `xfce-sway` (XFCE 4.20's Wayland-session compositors),
+`kde` (kwin_wayland), `gnome` (mutter headless). (`xfce-wayfire` was dropped —
+wayfire fails to build in the current nixpkgs pin, an upstream `wf-config`/
+`doctest` issue unrelated to cua-driver.)
 
 Checks (built on demand):
 

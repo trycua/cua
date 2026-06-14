@@ -54,16 +54,6 @@ let
     exec_always foot --server
   '';
 
-  # Minimal wayfire config: XWayland disabled so apps are forced native.
-  wayfireConfig = pkgs.writeText "wayfire.ini" ''
-    [core]
-    plugins = autostart
-    xwayland = false
-
-    [autostart]
-    autostart_wf_shell = false
-  '';
-
   desktops = {
     "xfce-labwc" = {
       label = "XFCE on labwc (native Wayland)";
@@ -71,12 +61,9 @@ let
       wlroots = true;
       launch = "labwc >/tmp/compositor.log 2>&1 &";
     };
-    "xfce-wayfire" = {
-      label = "XFCE on wayfire (native Wayland)";
-      packages = with pkgs; [ wayfire ];
-      wlroots = true;
-      launch = "wayfire -c ${wayfireConfig} >/tmp/compositor.log 2>&1 &";
-    };
+    # NOTE: xfce-wayfire intentionally omitted — wayfire fails to build in the
+    # current nixpkgs pin (wf-config can't link -ldoctest). labwc + sway cover
+    # XFCE-on-wlroots.
     "xfce-sway" = {
       label = "XFCE on sway (native Wayland)";
       packages = with pkgs; [ sway ];

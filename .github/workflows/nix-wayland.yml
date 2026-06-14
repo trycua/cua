@@ -1,7 +1,7 @@
 name: CUA Driver Native-Wayland TDD Suite
 
 # Native-Wayland reproduction of the cua-driver NixOS tests across five desktop
-# sessions (XFCE on labwc/wayfire/sway, plus KDE and GNOME). These are a TDD
+# sessions (XFCE on labwc/sway, plus KDE and GNOME). These are a TDD
 # RED suite: the driver is X11-only today, so they are EXPECTED TO FAIL until
 # native Wayland support lands. The triggers mirror the X11 nix-build.yml
 # workflow (PRs/pushes touching nix/flake/driver, plus manual dispatch). These
@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        desktop: [xfce-labwc, xfce-wayfire, xfce-sway, kde, gnome]
+        desktop: [xfce-labwc, xfce-sway, kde, gnome]
         scenario:
           - integration
           - screenshot
@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        desktop: [xfce-labwc, xfce-wayfire, xfce-sway, kde, gnome]
+        desktop: [xfce-labwc, xfce-sway, kde, gnome]
         app: [foot, gtk3-gedit, qt6-kcalc]
     steps:
       - name: Checkout

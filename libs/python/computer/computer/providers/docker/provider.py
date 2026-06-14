@@ -51,7 +51,7 @@ def _normalize_runtime(runtime: Optional[str]) -> str:
     }
     if value not in aliases:
         raise ValueError(
-            f"Unsupported container runtime '{runtime}'. Use 'docker' or 'container'."
+            f"Unsupported container runtime '{value}'. Use 'docker' or 'container'."
         )
     return aliases[value]
 
@@ -406,10 +406,6 @@ class DockerProvider(BaseVMProvider):
         """
         try:
             # Check if container already exists
-            if "container_runtime" in run_opts:
-                self.runtime = _normalize_runtime(run_opts["container_runtime"])
-                self._ensure_runtime_available()
-
             existing_vm = await self.get_vm(name, storage)
             if existing_vm["status"] == "running":
                 logger.info(f"Container {name} is already running")
@@ -674,7 +670,7 @@ class DockerProvider(BaseVMProvider):
             "name": name,
             "status": "error",
             "error": "Docker containers cannot be updated while running. Please stop and recreate the container with new options.",
-            "provider": "docker",
+            "provider": self._runtime_provider_name(),
         }
 
     async def get_ip(self, name: str, storage: Optional[str] = None, retry_delay: int = 2) -> str:

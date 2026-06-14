@@ -20,6 +20,15 @@ def test_normalize_container_runtime_rejects_unknown():
         _normalize_runtime("podman")
 
 
+def test_normalize_container_runtime_reports_env_value(monkeypatch):
+    from computer.providers.docker.provider import _normalize_runtime
+
+    monkeypatch.setenv("CUA_CONTAINER_RUNTIME", "podman")
+
+    with pytest.raises(ValueError, match="podman"):
+        _normalize_runtime(None)
+
+
 @patch("computer.providers.docker.provider.HAS_DOCKER", True)
 @patch("computer.providers.docker.provider.HAS_CONTAINER", True)
 def test_docker_runtime_commands_use_docker_cli():
@@ -51,6 +60,73 @@ def test_apple_container_runtime_commands_use_container_cli():
         "--force",
         "desktop",
     ]
+
+
+@patch("computer.providers.docker.provider.HAS_DOCKER", True)
+@patch("computer.providers.docker.provider.HAS_CONTAINER", True)
+def test_run_vm_container_runtime_option_does_not_mutate_provider_runtime():
+    from computer.providers.docker.provider import ContainerRuntime, DockerProvider
+
+    provider = DockerProvider(image="trycua/cua-xfce:latest", runtime="docker")
+
+    async def fake_get_vm(name, storage=None):
+        return {"status": "running", "name": name}
+
+    provider.get_vm = fake_get_vm
+
+    vm = asyncio.run(
+        provider.run_vm(
+            "trycua/cua-xfce:latest",
+            "desktop",
+            {"container_runtime": "container"},
+        )
+    )
+
+    assert vm["status"] == "running"
+    assert provider.runtime == ContainerRuntime.DOCKER
+
+
+@patch("computer.providers.docker.provider.HAS_DOCKER", True)
+@patch("computer.providers.docker.provider.HAS_CONTAINER", True)
+def test_update_vm_reports_active_runtime_provider():
+    from computer.providers.docker.provider import DockerProvider
+
+    provider = DockerProvider(image="trycua/cua-xfce:latest", runtime="container")
+
+    result = asyncio.run(provider.update_vm("desktop", {}))
+
+    assert result["provider"] == "container"
+
+
+def test_factory_preserves_apple_container_availability_errors(monkeypatch):
+    from computer.providers.base import VMProviderType
+    from computer.providers import factory as factory_module
+
+    class FakeDockerProvider:
+        def __init__(self, **kwargs):
+            raise RuntimeError("Apple container CLI is required when runtime='container'.")
+
+    monkeypatch.setattr(factory_module, "DockerProvider", FakeDockerProvider, raising=False)
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "computer.providers.docker": type(
+                "FakeDockerModule",
+                (),
+                {
+                    "HAS_CONTAINER": True,
+                    "HAS_DOCKER": True,
+                    "DockerProvider": FakeDockerProvider,
+                },
+            ),
+        },
+    ):
+        with pytest.raises(RuntimeError, match="Apple container CLI"):
+            factory_module.VMProviderFactory.create_provider(
+                VMProviderType.DOCKER,
+                runtime="container",
+            )
 
 
 @patch("computer.providers.docker.provider.HAS_DOCKER", True)

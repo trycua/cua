@@ -154,24 +154,9 @@ class VMProviderFactory:
                 ) from e
         elif provider_type == VMProviderType.DOCKER:
             try:
-                import os
-
-                from .docker import HAS_CONTAINER, HAS_DOCKER, DockerProvider
+                from .docker import DockerProvider
 
                 runtime = kwargs.get("runtime") or kwargs.get("container_runtime")
-                runtime = (runtime or os.environ.get("CUA_CONTAINER_RUNTIME") or "docker").lower()
-                uses_apple_container = runtime in {"apple", "apple-container", "apple_container", "container"}
-
-                if not HAS_DOCKER and not uses_apple_container:
-                    raise ImportError(
-                        "Docker is required for DockerProvider. "
-                        "Please install Docker and ensure it is running."
-                    )
-                if uses_apple_container and not HAS_CONTAINER:
-                    raise ImportError(
-                        "Apple container CLI is required for DockerProvider with runtime='container'. "
-                        "Install https://github.com/apple/container and run 'container system start'."
-                    )
                 return DockerProvider(
                     host=host,
                     storage=storage,

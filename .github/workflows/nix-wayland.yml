@@ -96,7 +96,6 @@ jobs:
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
       - name: Run cua-driver-wayland-${{ matrix.desktop }}-${{ matrix.scenario }}
-        continue-on-error: true
         run: |
           nix build ".#checks.x86_64-linux.cua-driver-wayland-${{ matrix.desktop }}-${{ matrix.scenario }}" \
             --print-build-logs --show-trace \

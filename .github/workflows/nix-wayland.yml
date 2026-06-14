@@ -99,7 +99,7 @@ jobs:
         run: |
           nix build ".#checks.x86_64-linux.cua-driver-wayland-${{ matrix.desktop }}-${{ matrix.scenario }}" \
             --print-build-logs --show-trace \
-            -o "result-${{ matrix.desktop }}-${{ matrix.scenario }}" || true
+            -o "result-${{ matrix.desktop }}-${{ matrix.scenario }}"
 
       - name: Collect artifacts
         if: always()
@@ -182,11 +182,10 @@ jobs:
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
       - name: Run cua-driver-wayland-${{ matrix.desktop }}-background-gui-${{ matrix.app }}
-        continue-on-error: true
         run: |
           nix build ".#checks.x86_64-linux.cua-driver-wayland-${{ matrix.desktop }}-background-gui-${{ matrix.app }}" \
             --print-build-logs --show-trace \
-            -o "result-${{ matrix.desktop }}-bg-gui-${{ matrix.app }}" || true
+            -o "result-${{ matrix.desktop }}-bg-gui-${{ matrix.app }}"
 
       - name: Collect artifacts
         if: always()

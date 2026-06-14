@@ -3,10 +3,11 @@ name: CUA Driver Native-Wayland TDD Suite
 # Native-Wayland reproduction of the cua-driver NixOS tests across five desktop
 # sessions (XFCE on labwc/wayfire/sway, plus KDE and GNOME). These are a TDD
 # RED suite: the driver is X11-only today, so they are EXPECTED TO FAIL until
-# native Wayland support lands. They therefore never gate a PR — this workflow
-# is opt-in (manual dispatch, or the `cua-driver-wayland` PR label) and every
-# job is continue-on-error. Artifacts (screenshots, GIFs, logs) are uploaded so
-# you can see exactly what each compositor does.
+# native Wayland support lands. The triggers mirror the X11 nix-build.yml
+# workflow (PRs/pushes touching nix/flake/driver, plus manual dispatch); every
+# job stays continue-on-error so the expected-red suite never blocks a PR.
+# Artifacts (screenshots, GIFs, logs) are uploaded so you can see exactly what
+# each compositor does.
 on:
   pull_request:
     paths:
@@ -14,7 +15,7 @@ on:
       - 'flake.nix'
       - 'flake.lock'
       - 'libs/cua-driver/rust/**'
-      - '.github/workflows/nix-build.yml'
+      - '.github/workflows/nix-wayland.yml'
   push:
     branches: [main]
     paths:
@@ -22,7 +23,7 @@ on:
       - 'flake.nix'
       - 'flake.lock'
       - 'libs/cua-driver/rust/**'
-      - '.github/workflows/nix-build.yml'
+      - '.github/workflows/nix-wayland.yml'
   workflow_dispatch:
 
 permissions:
@@ -38,7 +39,6 @@ env:
 jobs:
   wayland-scenarios:
     name: ${{ matrix.desktop }} / ${{ matrix.scenario }}
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'cua-driver-wayland'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -131,7 +131,6 @@ jobs:
 
   wayland-background-gui:
     name: ${{ matrix.desktop }} / background-gui ${{ matrix.app }}
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'cua-driver-wayland'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true

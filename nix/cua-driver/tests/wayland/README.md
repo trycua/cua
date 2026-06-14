@@ -56,7 +56,9 @@ virtual-pointer protocols.
 
 ## Running in CI
 
-The `.github/workflows/nix-wayland.yml` workflow runs the whole matrix opt-in
-(manual `workflow_dispatch`, or the `cua-driver-wayland` PR label). Every job is
-`continue-on-error` so the red suite never blocks a PR, and each uploads its
-screenshots / GIFs / logs as artifacts so you can see what each compositor did.
+The `.github/workflows/nix-wayland.yml` workflow runs the whole matrix on the
+same triggers as the X11 `nix-build.yml` workflow — PRs and `main` pushes that
+touch `nix/**`, `flake.{nix,lock}`, `libs/cua-driver/rust/**`, or the workflow
+itself, plus manual `workflow_dispatch`. Every job is `continue-on-error` so the
+expected-red suite never blocks a PR, and each uploads its screenshots / GIFs /
+logs as artifacts so you can see what each compositor did.

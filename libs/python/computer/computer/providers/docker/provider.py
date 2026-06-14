@@ -9,6 +9,7 @@ commands and container management.
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -26,6 +27,45 @@ try:
     HAS_DOCKER = True
 except (subprocess.SubprocessError, FileNotFoundError):
     HAS_DOCKER = False
+
+try:
+    subprocess.run(["container", "system", "version"], capture_output=True, check=True)
+    HAS_CONTAINER = True
+except (subprocess.SubprocessError, FileNotFoundError):
+    HAS_CONTAINER = False
+
+
+class ContainerRuntime:
+    DOCKER = "docker"
+    APPLE_CONTAINER = "container"
+
+
+def _normalize_runtime(runtime: Optional[str]) -> str:
+    value = (runtime or os.environ.get("CUA_CONTAINER_RUNTIME") or ContainerRuntime.DOCKER).lower()
+    aliases = {
+        "docker": ContainerRuntime.DOCKER,
+        "apple": ContainerRuntime.APPLE_CONTAINER,
+        "apple-container": ContainerRuntime.APPLE_CONTAINER,
+        "apple_container": ContainerRuntime.APPLE_CONTAINER,
+        "container": ContainerRuntime.APPLE_CONTAINER,
+    }
+    if value not in aliases:
+        raise ValueError(
+            f"Unsupported container runtime '{runtime}'. Use 'docker' or 'container'."
+        )
+    return aliases[value]
+
+
+def _normalize_image_ref(image: Any) -> str:
+    if isinstance(image, dict):
+        image = image.get("reference") or image.get("name") or ""
+    if not isinstance(image, str):
+        return ""
+    if image.startswith("docker.io/library/"):
+        return image.removeprefix("docker.io/library/")
+    if image.startswith("docker.io/"):
+        return image.removeprefix("docker.io/")
+    return image
 
 
 class DockerProvider(BaseVMProvider):
@@ -46,6 +86,7 @@ class DockerProvider(BaseVMProvider):
         ephemeral: bool = False,
         vnc_port: Optional[int] = 6901,
         api_port: Optional[int] = None,
+        runtime: Optional[str] = None,
     ):
         """Initialize the Docker VM Provider.
 
@@ -64,11 +105,22 @@ class DockerProvider(BaseVMProvider):
             ephemeral: Use ephemeral (temporary) storage
             vnc_port: Port for VNC interface (default: 6901)
             api_port: Port for API server (default: 8000)
+            runtime: Container runtime CLI to use: "docker" or Apple "container".
+                     Defaults to CUA_CONTAINER_RUNTIME or "docker".
         """
         self.host = host
         self.api_port = api_port if api_port is not None else 8000
         self.vnc_port = vnc_port
         self.ephemeral = ephemeral
+        self.runtime = _normalize_runtime(runtime)
+
+        if self.runtime == ContainerRuntime.DOCKER and not HAS_DOCKER:
+            raise RuntimeError("Docker is required when runtime='docker'.")
+        if self.runtime == ContainerRuntime.APPLE_CONTAINER and not HAS_CONTAINER:
+            raise RuntimeError(
+                "Apple container CLI is required when runtime='container'. "
+                "Install https://github.com/apple/container and run 'container system start'."
+            )
 
         self.shared_path = shared_path
         self.image = image
@@ -90,6 +142,109 @@ class DockerProvider(BaseVMProvider):
             self.storage = "ephemeral"  # Handle ephemeral storage (temporary directory)
         else:
             self.storage = storage
+
+    def _runtime_provider_name(self) -> str:
+        return "container" if self.runtime == ContainerRuntime.APPLE_CONTAINER else "docker"
+
+    def _ensure_runtime_available(self) -> None:
+        if self.runtime == ContainerRuntime.DOCKER and not HAS_DOCKER:
+            raise RuntimeError("Docker is required when runtime='docker'.")
+        if self.runtime == ContainerRuntime.APPLE_CONTAINER and not HAS_CONTAINER:
+            raise RuntimeError(
+                "Apple container CLI is required when runtime='container'. "
+                "Install https://github.com/apple/container and run 'container system start'."
+            )
+
+    def _inspect_cmd(self, name: str) -> List[str]:
+        if self.runtime == ContainerRuntime.APPLE_CONTAINER:
+            return ["container", "inspect", name]
+        return ["docker", "inspect", name]
+
+    def _list_cmd(self) -> List[str]:
+        if self.runtime == ContainerRuntime.APPLE_CONTAINER:
+            return ["container", "list", "--all", "--format", "json"]
+        return ["docker", "ps", "-a", "--filter", f"ancestor={self.image}", "--format", "json"]
+
+    def _delete_cmd(self, name: str, force: bool = False) -> List[str]:
+        if self.runtime == ContainerRuntime.APPLE_CONTAINER:
+            cmd = ["container", "delete"]
+            if force:
+                cmd.append("--force")
+            return [*cmd, name]
+        return ["docker", "rm", *( ["-f"] if force else [] ), name]
+
+    def _start_cmd(self, name: str) -> List[str]:
+        return [self._runtime_provider_name(), "start", name]
+
+    def _stop_cmd(self, name: str) -> List[str]:
+        return [self._runtime_provider_name(), "stop", name]
+
+    def _run_cmd(self, name: str) -> List[str]:
+        return [self._runtime_provider_name(), "run", "-d", "--name", name]
+
+    def _parse_inspect(self, name: str, container_info: Dict[str, Any]) -> Dict[str, Any]:
+        if self.runtime == ContainerRuntime.APPLE_CONTAINER:
+            status = container_info.get("status", "unknown")
+            if isinstance(status, dict):
+                status = status.get("state", "unknown")
+            configuration = container_info.get("configuration", {})
+            image = container_info.get("image") or configuration.get("image") or self.image
+            image = _normalize_image_ref(image) or self.image
+            networks = container_info.get("networks") or []
+            ip_address = None
+            if networks:
+                address = networks[0].get("address")
+                ip_address = address.split("/", 1)[0] if address else None
+
+            return {
+                "name": configuration.get("id", name),
+                "status": "running" if status == "running" else status,
+                "ip_address": ip_address or "127.0.0.1",
+                "ports": {},
+                "image": image,
+                "provider": self._runtime_provider_name(),
+                "container_id": configuration.get("id", name),
+                "created": container_info.get("created", ""),
+                "started": container_info.get("started", ""),
+            }
+
+        state = container_info["State"]
+        network_settings = container_info["NetworkSettings"]
+
+        if state["Running"]:
+            status = "running"
+        elif state["Paused"]:
+            status = "paused"
+        else:
+            status = "stopped"
+
+        ip_address = network_settings.get("IPAddress", "")
+        if not ip_address and "Networks" in network_settings:
+            for network_info in network_settings["Networks"].values():
+                if network_info.get("IPAddress"):
+                    ip_address = network_info["IPAddress"]
+                    break
+
+        ports = {}
+        if "Ports" in network_settings and network_settings["Ports"]:
+            for container_port, port_mappings in network_settings["Ports"].items():
+                if port_mappings:
+                    for mapping in port_mappings:
+                        if mapping.get("HostPort"):
+                            ports[container_port] = mapping["HostPort"]
+                            break
+
+        return {
+            "name": name,
+            "status": status,
+            "ip_address": ip_address or "127.0.0.1",
+            "ports": ports,
+            "image": container_info["Config"]["Image"],
+            "provider": self._runtime_provider_name(),
+            "container_id": container_info["Id"][:12],
+            "created": container_info["Created"],
+            "started": state.get("StartedAt", ""),
+        }
 
     def _detect_image_config(self):
         """Detect image type and configure paths accordingly."""
@@ -164,7 +319,7 @@ class DockerProvider(BaseVMProvider):
         """
         try:
             # Check if container exists and get its status
-            cmd = ["docker", "inspect", name]
+            cmd = self._inspect_cmd(name)
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             if result.returncode != 0:
@@ -175,76 +330,49 @@ class DockerProvider(BaseVMProvider):
                     "ip_address": None,
                     "ports": {},
                     "image": self.image,
-                    "provider": "docker",
+                    "provider": self._runtime_provider_name(),
                 }
 
             # Parse container info
             container_info = json.loads(result.stdout)[0]
-            state = container_info["State"]
-            network_settings = container_info["NetworkSettings"]
-
-            # Determine status
-            if state["Running"]:
-                status = "running"
-            elif state["Paused"]:
-                status = "paused"
-            else:
-                status = "stopped"
-
-            # Get IP address
-            ip_address = network_settings.get("IPAddress", "")
-            if not ip_address and "Networks" in network_settings:
-                # Try to get IP from bridge network
-                for network_name, network_info in network_settings["Networks"].items():
-                    if network_info.get("IPAddress"):
-                        ip_address = network_info["IPAddress"]
-                        break
-
-            # Get port mappings
-            ports = {}
-            if "Ports" in network_settings and network_settings["Ports"]:
-                # network_settings["Ports"] is a dict like:
-                # {'6901/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '6901'}, ...], ...}
-                for container_port, port_mappings in network_settings["Ports"].items():
-                    if port_mappings:  # Check if there are any port mappings
-                        # Take the first mapping (usually the IPv4 one)
-                        for mapping in port_mappings:
-                            if mapping.get("HostPort"):
-                                ports[container_port] = mapping["HostPort"]
-                                break  # Use the first valid mapping
-
-            return {
-                "name": name,
-                "status": status,
-                "ip_address": ip_address or "127.0.0.1",  # Use localhost if no IP
-                "ports": ports,
-                "image": container_info["Config"]["Image"],
-                "provider": "docker",
-                "container_id": container_info["Id"][:12],  # Short ID
-                "created": container_info["Created"],
-                "started": state.get("StartedAt", ""),
-            }
+            return self._parse_inspect(name, container_info)
 
         except Exception as e:
             logger.error(f"Error getting VM info for {name}: {e}")
             import traceback
 
             traceback.print_exc()
-            return {"name": name, "status": "error", "error": str(e), "provider": "docker"}
+            return {
+                "name": name,
+                "status": "error",
+                "error": str(e),
+                "provider": self._runtime_provider_name(),
+            }
 
     async def list_vms(self) -> List[Dict[str, Any]]:
         """List all Docker containers managed by this provider."""
         try:
             # List all containers (running and stopped) with the Cua image
-            cmd = ["docker", "ps", "-a", "--filter", f"ancestor={self.image}", "--format", "json"]
+            cmd = self._list_cmd()
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             containers = []
             if result.stdout.strip():
-                for line in result.stdout.strip().split("\n"):
+                lines = result.stdout.strip().split("\n")
+                if self.runtime == ContainerRuntime.APPLE_CONTAINER and result.stdout.lstrip().startswith("["):
+                    lines = [json.dumps(item) for item in json.loads(result.stdout)]
+                for line in lines:
                     if line.strip():
                         container_data = json.loads(line)
-                        vm_info = await self.get_vm(container_data["Names"])
+                        container_name = container_data.get("Names") or container_data.get("id") or container_data.get("configuration", {}).get("id")
+                        image = container_data.get("Image") or container_data.get("image") or container_data.get("configuration", {}).get("image")
+                        if (
+                            self.runtime == ContainerRuntime.APPLE_CONTAINER
+                            and image
+                            and _normalize_image_ref(image) != _normalize_image_ref(self.image)
+                        ):
+                            continue
+                        vm_info = await self.get_vm(container_name)
                         containers.append(vm_info)
 
             return containers
@@ -278,6 +406,10 @@ class DockerProvider(BaseVMProvider):
         """
         try:
             # Check if container already exists
+            if "container_runtime" in run_opts:
+                self.runtime = _normalize_runtime(run_opts["container_runtime"])
+                self._ensure_runtime_available()
+
             existing_vm = await self.get_vm(name, storage)
             if existing_vm["status"] == "running":
                 logger.info(f"Container {name} is already running")
@@ -286,12 +418,12 @@ class DockerProvider(BaseVMProvider):
                 if self.ephemeral:
                     # Delete existing container
                     logger.info(f"Deleting existing container {name}")
-                    delete_cmd = ["docker", "rm", name]
+                    delete_cmd = self._delete_cmd(name, force=True)
                     result = subprocess.run(delete_cmd, capture_output=True, text=True, check=True)
                 else:
                     # Start existing container
                     logger.info(f"Starting existing container {name}")
-                    start_cmd = ["docker", "start", name]
+                    start_cmd = self._start_cmd(name)
                     result = subprocess.run(start_cmd, capture_output=True, text=True, check=True)
 
                     # Wait for container to be ready
@@ -299,10 +431,10 @@ class DockerProvider(BaseVMProvider):
                     return await self.get_vm(name, storage)
 
             # Use provided image or default
-            docker_image = image if image != "default" else self.image
+            runtime_image = image if image != "default" else self.image
 
             # Build docker run command
-            cmd = ["docker", "run", "-d", "--name", name]
+            cmd = self._run_cmd(name)
 
             # Add memory limit if specified
             if "memory" in run_opts:
@@ -404,9 +536,11 @@ class DockerProvider(BaseVMProvider):
                 )
 
             # Add the image
-            cmd.append(docker_image)
+            cmd.append(runtime_image)
 
-            logger.info(f"Running Docker container with command: {' '.join(cmd)}")
+            logger.info(
+                f"Running {self._runtime_provider_name()} container with command: {' '.join(cmd)}"
+            )
 
             # Run the container
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -430,11 +564,21 @@ class DockerProvider(BaseVMProvider):
         except subprocess.CalledProcessError as e:
             error_msg = f"Failed to run container {name}: {e.stderr}"
             logger.error(error_msg)
-            return {"name": name, "status": "error", "error": error_msg, "provider": "docker"}
+            return {
+                "name": name,
+                "status": "error",
+                "error": error_msg,
+                "provider": self._runtime_provider_name(),
+            }
         except Exception as e:
             error_msg = f"Error running VM {name}: {e}"
             logger.error(error_msg)
-            return {"name": name, "status": "error", "error": error_msg, "provider": "docker"}
+            return {
+                "name": name,
+                "status": "error",
+                "error": error_msg,
+                "provider": self._runtime_provider_name(),
+            }
 
     async def _wait_for_container_ready(self, container_name: str, timeout: int = 60) -> bool:
         """Wait for the Docker container to be fully ready.
@@ -475,7 +619,7 @@ class DockerProvider(BaseVMProvider):
             logger.info(f"Stopping container {name}")
 
             # Stop the container
-            cmd = ["docker", "stop", name]
+            cmd = self._stop_cmd(name)
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             # Remove from running containers tracking
@@ -486,24 +630,34 @@ class DockerProvider(BaseVMProvider):
 
             # Delete container if ephemeral=True
             if self.ephemeral:
-                cmd = ["docker", "rm", name]
+                cmd = self._delete_cmd(name)
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             return {
                 "name": name,
                 "status": "stopped",
                 "message": "Container stopped successfully",
-                "provider": "docker",
+                "provider": self._runtime_provider_name(),
             }
 
         except subprocess.CalledProcessError as e:
             error_msg = f"Failed to stop container {name}: {e.stderr}"
             logger.error(error_msg)
-            return {"name": name, "status": "error", "error": error_msg, "provider": "docker"}
+            return {
+                "name": name,
+                "status": "error",
+                "error": error_msg,
+                "provider": self._runtime_provider_name(),
+            }
         except Exception as e:
             error_msg = f"Error stopping VM {name}: {e}"
             logger.error(error_msg)
-            return {"name": name, "status": "error", "error": error_msg, "provider": "docker"}
+            return {
+                "name": name,
+                "status": "error",
+                "error": error_msg,
+                "provider": self._runtime_provider_name(),
+            }
 
     async def restart_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         raise NotImplementedError("DockerProvider does not support restarting VMs.")

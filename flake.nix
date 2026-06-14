@@ -156,6 +156,71 @@
                   "electron-logseq"
                 ]
               )
+            )
+            # Native-Wayland TDD matrix — reproduce the cua-driver scenarios on
+            # real, NATIVE Wayland sessions (XFCE on labwc/wayfire/sway, plus KDE
+            # and GNOME). Apps run as Wayland clients and the tests never set
+            # DISPLAY, so the X11-only driver cannot see them: this is a RED suite
+            # specifying native Wayland support. One check per (desktop × scenario)
+            # and per (desktop × background-GUI app). See
+            # nix/cua-driver/tests/wayland/README.md.
+            // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
+              let
+                waylandDesktops = [
+                  "xfce-labwc"
+                  "xfce-wayfire"
+                  "xfce-sway"
+                  "kde"
+                  "gnome"
+                ];
+                waylandScenarios = {
+                  integration = ./nix/cua-driver/tests/wayland/integration.nix;
+                  screenshot = ./nix/cua-driver/tests/wayland/screenshot.nix;
+                  cursor-click-gif = ./nix/cua-driver/tests/wayland/cursor-click-gif.nix;
+                  background-terminal-gif = ./nix/cua-driver/tests/wayland/background-terminal-gif.nix;
+                  parallel-drag = ./nix/cua-driver/tests/wayland/parallel-drag.nix;
+                };
+                waylandBgApps = [
+                  "foot"
+                  "gtk3-gedit"
+                  "qt6-kcalc"
+                ];
+                waylandModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+                scenarioChecks = pkgs.lib.listToAttrs (
+                  pkgs.lib.concatMap (
+                    desktop:
+                    map (
+                      scenario:
+                      pkgs.lib.nameValuePair "cua-driver-wayland-${desktop}-${scenario}" (
+                        import waylandScenarios.${scenario} {
+                          inherit pkgs desktop;
+                          inherit (pkgs) lib;
+                          cuaDriverModule = waylandModule;
+                        }
+                      )
+                    ) (builtins.attrNames waylandScenarios)
+                  ) waylandDesktops
+                );
+                bgGuiChecks = pkgs.lib.listToAttrs (
+                  pkgs.lib.concatMap (
+                    desktop:
+                    map (
+                      app:
+                      pkgs.lib.nameValuePair "cua-driver-wayland-${desktop}-background-gui-${app}" (
+                        import ./nix/cua-driver/tests/wayland/background-gui.nix {
+                          inherit pkgs desktop app;
+                          inherit (pkgs) lib;
+                          cuaDriverModule = waylandModule;
+                        }
+                      )
+                    ) waylandBgApps
+                  ) waylandDesktops
+                );
+              in
+              scenarioChecks // bgGuiChecks
             );
         }
       )

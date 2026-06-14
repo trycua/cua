@@ -1,0 +1,205 @@
+name: CUA Driver Native-Wayland TDD Suite
+
+# Native-Wayland reproduction of the cua-driver NixOS tests across five desktop
+# sessions (XFCE on labwc/wayfire/sway, plus KDE and GNOME). These are a TDD
+# RED suite: the driver is X11-only today, so they are EXPECTED TO FAIL until
+# native Wayland support lands. They therefore never gate a PR — this workflow
+# is opt-in (manual dispatch, or the `cua-driver-wayland` PR label) and every
+# job is continue-on-error. Artifacts (screenshots, GIFs, logs) are uploaded so
+# you can see exactly what each compositor does.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-west-2
+  NIX_CACHE_BUCKET: trycua-nix-cache
+  NIX_CACHE_SECRET: nix-cache/trycua-nix-cache/signing-key
+
+jobs:
+  wayland-scenarios:
+    name: ${{ matrix.desktop }} / ${{ matrix.scenario }}
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'cua-driver-wayland'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [xfce-labwc, xfce-wayfire, xfce-sway, kde, gnome]
+        scenario:
+          - integration
+          - screenshot
+          - cursor-click-gif
+          - background-terminal-gif
+          - parallel-drag
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-nix-cache
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Nix signing key
+        id: nix-key
+        run: |
+          SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${{ env.NIX_CACHE_SECRET }}" \
+            --query 'SecretString' --output text)
+          SECRET_KEY=$(echo "$SECRET" | jq -r '.secret_key')
+          echo "::add-mask::$SECRET_KEY"
+          echo "$SECRET_KEY" > "${{ runner.temp }}/signing-key.sec"
+          chmod 600 "${{ runner.temp }}/signing-key.sec"
+          PUBLIC_KEY=$(echo "$SECRET" | jq -r '.public_key')
+          echo "public_key=$PUBLIC_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Setup AWS credentials file for Nix
+        run: |
+          mkdir -p ~/.aws
+          printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\nregion = %s\n' \
+            "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_SESSION_TOKEN" "$AWS_REGION" > ~/.aws/credentials
+          chmod 600 ~/.aws/credentials
+          sudo mkdir -p /root/.aws
+          sudo bash -c "printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\nregion = %s\n' \
+            '$AWS_ACCESS_KEY_ID' '$AWS_SECRET_ACCESS_KEY' '$AWS_SESSION_TOKEN' '$AWS_REGION' > /root/.aws/credentials"
+          sudo chmod 600 /root/.aws/credentials
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }} https://cache.nixos.org
+            trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
+            trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Run cua-driver-wayland-${{ matrix.desktop }}-${{ matrix.scenario }}
+        continue-on-error: true
+        run: |
+          nix build ".#checks.x86_64-linux.cua-driver-wayland-${{ matrix.desktop }}-${{ matrix.scenario }}" \
+            --print-build-logs --show-trace \
+            -o "result-${{ matrix.desktop }}-${{ matrix.scenario }}" || true
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts
+          find -L "result-${{ matrix.desktop }}-${{ matrix.scenario }}/" \
+            \( -name '*.gif' -o -name '*.png' -o -name '*.json' \) -type f \
+            -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -la artifacts/ 2>/dev/null || echo "No artifacts found"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-driver-wayland-${{ matrix.desktop }}-${{ matrix.scenario }}
+          path: artifacts/*
+          if-no-files-found: warn
+
+      - name: Sign and upload to Nix cache
+        if: always()
+        run: |
+          nix store sign --key-file "${{ runner.temp }}/signing-key.sec" --all || true
+          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}&want-mass-query=true" --all -L || true
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f "${{ runner.temp }}/signing-key.sec"
+
+  wayland-background-gui:
+    name: ${{ matrix.desktop }} / background-gui ${{ matrix.app }}
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'cua-driver-wayland'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [xfce-labwc, xfce-wayfire, xfce-sway, kde, gnome]
+        app: [foot, gtk3-gedit, qt6-kcalc]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-nix-cache
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Nix signing key
+        id: nix-key
+        run: |
+          SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${{ env.NIX_CACHE_SECRET }}" \
+            --query 'SecretString' --output text)
+          SECRET_KEY=$(echo "$SECRET" | jq -r '.secret_key')
+          echo "::add-mask::$SECRET_KEY"
+          echo "$SECRET_KEY" > "${{ runner.temp }}/signing-key.sec"
+          chmod 600 "${{ runner.temp }}/signing-key.sec"
+          PUBLIC_KEY=$(echo "$SECRET" | jq -r '.public_key')
+          echo "public_key=$PUBLIC_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Setup AWS credentials file for Nix
+        run: |
+          mkdir -p ~/.aws
+          printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\nregion = %s\n' \
+            "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_SESSION_TOKEN" "$AWS_REGION" > ~/.aws/credentials
+          chmod 600 ~/.aws/credentials
+          sudo mkdir -p /root/.aws
+          sudo bash -c "printf '[default]\naws_access_key_id = %s\naws_secret_access_key = %s\naws_session_token = %s\nregion = %s\n' \
+            '$AWS_ACCESS_KEY_ID' '$AWS_SECRET_ACCESS_KEY' '$AWS_SESSION_TOKEN' '$AWS_REGION' > /root/.aws/credentials"
+          sudo chmod 600 /root/.aws/credentials
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }} https://cache.nixos.org
+            trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
+            trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Run cua-driver-wayland-${{ matrix.desktop }}-background-gui-${{ matrix.app }}
+        continue-on-error: true
+        run: |
+          nix build ".#checks.x86_64-linux.cua-driver-wayland-${{ matrix.desktop }}-background-gui-${{ matrix.app }}" \
+            --print-build-logs --show-trace \
+            -o "result-${{ matrix.desktop }}-bg-gui-${{ matrix.app }}" || true
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts
+          find -L "result-${{ matrix.desktop }}-bg-gui-${{ matrix.app }}/" \
+            \( -name '*.gif' -o -name '*.png' -o -name '*.json' \) -type f \
+            -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -la artifacts/ 2>/dev/null || echo "No artifacts found"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-driver-wayland-${{ matrix.desktop }}-background-gui-${{ matrix.app }}
+          path: artifacts/*
+          if-no-files-found: warn
+
+      - name: Sign and upload to Nix cache
+        if: always()
+        run: |
+          nix store sign --key-file "${{ runner.temp }}/signing-key.sec" --all || true
+          nix copy --to "s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}&want-mass-query=true" --all -L || true
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f "${{ runner.temp }}/signing-key.sec"

@@ -8,9 +8,22 @@ name: CUA Driver Native-Wayland TDD Suite
 # job is continue-on-error. Artifacts (screenshots, GIFs, logs) are uploaded so
 # you can see exactly what each compositor does.
 on:
-  workflow_dispatch:
   pull_request:
-    types: [labeled]
+    paths:
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'libs/cua-driver/rust/**'
+      - '.github/workflows/nix-build.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'libs/cua-driver/rust/**'
+      - '.github/workflows/nix-build.yml'
+  workflow_dispatch:
 
 permissions:
   id-token: write

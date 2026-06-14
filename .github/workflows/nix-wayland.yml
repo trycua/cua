@@ -4,8 +4,9 @@ name: CUA Driver Native-Wayland TDD Suite
 # sessions (XFCE on labwc/wayfire/sway, plus KDE and GNOME). These are a TDD
 # RED suite: the driver is X11-only today, so they are EXPECTED TO FAIL until
 # native Wayland support lands. The triggers mirror the X11 nix-build.yml
-# workflow (PRs/pushes touching nix/flake/driver, plus manual dispatch); every
-# job stays continue-on-error so the expected-red suite never blocks a PR.
+# workflow (PRs/pushes touching nix/flake/driver, plus manual dispatch). These
+# jobs are BLOCKING (no continue-on-error): a red cell fails the PR, so the suite
+# can only go green once native Wayland support is implemented.
 # Artifacts (screenshots, GIFs, logs) are uploaded so you can see exactly what
 # each compositor does.
 on:
@@ -41,7 +42,6 @@ jobs:
     name: ${{ matrix.desktop }} / ${{ matrix.scenario }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -132,7 +132,6 @@ jobs:
     name: ${{ matrix.desktop }} / background-gui ${{ matrix.app }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:

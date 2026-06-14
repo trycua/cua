@@ -59,6 +59,7 @@ virtual-pointer protocols.
 The `.github/workflows/nix-wayland.yml` workflow runs the whole matrix on the
 same triggers as the X11 `nix-build.yml` workflow — PRs and `main` pushes that
 touch `nix/**`, `flake.{nix,lock}`, `libs/cua-driver/rust/**`, or the workflow
-itself, plus manual `workflow_dispatch`. Every job is `continue-on-error` so the
-expected-red suite never blocks a PR, and each uploads its screenshots / GIFs /
-logs as artifacts so you can see what each compositor did.
+itself, plus manual `workflow_dispatch`. The jobs are BLOCKING: a red cell fails
+the PR, so the suite only goes green once native Wayland support lands. Each job
+uploads its screenshots / GIFs / logs as artifacts so you can see what each
+compositor did.

@@ -10,6 +10,64 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Hosts that only accept connections from the local machine.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+
+
+class InsecureBindError(ValueError):
+    """Raised when the server would bind a public interface with auth disabled."""
+
+
+def _env_truthy(name: str) -> bool:
+    """Return True when environment variable *name* holds a truthy value."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return True when *host* only accepts connections from the local machine."""
+    return host.strip().lower() in _LOOPBACK_HOSTS
+
+
+def resolve_bind_host(requested_host: Optional[str]) -> str:
+    """Resolve the effective bind host, failing closed on insecure exposure.
+
+    The server only authenticates requests when ``CONTAINER_NAME`` is set
+    (sandbox/cloud mode). With it unset ("local mode") every endpoint — including
+    ``run_command`` and file read/write — is unauthenticated, so a non-loopback
+    bind would expose remote command execution to the whole network.
+
+    Resolution rules:
+    - No ``--host`` given: default to ``0.0.0.0`` in sandbox/cloud mode (auth is
+      enforced) or ``127.0.0.1`` in local mode (safe by default).
+    - Explicit non-loopback ``--host`` in local mode: refuse unless the operator
+      opts in with ``CUA_ALLOW_INSECURE``.
+
+    Raises:
+        InsecureBindError: when a non-loopback host is requested in local mode
+            without ``CUA_ALLOW_INSECURE`` set.
+    """
+    cloud_mode = bool(os.environ.get("CONTAINER_NAME"))
+
+    if requested_host is None:
+        return "0.0.0.0" if cloud_mode else "127.0.0.1"
+
+    if (
+        not cloud_mode
+        and not _is_loopback_host(requested_host)
+        and not _env_truthy("CUA_ALLOW_INSECURE")
+    ):
+        raise InsecureBindError(
+            f"Refusing to bind '{requested_host}' with authentication disabled.\n"
+            "The computer-server is unauthenticated when CONTAINER_NAME is unset, so "
+            "binding a non-loopback interface would expose unauthenticated shell and "
+            "file access to the network. Choose one:\n"
+            "  - Bind locally:       --host 127.0.0.1   (default)\n"
+            "  - Enable auth:        set CONTAINER_NAME (sandbox/cloud mode)\n"
+            "  - Override (unsafe):  set CUA_ALLOW_INSECURE=1"
+        )
+
+    return requested_host
+
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -30,7 +88,13 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Auto-detect and log the actual screen resolution at startup",
     )
     parser.add_argument(
-        "--host", default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)"
+        "--host",
+        default=None,
+        help=(
+            "Host to bind the server to. Default: 127.0.0.1 in local mode, or "
+            "0.0.0.0 when CONTAINER_NAME is set (authenticated sandbox/cloud mode). "
+            "Binding a non-loopback host in local mode requires CUA_ALLOW_INSECURE=1."
+        ),
     )
     parser.add_argument(
         "--port", type=int, default=8000, help="Port to bind the server to (default: 8000)"
@@ -109,8 +173,16 @@ def main() -> None:
         vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")
         logger.info(f"VNC backend enabled → {vnc_host}:{args.vnc_port}")
 
+    # Resolve the bind host, failing closed rather than exposing an
+    # unauthenticated server on a public interface (see issue #1892).
+    try:
+        bind_host = resolve_bind_host(args.host)
+    except InsecureBindError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
+
     # Create and start the server
-    logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")
+    logger.info(f"Starting Cua Computer API server on {bind_host}:{args.port}...")
     logger.info("HTTP API available at /ws, /cmd, /status endpoints")
     logger.info("MCP server available at /mcp endpoint (if fastmcp installed)")
 
@@ -133,7 +205,7 @@ def main() -> None:
     # the module-level handler factory runs in main.py.
     from .server import Server
 
-    server = Server(host=args.host, port=args.port, log_level=args.log_level, **ssl_args)
+    server = Server(host=bind_host, port=args.port, log_level=args.log_level, **ssl_args)
 
     try:
         server.start()

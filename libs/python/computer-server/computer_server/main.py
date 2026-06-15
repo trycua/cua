@@ -11,6 +11,7 @@ import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union, cast
+from urllib.parse import urlsplit
 
 import aiohttp
 import uvicorn
@@ -176,6 +177,84 @@ class UnavailableWithoutContainerMiddleware:
         await send({"type": "websocket.close", "code": 1008})
 
 
+class CrossSiteOriginGuard:
+    """Reject cross-site *browser* requests to the command/control endpoints.
+
+    Browsers attach an ``Origin`` header to ``fetch()`` and WebSocket requests;
+    native SDK clients (the Python/TS SDKs), ``curl``, and server-to-server
+    callers do not. Even with the server bound to loopback, a web page the user
+    is browsing runs on the same machine and could otherwise drive the server
+    (cross-site WebSocket hijacking / CSRF) into running shell commands or
+    reading files.
+
+    This guard rejects requests whose ``Origin`` is a non-loopback site while
+    allowing:
+      - requests with no ``Origin`` header (native clients, server-to-server), and
+      - same-machine (loopback) origins, e.g. a locally served UI.
+
+    Scoped to the ``/ws``, ``/cmd`` and ``/pty`` surfaces (shell, file, PTY).
+    ``/mcp`` and ``/status`` are intentionally left untouched. Pure ASGI (not
+    BaseHTTPMiddleware) so streaming/WebSocket responses are not buffered.
+    """
+
+    _DETAIL = "Cross-site origin is not allowed"
+    _LOOPBACK_ORIGIN_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+    def __init__(self, app):
+        self.app = app
+
+    @classmethod
+    def _is_protected(cls, path: str) -> bool:
+        return path in ("/ws", "/cmd", "/pty") or path.startswith("/pty/")
+
+    @classmethod
+    def _origin_allowed(cls, origin: Optional[str]) -> bool:
+        # No Origin header → not a browser cross-site request → allow.
+        if origin is None:
+            return True
+        host = (urlsplit(origin).hostname or "").lower()
+        return host in cls._LOOPBACK_ORIGIN_HOSTS
+
+    async def __call__(self, scope, receive, send):
+        scope_type = scope.get("type")
+        if scope_type in ("http", "websocket") and self._is_protected(scope.get("path", "")):
+            origin: Optional[str] = None
+            for key, value in scope.get("headers", []):
+                if key == b"origin":
+                    origin = value.decode("latin-1")
+                    break
+            if not self._origin_allowed(origin):
+                if scope_type == "http":
+                    await self._reject_http(send)
+                else:
+                    await self._reject_websocket(receive, send)
+                return
+        await self.app(scope, receive, send)
+
+    @classmethod
+    async def _reject_http(cls, send):
+        body = json.dumps({"detail": cls._DETAIL}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    @classmethod
+    async def _reject_websocket(cls, receive, send):
+        event = await receive()
+        if event.get("type") != "websocket.connect":
+            return
+        # Reject the handshake outright (close before accept). 1008 = Policy Violation.
+        await send({"type": "websocket.close", "code": 1008})
+
+
 app.add_middleware(UnavailableWithoutContainerMiddleware)
 
 # CORS configuration
@@ -187,6 +266,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Reject cross-site browser requests to the shell/file/PTY endpoints so a web
+# page the user visits cannot drive a loopback server (see issue #1892).
+app.add_middleware(CrossSiteOriginGuard)
 
 
 class McpBarePathRewrite:

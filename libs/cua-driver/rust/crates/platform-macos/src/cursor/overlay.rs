@@ -156,7 +156,10 @@ pub fn init(cfg: CursorConfig) {
     *CMD_RX_CELL.lock().unwrap() = Some(rx);
     *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
     let mut cursors = IndexMap::new();
-    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+    // Default cursor starts disabled — see state.rs:new() and #1777.
+    let mut default_cfg = cfg.clone();
+    default_cfg.enabled = false;
+    cursors.insert("default".to_owned(), RenderState::new(default_cfg));
     *RENDER.lock().unwrap() = Some(RenderMap {
         cursors,
         win_w: 0.0,

@@ -1,0 +1,98 @@
+{
+  "board": {
+    "active_layer": 0,
+    "active_layer_preset": "",
+    "auto_track_width": true,
+    "hidden_netclasses": [],
+    "hidden_nets": [],
+    "high_contrast_mode": 0,
+    "net_color_mode": 1,
+    "opacity": {
+      "images": 0.6,
+      "pads": 1.0,
+      "shapes": 1.0,
+      "tracks": 1.0,
+      "vias": 1.0,
+      "zones": 0.6
+    },
+    "selection_filter": {
+      "dimensions": true,
+      "footprints": true,
+      "graphics": true,
+      "keepouts": true,
+      "lockedItems": false,
+      "otherItems": true,
+      "pads": true,
+      "text": true,
+      "tracks": true,
+      "vias": true,
+      "zones": true
+    },
+    "visible_items": [
+      "vias",
+      "footprint_text",
+      "footprint_anchors",
+      "ratsnest",
+      "grid",
+      "footprints_front",
+      "footprints_back",
+      "footprint_values",
+      "footprint_references",
+      "tracks",
+      "drc_errors",
+      "drawing_sheet",
+      "bitmaps",
+      "pads",
+      "zones",
+      "drc_warnings",
+      "drc_exclusions",
+      "locked_item_shadows",
+      "conflict_shadows",
+      "shapes"
+    ],
+    "visible_layers": "ffffffff_ffffffff_ffffffff_ffffffff",
+    "zone_display_mode": 0
+  },
+  "git": {
+    "repo_type": "",
+    "repo_username": "",
+    "ssh_key": ""
+  },
+  "meta": {
+    "filename": "kicad_currentdivider_circuit.kicad_prl",
+    "version": 5
+  },
+  "net_inspector_panel": {
+    "col_hidden": [],
+    "col_order": [],
+    "col_widths": [],
+    "custom_group_rules": [],
+    "expanded_rows": [],
+    "filter_by_net_name": true,
+    "filter_by_netclass": true,
+    "filter_text": "",
+    "group_by_constraint": false,
+    "group_by_netclass": false,
+    "show_unconnected_nets": false,
+    "show_zero_pad_nets": false,
+    "sort_ascending": true,
+    "sorting_column": -1
+  },
+  "open_jobsets": [],
+  "project": {
+    "files": []
+  },
+  "schematic": {
+    "selection_filter": {
+      "graphics": true,
+      "images": true,
+      "labels": true,
+      "lockedItems": false,
+      "otherItems": true,
+      "pins": true,
+      "symbols": true,
+      "text": true,
+      "wires": true
+    }
+  }
+}

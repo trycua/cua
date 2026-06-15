@@ -467,6 +467,7 @@ impl RenderStateCore {
             }
             OverlayCommand::SetEnabled(v) => {
                 self.visible = v;
+                self.cfg.enabled = v; // keep cfg.enabled in sync with visible (#1900)
                 true
             }
             OverlayCommand::SetMotion(m) => {

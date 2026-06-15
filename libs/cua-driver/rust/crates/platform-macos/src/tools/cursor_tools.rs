@@ -603,8 +603,9 @@ mod tests {
         };
         assert!(read_for(&json!({ "session": "sessA" })));
         assert!(!read_for(&json!({ "session": "sessB" })));
-        // Anonymous caller (no session) falls back to the seeded default (on).
-        assert!(read_for(&json!({})));
+        // Anonymous caller (no session) falls back to the seeded default,
+        // which starts disabled per #1777.
+        assert!(!read_for(&json!({})));
     }
 
     #[test]

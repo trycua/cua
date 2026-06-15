@@ -209,9 +209,54 @@ class McpBarePathRewrite:
         await self.app(scope, receive, send)
 
 
-# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
+class McpAcceptHeaderShim:
+    """Make the MCP streamable-HTTP endpoint tolerant of the Accept header.
+
+    The MCP Python SDK's StreamableHTTP transport rejects requests with
+    JSON-RPC -32600 ("Not Acceptable: Client must accept ...") unless the
+    request's Accept header advertises BOTH ``application/json`` and
+    ``text/event-stream`` (POST path), or ``text/event-stream`` (GET SSE
+    path). claude.ai's MCP connector does not always send both, so its
+    handshake POST to /mcp is rejected before it ever reaches a tool.
+
+    This pure-ASGI shim normalizes the inbound Accept header for /mcp
+    requests so it always contains both media types, which lets the SDK's
+    Accept check pass for every client regardless of what it sent. It only
+    rewrites the REQUEST header — it does not touch ``json_response`` or any
+    response semantics, so the server still negotiates JSON vs. SSE exactly
+    as it would otherwise. This keeps existing MCP clients (Claude Code,
+    SDK) unaffected while admitting stricter/looser connectors.
+
+    Scoped to the /mcp prefix only; all other routes are passed through
+    untouched. Pure ASGI (not BaseHTTPMiddleware) so streaming responses
+    are not buffered.
+    """
+
+    _COMBINED = b"application/json, text/event-stream"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        # Match the bare /mcp endpoint and anything under /mcp/, but NOT
+        # unrelated routes that merely share the prefix (e.g. /mcpx).
+        if scope["type"] == "http" and (path == "/mcp" or path.startswith("/mcp/")):
+            headers = [(k, v) for (k, v) in scope.get("headers", []) if k != b"accept"]
+            headers.append((b"accept", self._COMBINED))
+            scope = dict(scope, headers=headers)
+        await self.app(scope, receive, send)
+
+
+# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp.
+#
+# Middleware ordering note: Starlette's app.add_middleware() prepends, so the
+# LAST one added runs FIRST (outermost). We want, outermost -> innermost:
+#   McpBarePathRewrite (fix the path) -> McpAcceptHeaderShim (fix Accept) -> app
+# so add McpAcceptHeaderShim first, then McpBarePathRewrite.
 if _mcp_http_app:
     app.mount("/mcp", _mcp_http_app)
+    app.add_middleware(McpAcceptHeaderShim)
     app.add_middleware(McpBarePathRewrite)
 
 protocol_version = 1

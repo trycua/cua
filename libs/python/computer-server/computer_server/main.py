@@ -220,7 +220,10 @@ class CrossSiteOriginGuard:
         if scope_type in ("http", "websocket") and self._is_protected(scope.get("path", "")):
             origin: Optional[str] = None
             for key, value in scope.get("headers", []):
-                if key == b"origin":
+                # ASGI lowercases header names, but match case-insensitively so a
+                # non-normalizing server can't let a differently-cased Origin slip
+                # past the guard (which would be treated as "no Origin" → allowed).
+                if key.lower() == b"origin":
                     origin = value.decode("latin-1")
                     break
             if not self._origin_allowed(origin):

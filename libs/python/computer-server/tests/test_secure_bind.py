@@ -18,7 +18,9 @@ import pytest
 
 try:
     from computer_server.cli import InsecureBindError, resolve_bind_host
-except Exception as import_error:  # pragma: no cover - environment-dependent
+except ImportError as import_error:  # pragma: no cover - dependency-dependent
+    # Only skip when the package/deps are absent. Any other error (e.g. a real
+    # regression inside computer_server.cli) must propagate and fail the suite.
     pytest.skip(
         f"computer_server.cli unavailable in this environment: {import_error}",
         allow_module_level=True,
@@ -49,8 +51,10 @@ class TestResolveBindHost:
     def test_explicit_loopback_allowed_in_local_mode(self, clean_env, host):
         assert resolve_bind_host(host) == host
 
-    @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "::"])
+    @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "::", "", "   "])
     def test_explicit_public_host_refused_in_local_mode(self, clean_env, host):
+        # An empty/whitespace host binds all interfaces (INADDR_ANY), so it must
+        # be refused in local mode rather than treated as loopback.
         with pytest.raises(InsecureBindError):
             resolve_bind_host(host)
 
@@ -64,11 +68,12 @@ class TestResolveBindHost:
         assert resolve_bind_host("0.0.0.0") == "0.0.0.0"
 
 
-async def _run_guard(path, *, origin=None, scope_type="http"):
+async def _run_guard(path, *, origin=None, scope_type="http", origin_header=b"origin"):
     """Drive the guard once; return ``(inner_called, sent_messages)``."""
     try:
         from computer_server.main import CrossSiteOriginGuard
-    except Exception as exc:  # pragma: no cover - environment-dependent
+    except ImportError as exc:  # pragma: no cover - dependency-dependent
+        # Skip only on missing deps; a regression inside main must fail, not skip.
         pytest.skip(f"computer_server.main unavailable in this environment: {exc}")
 
     state = {"inner_called": False}
@@ -78,7 +83,7 @@ async def _run_guard(path, *, origin=None, scope_type="http"):
 
     headers = []
     if origin is not None:
-        headers.append((b"origin", origin.encode("latin-1")))
+        headers.append((origin_header, origin.encode("latin-1")))
     scope = {"type": scope_type, "path": path, "headers": headers}
 
     sent = []
@@ -135,6 +140,16 @@ class TestCrossSiteOriginGuard:
     async def test_null_origin_is_rejected(self):
         # Sandboxed iframes and file:// pages send ``Origin: null``.
         called, _ = await _run_guard("/cmd", origin="null")
+        assert called is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("origin_header", [b"Origin", b"ORIGIN"])
+    async def test_cross_site_origin_detected_regardless_of_header_casing(self, origin_header):
+        # A non-normalizing server must not let a differently-cased Origin bypass
+        # the guard by being treated as "no Origin".
+        called, _ = await _run_guard(
+            "/cmd", origin="https://evil.example", origin_header=origin_header
+        )
         assert called is False
 
     @pytest.mark.asyncio

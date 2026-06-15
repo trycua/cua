@@ -11,7 +11,9 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 # Hosts that only accept connections from the local machine.
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+# Note: an empty/whitespace host is deliberately excluded — it binds all
+# interfaces (INADDR_ANY), so it must not be treated as loopback.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class InsecureBindError(ValueError):

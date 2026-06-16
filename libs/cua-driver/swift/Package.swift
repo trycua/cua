@@ -43,5 +43,13 @@ let package = Package(
             name: "FocusStealPreventerTests",
             dependencies: ["CuaDriverCore"]
         ),
+        .testTarget(
+            name: "HealthReportTests",
+            dependencies: [
+                "CuaDriverCore",
+                "CuaDriverServer",
+                .product(name: "MCP", package: "swift-sdk"),
+            ]
+        ),
     ]
 )

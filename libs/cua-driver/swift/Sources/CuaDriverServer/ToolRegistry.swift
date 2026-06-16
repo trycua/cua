@@ -234,6 +234,7 @@ public struct ToolRegistry: Sendable {
         LaunchAppTool.handler,
         GetScreenSizeTool.handler,
         CheckPermissionsTool.handler,
+        HealthReportTool.handler,
         ScreenshotTool.handler,
 
         GetCursorPositionTool.handler,

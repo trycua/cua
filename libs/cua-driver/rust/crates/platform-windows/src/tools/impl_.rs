@@ -4815,10 +4815,18 @@ impl Tool for ZoomTool {
             ));
         }
 
+        // Issue #1880: the caller's coordinates are in the (possibly downscaled)
+        // screenshot space of the last `get_window_state` call, but the crop below
+        // runs on a fresh native-resolution capture. Scale by the stored resize
+        // ratio so the crop lands on the intended region; the zoom context then
+        // holds native-pixel values, which is what `from_zoom` clicks expect.
+        let ratio = self.state.resize_registry.ratio(raw_pid as u32).unwrap_or(1.0);
+        let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
+
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
             let png = crate::capture::screenshot_window_bytes(hwnd)?;
-            cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
+            cursor_overlay::capture_utils::crop_png_to_jpeg(&png, nx1, ny1, nx2, ny2, 500)
         }).await;
 
         match result {

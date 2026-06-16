@@ -81,9 +81,9 @@ pkgs.testers.nixosTest {
         wl = machine.succeed("cat /tmp/wl-display").strip()
         env = f"env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0"
         # Target first, control second so the target is left UNFOCUSED.
-        machine.execute(f"sh -lc '{env} foot --title=cua-wayland-target >/tmp/target.log 2>&1 &'")
+        machine.execute(f"sh -lc '{env} foot --app-id=cua-wayland-target --title=cua-wayland-target >/tmp/target.log 2>&1 &'")
         machine.succeed("sleep 1")
-        machine.execute(f"sh -lc '{env} foot --title=cua-wayland-control >/tmp/control.log 2>&1 &'")
+        machine.execute(f"sh -lc '{env} foot --app-id=cua-wayland-control --title=cua-wayland-control >/tmp/control.log 2>&1 &'")
         machine.succeed("sleep 3")
 
     with subtest("Record GIF and type into the inactive native Wayland terminal"):

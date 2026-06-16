@@ -80,7 +80,7 @@ pkgs.testers.nixosTest {
             raise
         wl = machine.succeed("cat /tmp/wl-display").strip()
         env = f"env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0"
-        machine.execute(f"sh -lc '{env} foot --title=cua-wayland-paint >/tmp/paint.log 2>&1 &'")
+        machine.execute(f"sh -lc '{env} foot --app-id=cua-wayland-paint --title=cua-wayland-paint >/tmp/paint.log 2>&1 &'")
         machine.succeed("sleep 3")
 
     with subtest("Record GIF and pilot cua-driver through parallel_mouse_drag (expected RED)"):

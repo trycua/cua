@@ -83,7 +83,7 @@ pkgs.testers.nixosTest {
         wl = machine.succeed("cat /tmp/wl-display").strip()
         machine.execute(
             f"sh -lc 'env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0 "
-            "foot --title=cua-wayland-foot >/tmp/foot.log 2>&1 & echo $! >/tmp/foot-pid.txt'"
+            "foot --app-id=cua-wayland-foot --title=cua-wayland-foot >/tmp/foot.log 2>&1 & echo $! >/tmp/foot-pid.txt'"
         )
         machine.succeed("sleep 3")
 

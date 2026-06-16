@@ -29,7 +29,7 @@ let
       packages = [ pkgs.foot ];
       # foot is Wayland-only; no backend hint needed.
       env = "";
-      launch = "foot --title=cua-wayland-foot-app";
+      launch = "foot --app-id=cua-wayland-foot-app --title=cua-wayland-foot-app";
       match = "cua-wayland-foot-app";
     };
     "gtk3-gedit" = {

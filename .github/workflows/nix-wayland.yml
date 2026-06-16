@@ -4,17 +4,9 @@ name: CUA Driver Native-Wayland TDD Suite
 # sessions (XFCE on labwc/sway, plus KDE and GNOME). These are a TDD
 # RED suite: the driver is X11-only today, so they are EXPECTED TO FAIL until
 # native Wayland support lands. The triggers mirror the X11 nix-build.yml
-# workflow (PRs/pushes touching nix/flake/driver, plus manual dispatch).
-#
-# BLOCKING vs NON-BLOCKING (continue-on-error): only the cells achievable with
-# cua-driver as a standard Wayland client are blocking — the wlroots desktops
-# (labwc/sway) for enumeration (integration), capture (screenshot), focused
-# input (cursor-click-gif), and the read-only background-gui matrix. The rest run
-# for visibility but are NON-BLOCKING because they are infeasible on stock
-# compositors: background-terminal-gif (focus-free) + parallel-drag (multi-
-# pointer) need compositor cooperation no stock compositor exposes, and KDE
-# (kwin) / GNOME (mutter) headless expose no client protocols for enumeration/
-# capture/input without a portal/libei session. See tests/wayland/README.md.
+# workflow (PRs/pushes touching nix/flake/driver, plus manual dispatch). These
+# jobs are BLOCKING (no continue-on-error): a red cell fails the PR, so the suite
+# can only go green once native Wayland support is implemented.
 # Artifacts (screenshots, GIFs, logs) are uploaded so you can see exactly what
 # each compositor does.
 on:
@@ -50,10 +42,6 @@ jobs:
     name: ${{ matrix.desktop }} / ${{ matrix.scenario }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Blocking only for achievable cells (wlroots × enumeration/capture/focused
-    # input). KDE/GNOME and focus-free/multi-pointer scenarios run but don't fail
-    # the PR — they're infeasible on stock compositors (see header).
-    continue-on-error: ${{ matrix.desktop == 'kde' || matrix.desktop == 'gnome' || matrix.scenario == 'background-terminal-gif' || matrix.scenario == 'parallel-drag' }}
     strategy:
       fail-fast: false
       matrix:
@@ -144,8 +132,6 @@ jobs:
     name: ${{ matrix.desktop }} / background-gui ${{ matrix.app }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Read-only window capture is achievable on wlroots; KDE/GNOME stay non-blocking.
-    continue-on-error: ${{ matrix.desktop == 'kde' || matrix.desktop == 'gnome' }}
     strategy:
       fail-fast: false
       matrix:

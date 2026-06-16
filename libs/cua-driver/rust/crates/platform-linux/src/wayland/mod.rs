@@ -131,6 +131,31 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
     Ok(out)
 }
 
+/// Capture the Wayland output as PNG bytes via `grim` (the wlroots screenshot
+/// tool — wlr-screencopy under the hood, works on labwc/sway). This mirrors the
+/// X11 backend shelling out to `import`/`xwd`. foreign-toplevel exposes no
+/// per-window geometry, so this captures the whole output; that is sufficient
+/// for `get_window_state`'s vision payload.
+pub fn screenshot_bytes() -> anyhow::Result<Vec<u8>> {
+    let out = std::process::Command::new("grim").args(["-t", "png", "-"]).output()?;
+    if !out.status.success() {
+        anyhow::bail!("grim failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    if out.stdout.is_empty() {
+        anyhow::bail!("grim produced no output");
+    }
+    Ok(out.stdout)
+}
+
+/// Capture dispatcher: native Wayland (grim) when applicable, else X11.
+pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
+    if is_wayland() {
+        screenshot_bytes()
+    } else {
+        crate::capture::screenshot_window_bytes(xid)
+    }
+}
+
 /// Window-enumeration dispatcher: native Wayland when applicable, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if is_wayland() {

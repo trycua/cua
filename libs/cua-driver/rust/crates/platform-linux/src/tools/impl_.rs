@@ -386,7 +386,7 @@ impl Tool for GetWindowStateTool {
                 Vec::new()
             };
             let screenshot = if do_shot {
-                match crate::capture::screenshot_window_bytes(xid) {
+                match crate::wayland::screenshot_dispatch(xid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw).map(|(w, _)| w).unwrap_or(0);
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;

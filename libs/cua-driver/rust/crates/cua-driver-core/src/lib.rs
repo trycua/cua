@@ -16,6 +16,7 @@ pub mod cdp;
 pub mod element_cache;
 pub mod element_token;
 pub mod ffmpeg_install;
+pub mod health_report;
 pub mod image_utils;
 pub mod page;
 pub mod pip_hook;

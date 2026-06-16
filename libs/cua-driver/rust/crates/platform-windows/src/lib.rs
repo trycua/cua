@@ -21,6 +21,7 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod tools;
 pub mod overlay;
 pub mod diagnostics;
+pub mod health_report;
 pub mod recording_hooks;
 pub mod pip;
 pub mod terminal;

@@ -314,7 +314,7 @@ impl Tool for ListWindowsTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
-        let windows = tokio::task::spawn_blocking(move || crate::x11::list_windows(filter_pid)).await.unwrap_or_default();
+        let windows = tokio::task::spawn_blocking(move || crate::wayland::list_windows_dispatch(filter_pid)).await.unwrap_or_default();
         let mut lines = vec![format!("Found {} windows:", windows.len())];
         for w in &windows {
             lines.push(format!("  [xid={}] pid={:?} \"{}\" {}x{}+{}+{}",
@@ -2675,14 +2675,19 @@ impl Tool for CheckPermissionsTool {
         let atspi_ok = std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok()
             || std::path::Path::new("/run/user").exists();
 
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
         let status_text = format!(
-            "X11 display: {}\nAT-SPI (D-Bus): {}\nXSendEvent injection: {}",
+            "X11 display: {}\nWayland: {}\nAT-SPI (D-Bus): {}\nXSendEvent injection: {}",
             if x11_ok { "✅ connected" } else { "❌ DISPLAY not set or X11 unavailable" },
+            match &wayland_display {
+                Some(s) => format!("✅ native Wayland session (WAYLAND_DISPLAY={s})"),
+                None => "❌ not a Wayland session".to_string(),
+            },
             if atspi_ok { "✅ D-Bus session available" } else { "⚠️  D-Bus session not detected" },
             if x11_ok { "✅ available" } else { "❌ requires X11" }
         );
         ToolResult::text(status_text)
-            .with_structured(json!({ "x11": x11_ok, "atspi": atspi_ok, "xsend_event": x11_ok }))
+            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "atspi": atspi_ok, "xsend_event": x11_ok }))
     }
 }
 

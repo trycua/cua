@@ -35,14 +35,24 @@ static void type(struct ei *ei, struct ei_device *k, const char *s) {
 	ei_device_stop_emulating(k); ei_dispatch(ei);
 	printf("TYPE: \"%s\"\n", s); fflush(stdout);
 }
+static double curx = 40, cury = 40;
+static void glide(struct ei *ei, struct ei_device *d, double tx, double ty) {
+	int N = 20;
+	for (int i = 1; i <= N; i++) {
+		double x = curx + (tx-curx)*i/N, y = cury + (ty-cury)*i/N;
+		ei_device_pointer_motion_absolute(d, x, y); ei_device_frame(d, ei_now(ei));
+		ei_dispatch(ei); usleep(16000);
+	}
+	curx = tx; cury = ty;
+}
 static void click(struct ei *ei, struct ei_device *d, const char *label) {
 	int i = find(label); if (i < 0) { printf("USE: no '%s'\n", label); return; }
 	ei_device_start_emulating(d, 1);
-	ei_device_pointer_motion_absolute(d, bx[i], by[i]); ei_device_frame(d, ei_now(ei)); usleep(150000);
-	ei_device_button_button(d, BTN_LEFT, true);  ei_device_frame(d, ei_now(ei)); usleep(120000);
+	glide(ei, d, bx[i], by[i]); usleep(130000);
+	ei_device_button_button(d, BTN_LEFT, true);  ei_device_frame(d, ei_now(ei)); usleep(150000);
 	ei_device_button_button(d, BTN_LEFT, false); ei_device_frame(d, ei_now(ei));
 	ei_device_stop_emulating(d); ei_dispatch(ei);
-	printf("CLICK: '%s' @ %.0f,%.0f\n", label, bx[i], by[i]); fflush(stdout); usleep(650000);
+	printf("CLICK: '%s' @ %.0f,%.0f\n", label, bx[i], by[i]); fflush(stdout); usleep(500000);
 }
 int main(void) {
 	const char *sock = getenv("CUA_EIS_SOCKET"); if (!sock) sock = "cua-eis-0";

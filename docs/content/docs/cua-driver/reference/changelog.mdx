@@ -18,6 +18,19 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## 0.5.4 (2026-06-15)
+
+- **macOS: fix 0x0 screenshots on macOS 15+ — the release bundle now ships the
+  `com.apple.security.device.screen-capture` entitlement.** The macOS release
+  codesign steps signed the universal binary and `CuaDriver.app` with the
+  hardened runtime but passed no entitlements file, so on macOS 15 Sequoia and
+  later `SCStream.startCapture` failed with "Missing entitlements" even when TCC
+  Screen Recording was granted, and vision capture (`screenshot`,
+  `get_window_state`) returned a 0x0 image. The release pipeline now signs with
+  an entitlements plist granting `com.apple.security.device.screen-capture`
+  (plus `com.apple.security.automation.apple-events`), restoring capture
+  (#1893, #1862).
+
 ## 0.5.3 (2026-06-11)
 
 - **Linux: background drag and held-button tools + MPX parallel drags** (#1871).

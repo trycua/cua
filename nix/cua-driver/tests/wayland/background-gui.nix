@@ -52,6 +52,18 @@ let
   outputGif = "/tmp/cua-driver-wayland-${desktop}-background-gui-${app}.gif";
   outputPng = "/tmp/cua-driver-wayland-${desktop}-background-gui-${app}.png";
 
+  # GIF recorder env: native desktops point grim at the host socket; nested
+  # desktops leave WAYLAND_DISPLAY unset so the recorder self-resolves the
+  # driver's published nested socket ($XDG_RUNTIME_DIR/.cua-nested-display).
+  # No quotes around the command substitution: this string is interpolated into
+  # a python double-quoted string, and the socket path has no spaces. The inner
+  # `sh -c` re-parses and expands $(cat ...) itself.
+  recorderWlEnv =
+    if session.nested then
+      "env XDG_RUNTIME_DIR=/run/user/0"
+    else
+      "env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(cat /tmp/wl-display)";
+
   testScriptPy = pkgs.writeText "wayland-bg-gui.py" ''
     import base64, sys
     sys.path.insert(0, "/tmp")
@@ -59,11 +71,15 @@ let
 
     MATCH = "${cfg.match}"
     OUTPNG = "${outputPng}"
+    LAUNCH = "${cfg.launch}"
 
     d = Driver()
     try:
         d.initialize("nixos-wayland-bg-gui")
-        pid, wid = d.find_window(MATCH, timeout=40)
+        # Launch through cua-driver so the app lands in the session it owns
+        # (host compositor on native desktops; nested labwc on kde/gnome).
+        d.launch_app(LAUNCH)
+        pid, wid = d.find_window(MATCH, timeout=50)
         print(f"app window pid={pid} window_id={wid}", flush=True)
         resp = d.call("get_window_state", {
             "pid": pid, "window_id": wid, "capture_mode": "vision"}, timeout=45)
@@ -115,26 +131,21 @@ pkgs.testers.nixosTest {
             machine.log(machine.execute("cat /tmp/session.log || true")[1])
             machine.log(machine.execute("cat /tmp/compositor.log || true")[1])
             raise
-        wl = machine.succeed("cat /tmp/wl-display").strip()
 
-    with subtest("Launch native Wayland app (${app})"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        env = f"env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0"
-        machine.execute(f"sh -lc '{env} ${cfg.env} ${cfg.launch} >/tmp/bg-app.log 2>&1 & echo $! >/tmp/bg-app-pid.txt'")
-        machine.succeed("sleep 5")
-        machine.log(machine.execute("cat /tmp/bg-app.log || true")[1])
-
-    with subtest("Record GIF and read inactive app window via cua-driver"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        env = f"env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0"
+    with subtest("Launch (via cua-driver) + record GIF + read inactive app window"):
         machine.copy_from_host("${driverClient}", "/tmp/driver_client.py")
         machine.copy_from_host("${testScriptPy}", "/tmp/wayland-bg-gui.py")
+        # Start the recorder first; it grabs frames while the driver launches
+        # and reads the app. (Native: host socket; nested: self-resolves.)
         machine.execute(
-            f"sh -lc '{env} ${recordGifScript} /tmp/bg-gui-frames "
+            "sh -lc '${recorderWlEnv} ${recordGifScript} /tmp/bg-gui-frames "
             "${outputGif} /tmp/stop-bg-gui-recorder /tmp/rec-bg-gui.log 12 0.2 "
             ">/dev/null 2>&1 & echo $! >/tmp/rec-bg-gui.pid'"
         )
-        result = machine.execute(f"timeout 120 {env} python3 /tmp/wayland-bg-gui.py 2>&1")[1]
+        result = machine.execute(
+            "timeout 150 env CUA_DRIVER_BIN=${session.driverWrapper} "
+            "XDG_RUNTIME_DIR=/run/user/0 python3 /tmp/wayland-bg-gui.py 2>&1"
+        )[1]
         machine.log(result)
         # Stop + copy the GIF BEFORE asserting so even failing jobs upload one.
         machine.execute("touch /tmp/stop-bg-gui-recorder")
@@ -142,7 +153,7 @@ pkgs.testers.nixosTest {
         machine.execute("test -e ${outputGif} || : > ${outputGif}")
         machine.copy_from_machine("${outputGif}", "")
 
-    with subtest("cua-driver read/captured the native Wayland app window (RED until Wayland support lands)"):
+    with subtest("cua-driver read/captured the native Wayland app window"):
         assert "background gui read test complete" in result, result
   '';
 }

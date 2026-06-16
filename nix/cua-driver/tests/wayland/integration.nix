@@ -1,10 +1,11 @@
-# CUA Driver native-Wayland integration test (per desktop) — TDD red.
+# CUA Driver native-Wayland integration test (per desktop).
 #
-# Brings up a native Wayland session, verifies the MCP handshake + doctor
-# recognise the Wayland environment, then launches a native Wayland terminal
-# (foot) and asserts cua-driver can ENUMERATE it via list_windows. The driver
-# is X11-only today, so list_windows finds nothing and this fails — the spec for
-# native Wayland window enumeration.
+# Brings up the desktop session, then launches a native Wayland terminal (foot)
+# THROUGH cua-driver (launch_app) and asserts cua-driver can ENUMERATE it via
+# list_windows. On native (wlroots) desktops the driver talks to the host
+# compositor; on kde/gnome it drives its own nested labwc (CUA_WAYLAND_NEST=1,
+# set by the session driver wrapper). Either way the app lands in the session
+# the driver owns.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-wayland-<desktop>-integration
 {
@@ -32,12 +33,16 @@ let
         d._send("tools/list", {}, req_id=999)
         resp = d._recv()
         names = [t["name"] for t in resp.get("result", {}).get("tools", [])]
-        for t in ("list_windows", "get_window_state", "click", "type_text"):
+        for t in ("list_windows", "get_window_state", "click", "type_text", "launch_app"):
             assert t in names, f"{t} not advertised: {names}"
         print(f"tools advertised: {len(names)}", flush=True)
 
-        # The native-Wayland spec: list_windows must surface the foot terminal.
-        pid, wid = d.find_window("cua-wayland-foot", timeout=30)
+        # Launch foot through cua-driver so it lands in the session the driver
+        # owns (host compositor on native desktops; nested labwc on kde/gnome).
+        d.launch_app("foot --app-id=cua-wayland-foot --title=cua-wayland-foot")
+
+        # list_windows must surface the foot terminal the driver just launched.
+        pid, wid = d.find_window("cua-wayland-foot", timeout=40)
         print(f"RESOLVED native wayland window pid={pid} window_id={wid}", flush=True)
         print("integration test complete", flush=True)
     finally:
@@ -84,33 +89,18 @@ pkgs.testers.nixosTest {
             machine.log(machine.execute("cat /tmp/session.log || true")[1])
             machine.log(machine.execute("cat /tmp/compositor.log || true")[1])
             raise
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        machine.log(f"WAYLAND_DISPLAY={wl}")
+        machine.log("host WAYLAND_DISPLAY=" + machine.succeed("cat /tmp/wl-display").strip())
 
-    with subtest("doctor recognises native Wayland (no DISPLAY)"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        result = machine.succeed(
-            f"timeout 20 env -u DISPLAY WAYLAND_DISPLAY={wl} "
-            "XDG_RUNTIME_DIR=/run/user/0 cua-driver doctor 2>&1 || true"
-        )
+    with subtest("doctor reports a Wayland status line"):
+        result = machine.succeed("timeout 30 ${session.driverWrapper} doctor 2>&1 || true")
         machine.log(result)
         assert "Wayland" in result, f"doctor did not report Wayland: {result}"
 
-    with subtest("Launch native Wayland terminal (foot)"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        machine.execute(
-            f"sh -lc 'env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0 "
-            "foot --app-id=cua-wayland-foot --title=cua-wayland-foot >/tmp/foot.log 2>&1 & echo $! >/tmp/foot-pid.txt'"
-        )
-        # Give the client a moment to map its surface.
-        machine.succeed("sleep 3")
-
-    with subtest("cua-driver enumerates the native Wayland window (RED until Wayland support lands)"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
+    with subtest("cua-driver launches + enumerates a native Wayland window"):
         machine.copy_from_host("${driverClient}", "/tmp/driver_client.py")
         machine.copy_from_host("${testScriptPy}", "/tmp/wayland-integration.py")
         result = machine.succeed(
-            f"timeout 90 env -u DISPLAY WAYLAND_DISPLAY={wl} "
+            "timeout 120 env CUA_DRIVER_BIN=${session.driverWrapper} "
             "XDG_RUNTIME_DIR=/run/user/0 python3 /tmp/wayland-integration.py 2>&1"
         )
         machine.log(result)

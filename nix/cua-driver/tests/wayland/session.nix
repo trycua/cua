@@ -1,34 +1,36 @@
-# Shared NATIVE-Wayland desktop-session bring-up for the cua-driver Wayland TDD
-# suite.
+# Shared Wayland desktop-session bring-up for the cua-driver Wayland suite.
 #
-# These tests deliberately target *native* Wayland — apps run as real Wayland
-# clients (NOT XWayland), and the tests never set DISPLAY, so the X11-only
-# cua-driver has nothing to fall back to. Today the driver therefore cannot see
-# or drive these windows and the whole suite is RED; it is a TDD specification
-# for adding native Wayland support to the Linux backend.
+# Two execution models, selected per desktop:
+#
+#   * NATIVE (wlroots: labwc, sway) — apps run as real Wayland clients of the
+#     HOST compositor, and the driver talks to that same compositor's wlr
+#     protocols (foreign-toplevel + screencopy). The session `start` script
+#     launches the compositor headless, waits for its socket, and publishes it
+#     to /tmp/wl-display.
+#
+#   * NESTED (kde: kwin, gnome: mutter) — kwin/mutter expose NO client protocols
+#     for cross-window enumeration/capture, so the driver cannot drive them
+#     directly. Instead cua-driver "brings its own compositor": with
+#     CUA_WAYLAND_NEST=1 it spawns a private headless labwc and points
+#     WAYLAND_DISPLAY at it, so every app launched via `launch_app` runs inside
+#     that nested session where the wlr protocols DO work. The host kwin/mutter
+#     is still booted (best-effort) to prove cua-driver coexists with a real
+#     KDE/GNOME host, but the test never depends on it.
 #
 # Given a `desktop` this returns:
 #
-#   { packages; start; label; }
+#   { packages; start; label; nested; driverWrapper; }
 #
-#   * packages — extra `environment.systemPackages` the session needs.
-#   * start    — a `writeShellScript` that launches the compositor headless,
-#                waits for its Wayland socket, writes the socket name to
-#                /tmp/wl-display, then `touch`es /tmp/wl-ready and blocks. Tests
-#                run it in the background, wait for /tmp/wl-ready, read
-#                WAYLAND_DISPLAY, and drive cua-driver against native clients.
-#   * label    — human label for logs.
-#
-# Supported desktops (the compositor IS the per-desktop difference):
-#   xfce-labwc   — labwc, the compositor XFCE 4.20's Wayland session uses
-#   xfce-wayfire — the other compositor XFCE 4.20's Wayland session supports
-#   xfce-sway    — sway (wlroots, headless-friendly)
-#   kde          — KDE Plasma's kwin_wayland (virtual backend)
-#   gnome        — GNOME Shell / mutter headless (virtual monitor)
-#
-# Everything runs HEADLESS (no GPU/seat): wlroots compositors use the headless
-# backend + pixman software renderer; kwin uses --virtual; mutter uses
-# --headless --virtual-monitor.
+#   * packages      — extra `environment.systemPackages` the session needs.
+#   * start         — a `writeShellScript` that brings the session up and
+#                     `touch`es /tmp/wl-ready, then blocks.
+#   * label         — human label for logs.
+#   * nested        — true for kde/gnome (driver hosts its own compositor).
+#   * driverWrapper — a `writeShellScript` to use as CUA_DRIVER_BIN: it sets the
+#                     correct env (host WAYLAND_DISPLAY for native; the nest env
+#                     for nested) and execs `cua-driver "$@"`. Tests spawn the
+#                     driver through this so the python harness stays
+#                     desktop-agnostic.
 {
   pkgs,
   desktop,
@@ -59,6 +61,7 @@ let
       label = "XFCE on labwc (native Wayland)";
       packages = with pkgs; [ labwc ];
       wlroots = true;
+      nested = false;
       launch = "labwc >/tmp/compositor.log 2>&1 &";
     };
     # NOTE: xfce-wayfire intentionally omitted — wayfire fails to build in the
@@ -68,19 +71,23 @@ let
       label = "XFCE on sway (native Wayland)";
       packages = with pkgs; [ sway ];
       wlroots = true;
+      nested = false;
       launch = "sway -c ${swayConfig} >/tmp/compositor.log 2>&1 &";
     };
     "kde" = {
-      label = "KDE Plasma kwin_wayland (native Wayland)";
-      packages = with pkgs; [ kdePackages.kwin ];
+      label = "KDE Plasma kwin_wayland host + cua-driver nested labwc";
+      # labwc is what cua-driver nests; kwin is the host it coexists with.
+      packages = with pkgs; [ labwc kdePackages.kwin ];
       wlroots = false;
-      # No --xwayland: keep the session native-Wayland only.
+      nested = true;
+      # No --xwayland: keep the host session native-Wayland only.
       launch = "kwin_wayland --virtual --width 1280 --height 1024 --no-lockscreen >/tmp/compositor.log 2>&1 &";
     };
     "gnome" = {
-      label = "GNOME Shell / mutter (native Wayland, headless)";
-      packages = with pkgs; [ gnome-shell mutter ];
+      label = "GNOME Shell / mutter host + cua-driver nested labwc";
+      packages = with pkgs; [ labwc gnome-shell mutter ];
       wlroots = false;
+      nested = true;
       launch = "gnome-shell --wayland --headless --virtual-monitor 1280x1024 --unsafe-mode >/tmp/compositor.log 2>&1 &";
     };
   };
@@ -94,24 +101,8 @@ let
     export WLR_LIBINPUT_NO_DEVICES=1
   '';
 
-  start = pkgs.writeShellScript "wayland-session-start-${desktop}.sh" ''
-    set -u
-    export PATH=${lib.makeBinPath (commonPkgs ++ cfg.packages)}:$PATH
-
-    export XDG_RUNTIME_DIR=/run/user/0
-    mkdir -p "$XDG_RUNTIME_DIR"
-    chmod 700 "$XDG_RUNTIME_DIR"
-
-    ${wlrootsEnv}
-    export QT_QPA_PLATFORM=wayland
-    export GDK_BACKEND=wayland
-    export LIBGL_ALWAYS_SOFTWARE=1
-
-    rm -f /tmp/wl-ready /tmp/wl-display
-
-    # Run the compositor + readiness wait inside the session bus. `wlsock` is
-    # defined INSIDE this subshell (sh -c spawns a fresh shell) and prints the
-    # name of the first Wayland display socket under XDG_RUNTIME_DIR.
+  # Native model: block until the HOST compositor's socket appears, publish it.
+  nativeStart = ''
     dbus-run-session -- sh -c '
       wlsock() { ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -E "^wayland-[0-9]+$" | head -1; }
 
@@ -140,9 +131,88 @@ let
       exec sleep infinity
     '
   '';
+
+  # Nested model: boot the host compositor BEST-EFFORT (log whether it came up),
+  # but never block the test on it — cua-driver provides its own session. We
+  # record the host socket (if any) for logs; the driver wrapper ignores it.
+  nestedStart = ''
+    dbus-run-session -- sh -c '
+      wlsock() { ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -E "^wayland-[0-9]+$" | head -1; }
+
+      ${cfg.launch}
+
+      n=0
+      while [ -z "$(wlsock)" ] && [ "$n" -lt 40 ]; do
+        sleep 0.5
+        n=$((n + 1))
+      done
+      sock="$(wlsock)"
+      if [ -n "$sock" ]; then
+        echo "host compositor up: $sock" >&2
+      else
+        echo "host compositor did not come up; proceeding with nested session only" >&2
+        cat /tmp/compositor.log >&2 2>/dev/null || true
+      fi
+      echo "''${sock:-none}" > /tmp/wl-display
+
+      touch /tmp/wl-ready
+      exec sleep infinity
+    '
+  '';
+
+  start = pkgs.writeShellScript "wayland-session-start-${desktop}.sh" ''
+    set -u
+    export PATH=${lib.makeBinPath (commonPkgs ++ cfg.packages)}:$PATH
+
+    export XDG_RUNTIME_DIR=/run/user/0
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
+
+    ${wlrootsEnv}
+    export QT_QPA_PLATFORM=wayland
+    export GDK_BACKEND=wayland
+    export LIBGL_ALWAYS_SOFTWARE=1
+
+    rm -f /tmp/wl-ready /tmp/wl-display "$XDG_RUNTIME_DIR/.cua-nested-display"
+
+    ${if cfg.nested then nestedStart else nativeStart}
+  '';
+
+  # Driver launcher used as CUA_DRIVER_BIN. It owns the WAYLAND env so the python
+  # harness never has to. labwc/foot/grim are on PATH for the app/compositor
+  # processes cua-driver spawns.
+  # Toolkit apps cua-driver launches inherit its env, so force the NATIVE
+  # Wayland backends here (GTK auto-detects from WAYLAND_DISPLAY; Qt would
+  # otherwise default to xcb and fail with no X). Harmless for foot.
+  appBackendEnv = ''
+    export GDK_BACKEND=wayland
+    export QT_QPA_PLATFORM=wayland
+    export LIBGL_ALWAYS_SOFTWARE=1
+  '';
+
+  driverWrapper =
+    if cfg.nested then
+      pkgs.writeShellScript "cua-driver-nested-${desktop}" ''
+        export PATH=${lib.makeBinPath (commonPkgs ++ cfg.packages)}:$PATH
+        export XDG_RUNTIME_DIR=/run/user/0
+        export CUA_WAYLAND_NEST=1
+        export CUA_WAYLAND_NEST_COMPOSITOR=labwc
+        ${appBackendEnv}
+        unset DISPLAY WAYLAND_DISPLAY
+        exec cua-driver "$@"
+      ''
+    else
+      pkgs.writeShellScript "cua-driver-native-${desktop}" ''
+        export PATH=${lib.makeBinPath (commonPkgs ++ cfg.packages)}:$PATH
+        export XDG_RUNTIME_DIR=/run/user/0
+        export WAYLAND_DISPLAY="$(cat /tmp/wl-display)"
+        ${appBackendEnv}
+        unset DISPLAY
+        exec cua-driver "$@"
+      '';
 in
 {
-  inherit (cfg) label;
+  inherit (cfg) label nested;
   packages = commonPkgs ++ cfg.packages;
-  inherit start;
+  inherit start driverWrapper;
 }

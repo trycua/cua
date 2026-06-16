@@ -28,6 +28,21 @@ pkgs.writeShellScript "record-wayland-gif.sh" ''
   rm -rf "$frames_dir"
   mkdir -p "$frames_dir"
 
+  # In nested mode the caller can't know cua-driver's private socket ahead of
+  # time; the driver publishes it to $XDG_RUNTIME_DIR/.cua-nested-display once
+  # up. If WAYLAND_DISPLAY isn't already set, wait for and adopt that socket so
+  # the GIF captures the SAME session the driver drives.
+  if [ -z "''${WAYLAND_DISPLAY:-}" ]; then
+    dfile="''${XDG_RUNTIME_DIR:-/run/user/0}/.cua-nested-display"
+    w=0
+    while [ ! -s "$dfile" ] && [ "$w" -lt 60 ]; do sleep 0.5; w=$((w + 1)); done
+    if [ -s "$dfile" ]; then
+      WAYLAND_DISPLAY="$(cat "$dfile")"
+      export WAYLAND_DISPLAY
+      echo "recorder adopted nested WAYLAND_DISPLAY=$WAYLAND_DISPLAY" >>"$log_file"
+    fi
+  fi
+
   max_frames=450
   i=0
   while [ ! -f "$stop_file" ] && [ "$i" -lt "$max_frames" ]; do

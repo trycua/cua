@@ -75,6 +75,12 @@ pkgs.writeText "driver_client.py" ''
               raise RuntimeError(f"{name} returned isError: {resp}")
           return resp
 
+      def launch_app(self, command):
+          """Launch an app THROUGH cua-driver so it lands in whatever Wayland
+          session the driver owns — the host compositor (native desktops) or the
+          driver's own nested labwc (kde/gnome). Returns the launch response."""
+          return self.call("launch_app", {"name": command})
+
       def list_windows(self):
           resp = self.call("list_windows", {})
           result = resp.get("result", {})

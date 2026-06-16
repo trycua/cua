@@ -27,7 +27,8 @@ let
     d = Driver()
     try:
         d.initialize("nixos-wayland-screenshot")
-        pid, wid = d.find_window("cua-wayland-foot", timeout=30)
+        d.launch_app("foot --app-id=cua-wayland-foot --title=cua-wayland-foot")
+        pid, wid = d.find_window("cua-wayland-foot", timeout=40)
         print(f"window pid={pid} window_id={wid}", flush=True)
         resp = d.call("get_window_state", {
             "pid": pid, "window_id": wid, "capture_mode": "vision"}, timeout=30)
@@ -72,7 +73,7 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.wait_for_unit("multi-user.target")
 
-    with subtest("Bring up ${session.label} + native Wayland foot terminal"):
+    with subtest("Bring up ${session.label}"):
         machine.execute("${session.start} >/tmp/session.log 2>&1 &")
         try:
             machine.wait_for_file("/tmp/wl-ready", timeout=120)
@@ -80,19 +81,12 @@ pkgs.testers.nixosTest {
             machine.log(machine.execute("cat /tmp/session.log || true")[1])
             machine.log(machine.execute("cat /tmp/compositor.log || true")[1])
             raise
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        machine.execute(
-            f"sh -lc 'env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0 "
-            "foot --app-id=cua-wayland-foot --title=cua-wayland-foot >/tmp/foot.log 2>&1 & echo $! >/tmp/foot-pid.txt'"
-        )
-        machine.succeed("sleep 3")
 
-    with subtest("Screenshot the native Wayland window via cua-driver (RED until Wayland capture lands)"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
+    with subtest("Launch + screenshot a native Wayland window via cua-driver"):
         machine.copy_from_host("${driverClient}", "/tmp/driver_client.py")
         machine.copy_from_host("${testScriptPy}", "/tmp/wayland-screenshot.py")
         result = machine.succeed(
-            f"timeout 90 env -u DISPLAY WAYLAND_DISPLAY={wl} "
+            "timeout 120 env CUA_DRIVER_BIN=${session.driverWrapper} "
             "XDG_RUNTIME_DIR=/run/user/0 python3 /tmp/wayland-screenshot.py 2>&1"
         )
         machine.log(result)

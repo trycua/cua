@@ -5759,6 +5759,13 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(GetAgentCursorStateTool { state: state.clone() }));
     r.register(Box::new(SetAgentCursorStyleTool { state: state.clone() }));
     r.register(Box::new(CheckPermissionsTool));
+    // `health_report` — single-call cross-platform driver diagnostics.
+    // Stable schema_version="1" contract for downstream consumers
+    // (Hermes Agent, NousResearch/hermes-agent#47065). Windows skips
+    // tcc_* and bundle_identity with "not applicable on Windows".
+    r.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
+        std::sync::Arc::new(crate::health_report::WindowsHealthProvider),
+    )));
     r.register(Box::new(GetConfigTool { state: state.clone() }));
     r.register(Box::new(SetConfigTool { state: state.clone() }));
     r.register(Box::new(GetAccessibilityTreeTool));

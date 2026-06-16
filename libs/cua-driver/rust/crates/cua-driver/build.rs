@@ -7,8 +7,9 @@
 // emitting crate is the final binary crate — for transitive deps Cargo
 // silently drops them. So we re-emit the same rpaths from here.
 //
-// On Windows, embed the DPI-awareness manifest so the process receives
-// logical (not physical) screen coordinates at 125%/150%/200% scaling.
+// On Windows, embed the Per-Monitor V2 DPI-awareness manifest so the
+// process sees physical pixels (no DWM coordinate virtualization) at
+// 125%/150%/200% scaling and clicks land where screenshots say they do.
 
 fn main() {
     #[cfg(target_os = "windows")]

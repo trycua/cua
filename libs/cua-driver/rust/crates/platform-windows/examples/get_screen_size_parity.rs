@@ -1,7 +1,7 @@
 //! Parity check for `get_screen_size`.
 //!
-//! Asserts text matches Swift exactly:
-//!   `"✅ Main display: WxH points @ Sx"`
+//! Asserts text matches the Windows wording:
+//!   `"✅ Main display: WxH pixels @ Sx"`
 //! and `structuredContent` has `width`, `height`, and `scale_factor`
 //! (snake_case) that agree with the platform's `GetSystemMetrics` and
 //! `GetDpiForSystem`.
@@ -40,11 +40,11 @@ fn main() {
         .expect("missing text");
     println!("Response text: {text:?}");
 
-    // Parse "✅ Main display: WxH points @ Sx" by hand.
+    // Parse "✅ Main display: WxH pixels @ Sx" by hand.
     let rest = text.strip_prefix("✅ Main display: ")
-        .unwrap_or_else(|| panic!("Text {text:?} missing Swift prefix `✅ Main display: `"));
-    let (wh, scale_part) = rest.split_once(" points @ ")
-        .unwrap_or_else(|| panic!("Text {text:?} missing ` points @ `"));
+        .unwrap_or_else(|| panic!("Text {text:?} missing prefix `✅ Main display: `"));
+    let (wh, scale_part) = rest.split_once(" pixels @ ")
+        .unwrap_or_else(|| panic!("Text {text:?} missing ` pixels @ `"));
     let (w_str, h_str) = wh.split_once('x')
         .unwrap_or_else(|| panic!("Text {text:?} missing `x` separator"));
     let scale_str = scale_part.strip_suffix('x')
@@ -73,7 +73,7 @@ fn main() {
     assert_eq!((tw, th), (nw, nh));
     assert!((ts - ns).abs() < 0.001);
 
-    println!("\n✅ PASS: text format matches Swift, structuredContent has scale_factor, native agrees");
+    println!("\n✅ PASS: text format matches, structuredContent has scale_factor, native agrees");
 }
 
 #[cfg(not(target_os = "windows"))]

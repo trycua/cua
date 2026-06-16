@@ -25,6 +25,71 @@ pub fn is_wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_none()
 }
 
+fn wl_sockets(dir: &str) -> std::collections::HashSet<String> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.strip_prefix("wayland-").is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())))
+        .collect()
+}
+
+/// "Bring your own compositor": if `CUA_WAYLAND_NEST` is set, spawn a private
+/// **headless wlroots compositor** (labwc by default) and point this process —
+/// and therefore every app it launches (`launch_app`), every capture (`grim`),
+/// and all enumeration/injection — at it via `WAYLAND_DISPLAY`. This lets
+/// cua-driver automate apps in its **own** Wayland session on ANY host,
+/// including KDE (kwin) and GNOME (mutter) which expose no client protocols for
+/// this, without ever touching the host compositor or its focus. Idempotent.
+pub fn ensure_nested_session() {
+    use std::sync::OnceLock;
+    static DONE: OnceLock<()> = OnceLock::new();
+    if std::env::var_os("CUA_WAYLAND_NEST").is_none() {
+        return;
+    }
+    DONE.get_or_init(|| {
+        let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/0".into());
+        let comp = std::env::var("CUA_WAYLAND_NEST_COMPOSITOR").unwrap_or_else(|_| "labwc".into());
+        let before = wl_sockets(&xdg);
+        let spawned = std::process::Command::new(&comp)
+            .env("WLR_BACKENDS", "headless")
+            .env("WLR_RENDERER", "pixman")
+            .env("WLR_RENDERER_ALLOW_SOFTWARE", "1")
+            .env("WLR_LIBINPUT_NO_DEVICES", "1")
+            .env("WLR_HEADLESS_OUTPUTS", "1")
+            .env_remove("WAYLAND_DISPLAY") // headless: do not nest into the host compositor
+            .env_remove("DISPLAY")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawned {
+            Ok(child) => {
+                std::mem::forget(child); // keep the compositor alive for our lifetime
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                loop {
+                    if let Some(sock) = wl_sockets(&xdg).difference(&before).min().cloned() {
+                        std::env::set_var("WAYLAND_DISPLAY", &sock);
+                        std::env::remove_var("DISPLAY");
+                        // Publish the nested socket so external tools (e.g. a
+                        // `grim` recorder) can target the same session we drive.
+                        let _ = std::fs::write(format!("{xdg}/.cua-nested-display"), &sock);
+                        tracing::info!("cua nested compositor '{comp}' up: WAYLAND_DISPLAY={sock}");
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        tracing::error!("cua nested compositor '{comp}': no Wayland socket appeared");
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+            Err(e) => tracing::error!("cua nested compositor '{comp}' spawn failed: {e}"),
+        }
+    });
+}
+
 #[derive(Default)]
 struct Toplevel {
     title: String,

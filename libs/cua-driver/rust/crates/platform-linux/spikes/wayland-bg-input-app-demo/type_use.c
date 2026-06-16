@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <math.h>
 #include <linux/input-event-codes.h>
 
 #define MAXB 64
@@ -36,12 +37,19 @@ static void type(struct ei *ei, struct ei_device *k, const char *s) {
 	printf("TYPE: \"%s\"\n", s); fflush(stdout);
 }
 static double curx = 40, cury = 40;
+static double ease(double t) { return t < 0.5 ? 2*t*t : 1 - pow(-2*t + 2, 2)/2; } /* ease-in-out */
 static void glide(struct ei *ei, struct ei_device *d, double tx, double ty) {
-	int N = 20;
+	double sx = curx, sy = cury, dx = tx - sx, dy = ty - sy, dist = hypot(dx, dy);
+	double nx = -dy / (dist + 1e-6), ny = dx / (dist + 1e-6), defl = dist * 0.16; /* gentle curve */
+	double c1x = sx + dx*0.33 + nx*defl, c1y = sy + dy*0.33 + ny*defl;
+	double c2x = sx + dx*0.66 + nx*defl, c2y = sy + dy*0.66 + ny*defl;
+	int N = 30;
 	for (int i = 1; i <= N; i++) {
-		double x = curx + (tx-curx)*i/N, y = cury + (ty-cury)*i/N;
+		double u = ease((double)i / N), m = 1 - u;
+		double x = m*m*m*sx + 3*m*m*u*c1x + 3*m*u*u*c2x + u*u*u*tx;
+		double y = m*m*m*sy + 3*m*m*u*c1y + 3*m*u*u*c2y + u*u*u*ty;
 		ei_device_pointer_motion_absolute(d, x, y); ei_device_frame(d, ei_now(ei));
-		ei_dispatch(ei); usleep(16000);
+		ei_dispatch(ei); usleep(14000);
 	}
 	curx = tx; cury = ty;
 }

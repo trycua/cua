@@ -11,5 +11,6 @@ focused/raised, no real pointer moved.
 | `16-window-cursive-multicursor.webm` | 16 background windows, 16 independent cursors, concurrent cursive (scale). |
 | `4-window-independent-strokes.webm` | 4 windows, each a distinct stroke (independence, readable). |
 | `1-window-precise-freehand.webm` | one large window, slow precise freehand drag (fidelity). |
+| `16-window-with-foreground-occluder.webm` | a foreground window sits **on top** of the grid (not driven); the 16 windows behind/around it keep drawing — proves they're driven while backgrounded/occluded. |
 
 `preview-*.png` are single frames from each clip.

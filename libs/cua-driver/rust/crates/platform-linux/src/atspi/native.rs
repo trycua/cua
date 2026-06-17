@@ -540,6 +540,43 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
     })
 }
 
+/// Replace the contents of the best editable field in pid's tree with `text`
+/// via AT-SPI EditableText (setTextContents semantics, unlike [`insert_text`]
+/// which inserts at the caret). Works on unfocused windows when the toolkit
+/// exposes EditableText (Qt6, GTK4); errs when no editable is exposed (Qt5
+/// unfocused) so the caller can run its focus workaround and retry.
+pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
+    runtime().block_on(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = collect_visited(&conn, pid)
+            .await?
+            .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+        let target = pick_editable(&visited)
+            .ok_or_else(|| anyhow!("no editable element found for pid {pid}"))?;
+        dlog!(
+            "type_into_editable target: role={:?} focused={} in_web_doc={}",
+            target.role, target.focused, target.in_web_doc
+        );
+
+        let et = target
+            .acc
+            .proxies()
+            .await
+            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?
+            .editable_text()
+            .await
+            .map_err(|e| anyhow!("EditableText unavailable: {e}"))?;
+        match call(et.set_text_contents(text)).await {
+            Some(Ok(true)) => Ok(()),
+            Some(Ok(false)) => Err(anyhow!("setTextContents rejected by toolkit")),
+            Some(Err(e)) => Err(anyhow!("setTextContents failed: {e}")),
+            None => Err(anyhow!("setTextContents timed out")),
+        }
+    })
+}
+
 /// Find the window XID for a PID by listing its X11 windows.
 async fn entry_find_window_xid(pid: u32) -> Option<u64> {
     use crate::x11::list_windows;

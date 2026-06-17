@@ -24,25 +24,26 @@ let
 
   # Representative native-Wayland apps, one per major toolkit. `match` is the
   # identity substring find_window looks for (title/app_id/app/class).
+  #
+  # NOTE: no per-app env prefix here. Apps are launched via cua-driver's
+  # `launch_app`, which execs the command's FIRST token as the program — an
+  # `ENV=val cmd` prefix would be (mis)read as the program name. The native
+  # Wayland backends (GDK_BACKEND/QT_QPA_PLATFORM) are exported by the session
+  # driver wrapper instead (session.nix appBackendEnv), so the launched toolkit
+  # apps inherit them. Do not reintroduce an `env` field on these.
   apps = {
     foot = {
       packages = [ pkgs.foot ];
-      # foot is Wayland-only; no backend hint needed.
-      env = "";
       launch = "foot --app-id=cua-wayland-foot-app --title=cua-wayland-foot-app";
       match = "cua-wayland-foot-app";
     };
     "gtk3-gedit" = {
       packages = [ pkgs.gedit ];
-      # GTK auto-selects the Wayland backend from WAYLAND_DISPLAY.
-      env = "GDK_BACKEND=wayland";
       launch = "gedit";
       match = "gedit";
     };
     "qt6-kcalc" = {
       packages = [ pkgs.kdePackages.kcalc ];
-      # Qt defaults to xcb; force the NATIVE Wayland platform plugin (not xcb).
-      env = "QT_QPA_PLATFORM=wayland";
       launch = "kcalc";
       match = "kcalc";
     };
@@ -71,7 +72,7 @@ let
 
     MATCH = "${cfg.match}"
     OUTPNG = "${outputPng}"
-    LAUNCH = "${cfg.env} ${cfg.launch}"
+    LAUNCH = "${cfg.launch}"
     d = Driver()
     try:
         d.initialize("nixos-wayland-bg-gui")

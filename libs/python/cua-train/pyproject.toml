@@ -1,6 +1,6 @@
 [project]
 name = "cua-train"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cua Cloud Python client — control and data plane for Cua Cloud desktop VM pools"
 readme = "README.md"
 license = "MIT"

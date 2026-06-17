@@ -2855,13 +2855,19 @@ impl Tool for SetConfigTool {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
             description: "Update cua-driver-rs configuration. capture_mode / \
-                max_image_dimension take effect immediately. The experimental_pip \
-                keys persist to ~/.cua-driver/config.json and apply on next \
+                max_image_dimension take effect immediately.\n\n\
+                Two input shapes (both accepted, matching Windows/Swift):\n\
+                - **{key, value}** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 800}` \
+                  — single leaf write.\n\
+                - **Legacy per-field**: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n\
+                The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next \
                 daemon restart (the PiP backend is initialised once at startup; \
                 Linux ships only the trait stub today — see issue #1729).".into(),
             input_schema: json!({"type":"object","properties":{
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Default capture mode for get_window_state."},
-                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
+                "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
+                "value":{"description":"New value for `key`. JSON type depends on the key."},
+                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape. Default capture mode for get_window_state."},
+                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
                 "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
             },"additionalProperties":false}),
@@ -2872,6 +2878,52 @@ impl Tool for SetConfigTool {
         use cua_driver_core::tool_args::ArgsExt;
         let mut cfg = self.state.config.write().unwrap();
         let mut parts = Vec::new();
+        // {key, value} shape (what the Swift/macOS and Windows callers send).
+        // Linux previously read only the legacy per-field keys below, so a
+        // `{"key":"max_image_dimension","value":800}` write was silently
+        // dropped (issue #1923). Dispatch on `key` to the same fields.
+        if let (Some(key), Some(val)) = (
+            args.get("key").and_then(|v| v.as_str()),
+            args.get("value"),
+        ) {
+            match key {
+                "capture_mode" => match val.as_str() {
+                    Some(s) => { cfg.capture_mode = s.to_owned(); parts.push(format!("capture_mode={s}")); }
+                    None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
+                },
+                "max_image_dimension" => match val.as_u64() {
+                    Some(n) => { cfg.max_image_dimension = n as u32; parts.push(format!("max_image_dimension={n}")); }
+                    None => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
+                },
+                "experimental_pip" => match val.as_bool() {
+                    Some(b) => {
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
+                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+                        }
+                        parts.push(format!("experimental_pip={b} (next restart)"));
+                    }
+                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
+                },
+                "experimental_pip_geometry" => match val.as_str() {
+                    Some(s) => {
+                        if pip_preview::PipGeometry::parse(s).is_none() {
+                            return ToolResult::error(format!(
+                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
+                            ));
+                        }
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
+                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+                        }
+                        parts.push(format!("experimental_pip_geometry={s} (next restart)"));
+                    }
+                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
+                },
+                other => return ToolResult::error(format!(
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                )),
+            }
+        }
+        // Legacy per-field shape.
         if let Some(mode) = args.opt_str("capture_mode") {
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;

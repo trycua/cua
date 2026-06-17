@@ -87,6 +87,10 @@ class TrainClient:
         body = resp.json()
         return body["access_token"], float(body.get("expires_in", 300))
 
+    def reset_token(self) -> None:
+        """Force re-exchange on the next :meth:`get_async_httpx_client` call."""
+        self._token_deadline = 0
+
     def _refresh_token(self) -> None:
         if not self._client_id:
             return

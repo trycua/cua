@@ -71,8 +71,7 @@ let
 
     MATCH = "${cfg.match}"
     OUTPNG = "${outputPng}"
-    LAUNCH = "${cfg.launch}"
-
+    LAUNCH = "${cfg.env} ${cfg.launch}"
     d = Driver()
     try:
         d.initialize("nixos-wayland-bg-gui")

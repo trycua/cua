@@ -30,8 +30,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
-
 env:
   AWS_REGION: us-west-2
   NIX_CACHE_BUCKET: trycua-nix-cache

@@ -616,11 +616,35 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
             .await
             .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
 
-        if target.has_editable {
-            if let Ok(et) = proxies.editable_text().await {
-                if et.set_text_contents(value).await.unwrap_or(false) {
-                    return Ok(());
-                }
+        // EditableText write. We don't gate on the cached `has_editable` flag:
+        // GTK4 (and similar toolkits) only advertise the EditableText interface
+        // on a widget once it holds keyboard focus, so the interface list
+        // captured during the unfocused tree walk can be missing it even though
+        // the element is a real editable text box. GrabFocus first (internal
+        // widget focus, no window activation — same trick as `type_text`'s
+        // EditableText path), then resolve the EditableText proxy live over
+        // D-Bus and try to write. If the proxy genuinely isn't there the
+        // `editable_text()` resolve fails and we fall through to Value below.
+        if target.has_component {
+            if let Ok(comp) = proxies.component().await {
+                let _ = call(comp.grab_focus()).await;
+            }
+        }
+        if let Ok(et) = proxies.editable_text().await {
+            // Replace whole contents (parity with the Windows/macOS set_value,
+            // which overwrite rather than insert at the caret).
+            if et.set_text_contents(value).await.unwrap_or(false) {
+                return Ok(());
+            }
+            // Some toolkits reject SetTextContents but accept an insert at the
+            // caret offset; clear-then-insert as a fallback.
+            let off = match proxies.text().await {
+                Ok(tp) => tp.caret_offset().await.unwrap_or(0),
+                Err(_) => 0,
+            };
+            let len = value.chars().count() as i32;
+            if et.insert_text(off, value, len).await.unwrap_or(false) {
+                return Ok(());
             }
         }
         if target.has_value {

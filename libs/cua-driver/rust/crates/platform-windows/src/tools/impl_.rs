@@ -3872,9 +3872,9 @@ impl Tool for GetScreenSizeTool {
     fn def(&self) -> &ToolDef {
         GSS_DEF.get_or_init(|| ToolDef {
             name: "get_screen_size".into(),
-            description: "Return the logical size of the main display in points plus its backing \
-                scale factor. Agents click in points; Retina displays have scale_factor 2.0. \
-                Requires no TCC permissions.".into(),
+            description: "Return the size of the main display in physical pixels plus its display \
+                scale factor. On Windows, screenshots and pixel clicks use this same physical-pixel \
+                coordinate space. Requires no special permissions.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -3883,14 +3883,13 @@ impl Tool for GetScreenSizeTool {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         use windows::Win32::UI::HiDpi::GetDpiForSystem;
         // With permonitorv2 DPI awareness (set in cua-driver.manifest),
-        // SM_CXSCREEN/SM_CYSCREEN already return logical points (DPI-scaled).
+        // SM_CXSCREEN/SM_CYSCREEN return PHYSICAL pixels — the same
+        // coordinate space screenshots and pixel clicks use on Windows.
         // Report these as-is, along with the scale factor for reference.
-        // Matches Swift's NSScreen.frame behavior on macOS.
         let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
         let dpi = unsafe { GetDpiForSystem() };
         let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
-        // Matches Swift text format 1:1.
-        ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
+        ToolResult::text(format!("✅ Main display: {w}x{h} pixels @ {scale}x"))
             .with_structured(json!({ "width": w, "height": h, "scale_factor": scale }))
     }
 }
@@ -4816,10 +4815,18 @@ impl Tool for ZoomTool {
             ));
         }
 
+        // Issue #1880: the caller's coordinates are in the (possibly downscaled)
+        // screenshot space of the last `get_window_state` call, but the crop below
+        // runs on a fresh native-resolution capture. Scale by the stored resize
+        // ratio so the crop lands on the intended region; the zoom context then
+        // holds native-pixel values, which is what `from_zoom` clicks expect.
+        let ratio = self.state.resize_registry.ratio(raw_pid as u32).unwrap_or(1.0);
+        let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
+
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
             let png = crate::capture::screenshot_window_bytes(hwnd)?;
-            cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
+            cursor_overlay::capture_utils::crop_png_to_jpeg(&png, nx1, ny1, nx2, ny2, 500)
         }).await;
 
         match result {

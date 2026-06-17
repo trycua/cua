@@ -264,6 +264,7 @@ jobs:
         run: |
           IDENTITY="Developer ID Application: ${DEVELOPER_NAME} (${TEAM_ID})"
           codesign --force --timestamp --options runtime \
+            --entitlements scripts/CuaDriver.entitlements \
             --sign "$IDENTITY" release/universal/cua-driver
           codesign --verify --strict --verbose=2 release/universal/cua-driver
       - name: Assemble CuaDriver.app bundle
@@ -324,6 +325,7 @@ jobs:
           # is essentially a no-op on the binary and a fresh signature
           # on the bundle wrapper.
           codesign --force --deep --timestamp --options runtime \
+            --entitlements scripts/CuaDriver.entitlements \
             --sign "$IDENTITY" release/CuaDriver.app
           codesign --verify --strict --verbose=2 release/CuaDriver.app
 

@@ -13,10 +13,11 @@
 # and screencopy (so grim captures the output) — the same protocols labwc gives
 # the non-nested cells — so the EIS cells keep working end to end.
 #
-# Injection primitives (cua_motion/cua_button/cua_kbd_*) are harvested from the
-# Phase A/B/E spikes under crates/platform-linux/spikes/, but routed by app_id
-# (not positional device index) and transported over a plain socket instead of
-# libei/EIS — cua owns both ends, so the portal/libei layer buys nothing here.
+# The injection primitives (cua_motion/cua_button/cua_kbd_*) deliver wl_pointer/
+# wl_keyboard straight to a target client's resources, bypassing seat focus —
+# routed by app_id (not positional device index) and transported over a plain
+# socket instead of libei/EIS, since cua owns both ends and the portal/libei
+# layer buys nothing here.
 #
 # Usage: cua_compositor_patch.py <tinywl.c in> <cua-compositor.c out>
 import sys, io

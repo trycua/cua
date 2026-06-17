@@ -45,6 +45,7 @@ let
   commonPkgs = with pkgs; [
     foot
     grim
+    wtype # virtual-keyboard CLI: cua-driver shells out to it for type_text/press_key
     dbus
     procps
   ];

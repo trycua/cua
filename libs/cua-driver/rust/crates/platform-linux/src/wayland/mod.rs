@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 
 use wayland_client::{
-    event_created_child, protocol::wl_registry, Connection, Dispatch, Proxy, QueueHandle,
+    event_created_child,
+    protocol::{wl_registry, wl_seat::WlSeat},
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self as ftl_handle, ZwlrForeignToplevelHandleV1},
@@ -101,6 +103,10 @@ struct Toplevel {
 struct State {
     manager: Option<ZwlrForeignToplevelManagerV1>,
     toplevels: HashMap<u32, Toplevel>,
+    // Live handles + a seat, kept so `click` can `activate` a target toplevel by
+    // its window_id (foreign-toplevel protocol id) — the focus-based input model.
+    handles: HashMap<u32, ZwlrForeignToplevelHandleV1>,
+    seat: Option<WlSeat>,
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -116,8 +122,25 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             if interface == ZwlrForeignToplevelManagerV1::interface().name {
                 let v = version.min(3);
                 state.manager = Some(registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, v, qh, ()));
+            } else if interface == WlSeat::interface().name {
+                let v = version.min(7);
+                state.seat = Some(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
             }
         }
+    }
+}
+
+impl Dispatch<WlSeat, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &WlSeat,
+        _: wayland_client::protocol::wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // Seat name/capabilities events are irrelevant here — we only need the
+        // seat object to pass to foreign-toplevel `activate`.
     }
 }
 
@@ -149,6 +172,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         let id = handle.id().protocol_id();
+        state.handles.entry(id).or_insert_with(|| handle.clone());
         let tl = state.toplevels.entry(id).or_default();
         match event {
             ftl_handle::Event::Title { title } => tl.title = title,
@@ -219,6 +243,93 @@ pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     } else {
         crate::capture::screenshot_window_bytes(xid)
     }
+}
+
+/// Focus a native Wayland toplevel by its `window_id` (the foreign-toplevel
+/// protocol id from `list_windows`) via the protocol's `activate` request — the
+/// "click to focus" half of the focused-input model. Wayland forbids a client
+/// from knowing another window's on-screen geometry, so we cannot translate the
+/// caller's window-local x/y into global pointer coordinates; instead we
+/// deterministically focus+raise the exact window the caller targeted, so the
+/// subsequent `type_text`/`press_key` (virtual-keyboard) land in it.
+pub fn click(window_id: u64) -> anyhow::Result<()> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?; // bind manager + seat
+    if state.manager.is_none() {
+        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
+    }
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?; // drain toplevel + handle creation
+    }
+
+    let id = window_id as u32;
+    let handle = state
+        .handles
+        .get(&id)
+        .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {window_id}"))?;
+    let seat = state
+        .seat
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat to activate the window"))?;
+    handle.activate(seat);
+    queue.roundtrip(&mut state)?; // flush the activate request
+    Ok(())
+}
+
+/// Type Unicode text into the focused Wayland surface via `wtype` (the
+/// virtual-keyboard tool — `zwp_virtual_keyboard_v1` under the hood; it builds
+/// the xkb keymap and resolves shift levels for us). This mirrors the X11
+/// backend's XSendEvent typing and the capture slice's shell-out to `grim`.
+/// foreign-toplevel exposes no pid and Wayland delivers keys to the *focused*
+/// surface, so this is window_id-free; pair it with `click`/`activate` to put
+/// the intended window in focus first.
+pub fn type_text(text: &str) -> anyhow::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let out = std::process::Command::new("wtype").arg("--").arg(text).output()?;
+    if !out.status.success() {
+        anyhow::bail!("wtype failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+/// Press a single named key into the focused Wayland surface via `wtype -k`.
+pub fn press_key(key: &str) -> anyhow::Result<()> {
+    let keysym = key_to_keysym(key);
+    let out = std::process::Command::new("wtype").args(["-k", &keysym]).output()?;
+    if !out.status.success() {
+        anyhow::bail!("wtype -k {keysym} failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+/// Map cua key names to X keysym names that `wtype -k` understands. Unknown
+/// values pass through (single characters and valid keysym names work as-is).
+fn key_to_keysym(key: &str) -> String {
+    match key.to_lowercase().as_str() {
+        "enter" | "return" => "Return",
+        "tab" => "Tab",
+        "esc" | "escape" => "Escape",
+        "space" => "space",
+        "backspace" => "BackSpace",
+        "delete" | "del" => "Delete",
+        "up" => "Up",
+        "down" => "Down",
+        "left" => "Left",
+        "right" => "Right",
+        "home" => "Home",
+        "end" => "End",
+        "pageup" | "page_up" => "Prior",
+        "pagedown" | "page_down" => "Next",
+        _ => return key.to_string(),
+    }
+    .to_string()
 }
 
 /// Window-enumeration dispatcher: native Wayland when applicable, else X11.

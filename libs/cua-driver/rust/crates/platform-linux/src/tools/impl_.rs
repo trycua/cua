@@ -943,6 +943,13 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || {
+            // Native Wayland: focus+raise the target toplevel (foreign-toplevel
+            // `activate`). Wayland hides cross-window geometry, so window-local
+            // x/y can't be mapped to a global pointer position; activating the
+            // window the caller targeted is the focus-based equivalent.
+            if crate::wayland::is_wayland() {
+                return crate::wayland::click(xid);
+            }
             crate::input::send_click(xid, xi, yi, count, button)
         }).await;
         match result {
@@ -997,6 +1004,23 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+
+        // Native Wayland: keys go to the *focused* surface (no pid/window
+        // targeting in the protocol). Type via the virtual-keyboard tool; pair
+        // with a prior `click`/`activate` to focus the intended window.
+        if crate::wayland::is_wayland() {
+            let text_len = text.chars().count();
+            let text_w = text.clone();
+            let result =
+                tokio::task::spawn_blocking(move || crate::wayland::type_text(&text_w)).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
         // Pulse the agent cursor onto the field being typed into (when an
         // element_index is supplied) so the viewer sees *where* typing happens.
         if let Some(idx) = args.opt_u64("element_index") {
@@ -1124,6 +1148,19 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+        // Native Wayland: send the key to the focused surface via virtual-keyboard.
+        if crate::wayland::is_wayland() {
+            let key_w = key.clone();
+            let result = tokio::task::spawn_blocking(move || crate::wayland::press_key(&key_w)).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Pressed key '{key}' (via Wayland virtual-keyboard)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         let key_for_task = key.clone();
         let result = tokio::task::spawn_blocking(move || {
             if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {

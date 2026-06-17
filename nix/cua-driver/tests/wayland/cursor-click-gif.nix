@@ -1,11 +1,11 @@
-# CUA Driver native-Wayland cursor-click GIF test (per desktop) — TDD red.
+# CUA Driver native-Wayland cursor-click GIF test (per desktop).
 #
-# Native-Wayland analogue of ../../tests/linux-cursor-click-gif.nix. Launches a
-# native Wayland terminal (foot running a shell), finds it via cua-driver
-# list_windows, clicks into it and types a command, then verifies the command
-# RAN by checking a file it writes (display-server-agnostic proof). Records a
-# GIF of the composited output via grim. Fails today: the driver can neither
-# enumerate nor inject into native Wayland surfaces.
+# Launches two native Wayland terminals (foot) THROUGH cua-driver (launch_app) —
+# the second is the focused target — then clicks it (foreign-toplevel activate),
+# types a command via the Wayland virtual-keyboard (wtype), and verifies the
+# command RAN by checking a file it writes (display-server-agnostic proof).
+# Records a GIF of the composited output via grim. On wlroots desktops the driver
+# drives the host compositor; on kde/gnome it drives its own nested labwc.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-wayland-<desktop>-cursor-click-gif
 {
@@ -21,6 +21,14 @@ let
   driverClient = import ./driver-client.nix { inherit pkgs; };
   recordGifScript = import ./record-wayland-gif.nix { inherit pkgs; };
 
+  # GIF recorder env: native points grim at the host socket; nested self-resolves
+  # the driver's published nested socket ($XDG_RUNTIME_DIR/.cua-nested-display).
+  recorderWlEnv =
+    if session.nested then
+      "env XDG_RUNTIME_DIR=/run/user/0"
+    else
+      "env XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=$(cat /tmp/wl-display)";
+
   testScriptPy = pkgs.writeText "wayland-cursor-click.py" ''
     import sys, time
     sys.path.insert(0, "/tmp")
@@ -29,11 +37,18 @@ let
     d = Driver()
     try:
         d.initialize("nixos-wayland-click")
-        pid, wid = d.find_window("cua-wayland-target", timeout=30)
+        # Launch a control terminal then the target, so the target is the
+        # focused (last-mapped) window the keystrokes will reach.
+        d.launch_app("foot --app-id=cua-wayland-control --title=cua-wayland-control")
+        time.sleep(1)
+        d.launch_app("foot --app-id=cua-wayland-target --title=cua-wayland-target")
+        pid, wid = d.find_window("cua-wayland-target", timeout=40)
         print(f"target pid={pid} window_id={wid}", flush=True)
         d.call("set_agent_cursor_enabled", {"enabled": True})
         d.call("move_cursor", {"x": 1100.0, "y": 900.0})
         time.sleep(0.6)
+        # click focuses+raises the target (foreign-toplevel activate); type +
+        # enter go to it via the Wayland virtual-keyboard.
         d.call("click", {"pid": pid, "window_id": wid, "x": 120.0, "y": 120.0})
         time.sleep(0.4)
         d.call("type_text", {"pid": pid, "window_id": wid,
@@ -72,7 +87,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("multi-user.target")
     machine.succeed("modprobe uinput && test -e /dev/uinput")
 
-    with subtest("Bring up ${session.label} + native Wayland target/control terminals"):
+    with subtest("Bring up ${session.label}"):
         machine.execute("${session.start} >/tmp/session.log 2>&1 &")
         try:
             machine.wait_for_file("/tmp/wl-ready", timeout=120)
@@ -80,24 +95,19 @@ pkgs.testers.nixosTest {
             machine.log(machine.execute("cat /tmp/session.log || true")[1])
             machine.log(machine.execute("cat /tmp/compositor.log || true")[1])
             raise
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        env = f"env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0"
-        machine.execute(f"sh -lc '{env} foot --app-id=cua-wayland-control --title=cua-wayland-control >/tmp/control.log 2>&1 &'")
-        machine.execute(f"sh -lc '{env} foot --app-id=cua-wayland-target --title=cua-wayland-target >/tmp/target.log 2>&1 &'")
-        machine.succeed("sleep 3")
 
-    with subtest("Record GIF and run driver click+type into native Wayland terminal"):
-        wl = machine.succeed("cat /tmp/wl-display").strip()
-        env = f"env -u DISPLAY WAYLAND_DISPLAY={wl} XDG_RUNTIME_DIR=/run/user/0"
+    with subtest("Record GIF + driver launches, clicks, and types into a native Wayland terminal"):
         machine.copy_from_host("${driverClient}", "/tmp/driver_client.py")
         machine.copy_from_host("${testScriptPy}", "/tmp/wayland-cursor-click.py")
         machine.execute(
-            f"sh -lc '{env} ${recordGifScript} /tmp/click-frames "
+            "sh -lc '${recorderWlEnv} ${recordGifScript} /tmp/click-frames "
             "/tmp/cua-driver-wayland-${desktop}-cursor-click.gif /tmp/stop-click-recorder "
             "/tmp/rec-click.log 10 0.15 >/dev/null 2>&1 & echo $! >/tmp/rec-click.pid'"
         )
-        # Non-raising so the grim session GIF is captured even on a red run.
-        result = machine.execute(f"timeout 90 {env} python3 /tmp/wayland-cursor-click.py 2>&1")[1]
+        result = machine.execute(
+            "timeout 120 env CUA_DRIVER_BIN=${session.driverWrapper} "
+            "XDG_RUNTIME_DIR=/run/user/0 python3 /tmp/wayland-cursor-click.py 2>&1"
+        )[1]
         machine.log(result)
         machine.execute("touch /tmp/stop-click-recorder")
         machine.execute("sh -lc 'for i in $(seq 1 60); do kill -0 $(cat /tmp/rec-click.pid) 2>/dev/null || break; sleep 1; done'")
@@ -108,7 +118,7 @@ pkgs.testers.nixosTest {
         machine.execute("test -e /tmp/cua-driver-wayland-${desktop}-cursor-click.gif || : > /tmp/cua-driver-wayland-${desktop}-cursor-click.gif")
         machine.copy_from_machine("/tmp/cua-driver-wayland-${desktop}-cursor-click.gif", "")
 
-    with subtest("Driver completed click+type AND the command ran (RED until Wayland input lands)"):
+    with subtest("Driver completed click+type AND the command ran in the Wayland terminal"):
         assert "click GIF test complete" in result, result
         machine.wait_until_succeeds("test -f /tmp/click-focus.txt", timeout=20)
   '';

@@ -34,7 +34,30 @@ jobs:
   build-linux:
     name: linux-x86_64
     runs-on: ubuntu-latest
+    # Build INSIDE a Debian 11 (bullseye) container instead of directly on
+    # the ubuntu-latest host. ubuntu-latest is now Ubuntu 24.04, whose glibc
+    # is 2.39 — a binary linked there imports GLIBC_2.39 symbols (e.g.
+    # posix_spawn's pidfd_spawnp/pidfd_getpid) and refuses to even run
+    # `--version` on older distros:
+    #   cua-driver: /lib/.../libc.so.6: version 'GLIBC_2.39' not found
+    # That broke Debian 12 (glibc 2.36), Ubuntu 22.04 (2.35), and RHEL/Rocky
+    # 9 (2.34). Debian 11's glibc is 2.31, so linking against it lowers the
+    # floor to GLIBC_2.31 — covering Debian 11+, Ubuntu 20.04+, and RHEL/
+    # Rocky 8+. A container (rather than the retired ubuntu-20.04 runner
+    # label) keeps the floor deterministic regardless of GitHub's host image
+    # churn. The C deps below all exist in bullseye, including libwayland-dev
+    # for the native Wayland backend (#1910).
+    container:
+      image: debian:11
     steps:
+      # actions/checkout needs git inside the container; the bullseye image
+      # is bare. Install git + the build toolchain before anything else.
+      - name: Install base tooling (container is bare)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git ca-certificates curl build-essential pkg-config \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
       - uses: actions/checkout@v4
       - name: Determine version
         id: version
@@ -58,12 +81,6 @@ jobs:
           key: rust-cua-driver-rs-linux-x86_64-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
           restore-keys: |
             rust-cua-driver-rs-linux-x86_64-
-      # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) locates
-      # libX11/libXi/libXtst via pkg-config in its build.rs.
-      - name: Install X11 build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build (release)
         working-directory: libs/cua-driver/rust
         run: cargo build -p cua-driver --release --target x86_64-unknown-linux-gnu

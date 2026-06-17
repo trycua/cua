@@ -34,10 +34,15 @@
 {
   pkgs,
   desktop,
+  # EIS mode: cua-driver nests its OWN cua-compositor (focus-free keyboard +
+  # multi-cursor injection over a control socket) instead of labwc, on ANY host.
+  # Used by the background-terminal-gif + parallel-drag cells.
+  eis ? false,
 }:
 
 let
   inherit (pkgs) lib;
+  cuaCompositor = pkgs.callPackage ../../compositor { };
 
   # Native-Wayland tooling only. No xorg.* / xdotool / xterm here — those are
   # X11 and would let the driver cheat via XWayland. `foot` is a Wayland-native
@@ -179,9 +184,9 @@ let
     export GDK_BACKEND=wayland
     export LIBGL_ALWAYS_SOFTWARE=1
 
-    rm -f /tmp/wl-ready /tmp/wl-display "$XDG_RUNTIME_DIR/.cua-nested-display"
+    rm -f /tmp/wl-ready /tmp/wl-display "$XDG_RUNTIME_DIR/.cua-nested-display" "$XDG_RUNTIME_DIR/cua-inject.sock"
 
-    ${if cfg.nested then nestedStart else nativeStart}
+    ${if (cfg.nested || eis) then nestedStart else nativeStart}
   '';
 
   # Driver launcher used as CUA_DRIVER_BIN. It owns the WAYLAND env so the python
@@ -197,7 +202,20 @@ let
   '';
 
   driverWrapper =
-    if cfg.nested then
+    if eis then
+      # EIS mode: nest cua-compositor (focus-free + multi-cursor injection over
+      # the control socket) on ANY host. Apps launched via launch_app land in it.
+      pkgs.writeShellScript "cua-driver-eis-${desktop}" ''
+        export PATH=${lib.makeBinPath (commonPkgs ++ cfg.packages ++ [ cuaCompositor ])}:$PATH
+        export XDG_RUNTIME_DIR=/run/user/0
+        export CUA_WAYLAND_NEST=1
+        export CUA_WAYLAND_NEST_COMPOSITOR=${cuaCompositor}/bin/cua-compositor
+        export CUA_INJECT_SOCKET=/run/user/0/cua-inject.sock
+        ${appBackendEnv}
+        unset DISPLAY WAYLAND_DISPLAY
+        exec cua-driver "$@"
+      ''
+    else if cfg.nested then
       pkgs.writeShellScript "cua-driver-nested-${desktop}" ''
         export PATH=${lib.makeBinPath (commonPkgs ++ cfg.packages)}:$PATH
         export XDG_RUNTIME_DIR=/run/user/0
@@ -218,7 +236,8 @@ let
       '';
 in
 {
-  inherit (cfg) label nested;
-  packages = commonPkgs ++ cfg.packages;
+  label = if eis then "${cfg.label} + cua-compositor (EIS injection)" else cfg.label;
+  nested = cfg.nested || eis;
+  packages = commonPkgs ++ cfg.packages ++ lib.optional eis cuaCompositor;
   inherit start driverWrapper;
 }

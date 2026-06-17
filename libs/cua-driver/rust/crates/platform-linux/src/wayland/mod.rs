@@ -420,6 +420,168 @@ fn key_to_keysym(key: &str) -> String {
     .to_string()
 }
 
+// ── EIS nested-compositor injection ────────────────────────────────────────
+//
+// When cua-driver's nested compositor is `cua-compositor` (our patched wlroots,
+// see nix/cua-driver/compositor/), it exposes a line-protocol control socket at
+// $CUA_INJECT_SOCKET for what stock Wayland forbids: focus-FREE per-surface
+// keyboard injection and MULTI-cursor pointer injection, both routed to a target
+// window by its xdg app_id. These helpers speak that protocol.
+
+/// The control socket path, when running against the EIS nested compositor.
+pub fn inject_socket_path() -> Option<String> {
+    std::env::var("CUA_INJECT_SOCKET").ok().filter(|s| !s.is_empty())
+}
+
+/// True when input should be routed through the EIS compositor's control socket
+/// (focus-free / multi-cursor) rather than wtype / virtual-pointer.
+pub fn is_inject_mode() -> bool {
+    inject_socket_path().is_some()
+}
+
+fn inject_send(lines: &[String]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    let path = inject_socket_path().ok_or_else(|| anyhow::anyhow!("CUA_INJECT_SOCKET not set"))?;
+    // The nested compositor may still be starting; retry the connect briefly.
+    let mut stream = None;
+    for _ in 0..60 {
+        match UnixStream::connect(&path) {
+            Ok(s) => { stream = Some(s); break; }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    let mut s = stream.ok_or_else(|| anyhow::anyhow!("could not connect to inject socket {path}"))?;
+    let mut buf = String::new();
+    for l in lines {
+        buf.push_str(l);
+        buf.push('\n');
+    }
+    s.write_all(buf.as_bytes())?;
+    s.flush()?;
+    // Give the compositor a moment to process before the socket closes.
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    Ok(())
+}
+
+/// Resolve a window_id (foreign-toplevel protocol id) to its xdg app_id by
+/// enumerating toplevels — the inject protocol addresses windows by app_id.
+pub fn app_id_for_window(window_id: u64) -> Option<String> {
+    let conn = Connection::connect_to_env().ok()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state).ok()?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state).ok()?;
+    }
+    state
+        .toplevels
+        .get(&(window_id as u32))
+        .map(|t| t.app_id.clone())
+        .filter(|s| !s.is_empty())
+}
+
+fn to_hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Map a cua/X11 mouse-button number to its evdev (wl_pointer) button code.
+fn evdev_button(x_button: u32) -> u32 {
+    match x_button {
+        3 => 0x111, // BTN_RIGHT
+        2 => 0x112, // BTN_MIDDLE
+        _ => 0x110, // BTN_LEFT
+    }
+}
+
+/// Focus-free type into the window's surface (no focus change).
+pub fn inject_type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
+    let app = app_id_for_window(window_id)
+        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    inject_send(&[format!("t {app} {}", to_hex(text))])
+}
+
+/// Focus-free named-key press into the window's surface.
+pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
+    let app = app_id_for_window(window_id)
+        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    inject_send(&[format!("k {app} {key}")])
+}
+
+/// A single pointer drag for `inject_parallel_drags`: window-local waypoints,
+/// driven by cursor `idx` so several run concurrently on one window.
+pub struct InjectDrag {
+    pub app_id: String,
+    pub idx: usize,
+    pub x_button: u32,
+    pub path: Vec<(f64, f64)>,
+    pub steps: usize,
+}
+
+fn resample(path: &[(f64, f64)], steps: usize) -> Vec<(f64, f64)> {
+    if path.len() < 2 || steps == 0 {
+        return path.to_vec();
+    }
+    let seglen: Vec<f64> = path
+        .windows(2)
+        .map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt())
+        .collect();
+    let total: f64 = seglen.iter().sum();
+    if total == 0.0 {
+        return vec![path[0]; steps + 1];
+    }
+    let mut out = Vec::with_capacity(steps + 1);
+    for s in 0..=steps {
+        let target = total * (s as f64) / (steps as f64);
+        let mut acc = 0.0;
+        let mut pt = path[path.len() - 1];
+        for (i, &l) in seglen.iter().enumerate() {
+            if acc + l >= target || i == seglen.len() - 1 {
+                let f = if l > 0.0 { (target - acc) / l } else { 0.0 };
+                pt = (path[i].0 + (path[i + 1].0 - path[i].0) * f,
+                      path[i].1 + (path[i + 1].1 - path[i].1) * f);
+                break;
+            }
+            acc += l;
+        }
+        out.push(pt);
+    }
+    out
+}
+
+/// Run N pointer drags concurrently on their target windows: each cursor presses
+/// at its start, glides through its (interleaved) waypoints, and releases. This
+/// is true multi-cursor — each `idx` is an independent cursor in the compositor.
+pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
+    if drags.is_empty() {
+        return Ok(());
+    }
+    let resampled: Vec<Vec<(f64, f64)>> =
+        drags.iter().map(|d| resample(&d.path, d.steps.max(1))).collect();
+    let max_steps = resampled.iter().map(|p| p.len()).max().unwrap_or(0);
+    let mut lines = Vec::new();
+    // Press each cursor at its start point.
+    for (d, pts) in drags.iter().zip(&resampled) {
+        let (x, y) = pts[0];
+        lines.push(format!("m {} {} {x:.1} {y:.1}", d.app_id, d.idx));
+        lines.push(format!("b {} {} {} 1", d.app_id, d.idx, evdev_button(d.x_button)));
+    }
+    // Glide all cursors together, one interleaved step at a time.
+    for s in 1..max_steps {
+        for (d, pts) in drags.iter().zip(&resampled) {
+            let (x, y) = pts[s.min(pts.len() - 1)];
+            lines.push(format!("m {} {} {x:.1} {y:.1}", d.app_id, d.idx));
+        }
+    }
+    // Release each cursor.
+    for (d, _) in drags.iter().zip(&resampled) {
+        lines.push(format!("b {} {} {} 0", d.app_id, d.idx, evdev_button(d.x_button)));
+    }
+    inject_send(&lines)
+}
+
 /// Window-enumeration dispatcher: native Wayland when applicable, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if is_wayland() {

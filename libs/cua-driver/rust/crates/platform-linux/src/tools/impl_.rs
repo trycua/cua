@@ -1005,6 +1005,22 @@ impl Tool for TypeTextTool {
             }
         };
 
+        // EIS nested compositor: focus-FREE per-surface typing into window_id
+        // (the target need not be focused). Routed over the inject control socket.
+        if crate::wayland::is_inject_mode() {
+            let text_len = text.chars().count();
+            let text_w = text.clone();
+            let result =
+                tokio::task::spawn_blocking(move || crate::wayland::inject_type_text(xid, &text_w)).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (focus-free via EIS compositor)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // Native Wayland: keys go to the *focused* surface (no pid/window
         // targeting in the protocol). Type via the virtual-keyboard tool; pair
         // with a prior `click`/`activate` to focus the intended window.
@@ -1148,6 +1164,18 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+        // EIS nested compositor: focus-free named-key into window_id.
+        if crate::wayland::is_inject_mode() {
+            let key_w = key.clone();
+            let result =
+                tokio::task::spawn_blocking(move || crate::wayland::inject_press_key(xid, &key_w)).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key}' (focus-free via EIS compositor).")),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // Native Wayland: send the key to the focused surface via virtual-keyboard.
         if crate::wayland::is_wayland() {
             let key_w = key.clone();
@@ -2103,6 +2131,55 @@ pub struct ParallelMouseDragTool {
 }
 static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// EIS-compositor path for parallel_mouse_drag: build window-local drag paths
+/// and run them as concurrent multi-cursor injections over the control socket.
+/// Coordinates stay window-local (the compositor maps them per app_id), so no
+/// X11 geometry/MPX is needed — the X11 path's hard blocker on Wayland.
+async fn parallel_drag_inject(args: &Value) -> ToolResult {
+    let Some(items) = args.get("drags").and_then(|v| v.as_array()) else {
+        return ToolResult::error("drags[] is required.");
+    };
+    if items.len() < 2 {
+        return ToolResult::error("parallel_mouse_drag requires at least two drag items.");
+    }
+    let mut drags = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let Some(xid) = item.get("window_id").and_then(|v| v.as_u64()) else {
+            return ToolResult::error("each drag item requires window_id.");
+        };
+        let local: Vec<(f64, f64)> = if let Some(pts) = item.get("path").and_then(|v| v.as_array()) {
+            pts.iter()
+                .filter_map(|p| {
+                    let a = p.as_array()?;
+                    Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))
+                })
+                .collect()
+        } else {
+            let g = |k: &str| item.get(k).and_then(|v| v.as_f64());
+            match (g("from_x"), g("from_y"), g("to_x"), g("to_y")) {
+                (Some(fx), Some(fy), Some(tx), Some(ty)) => vec![(fx, fy), (tx, ty)],
+                _ => return ToolResult::error("each drag item requires path[] or from_x/from_y/to_x/to_y."),
+            }
+        };
+        if local.len() < 2 {
+            return ToolResult::error("drag path needs at least 2 points.");
+        }
+        let steps = item.get("steps").and_then(|v| v.as_u64()).unwrap_or(60).clamp(1, 300) as usize;
+        let x_button = parse_mouse_button(item.get("button").and_then(|v| v.as_str()).unwrap_or("left")) as u32;
+        let app = match tokio::task::spawn_blocking(move || crate::wayland::app_id_for_window(xid)).await {
+            Ok(Some(a)) => a,
+            _ => return ToolResult::error(format!("no Wayland app_id for window {xid}")),
+        };
+        drags.push(crate::wayland::InjectDrag { app_id: app, idx: i, x_button, path: local, steps });
+    }
+    let n = drags.len();
+    match tokio::task::spawn_blocking(move || crate::wayland::inject_parallel_drags(&drags)).await {
+        Ok(Ok(())) => ToolResult::text(format!("Ran {n} concurrent drags (multi-cursor via EIS compositor).")),
+        Ok(Err(e)) => ToolResult::error(e.to_string()),
+        Err(e) => ToolResult::error(format!("Task error: {e}")),
+    }
+}
+
 #[async_trait]
 impl Tool for ParallelMouseDragTool {
     fn def(&self) -> &ToolDef {
@@ -2137,6 +2214,11 @@ impl Tool for ParallelMouseDragTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // EIS nested compositor: run the drags as concurrent multi-cursor
+        // injections (window-local, no X11 MPX/geometry needed).
+        if crate::wayland::is_inject_mode() {
+            return parallel_drag_inject(&args).await;
+        }
         match tokio::task::spawn_blocking(crate::input::check_parallel_pointer_support).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return ToolResult::error(e.to_string()),

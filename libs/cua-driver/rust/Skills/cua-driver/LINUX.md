@@ -6,8 +6,8 @@ description: Drive a native Linux app (X11 / Wayland) via the cua-driver CLI —
 # cua-driver-rs — Linux
 
 **Status: BETA.** The Linux backend in cua-driver-rs covers the core
-tool surface (click, type_text, scroll, hotkey, screenshot,
-launch_app, list_apps, list_windows, get_window_state) but several
+tool surface (click, type_text, scroll, hotkey, launch_app,
+list_apps, list_windows, get_window_state, zoom) but several
 behaviors that the macOS / Windows skills consider table-stakes are
 **not yet implemented or only partially supported**:
 
@@ -26,7 +26,7 @@ behaviors that the macOS / Windows skills consider table-stakes are
   KDE-KWin with `org.freedesktop.portal.RemoteDesktop` enabled, some
   click and key paths work. Under most other compositors, input
   synthesis is denied by the security model and the tool surface
-  degrades to "passive" (snapshot, screenshot) only.
+  degrades to "passive" (snapshot via get_window_state) only.
 - **UIA / AX-tree equivalent**: AT-SPI when available, otherwise
   empty. Many GTK4 / Qt6 apps populate AT-SPI lazily; agents should
   expect partial trees and re-snapshot.
@@ -38,8 +38,9 @@ behaviors that the macOS / Windows skills consider table-stakes are
 See `SKILL.md` (macOS) and `WINDOWS.md` (Windows) for the full
 patterns. This file will grow as the Linux backend reaches GA. For
 now, **prefer macOS / Windows hosts** for agent-driven GUI tasks; use
-the Linux daemon for read-only inspection (screenshot,
-list_windows, get_window_state) when running on a Linux host.
+the Linux daemon for read-only inspection (list_windows,
+get_window_state — which embeds a screenshot — and zoom) when running
+on a Linux host.
 
 ## Quick triage
 

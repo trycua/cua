@@ -24,7 +24,6 @@ cd libs/cua-driver/rust/tests/integration
 | `page` tool | ✅ (cross-platform: Apple-Events on macOS, UIA+CDP on Windows, AT-SPI+CDP on Linux) | ✅ (macOS only) |
 | `--version` flag | ✅ | ✅ |
 | `call check_permissions` JSON | ✅ JSON | human-readable text |
-| `call screenshot` (no window_id) | ✅ full-display default | error (requires window_id) |
 
 ---
 
@@ -867,53 +866,49 @@ Windows's `click` takes `{button: enum}` instead.  Rationale:
 
 ---
 
-## MCP tool: `screenshot`
+## MCP tool: `screenshot` — REMOVED on all platforms
+
 - Swift: `libs/cua-driver/Sources/CuaDriverServer/Tools/ScreenshotTool.swift:5-170`
-- Rust: windows=`crates/platform-windows/src/tools/impl_.rs` (ScreenshotTool); macOS/linux OPEN
-- Status: windows VERIFIED
-- Test: `crates/platform-windows/examples/screenshot_parity.rs`
+- Rust: **not registered on any platform** (macOS / Windows / Linux).
+- Status: **removed** — superseded by `get_window_state` (`capture_mode:"vision"`).
 
-### Fixed (Windows)
-1. **Text format** — was `"Screenshot (window): WxH png."`; now matches
-   Swift verbatim: `"✅ Window screenshot — WxH png [window_id: ID]"`
-   (em-dash, checkmark, window-id suffix). Display fallback uses
-   `"✅ Display screenshot — WxH png"` (Rust-only, see intentional below).
-2. **Description** — multi-paragraph port from Swift adapted to Windows
-   (BitBlt + PrintWindow transport; no permission gate needed).
-3. **`idempotent`** — was `true`; Swift uses `false` (a fresh pixel grab
-   every call). Now matches Swift.
-4. **`max_image_dimension` default** — was 0 (no cap), Swift uses 1568.
-   Now 1568 on all 3 Rust platforms (matches
-   `CuaDriverConfig.defaultMaxImageDimension`). The 0 default was
-   producing 10MB screenshots on the Windows VM; 1568 caps the long
-   edge before encoding.
+### History
 
-### Intentional Rust-only
+The standalone `screenshot` tool was intentionally removed from all
+three Rust platforms:
 
-- **Optional `window_id`** — Swift requires it; Windows allows omission
-  for whole-display capture (`screenshot_display_bytes`).  Useful
-  Windows-only convenience that Swift can't easily provide because
-  macOS Screen Recording requires per-window grants.  Schema accepts
-  both shapes; description explains.
-- **Default `format`** — Swift defaults `png`; all 3 Rust platforms now
-  default `jpeg`. Rationale: agents typically want compact images for
-  vision-model context windows; PNG is lossless but multi-MB on screen
-  content. Schema still accepts both; callers wanting PNG pass
-  `{"format":"png"}`. Swift may follow; tracked as a follow-up parity
-  question.
-- **Default JPEG `quality`** — Swift defaults 95; Rust defaults 85
-  (already Linux's default and the macOS Claude-Code-compat tool's
-  default). 85 is the typical sweet spot for screen content. Diverges
-  from Swift only when both sides actually emit JPEG.
+- **PR #1692** removed the `screenshot` tool registration; `get_window_state`
+  with `capture_mode:"vision"` became the single canonical full-frame
+  screenshot path, and `zoom` covers region captures.
+- **PR #1694** deleted the now-dead `ScreenshotTool` / `ScreenshotCompatTool`
+  structs on macOS and Windows.
 
-### Verified on Windows
+So `cua-driver call screenshot '{}'` returning `Unknown tool: screenshot`
+is the **intended, parity-consistent** behavior on every platform — there
+is no Linux-specific gap here.
 
-`screenshot_parity.exe`:
-- Window screenshot: text matches `"✅ Window screenshot — 1087x644 png
-  [window_id: 4464038]"` ✓
-- Image content block present ✓
-- structuredContent has `width`, `height`, `format` ✓
-- JPEG format: `mimeType: image/jpeg`, `format: "jpeg"` ✓
+The underlying capture functions still exist on each platform because the
+canonical paths use them internally:
+- Linux: `crate::capture::screenshot_window_bytes` /
+  `screenshot_display_bytes` (and `wayland::screenshot_dispatch`) feed
+  `GetWindowStateTool` and `ZoomTool`.
+- Windows: `crate::capture::screenshot_window_bytes` / `screenshot_display_bytes`
+  (and the WGC backend) feed `GetWindowStateTool`.
+
+### Canonical replacement
+
+To capture a screenshot, call `get_window_state` with
+`capture_mode:"vision"` for a full-frame image (returns the screenshot as
+an image content block, honoring `max_image_dimension`, default 1568), or
+`zoom` for a cropped native-resolution region. The image-encoding behavior
+the old `screenshot` tool documented (default `jpeg`, `max_image_dimension`
+1568, JPEG quality 85) now lives in those paths.
+
+> Historical note: this section previously documented a Windows-only
+> `ScreenshotTool` as "VERIFIED" (text format `"✅ Window screenshot —
+> WxH png [window_id: ID]"`, optional `window_id`, `jpeg` default,
+> `max_image_dimension` 1568). That tool and its `screenshot_parity.rs`
+> example predate PR #1692/#1694 and no longer exist.
 
 ---
 
@@ -1184,8 +1179,8 @@ description content.
 ### Verified on Windows
 `list_tools_parity.exe`:
 - Names sorted ascending ✓
-- All 23 core tools present (click, double_click, right_click, type_text,
-  press_key, hotkey, scroll, screenshot, list_apps, list_windows,
+- All core tools present (click, double_click, right_click, type_text,
+  press_key, hotkey, scroll, list_apps, list_windows,
   get_cursor_position, get_screen_size, launch_app, move_cursor,
   set_agent_cursor_enabled, set_agent_cursor_motion,
   get_agent_cursor_state, set_value, get_config, set_config,
@@ -1411,7 +1406,6 @@ older clients that only read name/description still work.
          { "name": "press_key",               "…": "…" },
          { "name": "replay_trajectory",       "…": "…" },
          { "name": "right_click",             "…": "…" },
-         { "name": "screenshot",              "…": "…" },
          { "name": "scroll",                  "…": "…" },
          { "name": "set_config",              "…": "…" },
          { "name": "set_recording",           "…": "…" },

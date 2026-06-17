@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use wayland_client::{
     event_created_child,
-    protocol::{wl_registry, wl_seat::WlSeat},
+    protocol::{wl_output::{self, WlOutput}, wl_pointer::ButtonState, wl_registry, wl_seat::WlSeat},
     Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
@@ -18,6 +18,13 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
         self as ftl_manager, ZwlrForeignToplevelManagerV1, EVT_TOPLEVEL_OPCODE,
     },
 };
+use wayland_protocols_wlr::virtual_pointer::v1::client::{
+    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
+    zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+};
+
+/// Linux evdev BTN_LEFT — the button code the virtual-pointer protocol expects.
+const BTN_LEFT: u32 = 0x110;
 
 use crate::x11::WindowInfo;
 
@@ -107,6 +114,11 @@ struct State {
     // its window_id (foreign-toplevel protocol id) — the focus-based input model.
     handles: HashMap<u32, ZwlrForeignToplevelHandleV1>,
     seat: Option<WlSeat>,
+    // Virtual-pointer manager + output dimensions, so `click` can land a real
+    // button press at the output centre (over the just-activated window).
+    vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
+    output_w: u32,
+    output_h: u32,
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -125,6 +137,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             } else if interface == WlSeat::interface().name {
                 let v = version.min(7);
                 state.seat = Some(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
+            } else if interface == ZwlrVirtualPointerManagerV1::interface().name {
+                state.vptr_manager =
+                    Some(registry.bind::<ZwlrVirtualPointerManagerV1, _, _>(name, version.min(2), qh, ()));
+            } else if interface == WlOutput::interface().name {
+                registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ());
             }
         }
     }
@@ -141,6 +158,47 @@ impl Dispatch<WlSeat, ()> for State {
     ) {
         // Seat name/capabilities events are irrelevant here — we only need the
         // seat object to pass to foreign-toplevel `activate`.
+    }
+}
+
+impl Dispatch<WlOutput, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // Remember the output resolution so `click` can aim at its centre.
+        if let wl_output::Event::Mode { width, height, .. } = event {
+            state.output_w = width.max(0) as u32;
+            state.output_h = height.max(0) as u32;
+        }
+    }
+}
+
+impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrVirtualPointerManagerV1,
+        _: <ZwlrVirtualPointerManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrVirtualPointerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrVirtualPointerV1,
+        _: <ZwlrVirtualPointerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
     }
 }
 
@@ -245,13 +303,19 @@ pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     }
 }
 
-/// Focus a native Wayland toplevel by its `window_id` (the foreign-toplevel
-/// protocol id from `list_windows`) via the protocol's `activate` request — the
-/// "click to focus" half of the focused-input model. Wayland forbids a client
-/// from knowing another window's on-screen geometry, so we cannot translate the
-/// caller's window-local x/y into global pointer coordinates; instead we
-/// deterministically focus+raise the exact window the caller targeted, so the
-/// subsequent `type_text`/`press_key` (virtual-keyboard) land in it.
+/// Click a native Wayland toplevel identified by its `window_id` (the
+/// foreign-toplevel protocol id from `list_windows`). Wayland forbids a client
+/// from knowing another window's on-screen geometry, so we cannot map the
+/// caller's window-local x/y to a global pointer position. Instead, the
+/// focused-input model is two steps:
+///   1. `activate` the target toplevel (foreign-toplevel) — focus+raise it, so
+///      on a stacking layout it fills the output.
+///   2. land a real virtual-pointer button press at the output centre (now over
+///      the target). This both visually clicks and — crucially on sway, whose
+///      headless seat has no keyboard until a pointer interaction occurs — makes
+///      the compositor route the subsequent virtual-keyboard input to the
+///      target. (labwc routes it from `activate` alone; the centre click is
+///      harmless there since the activated window is centred under the cursor.)
 pub fn click(window_id: u64) -> anyhow::Result<()> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
@@ -259,25 +323,41 @@ pub fn click(window_id: u64) -> anyhow::Result<()> {
     conn.display().get_registry(&qh, ());
 
     let mut state = State::default();
-    queue.roundtrip(&mut state)?; // bind manager + seat
+    queue.roundtrip(&mut state)?; // bind manager + seat + vptr + outputs
     if state.manager.is_none() {
         anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
     }
     for _ in 0..4 {
-        queue.roundtrip(&mut state)?; // drain toplevel + handle creation
+        queue.roundtrip(&mut state)?; // drain toplevel/handle creation + output mode
     }
 
     let id = window_id as u32;
     let handle = state
         .handles
         .get(&id)
-        .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {window_id}"))?;
+        .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {window_id}"))?
+        .clone();
     let seat = state
         .seat
-        .as_ref()
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat to activate the window"))?;
-    handle.activate(seat);
-    queue.roundtrip(&mut state)?; // flush the activate request
+    handle.activate(&seat);
+    queue.roundtrip(&mut state)?; // flush activate so the target is focused/raised
+
+    // Land a button press at the output centre (over the now-focused window).
+    if let Some(mgr) = state.vptr_manager.clone() {
+        let (w, h) = (state.output_w.max(1), state.output_h.max(1));
+        let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
+        vptr.motion_absolute(0, w / 2, h / 2, w, h);
+        vptr.frame();
+        vptr.button(0, BTN_LEFT, ButtonState::Pressed);
+        vptr.frame();
+        vptr.button(0, BTN_LEFT, ButtonState::Released);
+        vptr.frame();
+        queue.roundtrip(&mut state)?;
+        vptr.destroy();
+        queue.roundtrip(&mut state)?;
+    }
     Ok(())
 }
 
@@ -292,7 +372,15 @@ pub fn type_text(text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    let out = std::process::Command::new("wtype").arg("--").arg(text).output()?;
+    // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
+    // seat (notably sway), the compositor needs the first virtual-keyboard event
+    // to wire up keyboard routing, and that first key is dropped. Sacrificing a
+    // modifier tap (no character) absorbs the drop so the real text lands intact;
+    // it's harmless where routing is already live (labwc).
+    let out = std::process::Command::new("wtype")
+        .args(["-k", "Shift_L", "--"])
+        .arg(text)
+        .output()?;
     if !out.status.success() {
         anyhow::bail!("wtype failed: {}", String::from_utf8_lossy(&out.stderr));
     }

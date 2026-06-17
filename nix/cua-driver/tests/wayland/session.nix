@@ -51,9 +51,14 @@ let
   ];
 
   # Minimal sway config: native Wayland only (XWayland off), stable output.
+  # `workspace_layout stacking` makes the focused window fill the output, so the
+  # driver's centre virtual-pointer click reliably lands on the activated target
+  # (sway needs a pointer interaction to route virtual-keyboard input on a
+  # headless seat with no physical keyboard).
   swayConfig = pkgs.writeText "sway-config" ''
     xwayland disable
     output HEADLESS-1 resolution 1280x1024
+    workspace_layout stacking
     exec_always foot --server
   '';
 

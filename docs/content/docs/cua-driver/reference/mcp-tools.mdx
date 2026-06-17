@@ -360,23 +360,41 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 ### scroll
 
-Scroll the target pid's focused region by synthesized keystrokes.
+Scroll the target pid's focused region.
 
-Mapping: by='page' → PageDown/PageUp × amount; by='line' → DownArrow/UpArrow × amount. Horizontal variants use Left/Right arrow keys.
+Default mode preserves the historical keystroke path: by='page' → PageDown/PageUp × amount; by='line' → DownArrow/UpArrow × amount. Horizontal variants use Left/Right arrow keys.
+
+For canvas, video, WebGL, and infinite-canvas apps that ignore key scrolling, use by='pixel' or provide delta_x / delta_y. That path posts native pixel scroll-wheel events to the target pid, can anchor the wheel event at x/y in window-local screenshot pixels, and can hold modifier keys across the gesture.
 
 Optional element_index + window_id pre-focuses the element before scrolling.
 
 **Arguments:**
 
-- `amount` (integer, optional): Number of keystroke repetitions. Default: 3.
-- `by` (string, optional): Scroll granularity. Default: line.
-- `direction` (string, required): Scroll direction.
+- `amount` (number, optional): Keystroke repetitions for line/page; pixel distance for by=pixel. Defaults: 3 for keys, 120 for pixels.
+- `by` (string, optional): Scroll granularity. Default: line. Use pixel for native wheel events.
+- `delay_ms` (integer, optional): Native wheel path only. Delay between split wheel events. Default: 8.
+- `delta_x` (number, optional): Native wheel path only. Positive values scroll/pan the viewport right.
+- `delta_y` (number, optional): Native wheel path only. Positive values scroll/pan the viewport down.
+- `direction` (string, optional): Scroll direction. Required unless delta_x or delta_y is supplied.
 - `element_index` (integer, optional)
+- `from_zoom` (boolean, optional): When true, x/y are in the last zoom image for this pid; driver translates back to full-window coordinates.
+- `modifier` (array of string, optional): Native wheel path only. Modifier keys held across the gesture: cmd, shift, option/alt, ctrl.
 - `pid` (integer, required)
+- `steps` (integer, optional): Native wheel path only. Split the pixel delta into this many wheel events. Default: 1.
 - `window_id` (integer, optional)
+- `x` (number, optional): Native wheel path only. Window-local screenshot X coordinate to anchor the event.
+- `y` (number, optional): Native wheel path only. Window-local screenshot Y coordinate to anchor the event.
 
 ```json
 {"direction":"down","pid":844}
+```
+
+```json
+{"pid":844,"window_id":10725,"by":"pixel","direction":"down","amount":240,"x":600,"y":400}
+```
+
+```json
+{"pid":844,"window_id":10725,"delta_x":300,"delta_y":-120,"steps":4}
 ```
 
 ### move_cursor

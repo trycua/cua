@@ -11,7 +11,7 @@
 //! cgAnnotatedSessionEventTap, which Chromium's window handler subscribes to.
 
 use core_graphics::{
-    event::{CGEvent, CGEventFlags, CGEventType, CGMouseButton},
+    event::{CGEvent, CGEventFlags, CGEventType, CGMouseButton, ScrollEventUnit},
     event_source::{CGEventSource, CGEventSourceStateID},
     geometry::CGPoint,
 };
@@ -316,6 +316,50 @@ pub fn drag_at_xy(
     Ok(())
 }
 
+/// Post a native scroll-wheel event to `pid`.
+///
+/// `delta_x` / `delta_y` use tool-facing viewport semantics: positive X scrolls
+/// right, positive Y scrolls down. CoreGraphics wheel deltas are inverted from
+/// that convention, so this helper translates before creating the event.
+pub fn scroll_wheel_at_xy(
+    pid: i32,
+    screen_point: Option<(f64, f64)>,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    delta_x: f64,
+    delta_y: f64,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let flags = parse_modifier_flags(modifiers);
+
+    let wheel_y = (-delta_y).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    let wheel_x = (-delta_x).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    if wheel_x == 0 && wheel_y == 0 {
+        return Ok(());
+    }
+
+    let event = CGEvent::new_scroll_event(
+        source,
+        ScrollEventUnit::PIXEL,
+        2,
+        wheel_y,
+        wheel_x,
+        0,
+    ).map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
+
+    if let Some((x, y)) = screen_point {
+        event.set_location(CGPoint::new(x, y));
+    }
+    if flags != CGEventFlags::CGEventFlagNull {
+        event.set_flags(flags);
+    }
+
+    post_scroll_event(pid, &event, window_local, wid);
+    Ok(())
+}
+
 /// Mouse button for drag gestures.
 #[derive(Clone, Copy, Debug)]
 pub enum DragButton {
@@ -434,6 +478,33 @@ fn post_mouse_event(
 
     // Public path: delivers to AppKit targets where SkyLight mouse drops.
     // Belt+suspenders — both fire unconditionally (matches Swift `postBoth`).
+    event.post_to_pid(pid as libc::pid_t);
+}
+
+fn post_scroll_event(
+    pid: i32,
+    event: &CGEvent,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+) {
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+
+    if let Some((wx, wy)) = window_local {
+        crate::input::skylight::set_window_location(event_ptr, wx, wy);
+    }
+
+    if let Some(wid) = wid {
+        let window_id = wid as i64;
+        let set = |f: u32, v: i64| { crate::input::skylight::set_integer_field(event_ptr, f, v); };
+        set(51, window_id); // windowNumber
+        set(91, window_id); // kCGMouseEventWindowUnderMousePointer
+        set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
+    }
+
+    crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
+    // kCGScrollWheelEventIsContinuous = 88; mark pixel wheels as trackpad-style.
+    crate::input::skylight::set_integer_field(event_ptr, 88, 1);
+    crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
     event.post_to_pid(pid as libc::pid_t);
 }
 

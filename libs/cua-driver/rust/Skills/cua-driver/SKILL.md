@@ -372,7 +372,7 @@ against a specific window.
 | Right click / context menu | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left on macOS — see `WEB_APPS.md` |
 | Type at cursor | `type_text({pid, text, window_id, element_index})` | focuses element first, then writes via the platform's text-set primitive |
 | Set whole field value | `set_value({pid, window_id, element_index, value})` | sliders, steppers, text fields; **use for keyboard-commit workarounds on minimized windows** |
-| Scroll | `scroll({pid, direction, amount, by, window_id, element_index})` | synthesizes per-pid PageUp/PageDown/arrows |
+| Scroll | `scroll({pid, direction, amount, by, window_id, element_index})` | default path synthesizes per-pid PageUp/PageDown/arrows; use `by: "pixel"` or `delta_x`/`delta_y` for native wheel events in canvas/WebGL surfaces |
 | Focus + send key | `press_key({pid, key, window_id, element_index, modifiers})` | element_index sets focus, then posts key |
 | Send key to pid | `press_key({pid, key, modifiers})` | no focus change; key goes to pid's current focus |
 | Modifier combo | `hotkey({pid, keys})` | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap |

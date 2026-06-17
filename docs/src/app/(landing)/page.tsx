@@ -33,6 +33,7 @@ const navCards = [
     title: 'Cloud',
     description: 'Managed sandboxes for production. Deploy agents at scale without managing infra.',
     href: 'https://cua.ai',
+    external: true,
   },
 ];
 
@@ -97,7 +98,7 @@ export default function LandingPage() {
                   >
                     <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z" />
                   </svg>
-                  13.1k
+                  15.5k
                 </span>
               </a>
 
@@ -163,12 +164,43 @@ export default function LandingPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {navCards.map((card) => {
             const Icon = card.icon;
+            const cardClasses =
+              'cds-card group relative overflow-hidden p-6 backdrop-blur-sm transition-all duration-300';
+
+            if (card.external) {
+              return (
+                <a
+                  key={card.title}
+                  href={card.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={cardClasses}
+                >
+                  <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                    <div className="absolute inset-0 bg-gradient-to-br from-[rgba(97,188,255,0.09)] to-[rgba(88,200,190,0.06)]" />
+                  </div>
+
+                  <div className="relative">
+                    <div className="mb-4 inline-flex rounded-2xl border border-white/10 bg-[rgba(97,188,255,0.08)] p-3">
+                      <Icon className="h-6 w-6 text-[var(--brand-500)]" />
+                    </div>
+                    <h3 className="mb-2 text-lg font-semibold text-[var(--ink-strong)]">
+                      {card.title}
+                    </h3>
+                    <p className="text-sm leading-relaxed text-[var(--ink-muted)]">
+                      {card.description}
+                    </p>
+                    <div className="mt-4 inline-flex items-center text-sm font-medium text-[var(--brand-500)] opacity-0 transition-all duration-300 group-hover:opacity-100">
+                      Explore
+                      <ArrowRight className="ml-1 h-4 w-4 transition-transform group-hover:translate-x-1" />
+                    </div>
+                  </div>
+                </a>
+              );
+            }
+
             return (
-              <Link
-                key={card.title}
-                href={card.href}
-                className="cds-card group relative overflow-hidden p-6 backdrop-blur-sm transition-all duration-300"
-              >
+              <Link key={card.title} href={card.href} className={cardClasses}>
                 <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
                   <div className="absolute inset-0 bg-gradient-to-br from-[rgba(97,188,255,0.09)] to-[rgba(88,200,190,0.06)]" />
                 </div>

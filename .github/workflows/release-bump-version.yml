@@ -55,7 +55,7 @@ permissions:
 
 jobs:
   bump-version:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.service == 'cua-driver-rs' && 'macos-latest' || 'ubuntu-latest' }}
     steps:
       - name: Set package directory and type
         id: package
@@ -256,6 +256,30 @@ jobs:
           fi
           bump2version $CONFIG_FLAG ${{ inputs.bump_type }}
 
+      - name: Regenerate cua-driver reference docs
+        if: ${{ inputs.service == 'cua-driver-rs' }}
+        run: |
+          npx tsx scripts/docs-generators/cua-driver.ts
+
+          if git diff --quiet -- docs/content/docs/cua-driver/reference/cli-reference.mdx docs/content/docs/cua-driver/reference/mcp-tools.mdx; then
+            echo "cua-driver reference docs already up to date."
+            exit 0
+          fi
+
+          BUMP_COMMIT=$(git rev-parse HEAD)
+          TAGS_TO_UPDATE=$(git tag --points-at "$BUMP_COMMIT" | tr '\n' ' ' | xargs)
+          if [ -z "$TAGS_TO_UPDATE" ]; then
+            echo "ERROR: No release tag found on bump commit; cannot attach regenerated docs to release tag."
+            exit 1
+          fi
+
+          git add docs/content/docs/cua-driver/reference/cli-reference.mdx docs/content/docs/cua-driver/reference/mcp-tools.mdx
+          git commit --amend --no-edit
+
+          for tag in $TAGS_TO_UPDATE; do
+            git tag -f "$tag" HEAD
+          done
+
       - name: Collect created tag
         id: collect_tags
         run: |
@@ -433,7 +457,7 @@ jobs:
         if: ${{ inputs.service == 'cua-driver-rs' }}
         id: cua_driver_rs_version
         run: |
-          VERSION=$(grep -m1 -oP '^version = "\K[^"]+' libs/cua-driver/rust/Cargo.toml)
+          VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' libs/cua-driver/rust/Cargo.toml | head -n 1)
           echo "cua-driver-rs version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 

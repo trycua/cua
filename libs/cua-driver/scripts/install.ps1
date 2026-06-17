@@ -86,6 +86,58 @@ param(
     [switch]$NoAutoStart,
     [switch]$NoPathUpdate
 )
+
+function Resolve-CuaDriverTempDir {
+    $candidates = @()
+    if ($env:TEMP) { $candidates += $env:TEMP }
+    if ($env:TMP) { $candidates += $env:TMP }
+
+    $dotNetTemp = $null
+    try { $dotNetTemp = [System.IO.Path]::GetTempPath() } catch {}
+    if ($dotNetTemp) { $candidates += $dotNetTemp }
+
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA "Temp") }
+    if ($env:SystemRoot) { $candidates += (Join-Path $env:SystemRoot "Temp") }
+
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+
+        try {
+            $dir = [System.IO.Path]::GetFullPath([string]$candidate)
+        } catch {
+            continue
+        }
+
+        $key = $dir.TrimEnd('\').ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+
+        $probe = Join-Path $dir ("cua-driver-temp-probe-" + [Guid]::NewGuid().ToString('N') + ".tmp")
+        $stream = $null
+        try {
+            $stream = [System.IO.File]::Open(
+                $probe,
+                [System.IO.FileMode]::CreateNew,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::None)
+            $stream.Dispose()
+            $stream = $null
+            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+            return $dir
+        } catch {
+            if ($stream) {
+                $stream.Dispose()
+            }
+            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    throw "could not find a writable temporary directory. Checked TEMP, TMP, .NET temp, LOCALAPPDATA\Temp, and SystemRoot\Temp."
+}
+
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
 if ($NoAutoStart) { $AutoStart = $false }
@@ -558,7 +610,7 @@ function Import-CuaDriverInstallModuleBootstrap {
         }
     }
     $body = Invoke-RestMethod -Uri $Url -UseBasicParsing
-    $tmp = Join-Path $env:TEMP ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
+    $tmp = Join-Path (Resolve-CuaDriverTempDir) ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
     Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
     try {
         Import-Module -Name $tmp -Force -ErrorAction Stop
@@ -1063,7 +1115,7 @@ if (Test-Path -LiteralPath (Join-Path $versionedDir $BinaryName)) {
 }
 
 if (-not $skipDownload) {
-    $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cua-driver-rs-install-" + [Guid]::NewGuid().ToString("N"))
+    $tmpRoot = Join-Path (Resolve-CuaDriverTempDir) ("cua-driver-rs-install-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
     try {
         $stageDir = Get-ReleaseAsset $version $archLabel $tmpRoot

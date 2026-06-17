@@ -37,7 +37,12 @@ pub mod capture;
 #[cfg(target_os = "linux")]
 pub mod atspi;
 
+#[cfg(target_os = "linux")]
+pub mod wayland;
+
 pub fn register_tools() -> ToolRegistry {
+    #[cfg(target_os = "linux")]
+    wayland::ensure_nested_session();
     tools::build_registry(false)
 }
 
@@ -46,6 +51,8 @@ pub fn register_tools() -> ToolRegistry {
 /// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
 /// tools). See `tools::impl_::ScreenshotCompatTool`.
 pub fn register_tools_with_cursor(cfg: cursor_overlay::CursorConfig, compat: bool) -> ToolRegistry {
+    #[cfg(target_os = "linux")]
+    wayland::ensure_nested_session();
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();

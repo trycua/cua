@@ -15,7 +15,7 @@
 
 pkgs.rustPlatform.buildRustPackage {
   pname = "cua-driver";
-  version = "0.5.1";
+  version = "0.5.3";
 
   inherit src;
 
@@ -25,7 +25,7 @@ pkgs.rustPlatform.buildRustPackage {
   # gracefully via `cargo vendor`.
   # Bumped when the dependency set changes (added `atspi`/zbus for native
   # AT-SPI). If this mismatches, the nix build prints the expected value.
-  cargoHash = "sha256-8e/8inqyEUJA3s9lp/YGU5ckDXV1PnUVTyArwAM1e5g=";
+  cargoHash = "sha256-ykVW0duMeoWho0qwDdu0k//cOY6HG+HsIBQF7iT0nZ0=";
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win

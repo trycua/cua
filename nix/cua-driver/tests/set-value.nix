@@ -142,14 +142,19 @@ let
             parts.append(sc["tree_markdown"])
         return "\n".join(parts)
 
+    # Roles that denote an actually-editable text widget. STRICT: we only ever
+    # accept one of these. We must NOT fall back to a window/group/label/panel —
+    # set_value on a non-editable (e.g. the window at index 0) correctly fails
+    # with "neither EditableText nor Value", which would masquerade as the #1929
+    # fix being broken when really we just picked the wrong element.
+    EDITABLE_ROLES = ("entry", "text box", "textbox", "password text", "editable")
+
     def find_editable_index(result):
-        # Pick the editable element. Indexed actionable lines look like
-        # `- [N] <role> "..." [...] [actions=[...]]`. A GtkTextView renders with
-        # role "text"; a GtkEntry with role "entry". Prefer a text/entry line;
-        # fall back to the first indexed element if the role name differs.
+        # Indexed actionable lines look like `- [N] <role> "..." [...]
+        # [actions=[...]]`. A GtkText/GtkSearchEntry renders with role "entry"
+        # or "text"; match the role token that sits right after `- [N] `. Returns
+        # None (never a window/group fallback) if no editable role is present.
         text = tree_text(result)
-        editable_idx = None
-        first_idx = None
         for line in text.splitlines():
             s = line.strip()
             if not s.startswith("- ["):
@@ -158,12 +163,15 @@ let
                 idx = int(s[s.index("[") + 1 : s.index("]")])
             except Exception:
                 continue
-            if first_idx is None:
-                first_idx = idx
-            low = s.lower()
-            if ("entry" in low or "text" in low) and editable_idx is None:
-                editable_idx = idx
-        return editable_idx if editable_idx is not None else first_idx
+            # The role is the text between the closing `]` of the index and the
+            # first double-quote of the name.
+            after_idx = s[s.index("]") + 1 :].lstrip()
+            role = after_idx.split('"', 1)[0].strip().lower()
+            # role "text" (bare) is GtkText/GtkTextView's AT-SPI role; also accept
+            # the explicit editable roles. Reject "static text"/"label"/etc.
+            if role == "text" or role in EDITABLE_ROLES:
+                return idx
+        return None
 
     def get_window_state(proc, req_id, pid, xid):
         # ax = tree only (no screenshot needed; faster + avoids capture flakiness).
@@ -188,19 +196,29 @@ let
             send(proc, "notifications/initialized", {})
             time.sleep(0.5)
 
-            # ── Locate the editable element. Retry: GTK4 builds its accessible
-            # tree a moment after first paint. ──────────────────────────────────
+            # ── Locate the editable element. gnome-characters' GtkSearchEntry is
+            # only realized (and thus only appears in the AT-SPI tree) once the
+            # search is opened, so the helper testScript opens search via xdotool
+            # BEFORE this client runs. Retry: GTK4 builds its accessible tree a
+            # moment after first paint / after the search bar slides in. ─────────
             print("\n--- get_window_state (locate editable) ---", flush=True)
             idx = None
             before_state = None
-            for _ in range(15):
+            for _ in range(20):
                 before_state = get_window_state(proc, 2, target_pid, target_xid)
                 idx = find_editable_index(before_state)
                 if idx is not None:
                     break
                 time.sleep(1.0)
+            if idx is None:
+                # Dump the full tree so a "no editable" failure is diagnosable: it
+                # tells us whether the search entry realized at all.
+                print("NO_EDITABLE_TREE_BEGIN", flush=True)
+                print(tree_text(before_state or {}), flush=True)
+                print("NO_EDITABLE_TREE_END", flush=True)
             assert idx is not None, (
-                "no editable element found in GTK4 window:\n" + tree_text(before_state or {})
+                "no editable (entry/text) element found in the GTK4 window — the "
+                "search entry may not have realized. Tree dumped above."
             )
             print(f"editable element_index = {idx}", flush=True)
 
@@ -351,6 +369,21 @@ pkgs.testers.nixosTest {
         # on its text view (the fix also GrabFocus-es, but this gives the tree a
         # focused editable from the start).
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(cat /tmp/target-xid.txt)")
+
+    with subtest("Realize the GtkSearchEntry so it appears in the AT-SPI tree"):
+        # gnome-characters' search field is a GtkSearchEntry that is NOT realized
+        # (and so is absent from the default AT-SPI tree) until search is opened.
+        # Open it via the GTK "find" accelerator and a typed key (Characters also
+        # supports type-to-search), then give the bar a moment to slide in and
+        # register its accessible. Without this the only indexed element is the
+        # window itself — set_value on which correctly fails, masking the real fix.
+        xid = machine.succeed("cat /tmp/target-xid.txt").strip()
+        machine.succeed(f"DISPLAY=:99 xdotool windowactivate --sync {xid}")
+        machine.execute(f"DISPLAY=:99 xdotool key --clearmodifiers --window {xid} ctrl+f")
+        machine.sleep(1)
+        # Type-to-search fallback: a plain letter also pops the search bar.
+        machine.execute(f"DISPLAY=:99 xdotool key --clearmodifiers --window {xid} a")
+        machine.sleep(2)
 
     with subtest("set_value writes the test string into the GTK4 editable via EditableText"):
         machine.copy_from_host("${setValueTest}", "/tmp/set-value-test.py")

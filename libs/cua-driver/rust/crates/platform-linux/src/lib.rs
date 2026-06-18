@@ -38,6 +38,9 @@ pub mod capture;
 pub mod atspi;
 
 #[cfg(target_os = "linux")]
+pub mod a11y;
+
+#[cfg(target_os = "linux")]
 pub mod wayland;
 
 pub fn register_tools() -> ToolRegistry {

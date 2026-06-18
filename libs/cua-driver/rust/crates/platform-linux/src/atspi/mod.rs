@@ -133,6 +133,14 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
     native::insert_text(pid, text)
 }
 
+/// Classify what holds keyboard focus so `type_text` can target the focused
+/// widget (the thing just clicked) instead of the first editable anywhere:
+/// `Some(true)` = focused editable, `Some(false)` = focused non-editable input
+/// (spreadsheet cell, terminal, canvas), `None` = nothing focused / unreachable.
+pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
+    native::focused_is_editable(pid)
+}
+
 /// Get the screen-coordinate bounding box (x, y, width, height) of element `idx`.
 /// Screen-coordinate bounds for every action node in pid's AT-SPI tree, keyed
 /// by `element_index`. Best-effort: nodes whose bounds can't be read are

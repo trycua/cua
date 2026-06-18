@@ -650,6 +650,30 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
     })
 }
 
+/// Classify what holds keyboard focus in `pid`'s tree, so `type_text` can target
+/// the thing the user just clicked rather than the first editable anywhere:
+///   `Some(true)`  — a focused **editable** widget (a text entry/box). AT-SPI
+///                   EditableText insertion targets it correctly.
+///   `Some(false)` — a focused **non-editable** widget that still accepts typed
+///                   input (a spreadsheet cell/grid, a terminal, a canvas). An
+///                   AT-SPI editable search would grab the wrong field here (e.g.
+///                   gnumeric's name box), so the caller should synth-type into
+///                   the focused widget instead.
+///   `None`        — nothing is focused (or the app is unreachable): fall back to
+///                   the focus-free "first editable" path for background typing.
+pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        Ok(visited.iter().find(|v| v.focused).map(|v| v.has_editable))
+    }, || Ok(None))
+}
+
 /// Find the window XID for a PID by listing its X11 windows.
 async fn entry_find_window_xid(pid: u32) -> Option<u64> {
     use crate::x11::list_windows;

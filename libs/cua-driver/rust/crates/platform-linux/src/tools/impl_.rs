@@ -1054,6 +1054,38 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
 
+        // Prefer the focused widget — the element the user just clicked. If a
+        // NON-editable input holds keyboard focus (a spreadsheet cell, a
+        // terminal, a canvas), the focus-free AT-SPI editable search below would
+        // grab the wrong field (e.g. gnumeric's name box instead of the selected
+        // cell, or skip a terminal entirely), so synth-type into the focused
+        // widget instead: terminals via pty injection, everything else via
+        // XSendEvent to the focused window. A focused *editable* (Some(true)) or
+        // nothing focused (None) falls through to the existing AT-SPI-first flow.
+        let focus_kind = tokio::task::spawn_blocking(move || {
+            crate::atspi::focused_is_editable(pid).ok().flatten()
+        }).await.ok().flatten();
+        if focus_kind == Some(false) {
+            let text_f = text.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                if inject_terminal_input(pid, xid, &text_f)? {
+                    return Ok(());
+                }
+                // XTest (real input to the focused window), NOT XSendEvent: GTK/Qt
+                // drop synthetic key events, so a spreadsheet cell / canvas would
+                // stay empty. The click that gave this widget focus already put it
+                // under the X input focus, so XTest-to-focus lands correctly.
+                crate::input::send_type_text_xtest(&text_f)
+            }).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) into the focused widget."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // Try AT-SPI EditableText first (focus-free, works for Qt6/GTK4).
         let text_clone = text.clone();
         let atspi_result = tokio::task::spawn_blocking(move || {

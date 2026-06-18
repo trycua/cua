@@ -138,21 +138,52 @@ async fn app_for_pid<'a>(
     pid: u32,
 ) -> Result<Option<AccessibleProxy<'a>>> {
     let zconn = conn.connection();
-    let root = conn
-        .root_accessible_on_registry()
-        .await
-        .map_err(|e| anyhow!("registry root unavailable: {e}"))?;
+    // Every AT-SPI round-trip below can block on an app whose main loop isn't
+    // servicing D-Bus — most commonly one holding a modal grab (an "Add/Edit/
+    // Preferences" dialog). Without a bound, `GetConnectionUnixProcessID` stalls
+    // on the zbus default (~25s) per such app, which made get_window_state and
+    // type_text hang on real apps (#1936). Bound each step with CALL_TIMEOUT and
+    // skip/return instead of stalling — for type_text this returns fast so the
+    // tool falls back to XTEST, which still types into the focused dialog field.
+    let root = match call(conn.root_accessible_on_registry()).await {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Err(anyhow!("registry root unavailable: {e}")),
+        None => {
+            dlog!("registry root lookup timed out");
+            return Ok(None);
+        }
+    };
     let dbus = atspi::zbus::fdo::DBusProxy::new(zconn)
         .await
         .map_err(|e| anyhow!("DBus proxy unavailable: {e}"))?;
 
-    let apps = root.get_children().await.unwrap_or_default();
+    let apps = match call(root.get_children()).await {
+        Some(r) => r.unwrap_or_default(),
+        None => {
+            dlog!("registry get_children timed out");
+            return Ok(None);
+        }
+    };
     dlog!("registry root has {} application(s); seeking pid {pid}", apps.len());
     for child in apps {
-        let cpid = pid_of(&dbus, &child).await;
+        // A modal-grabbed app can't answer the pid query; skip it after
+        // CALL_TIMEOUT rather than blocking the whole walk on it.
+        let cpid = match call(pid_of(&dbus, &child)).await {
+            Some(p) => p,
+            None => {
+                dlog!("  pid_of timed out for bus={:?}, skipping", child.name_as_str());
+                continue;
+            }
+        };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
         if cpid == Some(pid) {
-            return Ok(Some(accessible_for(zconn, &child).await?));
+            return match call(accessible_for(zconn, &child)).await {
+                Some(r) => r.map(Some),
+                None => {
+                    dlog!("  accessible_for timed out for pid {pid}");
+                    Ok(None)
+                }
+            };
         }
     }
     dlog!("no application accessible matched pid {pid}");

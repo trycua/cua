@@ -16,21 +16,26 @@
 #      set_value to write the test string, then get_window_state again and
 #      assert the field now DOES contain it.
 #
-# GTK4 choice — why gnome-characters:
+# GTK4 choice — why gtk4-widget-factory:
 # #1924 is GTK4-SPECIFIC (the focus-gated EditableText advertisement is a GTK4
 # behaviour), so this test must drive a GTK4 editable — a GTK3 fallback would
-# not exercise the regression. We drive gnome-characters because it is the ONE
-# GTK4 app the linux-background-gui matrix found reliably surfaces a window
-# under headless Xvfb (the other GNOME GTK4 apps, gnome-text-editor included,
-# launch but never map an X11 window without a real compositor/portal, so the
-# window-find times out). gnome-characters is GTK4 and its search field is a
-# GtkText/GtkSearchEntry — a real GTK4 editable that advertises the AT-SPI
-# EditableText interface once focused, which is exactly the surface #1924's fix
-# touches (GrabFocus, then EditableText::SetTextContents). It is a packaged Nix
-# app, so its wrapper wires up GTK4 + all typelibs (unlike a hand-rolled
-# PyGObject script, which needs the full GObject-introspection typelib set on
-# GI_TYPELIB_PATH). The search field starts empty, so the baseline "field is
-# empty" assert holds and a pass can only mean the write took.
+# not exercise the regression. We drive gtk4-widget-factory (the GTK4 reference
+# demo, shipped in pkgs.gtk4's bin) because, unlike the GNOME apps tried first:
+#   - gnome-text-editor launches but never maps an X11 window under headless
+#     Xvfb (no compositor/portal) — the window-find timed out.
+#   - gnome-characters maps a window, but its only editable is a GtkSearchEntry
+#     hidden behind a "Search" toggle button (not realized in the default
+#     AT-SPI tree, and Ctrl+F does not open it headless), so the strict editable
+#     finder found no entry.
+# gtk4-widget-factory is a pure GTK4 app (NOT a GNOME portal app), so it maps a
+# real X11 window headless, AND its first page shows a VISIBLE GtkEntry by
+# default — a genuine GTK4 editable that advertises the AT-SPI EditableText
+# interface once focused, exactly the surface #1924's fix touches (GrabFocus,
+# then EditableText::SetTextContents). It is a packaged Nix app, so its wrapper
+# wires up GTK4 + all typelibs (unlike a hand-rolled PyGObject script, which
+# needs the full GObject-introspection typelib set on GI_TYPELIB_PATH). The
+# entry starts empty, so the baseline "field does not contain the test string"
+# assert holds and a pass can only mean the write took.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-set-value
 {
@@ -68,14 +73,19 @@ let
     "GSK_RENDERER=cairo"
   ];
 
-  # Packaged GTK4 app whose search field is an editable GtkText/GtkSearchEntry
-  # (the GTK4 editable surface #1924 is about). The one GTK4 app proven to map a
-  # window under headless Xvfb — see the rationale above.
-  gtk4App = pkgs.gnome-characters;
-  gtk4Launch = "${gtk4App}/bin/gnome-characters";
-  # Its WM_CLASS for the xdotool window search (same match the passing
-  # gtk4-characters entry in linux-background-gui.nix uses).
-  gtk4WindowMatch = "--class org.gnome.Characters";
+  # gtk4-widget-factory: the GTK4 reference demo, shipped in the gtk4 package's
+  # bin. Unlike the GNOME apps (gnome-text-editor never mapped a window headless;
+  # gnome-characters maps but hides its search entry behind a toggle button), it
+  # is a pure GTK4 app — NOT a GNOME portal app — so it maps a real X11 window
+  # under headless Xvfb, AND its first page shows a VISIBLE GtkEntry by default
+  # (no search toggle, no choreography). That GtkEntry is the editable GTK4
+  # surface #1924's fix targets (GrabFocus -> EditableText::SetTextContents).
+  gtk4App = pkgs.gtk4;
+  gtk4Launch = "${gtk4App}/bin/gtk4-widget-factory";
+  # Its WM_CLASS (GTK4 reference app id). The window-find also falls back to the
+  # launched PID's window and the newest visible window, so a class mismatch
+  # still resolves a window.
+  gtk4WindowMatch = "--class org.gtk.WidgetFactory";
 
   # Python MCP client that drives cua-driver over stdio against the live GTK4
   # window: find the editable element_index, baseline-read, set_value, read back.
@@ -196,11 +206,10 @@ let
             send(proc, "notifications/initialized", {})
             time.sleep(0.5)
 
-            # ── Locate the editable element. gnome-characters' GtkSearchEntry is
-            # only realized (and thus only appears in the AT-SPI tree) once the
-            # search is opened, so the helper testScript opens search via xdotool
-            # BEFORE this client runs. Retry: GTK4 builds its accessible tree a
-            # moment after first paint / after the search bar slides in. ─────────
+            # ── Locate the editable element. gtk4-widget-factory shows a GtkEntry
+            # on its first page by default, so it is present in the AT-SPI tree
+            # without any UI choreography. Retry: GTK4 builds its accessible tree
+            # a moment after first paint. ───────────────────────────────────────
             print("\n--- get_window_state (locate editable) ---", flush=True)
             idx = None
             before_state = None
@@ -312,7 +321,7 @@ pkgs.testers.nixosTest {
         dbus
         at-spi2-core
         python3
-        gtk4App # gnome-characters (GTK4 editable search field) — properly packaged
+        gtk4App # gtk4 — provides bin/gtk4-widget-factory (GTK4 editable demo)
         glib # `gsettings`
         gsettings-desktop-schemas
         procps
@@ -348,7 +357,7 @@ pkgs.testers.nixosTest {
         )
         machine.log("atspi-launcher.log: " + machine.execute("cat /tmp/atspi-launcher.log")[1])
 
-    with subtest("Launch the GTK4 editable app (gnome-characters)"):
+    with subtest("Launch the GTK4 editable app (gtk4-widget-factory)"):
         machine.execute("sh -lc '${a11yEnv} ${gtk4Launch} >/tmp/target.log 2>&1 & echo $! >/tmp/target-pid.txt'")
         # Surface the app's own stdout/stderr early so a launch failure is visible
         # instead of just a window-find timeout.
@@ -356,34 +365,25 @@ pkgs.testers.nixosTest {
         machine.log("target.log after launch: " + machine.execute("cat /tmp/target.log")[1])
         machine.wait_until_succeeds("${windowFindCmd}", timeout=120)
         machine.log("target-xid: " + machine.execute("cat /tmp/target-xid.txt")[1])
-        # Resolve the PID that actually owns the mapped window (gnome-characters
-        # is single-instance: the launched shell may differ from the GTK process),
-        # and persist it for the driver.
+        # Diagnostic: dump the resolved window's actual WM_CLASS so a class
+        # mismatch (which would have fallen through to the PID/newest-window
+        # fallback) is visible in the CI log.
+        machine.log("target-class: " + machine.execute(
+            "DISPLAY=:99 xdotool getwindowclassname $(cat /tmp/target-xid.txt) 2>&1"
+        )[1])
+        # Resolve the PID that actually owns the mapped window (the launched shell
+        # may differ from the GTK process), and persist it for the driver.
         machine.execute(
             "sh -lc 'export DISPLAY=:99; "
             "wpid=$(${pkgs.xdotool}/bin/xdotool getwindowpid $(cat /tmp/target-xid.txt) 2>/dev/null); "
             "[ -n \"$wpid\" ] && echo $wpid >/tmp/target-pid.txt; true'"
         )
         machine.log("target-pid: " + machine.execute("cat /tmp/target-pid.txt")[1])
-        # Make sure the editor window holds focus so GTK4 advertises EditableText
-        # on its text view (the fix also GrabFocus-es, but this gives the tree a
-        # focused editable from the start).
+        # Hold focus on the app window so GTK4 advertises EditableText on its
+        # entry (the fix also GrabFocus-es; this gives the tree a focused
+        # editable from the start). gtk4-widget-factory's first page shows a
+        # GtkEntry by default — no search toggle / choreography needed.
         machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(cat /tmp/target-xid.txt)")
-
-    with subtest("Realize the GtkSearchEntry so it appears in the AT-SPI tree"):
-        # gnome-characters' search field is a GtkSearchEntry that is NOT realized
-        # (and so is absent from the default AT-SPI tree) until search is opened.
-        # Open it via the GTK "find" accelerator and a typed key (Characters also
-        # supports type-to-search), then give the bar a moment to slide in and
-        # register its accessible. Without this the only indexed element is the
-        # window itself — set_value on which correctly fails, masking the real fix.
-        xid = machine.succeed("cat /tmp/target-xid.txt").strip()
-        machine.succeed(f"DISPLAY=:99 xdotool windowactivate --sync {xid}")
-        machine.execute(f"DISPLAY=:99 xdotool key --clearmodifiers --window {xid} ctrl+f")
-        machine.sleep(1)
-        # Type-to-search fallback: a plain letter also pops the search bar.
-        machine.execute(f"DISPLAY=:99 xdotool key --clearmodifiers --window {xid} a")
-        machine.sleep(2)
 
     with subtest("set_value writes the test string into the GTK4 editable via EditableText"):
         machine.copy_from_host("${setValueTest}", "/tmp/set-value-test.py")

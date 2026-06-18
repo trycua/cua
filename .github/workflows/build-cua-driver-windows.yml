@@ -1,0 +1,91 @@
+name: "Build: cua-driver (Windows x86_64)"
+
+# Ad-hoc / reusable build of the Windows cua-driver from source on `main`.
+#
+#   - workflow_dispatch : build a fresh Windows binary on demand.
+#   - workflow_call     : reused by periodic-test-cua-driver-windows.yml so the
+#                         smoke test always drives a driver built from this ref.
+#
+# Every build uploads the two .exe files as a GitHub artifact AND to S3 with a
+# 12h presigned download URL (printed to the job summary) so frequent main
+# builds are easy to grab. There is intentionally NO schedule — add one here if
+# you later want automatic nightly builds.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref of trycua/cua to build (default: the triggering ref)"
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    name: cua-driver windows-x86_64
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            libs/cua-driver/rust/target
+          key: rust-cua-driver-windows-x86_64-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
+          restore-keys: |
+            rust-cua-driver-windows-x86_64-
+
+      - name: Build (release)
+        working-directory: libs/cua-driver/rust
+        # Same invocation as cd-rust-cua-driver.yml's build-windows job: the main
+        # CLI/MCP binary plus the UIAccess worker sibling.
+        run: cargo build -p cua-driver -p cua-driver-uia --release --target x86_64-pc-windows-msvc
+
+      - name: Stage binaries
+        working-directory: libs/cua-driver/rust
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/cua-driver.exe     dist/
+          Copy-Item target/x86_64-pc-windows-msvc/release/cua-driver-uia.exe dist/
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-windows-x86_64
+          path: libs/cua-driver/rust/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-cua-driver-windows
+          aws-region: us-west-2
+
+      - name: Publish build to S3 + presign
+        shell: bash
+        run: |
+          PREFIX="cua-driver-windows/builds/${{ github.run_id }}-${{ github.run_attempt }}"
+          aws s3 cp libs/cua-driver/rust/dist/cua-driver.exe     "s3://trycua-samples/${PREFIX}/cua-driver.exe"
+          aws s3 cp libs/cua-driver/rust/dist/cua-driver-uia.exe "s3://trycua-samples/${PREFIX}/cua-driver-uia.exe"
+          URL=$(aws s3 presign "s3://trycua-samples/${PREFIX}/cua-driver.exe" --expires-in 43200)
+          {
+            echo "### cua-driver Windows build"
+            echo ""
+            echo "- S3 prefix: \`s3://trycua-samples/${PREFIX}/\`"
+            echo "- Presigned (12h) \`cua-driver.exe\`: ${URL}"
+          } >> "$GITHUB_STEP_SUMMARY"

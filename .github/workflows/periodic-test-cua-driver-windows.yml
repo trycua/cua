@@ -1,0 +1,155 @@
+name: "Periodic: Test cua-driver on Windows Cloud VM"
+
+# Extends periodic-test-linux-cloud-vm.yml to Windows, exercising the cua-driver
+# built from `main`:
+#   build-driver -> build cua-driver.exe from source (reusable build workflow)
+#   smoke        -> provision a Windows cloud VM, push the driver, replay a
+#                   pre-provided Calculator trajectory (2 + 2), screenshot,
+#                   upload the screenshot to S3, and post the outcome to am.cua.ai
+#                   (#notifications) with the screenshot presigned URL.
+
+on:
+  schedule:
+    # Daily — a cold Windows VM boot is minutes and bills while warming, so this
+    # is intentionally not the 15-min cadence of the Linux test.
+    - cron: "23 13 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - examples/sandboxes/test_windows_cloud_driver.py
+      - examples/sandboxes/fixtures/calculator-2plus2/**
+      - .github/workflows/periodic-test-cua-driver-windows.yml
+      - .github/workflows/build-cua-driver-windows.yml
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  # Never run two expensive Windows VMs at once, and never cancel mid-run (that
+  # would orphan a billing VM before teardown).
+  group: cua-driver-windows-smoke
+  cancel-in-progress: false
+
+jobs:
+  build-driver:
+    uses: ./.github/workflows/build-cua-driver-windows.yml
+
+  smoke:
+    name: Provision Windows + replay trajectory
+    needs: build-driver
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download driver binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-windows-x86_64
+          path: driver-bin
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-cua-driver-windows
+          aws-region: us-west-2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install cua pytest pytest-asyncio
+
+      - name: Run smoke test
+        id: smoke
+        env:
+          CUA_API_KEY: ${{ secrets.PERIODIC_TEST_CUA_API_KEY }}
+          CUA_LOG_LEVEL: DEBUG
+          DRIVER_EXE: ${{ github.workspace }}/driver-bin/cua-driver.exe
+          DRIVER_UIA_EXE: ${{ github.workspace }}/driver-bin/cua-driver-uia.exe
+          TRAJECTORY_DIR: ${{ github.workspace }}/examples/sandboxes/fixtures/calculator-2plus2
+          SCREENSHOT_OUT: ${{ github.workspace }}/screenshot.png
+          RESULT_JSON: ${{ github.workspace }}/result.json
+        run: >-
+          python -m pytest examples/sandboxes/test_windows_cloud_driver.py
+          -v -s --log-cli-level=INFO
+
+      - name: Upload screenshot + result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-windows-smoke-screenshot
+          path: |
+            screenshot.png
+            result.json
+          if-no-files-found: warn
+
+      - name: Upload screenshot to S3 + presign
+        id: s3
+        if: always()
+        shell: bash
+        run: |
+          if [ -f screenshot.png ]; then
+            KEY="cua-driver-windows/smoke/${{ github.run_id }}-${{ github.run_attempt }}.png"
+            aws s3 cp screenshot.png "s3://trycua-samples/${KEY}" --content-type image/png
+            URL=$(aws s3 presign "s3://trycua-samples/${KEY}" --expires-in 43200)
+            echo "image_url=${URL}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_url=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Post the outcome to am.cua.ai -> #notifications. PR runs stay quiet
+      # (they still publish the artifact); only scheduled/dispatch runs notify.
+      - name: Notify am.cua.ai (success)
+        if: success() && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          IMAGE_URL: ${{ steps.s3.outputs.image_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+            -H 'Content-Type: application/json' \
+            -d "[{
+              \"labels\": {
+                \"alertname\": \"PeriodicTestCuaDriverWindowsSmokePassed\",
+                \"severity\": \"info\",
+                \"service\": \"cua-driver\",
+                \"job\": \"periodic-test-cua-driver-windows\"
+              },
+              \"annotations\": {
+                \"summary\": \"cua-driver Windows smoke test passed (2 + 2 = 4)\",
+                \"description\": \"Built cua-driver from main, provisioned a Windows cloud VM, replayed the Calculator trajectory. Run: ${RUN_URL} -- Screenshot: ${IMAGE_URL}\",
+                \"dashboard\": \"https://github.com/${{ github.repository }}/actions/workflows/periodic-test-cua-driver-windows.yml\"
+              },
+              \"generatorURL\": \"${RUN_URL}\"
+            }]"
+
+      - name: Notify am.cua.ai (failure)
+        if: failure() && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          IMAGE_URL: ${{ steps.s3.outputs.image_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+            -H 'Content-Type: application/json' \
+            -d "[{
+              \"labels\": {
+                \"alertname\": \"PeriodicTestCuaDriverWindowsSmokeFailed\",
+                \"severity\": \"critical\",
+                \"service\": \"cua-driver\",
+                \"job\": \"periodic-test-cua-driver-windows\"
+              },
+              \"annotations\": {
+                \"summary\": \"cua-driver Windows smoke test FAILED\",
+                \"description\": \"Building cua-driver from main / provisioning a Windows cloud VM / replaying the Calculator trajectory failed. Run: ${RUN_URL} -- Screenshot: ${IMAGE_URL}\",
+                \"dashboard\": \"https://github.com/${{ github.repository }}/actions/workflows/periodic-test-cua-driver-windows.yml\"
+              },
+              \"generatorURL\": \"${RUN_URL}\"
+            }]"

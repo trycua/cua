@@ -27,6 +27,7 @@
 
 use std::sync::Once;
 
+use anyhow::{anyhow, Context};
 use atspi::zbus;
 
 /// Well-known session-bus name of the freedesktop accessibility-bus launcher,
@@ -69,36 +70,47 @@ pub fn ensure_chromium_accessibility_enabled() {
 }
 
 fn advertise_screen_reader_to_session() -> anyhow::Result<()> {
-    // One-shot startup work: a private current-thread runtime keeps this off the
-    // shared AT-SPI walk runtime and is torn down as soon as the writes land.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    runtime.block_on(async {
-        let session_bus = zbus::Connection::session().await?;
-        let status = zbus::Proxy::new(
-            &session_bus,
-            ACCESSIBILITY_BUS_SERVICE,
-            ACCESSIBILITY_BUS_OBJECT,
-            ACCESSIBILITY_STATUS_INTERFACE,
-        )
-        .await?;
+    // The daemon's tokio runtime is already driving this thread when the tool
+    // registry is built, and `block_on` panics if called from within a runtime.
+    // Run the one-shot bus work on a dedicated OS thread that owns a small
+    // runtime of its own, then join it — no nesting, torn down once it returns.
+    std::thread::Builder::new()
+        .name("cua-a11y-advertise".into())
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(advertise_screen_reader())
+        })
+        .context("spawning the accessibility-advertise thread")?
+        .join()
+        .map_err(|_| anyhow!("accessibility-advertise thread panicked"))?
+}
 
-        // Don't clobber a screen reader the user is already running: only write
-        // when a flag is currently false, so an active Orca session stays
-        // authoritative and we avoid emitting a redundant PropertiesChanged.
-        if !is_flag_set(&status, SCREEN_READER_ENABLED_PROPERTY).await {
-            status
-                .set_property(SCREEN_READER_ENABLED_PROPERTY, true)
-                .await?;
-        }
-        if !is_flag_set(&status, ACCESSIBILITY_IS_ENABLED_PROPERTY).await {
-            status
-                .set_property(ACCESSIBILITY_IS_ENABLED_PROPERTY, true)
-                .await?;
-        }
-        Ok::<(), anyhow::Error>(())
-    })
+async fn advertise_screen_reader() -> anyhow::Result<()> {
+    let session_bus = zbus::Connection::session().await?;
+    let status = zbus::Proxy::new(
+        &session_bus,
+        ACCESSIBILITY_BUS_SERVICE,
+        ACCESSIBILITY_BUS_OBJECT,
+        ACCESSIBILITY_STATUS_INTERFACE,
+    )
+    .await?;
+
+    // Don't clobber a screen reader the user is already running: only write when
+    // a flag is currently false, so an active Orca session stays authoritative
+    // and we avoid emitting a redundant PropertiesChanged.
+    if !is_flag_set(&status, SCREEN_READER_ENABLED_PROPERTY).await {
+        status
+            .set_property(SCREEN_READER_ENABLED_PROPERTY, true)
+            .await?;
+    }
+    if !is_flag_set(&status, ACCESSIBILITY_IS_ENABLED_PROPERTY).await {
+        status
+            .set_property(ACCESSIBILITY_IS_ENABLED_PROPERTY, true)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Read a boolean status property, treating an unreadable property as unset so

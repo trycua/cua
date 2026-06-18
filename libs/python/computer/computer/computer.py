@@ -376,27 +376,11 @@ class Computer:
             # If using host computer server
             if self.use_host_computer_server:
                 self.logger.info("Using host computer server")
-                # Set ip_address for host computer server mode
+                # Set ip_address for host computer server mode; the interface is
+                # created+connected by the unified block below (which threads
+                # api_base_url/api_headers through), so we only resolve the target
+                # here and avoid a redundant double-connect.
                 ip_address = self.api_host if self.api_host else "localhost"
-                # Create the interface with explicit type annotation
-                from .interface.base import BaseComputerInterface
-
-                interface = cast(
-                    BaseComputerInterface,
-                    InterfaceFactory.create_interface_for_os(
-                        os=self.os_type,  # type: ignore[arg-type]
-                        ip_address=ip_address,
-                        api_port=self.api_port,
-                        api_base_url=self.api_base_url,
-                        api_headers=self.api_headers,
-                    ),
-                )
-                self._interface = interface
-                self._original_interface = interface
-
-                self.logger.info("Waiting for host computer server to be ready...")
-                await self._interface.wait_for_ready()
-                self.logger.info("Host computer server ready")
             else:
                 # Start or connect to VM
                 self.logger.info(f"Starting VM: {self.image}")
@@ -659,13 +643,19 @@ class Computer:
                         api_key=self.api_key,
                         vm_name=self.config.name,
                         api_port=self.api_port,
+                        api_base_url=self.api_base_url,
+                        api_headers=self.api_headers,
                     ),
                 )
             else:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, ip_address=ip_address, api_port=self.api_port
+                        os=self.os_type,
+                        ip_address=ip_address,
+                        api_port=self.api_port,
+                        api_base_url=self.api_base_url,
+                        api_headers=self.api_headers,
                     ),
                 )
 

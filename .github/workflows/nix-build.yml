@@ -43,6 +43,12 @@ jobs:
             visual: false
             result_link: result-cua-driver-integration
             artifact_name: ""
+          - name: NixOS set_config persistence test
+            check_attr: cua-driver-set-config
+            timeout_minutes: 8
+            visual: false
+            result_link: result-cua-driver-set-config
+            artifact_name: ""
           - name: Linux cursor click GIF test
             check_attr: cua-driver-linux-cursor-click-gif
             timeout_minutes: 12

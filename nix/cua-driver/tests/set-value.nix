@@ -10,24 +10,26 @@
 #
 #   1. boot a NixOS VM with a session D-Bus + AT-SPI bus (same scaffolding as
 #      linux-background-gui.nix),
-#   2. launch a GTK4 app exposing a real editable text field,
+#   2. launch a packaged GTK4 app exposing a real editable text field,
 #   3. over MCP stdio: get_window_state to locate the editable element_index,
 #      assert the field does NOT already contain the test string (baseline),
 #      set_value to write the test string, then get_window_state again and
 #      assert the field now DOES contain it.
 #
-# GTK4 choice / why a self-contained app:
+# GTK4 choice — why gnome-text-editor:
 # #1924 is GTK4-SPECIFIC (the focus-gated EditableText advertisement is a GTK4
 # behaviour), so this test must drive a GTK4 editable — a GTK3 fallback would
-# not exercise the regression. The real GNOME GTK4 apps named in the issue
-# (gnome-text-editor) were dropped from the linux-background-gui matrix because
-# they never mapped a window within 120s headless in CI (missing portals / EDS
-# / VTE runtime). So, exactly like the `tk` and `chromium` targets in
-# linux-background-gui.nix, this test ships its OWN minimal GTK4 app: a single
-# GtkApplicationWindow holding one GtkEntry (a genuine GTK4 editable that
-# exposes Text/EditableText), with no portal/EDS/VTE dependencies, so it maps
-# reliably headless. The GtkEntry starts empty, guaranteeing the baseline
-# "field is empty" assert holds and a pass can only mean the write took.
+# not exercise the regression. gnome-text-editor is the exact app the issue
+# names as the repro: it is GTK4 and its main view is a large editable
+# GtkTextView that exposes the AT-SPI Text/EditableText interfaces. It is a
+# properly-packaged Nix app, so (unlike a hand-rolled PyGObject script, which
+# needs the full GObject-introspection typelib set on GI_TYPELIB_PATH) its
+# wrapper already wires up GTK4 + all typelibs. We launch it FOREGROUND as the
+# only window under Xvfb/openbox — the linux-background-gui matrix only dropped
+# the GTK4 GNOME apps because they were slow to map *in the background while
+# focus was held elsewhere*; here the app is the active window, which maps fine.
+# The editor starts on an empty buffer, so the baseline "field is empty" assert
+# holds and a pass can only mean the write took.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-set-value
 {
@@ -45,6 +47,8 @@ let
   # Shared session-bus + a11y environment, identical in spirit to
   # linux-background-gui.nix: the GTK4 app and the driver's native AT-SPI client
   # must reach the same registry. Fixed bus path so every machine.* shell opts in.
+  # The GTK4-specific exports (GTK_A11Y=atspi, x11 backend, cairo renderer) are
+  # the same ones linux-background-gui.nix uses for its GTK4 entries.
   a11yEnv = lib.concatStringsSep " " [
     "DISPLAY=:99"
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cua-session-bus"
@@ -58,51 +62,21 @@ let
     "GNOME_ACCESSIBILITY=1"
     "QT_ACCESSIBILITY=1"
     "NO_AT_BRIDGE=0"
-    # GTK4 talks AT-SPI directly (not via atk-bridge), but only exports its
-    # accessible tree when it selects the AT-SPI backend at startup; GTK_A11Y=atspi
-    # forces it on. x11 backend + cairo renderer keep it headless-safe. (Same
-    # exports linux-background-gui.nix uses for its GTK4 entries.)
     "GTK_A11Y=atspi"
     "GDK_BACKEND=x11"
     "GSK_RENDERER=cairo"
   ];
 
-  # Minimal self-contained GTK4 app: one window, one GtkEntry, autofocused. The
-  # GtkEntry is a real GTK4 editable that exposes the AT-SPI Text/EditableText
-  # interfaces — exactly the widget class #1924 failed on. No portal/EDS/VTE, so
-  # it maps reliably headless. Fixed window title so xdotool can find it.
-  gtk4Env = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
-
-  # PyGObject loads GTK4 via GObject-introspection typelibs at runtime, so the
-  # GTK-4.0 (and its dependency) typelibs must be on GI_TYPELIB_PATH. The
-  # `withPackages` env only carries PyGObject itself, not the GTK4 typelib, so
-  # point GI at gtk4's girepository dir explicitly before launching the app.
-  giTypelibEnv = "GI_TYPELIB_PATH=${pkgs.gtk4}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0:${pkgs.graphene}/lib/girepository-1.0:${pkgs.pango.out}/lib/girepository-1.0:${pkgs.gdk-pixbuf}/lib/girepository-1.0:${pkgs.harfbuzz.out}/lib/girepository-1.0";
-  gtk4App = pkgs.writeText "cua-gtk4-entry.py" ''
-    import gi
-    gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk, GLib
-
-    def on_activate(app):
-        win = Gtk.ApplicationWindow(application=app)
-        win.set_title("cua-setvalue")
-        win.set_default_size(400, 120)
-        entry = Gtk.Entry()
-        entry.set_hexpand(True)
-        # Start EMPTY so the baseline "field does not contain the test string"
-        # assertion is guaranteed to hold before the write.
-        entry.set_text("")
-        win.set_child(entry)
-        win.present()
-        entry.grab_focus()
-
-    app = Gtk.Application(application_id="com.trycua.SetValueEntry")
-    app.connect("activate", on_activate)
-    app.run(None)
-  '';
+  # Packaged GTK4 editor with a large editable GtkTextView (the repro app from
+  # #1924). Launched foreground; --new-window forces its own toplevel.
+  gtk4App = pkgs.gnome-text-editor;
+  gtk4Launch = "${gtk4App}/bin/gnome-text-editor --new-window";
+  # Its WM_CLASS for the xdotool window search.
+  gtk4WindowMatch = "--class org.gnome.TextEditor";
 
   # Python MCP client that drives cua-driver over stdio against the live GTK4
   # window: find the editable element_index, baseline-read, set_value, read back.
+  # Same MCP-stdio structure as set-config.nix.
   setValueTest = pkgs.writeText "set-value-test.py" ''
     import json, os, sys, threading, time
 
@@ -166,12 +140,12 @@ let
         return "\n".join(parts)
 
     def find_editable_index(result):
-        # Pick the editable element. The tree markdown lines for actionable
-        # elements look like `- [N] entry "..." [...] [actions=[...]]`. A GtkEntry
-        # renders with role "entry"/"text". Prefer an entry/text line; fall back
-        # to the first indexed element if the role name differs across builds.
+        # Pick the editable element. Indexed actionable lines look like
+        # `- [N] <role> "..." [...] [actions=[...]]`. A GtkTextView renders with
+        # role "text"; a GtkEntry with role "entry". Prefer a text/entry line;
+        # fall back to the first indexed element if the role name differs.
         text = tree_text(result)
-        entry_idx = None
+        editable_idx = None
         first_idx = None
         for line in text.splitlines():
             s = line.strip()
@@ -184,9 +158,9 @@ let
             if first_idx is None:
                 first_idx = idx
             low = s.lower()
-            if ("entry" in low or "text" in low) and entry_idx is None:
-                entry_idx = idx
-        return entry_idx if entry_idx is not None else first_idx
+            if ("entry" in low or "text" in low) and editable_idx is None:
+                editable_idx = idx
+        return editable_idx if editable_idx is not None else first_idx
 
     def get_window_state(proc, req_id, pid, xid):
         # ax = tree only (no screenshot needed; faster + avoids capture flakiness).
@@ -216,7 +190,7 @@ let
             print("\n--- get_window_state (locate editable) ---", flush=True)
             idx = None
             before_state = None
-            for _ in range(10):
+            for _ in range(15):
                 before_state = get_window_state(proc, 2, target_pid, target_xid)
                 idx = find_editable_index(before_state)
                 if idx is not None:
@@ -253,7 +227,7 @@ let
             # moment after SetTextContents. ─────────────────────────────────────
             print("\n--- get_window_state (read back) ---", flush=True)
             after_text = ""
-            for _ in range(10):
+            for _ in range(15):
                 after_state = get_window_state(proc, 4, target_pid, target_xid)
                 after_text = tree_text(after_state)
                 if TEST_VALUE in after_text:
@@ -274,6 +248,21 @@ let
         main()
   '';
 
+  # Window-find: match the GTK4 app's class, then fall back to the launched PID's
+  # window, then the newest visible window. Store-path script (one safe token for
+  # the Python testScript string), same idiom as linux-background-gui.nix.
+  windowFindCmd = pkgs.writeShellScript "cua-setvalue-window-find.sh" ''
+    export DISPLAY=:99
+    xid=$(${pkgs.xdotool}/bin/xdotool search --sync --onlyvisible ${gtk4WindowMatch} 2>/dev/null | head -1)
+    if [ -z "$xid" ]; then
+      xid=$(${pkgs.xdotool}/bin/xdotool search --all --pid "$(cat /tmp/target-pid.txt)" 2>/dev/null | head -1)
+    fi
+    if [ -z "$xid" ]; then
+      xid=$(${pkgs.xdotool}/bin/xdotool search --onlyvisible "" 2>/dev/null | tail -1)
+    fi
+    test -n "$xid" && printf "%s" "$xid" >/tmp/target-xid.txt && test -s /tmp/target-xid.txt
+  '';
+
 in
 
 pkgs.testers.nixosTest {
@@ -286,7 +275,7 @@ pkgs.testers.nixosTest {
       imports = [ cuaDriverModule ];
       virtualisation = {
         cores = 2;
-        memorySize = 2048;
+        memorySize = 4096;
         diskSize = 8192;
       };
       services.cua-driver.enable = true;
@@ -299,9 +288,7 @@ pkgs.testers.nixosTest {
         dbus
         at-spi2-core
         python3
-        gtk4Env # PyGObject env for the self-contained editable app
-        gtk4 # GTK-4.0 typelib + libs (loaded by PyGObject at runtime)
-        gobject-introspection
+        gtk4App # gnome-text-editor (GTK4 editable) — properly packaged
         glib # `gsettings`
         gsettings-desktop-schemas
         procps
@@ -337,26 +324,32 @@ pkgs.testers.nixosTest {
         )
         machine.log("atspi-launcher.log: " + machine.execute("cat /tmp/atspi-launcher.log")[1])
 
-    with subtest("Launch the self-contained GTK4 editable app"):
-        machine.execute("sh -lc '${a11yEnv} ${giTypelibEnv} ${gtk4Env}/bin/python3 ${gtk4App} >/tmp/target.log 2>&1 & echo $! >/tmp/target-pid.txt'")
+    with subtest("Launch the GTK4 editable app (gnome-text-editor)"):
+        machine.execute("sh -lc '${a11yEnv} ${gtk4Launch} >/tmp/target.log 2>&1 & echo $! >/tmp/target-pid.txt'")
+        # Surface the app's own stdout/stderr early so a launch failure is visible
+        # instead of just a window-find timeout.
         machine.sleep(5)
         machine.log("target.log after launch: " + machine.execute("cat /tmp/target.log")[1])
-        # Find the GTK4 window by its fixed title; fall back to the launched PID's
-        # window, then the newest visible window.
-        machine.wait_until_succeeds(
-            "sh -lc 'export DISPLAY=:99; "
-            "xid=$(${pkgs.xdotool}/bin/xdotool search --sync --onlyvisible --name cua-setvalue 2>/dev/null | head -1); "
-            "[ -z \"$xid\" ] && xid=$(${pkgs.xdotool}/bin/xdotool search --all --pid $(cat /tmp/target-pid.txt) 2>/dev/null | head -1); "
-            "[ -z \"$xid\" ] && xid=$(${pkgs.xdotool}/bin/xdotool search --onlyvisible \"\" 2>/dev/null | tail -1); "
-            "test -n \"$xid\" && printf %s \"$xid\" >/tmp/target-xid.txt && test -s /tmp/target-xid.txt'",
-            timeout=60,
-        )
+        machine.wait_until_succeeds("${windowFindCmd}", timeout=120)
         machine.log("target-xid: " + machine.execute("cat /tmp/target-xid.txt")[1])
+        # Resolve the PID that actually owns the mapped window (gnome-text-editor
+        # is single-instance: the launched shell may differ from the GTK process),
+        # and persist it for the driver.
+        machine.execute(
+            "sh -lc 'export DISPLAY=:99; "
+            "wpid=$(${pkgs.xdotool}/bin/xdotool getwindowpid $(cat /tmp/target-xid.txt) 2>/dev/null); "
+            "[ -n \"$wpid\" ] && echo $wpid >/tmp/target-pid.txt; true'"
+        )
+        machine.log("target-pid: " + machine.execute("cat /tmp/target-pid.txt")[1])
+        # Make sure the editor window holds focus so GTK4 advertises EditableText
+        # on its text view (the fix also GrabFocus-es, but this gives the tree a
+        # focused editable from the start).
+        machine.succeed("DISPLAY=:99 xdotool windowactivate --sync $(cat /tmp/target-xid.txt)")
 
     with subtest("set_value writes the test string into the GTK4 editable via EditableText"):
         machine.copy_from_host("${setValueTest}", "/tmp/set-value-test.py")
         result = machine.succeed(
-            "${a11yEnv} timeout 180 python3 /tmp/set-value-test.py 2>&1"
+            "${a11yEnv} timeout 240 python3 /tmp/set-value-test.py 2>&1"
         )
         machine.log(result)
         assert "set_value EditableText test passed" in result, f"set_value test failed: {result}"

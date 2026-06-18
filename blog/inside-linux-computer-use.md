@@ -1,6 +1,6 @@
 # Inside Linux computer-use: AT-SPI, XTEST, and background agents
 
-_Published on June 18 by Francesco Bonacci_
+_Published on June 18 by Robert Wendt_
 
 <img width="960" height="540" alt="screen-recording-2026-06-17" src="https://github.com/user-attachments/assets/2a8a131c-4ce4-451e-bcc6-f80b4bdfa8eb" />
 

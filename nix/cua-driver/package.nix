@@ -15,17 +15,24 @@
 
 pkgs.rustPlatform.buildRustPackage {
   pname = "cua-driver";
-  version = "0.5.3";
+  # Read the version from the single source of truth (the workspace manifest
+  # bumpversion edits) so it can never drift from Cargo.toml the way a
+  # hardcoded literal silently did across 0.5.3 -> 0.5.6.
+  version = (pkgs.lib.importTOML "${src}/Cargo.toml").workspace.package.version;
 
   inherit src;
 
-  # Use cargoHash (fetchCargoVendor) rather than cargoLock.lockFile because
-  # the workspace Cargo.lock includes macOS-only crates (apple-metal, apple-cf)
-  # that may be unreachable from crates.io. fetchCargoVendor handles this
-  # gracefully via `cargo vendor`.
-  # Bumped when the dependency set changes (added `atspi`/zbus for native
-  # AT-SPI). If this mismatches, the nix build prints the expected value.
-  cargoHash = "sha256-ykVW0duMeoWho0qwDdu0k//cOY6HG+HsIBQF7iT0nZ0=";
+  # Vendor straight from the committed Cargo.lock instead of a manual cargoHash.
+  # `importCargoLock` derives every dependency's fixed-output hash from the
+  # lockfile itself, so there is NO hash to hand-maintain: Cargo.lock can change
+  # (a version bump, a dependency update) and the build keeps working. The old
+  # cargoHash approach hashed the vendored lockfile, so any Cargo.lock change —
+  # even a workspace-version bump the release bump leaves behind — silently
+  # invalidated it and turned every nix job red until someone recomputed it.
+  # Every dependency here is a crates.io registry crate (the macOS-only
+  # apple-cf/apple-metal/objc2 crates included) and there are zero git deps, so
+  # importCargoLock needs no `outputHashes` overrides.
+  cargoLock.lockFile = "${src}/Cargo.lock";
 
   # Build only the main binary crate. The workspace also contains
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win

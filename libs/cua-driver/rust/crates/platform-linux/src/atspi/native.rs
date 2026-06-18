@@ -671,6 +671,76 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
     })
 }
 
+/// Real on-screen origin (root-relative top-left) of an X11 window, or `None`
+/// if it can't be resolved. Mirrors `list_windows`' geometry path.
+fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let window = xid as u32;
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+    let trans = conn
+        .translate_coordinates(window, geom.root, 0, 0)
+        .ok()?
+        .reply()
+        .ok()?;
+    Some((trans.dst_x as i32, trans.dst_y as i32))
+}
+
+/// Compute the additive screen-coordinate correction for GTK4's AT-SPI bridge.
+///
+/// Reads the frame (toplevel) node's reported `GetExtents(Screen)` origin and
+/// compares it with the window's real X11 screen origin. GTK3/Qt report the
+/// true origin, so the two match and the offset is `(0,0)` — no correction.
+/// GTK4 reports the frame at (≈0,0) regardless of where the window actually
+/// is, so the offset becomes the window's real origin and every element is
+/// shifted into true screen space.
+///
+/// Returns `(0,0)` whenever anything is uncertain (no frame, no Component, no
+/// X11 origin), so the existing behaviour is preserved for non-GTK4 toolkits
+/// and the change can never make correct coordinates worse.
+async fn gtk4_screen_offset(visited: &[Visited<'_>], pid: u32, xid: u64) -> (i32, i32) {
+    // The frame is the toplevel window accessible. Prefer an explicit "frame"
+    // role; fall back to the first node that exposes a Component interface.
+    let frame = visited
+        .iter()
+        .find(|v| v.role.eq_ignore_ascii_case("frame") && v.has_component)
+        .or_else(|| visited.iter().find(|v| v.has_component));
+    let Some(frame) = frame else { return (0, 0) };
+
+    let frame_origin = async {
+        let proxies = call(frame.acc.proxies()).await?.ok()?;
+        let comp = call(proxies.component()).await?.ok()?;
+        let (fx, fy, _, _) = call(comp.get_extents(CoordType::Screen)).await?.ok()?;
+        Some((fx, fy))
+    }
+    .await;
+    let Some((frame_sx, frame_sy)) = frame_origin else { return (0, 0) };
+
+    // The window's real screen origin. Resolve the xid we were given; if it's
+    // unusable (0), fall back to this pid's first window (matches the rest of
+    // the backend's xid-recovery pattern).
+    let win_origin = x11_window_origin(xid).or_else(|| {
+        let alt = crate::x11::list_windows(Some(pid));
+        alt.first().and_then(|w| x11_window_origin(w.xid))
+    });
+    let Some((win_sx, win_sy)) = win_origin else { return (0, 0) };
+
+    // Only correct the GTK4 signature: the frame claims to sit at the screen
+    // origin while the window is really somewhere else. A small tolerance keeps
+    // GTK3/Qt (whose frame origin already matches X11 within a pixel or two of
+    // decoration inset) at a zero offset, so they are never shifted.
+    let frame_at_origin = frame_sx.abs() <= 2 && frame_sy.abs() <= 2;
+    let window_displaced = win_sx.abs() > 2 || win_sy.abs() > 2;
+    if frame_at_origin && window_displaced {
+        (win_sx - frame_sx, win_sy - frame_sy)
+    } else {
+        (0, 0)
+    }
+}
+
 /// Screen-coordinate bounds for every action node in the tree, keyed by the
 /// same `element_index` used by [`walk_tree`]/`get_element_bounds`.
 ///
@@ -680,8 +750,18 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
 /// or whose extents query fails/times out, are silently skipped — the result is
 /// best-effort and never errors on a per-node hiccup.
 ///
+/// GTK4 caveat: GTK4's AT-SPI bridge reports `GetExtents(Screen)` as if it were
+/// `GetExtents(Window)` — every element comes back relative to the toplevel
+/// window's own origin, so the frame lands at (0,0) and every descendant is
+/// off by the window's real on-screen position (issue #1564: all elements
+/// `x:0,y:0`). GTK3 and Qt report true screen coordinates. We detect and
+/// correct this generically: read the frame's reported screen origin and the
+/// window's real X11 screen origin (`xid`); when they disagree (the GTK4
+/// signature) we shift every element by the difference. For GTK3/Qt the two
+/// origins already agree, so the offset is zero and nothing changes.
+///
 /// Returns `(element_index, x, y, width, height)` tuples.
-pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
+pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
     runtime().block_on(async {
         let conn = AccessibilityConnection::new()
             .await
@@ -689,6 +769,16 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+
+        // GTK4 screen-coordinate correction. The frame node (toplevel window)
+        // is the natural reference: GTK3/Qt report its true screen origin,
+        // GTK4 reports (0,0). Comparing that against the window's real X11
+        // origin tells us how far every element is shifted.
+        let (offset_x, offset_y) = gtk4_screen_offset(&visited, pid, xid).await;
+        if offset_x != 0 || offset_y != 0 {
+            dlog!("GTK4 screen-coord correction: shifting elements by ({offset_x},{offset_y})");
+        }
+
         let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
         // Each element costs ~3 D-Bus round-trips (proxies + component +
         // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
@@ -723,11 +813,13 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
                 // report GetExtents as the i32::MIN sentinel and/or a degenerate
                 // 0x0 / 1x1 size. Emitting those poisons downstream consumers
                 // (overlay renderers, click targeting), so keep only elements
-                // with plausible on-screen geometry.
+                // with plausible on-screen geometry. (Validate the raw extents,
+                // before applying the GTK4 offset, so the sentinel check still
+                // catches unrealized widgets.)
                 if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
                     continue;
                 }
-                out.push((idx, x, y, w as u32, h as u32));
+                out.push((idx, x + offset_x, y + offset_y, w as u32, h as u32));
             }
         }
         Ok(out)

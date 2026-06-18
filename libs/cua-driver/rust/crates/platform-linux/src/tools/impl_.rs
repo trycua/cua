@@ -381,7 +381,7 @@ impl Tool for GetWindowStateTool {
             // Best-effort per-element screen bounds (AT-SPI Component.GetExtents).
             // Tolerant: an empty/missing map never fails the call.
             let bounds = if do_tree {
-                crate::atspi::get_all_element_bounds(pid).unwrap_or_default()
+                crate::atspi::get_all_element_bounds(pid, xid).unwrap_or_default()
             } else {
                 Vec::new()
             };

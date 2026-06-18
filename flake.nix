@@ -63,6 +63,20 @@
                 };
               };
 
+              # set_value EditableText test — regression for #1924 (fixed in
+              # #1929): set_value on a GTK4 editable failed with "neither
+              # EditableText nor Value". Launches a packaged GTK4 editor
+              # (gnome-text-editor) and proves set_value writes via AT-SPI
+              # EditableText::SetTextContents.
+              cua-driver-set-value = import ./nix/cua-driver/tests/set-value.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
               # Screenshot test — uses cua-driver's own get_window_state tool
               # to capture a screenshot via MCP, proving the driver can see the display
               cua-driver-screenshot = import ./nix/cua-driver/tests/screenshot.nix {

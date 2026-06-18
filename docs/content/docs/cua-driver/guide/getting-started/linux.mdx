@@ -59,6 +59,12 @@ If the probe fails, install the AT-SPI service and enable accessibility:
 
 You don't need accessibility enabled _system-wide_ — it needs to be on for the user session that's running Cua Driver. Most desktop environments toggle this automatically when an accessibility client connects.
 
+### Electron, Chromium, and Chrome apps
+
+Chromium-based apps — Chrome, and everything built on Electron or CEF (VS Code, Slack, Discord, Obsidian, including the AppImage builds) — keep their accessibility tree switched off until they detect that an assistive technology is present, so by default `get_window_state` would see an empty tree for them. When you run `cua-driver serve`, the daemon flips the session's `org.a11y.Status` flags on (the same signal a screen reader sets), which makes Chromium build its full AT-SPI tree — retroactively, for apps already open, with no relaunch and no per-app flag. GTK and Qt read the same signal, so their bridges warm up too.
+
+This is on by default. To leave your session's accessibility status untouched, start the daemon with `CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE=1`.
+
 <Callout type="info">
   **Why AT-SPI and not raw X11 properties?** Many Linux apps don't expose their UI structure through
   X11 window manager hints — only through AT-SPI. Without AT-SPI, `click` would have to fall back to

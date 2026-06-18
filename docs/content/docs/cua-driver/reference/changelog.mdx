@@ -18,6 +18,20 @@ The canonical, always-current source is the
 release body is auto-generated per release from the commits touching
 `libs/cua-driver/rust`, including SHA256 checksums and install instructions.
 
+## 0.5.6 (unreleased)
+
+- **Windows: fix idle CPU burn and orphaned `mcp` processes from the cursor
+  overlay** (#1808). The agent-cursor overlay render timer ran at ~125 Hz
+  unconditionally and re-composited a full virtual-screen pixmap (plus an
+  RGBA→BGRA copy and `UpdateLayeredWindow` blit) on every tick — so an idle
+  `cua-driver mcp` with no automation pinned 60–85% of a CPU core. The render
+  loop is now event-driven: it only composites and blits while a cursor is
+  actually animating or fading, and drops to a slow heartbeat (waking instantly
+  on the next command) once every cursor is static. The in-process `mcp` (stdio)
+  child now force-exits when the client disconnects (stdin EOF / pipe closed)
+  instead of leaving the overlay loop running as an orphan that accumulates CPU.
+  Use `--no-overlay` to disable the agent cursor entirely for headless runs.
+
 ## 0.5.4 (2026-06-15)
 
 - **macOS: fix 0x0 screenshots on macOS 15+ — the release bundle now ships the

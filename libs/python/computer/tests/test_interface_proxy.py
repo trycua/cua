@@ -12,7 +12,6 @@ interface layer.
 """
 
 import pytest
-
 from computer.interface.factory import InterfaceFactory
 from computer.interface.windows import WindowsComputerInterface
 
@@ -38,17 +37,13 @@ class TestApiBaseUrlBuilding:
         assert iface.ws_uri == "wss://run.cua.ai/api/svc/ns/sb-api/ws"
 
     def test_http_base_maps_to_ws(self):
-        iface = WindowsComputerInterface(
-            "ignored-ip", api_base_url="http://localhost:9999/prefix"
-        )
+        iface = WindowsComputerInterface("ignored-ip", api_base_url="http://localhost:9999/prefix")
         assert iface.rest_uri == "http://localhost:9999/prefix/cmd"
         assert iface.ws_uri == "ws://localhost:9999/prefix/ws"
 
     def test_api_headers_stored(self):
         headers = {"Authorization": "Bearer secret"}
-        iface = WindowsComputerInterface(
-            "ignored-ip", api_base_url=PROXY_BASE, api_headers=headers
-        )
+        iface = WindowsComputerInterface("ignored-ip", api_base_url=PROXY_BASE, api_headers=headers)
         assert iface._api_headers == headers
 
     def test_factory_threads_params(self):

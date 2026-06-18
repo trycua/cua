@@ -98,9 +98,9 @@ class GenericComputerInterface(BaseComputerInterface):
     def _base_url_to_ws(base_url: str) -> str:
         """Convert an http(s) base URL to its ws(s) equivalent, preserving the path prefix."""
         if base_url.startswith("https://"):
-            return "wss://" + base_url[len("https://"):]
+            return "wss://" + base_url[len("https://") :]
         if base_url.startswith("http://"):
-            return "ws://" + base_url[len("http://"):]
+            return "ws://" + base_url[len("http://") :]
         # No recognized scheme; assume it is already a ws(s) URL.
         return base_url
 
@@ -1086,7 +1086,9 @@ class GenericComputerInterface(BaseComputerInterface):
 
                 # Send the request
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(self.rest_uri, json=payload, headers=headers) as response:
+                    async with session.post(
+                        self.rest_uri, json=payload, headers=headers
+                    ) as response:
                         # Get the response text
                         response_text = await response.text()
 
@@ -1095,8 +1097,10 @@ class GenericComputerInterface(BaseComputerInterface):
 
                         # Empty body: proxy cut off the streaming response; retry
                         if not response_text and attempt < max_empty_retries - 1:
-                            self.logger.warning(f"[REST] empty body for cmd={command} attempt={attempt}, retrying")
-                            await asyncio.sleep(2 ** attempt)
+                            self.logger.warning(
+                                f"[REST] empty body for cmd={command} attempt={attempt}, retrying"
+                            )
+                            await asyncio.sleep(2**attempt)
                             continue
 
                         # Check if it starts with "data: "
@@ -1106,14 +1110,18 @@ class GenericComputerInterface(BaseComputerInterface):
                             try:
                                 return json.loads(json_str)
                             except json.JSONDecodeError:
-                                self.logger.warning(f"[REST] JSON decode error for cmd={command} body={response_text[:200]!r}")
+                                self.logger.warning(
+                                    f"[REST] JSON decode error for cmd={command} body={response_text[:200]!r}"
+                                )
                                 return {
                                     "success": False,
                                     "error": "Server returned malformed response",
                                     "message": response_text,
                                 }
                         else:
-                            self.logger.warning(f"[REST] unexpected response cmd={command} status={response.status} body={response_text[:300]!r}")
+                            self.logger.warning(
+                                f"[REST] unexpected response cmd={command} status={response.status} body={response_text[:300]!r}"
+                            )
                             # Return error response
                             return {
                                 "success": False,
@@ -1122,7 +1130,9 @@ class GenericComputerInterface(BaseComputerInterface):
                             }
 
             except Exception as e:
-                self.logger.warning(f"[REST] exception cmd={command} attempt={attempt} {type(e).__name__}: {e}")
+                self.logger.warning(
+                    f"[REST] exception cmd={command} attempt={attempt} {type(e).__name__}: {e}"
+                )
                 return {"success": False, "error": "Request failed", "message": str(e)}
 
         return {"success": False, "error": "Server returned malformed response", "message": ""}

@@ -2,7 +2,8 @@
 #
 # Runs the integration test and then uses cua-driver's own get_window_state
 # tool to capture a screenshot of an xterm window via MCP. The screenshot
-# is extracted as a PNG from the base64 MCP response and copied out of the VM.
+# is extracted as a PNG from the base64 MCP response and copied out of the
+# container.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-screenshot
 #
@@ -179,6 +180,10 @@ let
     sleep infinity
   '';
 
+  # openbox config with focusNew=no (see openbox-rc.nix) so the xterm under test
+  # keeps X focus when it maps.
+  openboxRc = import ./openbox-rc.nix { inherit pkgs; };
+
 in
 
 pkgs.testers.nixosTest {
@@ -187,7 +192,7 @@ pkgs.testers.nixosTest {
     maintainers = [ ];
   };
 
-  nodes.machine =
+  containers.machine =
     {
       config,
       pkgs,
@@ -196,10 +201,6 @@ pkgs.testers.nixosTest {
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
@@ -214,6 +215,9 @@ pkgs.testers.nixosTest {
     };
 
   testScript = ''
+    # cache-bust 2026-06-08.1: this comment is part of the test derivation, so
+    # bumping it changes the output path and forces the test to actually re-run
+    # instead of being substituted from the binary cache. Bump again to re-run.
     machine.start()
     machine.wait_for_unit("multi-user.target")
 
@@ -229,13 +233,13 @@ pkgs.testers.nixosTest {
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
         # Start openbox WM so _NET_CLIENT_LIST is populated for list_windows
-        machine.execute("DISPLAY=:99 openbox >/dev/null 2>&1 &")
+        machine.execute("DISPLAY=:99 openbox --config-file ${openboxRc} >/dev/null 2>&1 &")
         # Start compositing manager so X11 GetImage returns rendered pixels
         machine.execute("DISPLAY=:99 picom --backend xrender >/dev/null 2>&1 &")
         machine.copy_from_host("${testPage}", "/tmp/test-page.sh")
         machine.succeed("chmod +x /tmp/test-page.sh")
         machine.execute("DISPLAY=:99 xterm -T 'CUA Test' -fa Monospace -fs 14 -geometry 60x20+100+100 -e /tmp/test-page.sh >/dev/null 2>&1 &")
-        # Wait for xterm window to appear (poll via xdotool inside the VM)
+        # Wait for xterm window to appear (poll via xdotool inside the container)
         machine.wait_until_succeeds("DISPLAY=:99 xdotool search --class xterm", timeout=15)
         # Save the xterm window ID and PID for the MCP screenshot test
         machine.succeed("DISPLAY=:99 xdotool search --class xterm | head -1 > /tmp/xterm-xid.txt")
@@ -254,7 +258,7 @@ pkgs.testers.nixosTest {
         assert "Screenshot test complete" in result, f"Test did not complete: {result}"
 
     with subtest("Extract screenshot"):
-        # Copy screenshot out of VM if it exists
+        # Copy screenshot out of the container if it exists
         machine.succeed("test -f /tmp/cua-driver-screenshot.png || test -f /tmp/cua-driver-response.json")
         machine.copy_from_machine("/tmp/cua-driver-screenshot.png", "")
   '';

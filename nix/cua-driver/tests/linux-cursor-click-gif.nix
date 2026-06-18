@@ -115,23 +115,23 @@ let
   '';
 
   recordGifScript = import ./record-x11-gif.nix { inherit pkgs; };
+
+  # openbox config with focusNew=no (see openbox-rc.nix) so the control terminal
+  # keeps X focus when the second xterm maps.
+  openboxRc = import ./openbox-rc.nix { inherit pkgs; };
 in
 
 pkgs.testers.nixosTest {
   name = "cua-driver-linux-cursor-click-gif-test";
   meta.maintainers = [ ];
 
-  nodes.machine =
+  containers.machine =
     {
       pkgs,
       ...
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
@@ -147,13 +147,16 @@ pkgs.testers.nixosTest {
     };
 
   testScript = ''
+    # cache-bust 2026-06-08.1: this comment is part of the test derivation, so
+    # bumping it changes the output path and forces the test to actually re-run
+    # instead of being substituted from the binary cache. Bump again to re-run.
     machine.start()
     machine.wait_for_unit("multi-user.target")
 
     with subtest("Start X11 desktop and two xterms"):
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
-        machine.execute("DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &")
+        machine.execute("DISPLAY=:99 openbox --config-file ${openboxRc} >/tmp/openbox.log 2>&1 &")
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
         machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Target Click' -fa Monospace -fs 14 -geometry 70x24+80+120 >/tmp/target-click.log 2>&1 & echo \\$! >/tmp/target-click-pid.txt\"")
         machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Control Click' -fa Monospace -fs 14 -geometry 70x24+700+120 >/tmp/control-click.log 2>&1 & echo \\$! >/tmp/control-click-pid.txt\"")
@@ -177,7 +180,7 @@ pkgs.testers.nixosTest {
         machine.succeed("test -s /tmp/cua-driver-linux-cursor-click.gif")
         machine.wait_until_succeeds("test -f /tmp/click-focus.txt", timeout=20)
 
-    with subtest("Copy GIF out of the VM"):
+    with subtest("Copy GIF out of the container"):
         machine.copy_from_machine("/tmp/cua-driver-linux-cursor-click.gif", "")
   '';
 }

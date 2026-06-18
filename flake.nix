@@ -51,6 +51,18 @@
                 };
               };
 
+              # set_config persistence test — regression for #1923 (fixed in
+              # #1928): the {key, value} write shape must persist and read back
+              # via get_config (it was silently dropped on Linux before).
+              cua-driver-set-config = import ./nix/cua-driver/tests/set-config.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
               # Screenshot test — uses cua-driver's own get_window_state tool
               # to capture a screenshot via MCP, proving the driver can see the display
               cua-driver-screenshot = import ./nix/cua-driver/tests/screenshot.nix {

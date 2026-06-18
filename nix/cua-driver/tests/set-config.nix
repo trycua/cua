@@ -3,9 +3,9 @@
 # Regression test for #1923 (fixed in PR #1928): on Linux the `set_config`
 # tool only read the legacy per-field keys, so a `{"key":..., "value":...}`
 # write (the shape the Swift/macOS and Windows callers send) was silently
-# dropped. This boots a NixOS VM, drives the driver over MCP stdio, writes
-# config via the `{key, value}` shape, then reads it back with `get_config`
-# and asserts the new value persisted.
+# dropped. This boots a NixOS container, drives the driver over MCP stdio,
+# writes config via the `{key, value}` shape, then reads it back with
+# `get_config` and asserts the new value persisted.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-set-config
 #
@@ -143,7 +143,7 @@ pkgs.testers.nixosTest {
     maintainers = [ ];
   };
 
-  nodes.machine =
+  containers.machine =
     {
       config,
       pkgs,
@@ -152,10 +152,6 @@ pkgs.testers.nixosTest {
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver # Xvfb for headless X11
@@ -164,6 +160,9 @@ pkgs.testers.nixosTest {
     };
 
   testScript = ''
+    # cache-bust 2026-06-08.1: this comment is part of the test derivation, so
+    # bumping it changes the output path and forces the test to actually re-run
+    # instead of being substituted from the binary cache. Bump again to re-run.
     machine.start()
     machine.wait_for_unit("multi-user.target")
 

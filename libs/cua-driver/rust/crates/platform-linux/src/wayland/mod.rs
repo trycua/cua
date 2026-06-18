@@ -28,10 +28,37 @@ const BTN_LEFT: u32 = 0x110;
 
 use crate::x11::WindowInfo;
 
-/// True when we should drive Wayland rather than X11: a Wayland display is
-/// present and there is no X11 DISPLAY to fall back to.
+/// Name of the opt-in env var that unlocks the experimental native-Wayland
+/// backend.
+pub const ENABLE_WAYLAND_ENV: &str = "CUA_DRIVER_RS_ENABLE_WAYLAND";
+
+/// Whether the user has opted into the experimental native-Wayland backend.
+///
+/// The Wayland backend is incomplete (toplevel enumeration + virtual-pointer /
+/// virtual-keyboard input via the wlroots protocols; capture and AT-SPI parity
+/// are still landing), so it stays OFF by default and a pure-Wayland session is
+/// reported as unsupported unless the user explicitly sets
+/// `CUA_DRIVER_RS_ENABLE_WAYLAND=1`. Any value other than empty / `0` / `false`
+/// enables it.
+pub fn wayland_enabled() -> bool {
+    match std::env::var(ENABLE_WAYLAND_ENV) {
+        Ok(v) => {
+            let v = v.trim();
+            !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+        }
+        Err(_) => false,
+    }
+}
+
+/// True when we should drive Wayland rather than X11: the experimental backend
+/// is opted in ([`wayland_enabled`]), a Wayland display is present, and there is
+/// no X11 DISPLAY to fall back to. Without the opt-in this returns false even on
+/// a pure-Wayland session, so the backend treats it as unsupported rather than
+/// silently engaging an incomplete code path.
 pub fn is_wayland() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_none()
+    wayland_enabled()
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none()
 }
 
 fn wl_sockets(dir: &str) -> std::collections::HashSet<String> {

@@ -21,7 +21,7 @@ The `display server` probe surfaces:
 
 - **`DISPLAY` set, `WAYLAND_DISPLAY` unset** — pure X11 session. This is the expected path for the current pre-release backend.
 - **`WAYLAND_DISPLAY` set, `DISPLAY` set** — Wayland session with XWayland. cua-driver talks to XWayland (treats the session as X11). Native-Wayland-only apps that bypass XWayland aren't visible to the tools — call this out as a known limitation.
-- **`WAYLAND_DISPLAY` set, `DISPLAY` unset** — pure Wayland session, no XWayland. **Not supported today**. Run an X11 session, or install / enable XWayland.
+- **`WAYLAND_DISPLAY` set, `DISPLAY` unset** — pure Wayland session, no XWayland. Unsupported by default. There is an **experimental native-Wayland backend** (toplevel enumeration + virtual-pointer / virtual-keyboard input on wlroots compositors like sway and labwc) behind an opt-in flag — see [Experimental native Wayland](#experimental-native-wayland). Otherwise, run an X11 session or install / enable XWayland.
 - **Neither set** — headless. Window-driving tools will return errors. See [Headless workflow](#headless-workflow) for `Xvfb`.
 
 <Callout type="warn">
@@ -32,6 +32,18 @@ The `display server` probe surfaces:
   `list_windows` and aren't clickable. If your target app is one of those, run an X11 session (most
   distros let you pick X11 vs Wayland at the login screen).
 </Callout>
+
+### Experimental native Wayland
+
+A native-Wayland backend is shipping behind an opt-in flag. It enumerates toplevels via `zwlr_foreign_toplevel_manager_v1` and injects input via the wlroots virtual-pointer / virtual-keyboard protocols, so on **wlroots compositors** (sway, labwc, Hyprland, …) it can `list_windows` and drive input without XWayland. Screen capture and full AT-SPI parity are still landing, so it is **off by default** and a pure-Wayland session reports as unsupported until you opt in.
+
+Enable it by starting the daemon with the flag set:
+
+```bash
+CUA_DRIVER_RS_ENABLE_WAYLAND=1 cua-driver serve
+```
+
+`cua-driver doctor` reflects the state — a pure-Wayland session shows the backend as `OFF` (with the flag to set) or `ENABLED`. Treat it as experimental: report gaps rather than relying on it in production.
 
 ## AT-SPI prerequisite
 

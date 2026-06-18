@@ -199,6 +199,9 @@ let
     export GDK_BACKEND=wayland
     export QT_QPA_PLATFORM=wayland
     export LIBGL_ALWAYS_SOFTWARE=1
+    # The native-Wayland backend is opt-in (off by default); these tests exist
+    # to exercise it, so turn it on for every Wayland-session driver wrapper.
+    export CUA_DRIVER_RS_ENABLE_WAYLAND=1
   '';
 
   driverWrapper =

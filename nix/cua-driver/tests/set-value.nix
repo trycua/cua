@@ -16,20 +16,21 @@
 #      set_value to write the test string, then get_window_state again and
 #      assert the field now DOES contain it.
 #
-# GTK4 choice — why gnome-text-editor:
+# GTK4 choice — why gnome-characters:
 # #1924 is GTK4-SPECIFIC (the focus-gated EditableText advertisement is a GTK4
 # behaviour), so this test must drive a GTK4 editable — a GTK3 fallback would
-# not exercise the regression. gnome-text-editor is the exact app the issue
-# names as the repro: it is GTK4 and its main view is a large editable
-# GtkTextView that exposes the AT-SPI Text/EditableText interfaces. It is a
-# properly-packaged Nix app, so (unlike a hand-rolled PyGObject script, which
-# needs the full GObject-introspection typelib set on GI_TYPELIB_PATH) its
-# wrapper already wires up GTK4 + all typelibs. We launch it FOREGROUND as the
-# only window under Xvfb/openbox — the linux-background-gui matrix only dropped
-# the GTK4 GNOME apps because they were slow to map *in the background while
-# focus was held elsewhere*; here the app is the active window, which maps fine.
-# The editor starts on an empty buffer, so the baseline "field is empty" assert
-# holds and a pass can only mean the write took.
+# not exercise the regression. We drive gnome-characters because it is the ONE
+# GTK4 app the linux-background-gui matrix found reliably surfaces a window
+# under headless Xvfb (the other GNOME GTK4 apps, gnome-text-editor included,
+# launch but never map an X11 window without a real compositor/portal, so the
+# window-find times out). gnome-characters is GTK4 and its search field is a
+# GtkText/GtkSearchEntry — a real GTK4 editable that advertises the AT-SPI
+# EditableText interface once focused, which is exactly the surface #1924's fix
+# touches (GrabFocus, then EditableText::SetTextContents). It is a packaged Nix
+# app, so its wrapper wires up GTK4 + all typelibs (unlike a hand-rolled
+# PyGObject script, which needs the full GObject-introspection typelib set on
+# GI_TYPELIB_PATH). The search field starts empty, so the baseline "field is
+# empty" assert holds and a pass can only mean the write took.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-set-value
 {
@@ -67,12 +68,14 @@ let
     "GSK_RENDERER=cairo"
   ];
 
-  # Packaged GTK4 editor with a large editable GtkTextView (the repro app from
-  # #1924). Launched foreground; --new-window forces its own toplevel.
-  gtk4App = pkgs.gnome-text-editor;
-  gtk4Launch = "${gtk4App}/bin/gnome-text-editor --new-window";
-  # Its WM_CLASS for the xdotool window search.
-  gtk4WindowMatch = "--class org.gnome.TextEditor";
+  # Packaged GTK4 app whose search field is an editable GtkText/GtkSearchEntry
+  # (the GTK4 editable surface #1924 is about). The one GTK4 app proven to map a
+  # window under headless Xvfb — see the rationale above.
+  gtk4App = pkgs.gnome-characters;
+  gtk4Launch = "${gtk4App}/bin/gnome-characters";
+  # Its WM_CLASS for the xdotool window search (same match the passing
+  # gtk4-characters entry in linux-background-gui.nix uses).
+  gtk4WindowMatch = "--class org.gnome.Characters";
 
   # Python MCP client that drives cua-driver over stdio against the live GTK4
   # window: find the editable element_index, baseline-read, set_value, read back.
@@ -253,7 +256,10 @@ let
   # the Python testScript string), same idiom as linux-background-gui.nix.
   windowFindCmd = pkgs.writeShellScript "cua-setvalue-window-find.sh" ''
     export DISPLAY=:99
-    xid=$(${pkgs.xdotool}/bin/xdotool search --sync --onlyvisible ${gtk4WindowMatch} 2>/dev/null | head -1)
+    # No --sync: a non-matching class makes xdotool block until killed, which
+    # would swallow the whole wait_until_succeeds budget before the fallbacks
+    # below ever run. wait_until_succeeds re-runs this script to poll instead.
+    xid=$(${pkgs.xdotool}/bin/xdotool search --onlyvisible ${gtk4WindowMatch} 2>/dev/null | head -1)
     if [ -z "$xid" ]; then
       xid=$(${pkgs.xdotool}/bin/xdotool search --all --pid "$(cat /tmp/target-pid.txt)" 2>/dev/null | head -1)
     fi
@@ -288,7 +294,7 @@ pkgs.testers.nixosTest {
         dbus
         at-spi2-core
         python3
-        gtk4App # gnome-text-editor (GTK4 editable) — properly packaged
+        gtk4App # gnome-characters (GTK4 editable search field) — properly packaged
         glib # `gsettings`
         gsettings-desktop-schemas
         procps
@@ -324,7 +330,7 @@ pkgs.testers.nixosTest {
         )
         machine.log("atspi-launcher.log: " + machine.execute("cat /tmp/atspi-launcher.log")[1])
 
-    with subtest("Launch the GTK4 editable app (gnome-text-editor)"):
+    with subtest("Launch the GTK4 editable app (gnome-characters)"):
         machine.execute("sh -lc '${a11yEnv} ${gtk4Launch} >/tmp/target.log 2>&1 & echo $! >/tmp/target-pid.txt'")
         # Surface the app's own stdout/stderr early so a launch failure is visible
         # instead of just a window-find timeout.
@@ -332,7 +338,7 @@ pkgs.testers.nixosTest {
         machine.log("target.log after launch: " + machine.execute("cat /tmp/target.log")[1])
         machine.wait_until_succeeds("${windowFindCmd}", timeout=120)
         machine.log("target-xid: " + machine.execute("cat /tmp/target-xid.txt")[1])
-        # Resolve the PID that actually owns the mapped window (gnome-text-editor
+        # Resolve the PID that actually owns the mapped window (gnome-characters
         # is single-instance: the launched shell may differ from the GTK process),
         # and persist it for the driver.
         machine.execute(

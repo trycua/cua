@@ -34,6 +34,29 @@ async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
     tokio::time::timeout(CALL_TIMEOUT, fut).await.ok()
 }
 
+/// Drive an AT-SPI op `work` on the runtime, bounded by [`OP_TIMEOUT`].
+///
+/// Individual interface calls are each bounded by [`call`], and `app_for_pid` /
+/// `collect_visited` carry their own deadlines — but not every internal await is
+/// wrapped (e.g. the EditableText writes in `write_into_editable`, the proxy
+/// builds in `app_for_pid`), and an app that holds a modal grab can leave one of
+/// those unwrapped round-trips pending indefinitely. `walk_tree` already guards
+/// itself this way; this helper applies the same backstop to every other public
+/// entry point so a modal/wedged app can never hang the caller (the daemon, an
+/// MCP client) past OP_TIMEOUT (#1936). On timeout it yields `on_timeout` — the
+/// graceful "couldn't complete" value, so e.g. `type_text` falls back to XTEST.
+fn bounded<T>(
+    work: impl std::future::Future<Output = Result<T>>,
+    on_timeout: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    runtime().block_on(async move {
+        match tokio::time::timeout(OP_TIMEOUT, work).await {
+            Ok(r) => r,
+            Err(_) => on_timeout(),
+        }
+    })
+}
+
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
 /// native walk actually found in CI.
@@ -138,21 +161,52 @@ async fn app_for_pid<'a>(
     pid: u32,
 ) -> Result<Option<AccessibleProxy<'a>>> {
     let zconn = conn.connection();
-    let root = conn
-        .root_accessible_on_registry()
-        .await
-        .map_err(|e| anyhow!("registry root unavailable: {e}"))?;
+    // Every AT-SPI round-trip below can block on an app whose main loop isn't
+    // servicing D-Bus — most commonly one holding a modal grab (an "Add/Edit/
+    // Preferences" dialog). Without a bound, `GetConnectionUnixProcessID` stalls
+    // on the zbus default (~25s) per such app, which made get_window_state and
+    // type_text hang on real apps (#1936). Bound each step with CALL_TIMEOUT and
+    // skip/return instead of stalling — for type_text this returns fast so the
+    // tool falls back to XTEST, which still types into the focused dialog field.
+    let root = match call(conn.root_accessible_on_registry()).await {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Err(anyhow!("registry root unavailable: {e}")),
+        None => {
+            dlog!("registry root lookup timed out");
+            return Ok(None);
+        }
+    };
     let dbus = atspi::zbus::fdo::DBusProxy::new(zconn)
         .await
         .map_err(|e| anyhow!("DBus proxy unavailable: {e}"))?;
 
-    let apps = root.get_children().await.unwrap_or_default();
+    let apps = match call(root.get_children()).await {
+        Some(r) => r.unwrap_or_default(),
+        None => {
+            dlog!("registry get_children timed out");
+            return Ok(None);
+        }
+    };
     dlog!("registry root has {} application(s); seeking pid {pid}", apps.len());
     for child in apps {
-        let cpid = pid_of(&dbus, &child).await;
+        // A modal-grabbed app can't answer the pid query; skip it after
+        // CALL_TIMEOUT rather than blocking the whole walk on it.
+        let cpid = match call(pid_of(&dbus, &child)).await {
+            Some(p) => p,
+            None => {
+                dlog!("  pid_of timed out for bus={:?}, skipping", child.name_as_str());
+                continue;
+            }
+        };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
         if cpid == Some(pid) {
-            return Ok(Some(accessible_for(zconn, &child).await?));
+            return match call(accessible_for(zconn, &child)).await {
+                Some(r) => r.map(Some),
+                None => {
+                    dlog!("  accessible_for timed out for pid {pid}");
+                    Ok(None)
+                }
+            };
         }
     }
     dlog!("no application accessible matched pid {pid}");
@@ -183,24 +237,77 @@ async fn collect_visited<'a>(
     let mut visited: Vec<Visited<'a>> = Vec::new();
     // Guard against pathological/looping trees.
     let mut budget = 5000usize;
+    // Time budget alongside the node budget: when an app is unresponsive to
+    // AT-SPI (most commonly because it holds a modal grab and isn't servicing
+    // D-Bus), every per-node `call()` burns the full CALL_TIMEOUT before being
+    // skipped, so the walk would otherwise grind for minutes. Callers that lack
+    // their own OP_TIMEOUT (get_all_element_bounds, insert_text) relied on this
+    // never happening — bound it here so the walk returns partial within
+    // OP_TIMEOUT for every caller, instead of hanging get_window_state/type_text
+    // on modal dialogs (#1936).
+    let deadline = std::time::Instant::now() + OP_TIMEOUT;
+    // Fast bail for an app that has stopped answering AT-SPI entirely (modal
+    // grab): if several consecutive nodes each burn the full CALL_TIMEOUT, the
+    // app is unresponsive and the remaining ~OP_TIMEOUT of walking would all
+    // time out too. Give up after a few so type_text falls back to XTEST in a
+    // few seconds rather than ~25s.
+    let mut consecutive_timeouts = 0u32;
 
     while let Some((oref, depth, in_web_doc)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
             break;
         }
+        if std::time::Instant::now() >= deadline {
+            dlog!("collect_visited time budget exhausted; returning partial walk");
+            break;
+        }
         budget -= 1;
 
-        let acc = match accessible_for(zconn, &oref).await {
-            Ok(a) => a,
-            Err(_) => continue,
+        // accessible_for builds a proxy whose first use round-trips to the
+        // target app. On a modal-grabbed (AT-SPI-unresponsive) app this is the
+        // await that actually hangs, so it MUST carry the per-call timeout —
+        // otherwise the loop never returns to the deadline check at the top and
+        // the walk stalls past OP_TIMEOUT for callers without an outer guard
+        // (get_all_element_bounds, insert_text). That was the residual #1936 hang.
+        let acc = match call(accessible_for(zconn, &oref)).await {
+            Some(Ok(a)) => a,
+            Some(Err(_)) => continue,
+            None => {
+                consecutive_timeouts += 1;
+                if consecutive_timeouts >= 3 {
+                    dlog!(
+                        "{} consecutive AT-SPI timeouts (accessible_for); app unresponsive, bailing walk",
+                        consecutive_timeouts
+                    );
+                    break;
+                }
+                continue;
+            }
         };
 
         // Interfaces gate every other query; if even this times out the node is
         // unreachable, so skip it rather than stall.
         let ifaces = match call(acc.get_interfaces()).await {
-            Some(Ok(i)) => i,
-            _ => continue,
+            Some(Ok(i)) => {
+                consecutive_timeouts = 0;
+                i
+            }
+            // A completed-but-errored call is node-specific; keep walking.
+            Some(Err(_)) => continue,
+            // A timeout means the app didn't answer in CALL_TIMEOUT. A run of
+            // these means the whole app is wedged — bail so callers fall back.
+            None => {
+                consecutive_timeouts += 1;
+                if consecutive_timeouts >= 3 {
+                    dlog!(
+                        "{} consecutive AT-SPI timeouts; app unresponsive, bailing walk",
+                        consecutive_timeouts
+                    );
+                    break;
+                }
+                continue;
+            }
         };
         let has_action = ifaces.contains(Interface::Action);
         let has_editable = ifaces.contains(Interface::EditableText);
@@ -447,7 +554,7 @@ async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool
 }
 
 pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -537,7 +644,34 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         }
 
         Ok(false)
+    }, || {
+        dlog!("insert_text timed out for pid {pid}; falling back to synthetic typing");
+        Ok(false)
     })
+}
+
+/// Classify what holds keyboard focus in `pid`'s tree, so `type_text` can target
+/// the thing the user just clicked rather than the first editable anywhere:
+///   `Some(true)`  — a focused **editable** widget (a text entry/box). AT-SPI
+///                   EditableText insertion targets it correctly.
+///   `Some(false)` — a focused **non-editable** widget that still accepts typed
+///                   input (a spreadsheet cell/grid, a terminal, a canvas). An
+///                   AT-SPI editable search would grab the wrong field here (e.g.
+///                   gnumeric's name box), so the caller should synth-type into
+///                   the focused widget instead.
+///   `None`        — nothing is focused (or the app is unreachable): fall back to
+///                   the focus-free "first editable" path for background typing.
+pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        Ok(visited.iter().find(|v| v.focused).map(|v| v.has_editable))
+    }, || Ok(None))
 }
 
 /// Find the window XID for a PID by listing its X11 windows.
@@ -570,7 +704,7 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -594,11 +728,11 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
             .await
             .map_err(|e| anyhow!("doAction failed: {e}"))?;
         Ok(target.actions.first().cloned().unwrap_or_default())
-    })
+    }, || Err(anyhow!("perform_action timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -661,11 +795,11 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
             return Ok(());
         }
         Err(anyhow!("element {idx} exposes neither EditableText nor Value"))
-    })
+    }, || Err(anyhow!("set_value timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -692,7 +826,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             .await
             .map_err(|e| anyhow!("getExtents failed: {e}"))?;
         Ok((x, y, w.max(0) as u32, h.max(0) as u32))
-    })
+    }, || Err(anyhow!("get_element_bounds timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
 /// Real on-screen origin (root-relative top-left) of an X11 window, or `None`
@@ -786,7 +920,7 @@ async fn gtk4_screen_offset(visited: &[Visited<'_>], pid: u32, xid: u64) -> (i32
 ///
 /// Returns `(element_index, x, y, width, height)` tuples.
 pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -847,5 +981,8 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
             }
         }
         Ok(out)
+    }, || {
+        dlog!("get_all_element_bounds timed out for pid {pid}; returning no bounds");
+        Ok(Vec::new())
     })
 }

@@ -110,6 +110,8 @@ class Computer:
         storage: Optional[str] = None,
         ephemeral: bool = False,
         api_key: Optional[str] = None,
+        api_base_url: Optional[str] = None,
+        api_headers: Optional[Dict[str, str]] = None,
         experiments: Optional[List[str]] = None,
         timeout: int = 100,
         backend: Literal["native", "vnc"] = "native",
@@ -145,6 +147,16 @@ class Computer:
             storage: Optional path for persistent VM storage (Lumier provider)
             ephemeral: Whether to use ephemeral storage
             api_key: Optional API key for cloud providers (defaults to CUA_API_KEY environment variable)
+            api_base_url: Optional explicit base URL of the computer-server to connect to
+                directly, e.g. when it sits behind an authenticated, path-prefixed reverse
+                proxy such as ``https://run.cua.ai/api/svc/<ns>/<sandbox>-api``. Only used
+                with ``use_host_computer_server=True``. When set, the SDK derives the REST
+                (``<base>/cmd``) and WebSocket (``wss://.../ws``) URLs from this base
+                instead of building them from ``api_host`` + ``api_port``. Defaults to the
+                ``CUA_API_BASE_URL`` environment variable.
+            api_headers: Optional dict of extra HTTP headers (e.g.
+                ``{"Authorization": "Bearer <token>"}``) sent on every REST request and on
+                the WebSocket upgrade, for connecting through an authenticated proxy.
             experiments: Optional list of experimental features to enable (e.g. ["app-use"])
             timeout: Timeout in seconds for connecting to the computer interface
             backend: Handler backend for the computer-server: 'native' (OS-specific) or 'vnc'. Defaults to 'native'.
@@ -168,6 +180,10 @@ class Computer:
         if api_key is None:
             api_key = os.environ.get("CUA_API_KEY")
 
+        # Fall back to environment variable for api_base_url if not provided (mirrors api_key)
+        if api_base_url is None:
+            api_base_url = os.environ.get("CUA_API_BASE_URL")
+
         if not image:
             if os_type == "macos":
                 image = "macos-sequoia-cua:latest"
@@ -182,6 +198,8 @@ class Computer:
         self.noVNC_port = noVNC_port
         self.api_port = api_port
         self.api_host = api_host
+        self.api_base_url = api_base_url
+        self.api_headers = api_headers or {}
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
@@ -366,7 +384,11 @@ class Computer:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, ip_address=ip_address, api_port=self.api_port  # type: ignore[arg-type]
+                        os=self.os_type,  # type: ignore[arg-type]
+                        ip_address=ip_address,
+                        api_port=self.api_port,
+                        api_base_url=self.api_base_url,
+                        api_headers=self.api_headers,
                     ),
                 )
                 self._interface = interface

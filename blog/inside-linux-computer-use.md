@@ -1,10 +1,12 @@
 # Inside Linux computer-use: AT-SPI, XTEST, and background agents
 
-_Published on [FILL] by Francesco Bonacci_
+_Published on June 18 by Francesco Bonacci_
+
+<img width="960" height="540" alt="screen-recording-2026-06-17" src="https://github.com/user-attachments/assets/2a8a131c-4ce4-451e-bcc6-f80b4bdfa8eb" />
 
 **TL;DR:**
 
-- Cua Driver now drives real Linux desktop apps in the background for any agent (Claude Code, Codex, your own loop), over MCP or the CLI, available today on the release tag [FILL].
+- Cua Driver now drives real Linux desktop apps in the background for any agent (Claude Code, Codex, your own loop), over MCP or the CLI, available today on the release tag 0.5.7.
 - It uses AT-SPI 2 over D-Bus for the accessibility tree, XTEST for input synthesis, and a painted agent cursor kept separate from your physical pointer.
 - The supported backend is X11 and XWayland. Native Wayland is still in preview behind an opt-in flag, and contributions are more than welcome.
 - Tested on Debian 12, Ubuntu 22.04, Ubuntu 24.04, Rocky 9, and Fedora 41, with release binaries built for glibc 2.31 and newer.
@@ -16,7 +18,7 @@ After shipping background computer-use on macOS and then Windows, the obvious ne
 
 Let me back up. The reason any of this matters is that a lot of real Linux work still lives in GTK, Qt, Electron, Chromium, Tk, and native desktop tools that will never expose an agent API. If you want an agent to use those apps, it eventually has to use the same interface a person uses: open the window, read the controls, click, type, drag, verify, and go back to code. That loop already works reasonably well for web apps. On the desktop it is harder, and on Linux it is harder in a way that has nothing to do with the apps themselves and everything to do with how many moving parts sit underneath them.
 
-What I came out the other side with is the Linux backend for cua-driver, a driver that lets any agent (Claude Code, Codex, your own loop) drive a real Linux desktop app while you keep working in the foreground. The cursor does not move. Focus does not need to change for most operations. The agent gets its own painted cursor, and the tools are available through both MCP and the CLI. It ships today on the same install path as macOS and Windows. The release tag is [FILL].
+What I came out the other side with is the Linux backend for cua-driver, a driver that lets any agent (Claude Code, Codex, your own loop) drive a real Linux desktop app while you keep working in the foreground. The cursor does not move. Focus does not need to change for most operations. The agent gets its own painted cursor, and the tools are available through both MCP and the CLI. It ships today on the same install path as macOS and Windows.
 
 ## Linux is hard in a different way
 
@@ -68,13 +70,13 @@ The first demos are deliberately small. I wanted to show the primitive things th
 
 **1. Multi-cursor drag on XFCE.**
 
-<div align="center"><video src="[FILL]" width="600" controls></video></div>
+<div align="center"><video src="https://github.com/user-attachments/assets/8cd1d8d9-2533-4c3e-88c3-d1fad4971dc2" width="600" controls></video></div>
 
 An agent cursor drags the word "Cua" around on an XFCE desktop while I keep working. The whole point is the separation: the painted agent cursor moves on its own, and my physical pointer never twitches.
 
 **2. Build, launch, act, verify.**
 
-<div align="center"><video src="[FILL]" width="600" controls></video></div>
+<div align="center"><video src="https://github.com/user-attachments/assets/6562aa37-8077-453d-8ebf-549bd75b5021" width="600" controls></video></div>
 
 A coding agent builds a calculator desktop app, launches it, then uses Cua Driver to QA the app through its own Linux UI. This is the same loop that made the Windows WPF demo worth watching, where the agent does not stop at code generation but runs the thing and checks the thing. For desktop apps a diff is not evidence; the agent has to launch the app and show what happened.
 

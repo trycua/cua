@@ -33,3 +33,8 @@ atspi = { version = "0.30", features = ["tokio", "zbus"] }
 evdev = "0.12"
 # Math-expression evaluator for parallel_mouse_drag `fn` paths (y = f(x)).
 meval = "0.2"
+# Native Wayland backend (window enumeration via wlr-foreign-toplevel-management;
+# capture/input protocols added as those slices land). Pure-Rust client; used
+# when running under a Wayland compositor with no X11 (no DISPLAY).
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }

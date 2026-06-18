@@ -771,6 +771,10 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
+        // Turn on Chromium/Electron (and GTK/Qt) accessibility for the session
+        // so their AT-SPI trees are visible to get_window_state. Best-effort and
+        // idempotent; only on the serve path, not for short-lived CLI calls.
+        platform_linux::a11y::ensure_chromium_accessibility_enabled();
         { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]

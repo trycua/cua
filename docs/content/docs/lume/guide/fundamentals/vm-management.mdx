@@ -195,10 +195,13 @@ When pulling images from a registry, Lume can cache layers locally for faster fu
 
 ```bash
 # Enable caching
-lume config caching set true
+lume config cache enable
+
+# Disable caching
+lume config cache disable
 
 # Set cache directory
-lume config cache set /path/to/cache
+lume config cache dir /path/to/cache
 
 # View current config
 lume config get

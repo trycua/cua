@@ -11,11 +11,9 @@ have already started on the server.
 from __future__ import annotations
 
 import json
-from itertools import cycle
 
 import httpx
 import pytest
-
 from cua_sandbox.transport.http import HTTPTransport
 
 pytestmark = pytest.mark.asyncio
@@ -61,11 +59,13 @@ async def test_cmd_retries_5xx_then_succeeds(monkeypatch):
 
     monkeypatch.setattr(http_mod.asyncio, "sleep", _no_sleep)
 
-    responses = iter([
-        httpx.Response(503, text="service unavailable"),
-        httpx.Response(502, text="bad gateway"),
-        httpx.Response(200, text=_sse_body({"ok": True})),
-    ])
+    responses = iter(
+        [
+            httpx.Response(503, text="service unavailable"),
+            httpx.Response(502, text="bad gateway"),
+            httpx.Response(200, text=_sse_body({"ok": True})),
+        ]
+    )
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:

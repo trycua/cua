@@ -127,23 +127,23 @@ let
   '';
 
   recordGifScript = import ./record-x11-gif.nix { inherit pkgs; };
+
+  # openbox config with focusNew=no (see openbox-rc.nix) so focus stays on the
+  # control terminal when the target xterm maps.
+  openboxRc = import ./openbox-rc.nix { inherit pkgs; };
 in
 
 pkgs.testers.nixosTest {
   name = "cua-driver-linux-background-terminal-gif-test";
   meta.maintainers = [ ];
 
-  nodes.machine =
+  containers.machine =
     {
       pkgs,
       ...
     }:
     {
       imports = [ cuaDriverModule ];
-      virtualisation = {
-        cores = 2;
-        memorySize = 2048;
-      };
       services.cua-driver.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
@@ -159,13 +159,16 @@ pkgs.testers.nixosTest {
     };
 
   testScript = ''
+    # cache-bust 2026-06-08.1: this comment is part of the test derivation, so
+    # bumping it changes the output path and forces the test to actually re-run
+    # instead of being substituted from the binary cache. Bump again to re-run.
     machine.start()
     machine.wait_for_unit("multi-user.target")
 
     with subtest("Start X11 desktop and target/control xterms"):
         machine.execute("Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &")
         machine.wait_until_succeeds("test -e /tmp/.X11-unix/X99", timeout=10)
-        machine.execute("DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &")
+        machine.execute("DISPLAY=:99 openbox --config-file ${openboxRc} >/tmp/openbox.log 2>&1 &")
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
         machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Background Target' -fa Monospace -fs 14 -geometry 70x24+40+120 >/tmp/background-target.log 2>&1 & echo \\$! >/tmp/background-target-pid.txt\"")
         machine.execute("sh -lc \"DISPLAY=:99 xterm -T 'Background Control' -fa Monospace -fs 14 -geometry 70x24+690+120 >/tmp/background-control.log 2>&1 & echo \\$! >/tmp/background-control-pid.txt\"")
@@ -194,7 +197,7 @@ pkgs.testers.nixosTest {
         active = machine.succeed("DISPLAY=:99 xdotool getactivewindow").strip()
         assert control == active, f"expected active window {control}, got {active}"
 
-    with subtest("Copy GIF out of the VM"):
+    with subtest("Copy GIF out of the container"):
         machine.copy_from_machine("/tmp/cua-driver-linux-background-terminal.gif", "")
   '';
 }

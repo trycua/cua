@@ -481,9 +481,10 @@ case "$OS-$ARCH_RAW" in
     Darwin-arm64|Darwin-aarch64)     LABEL="darwin-arm64"  ; TARGET="aarch64-apple-darwin"      ;;
     Darwin-x86_64)                   LABEL="darwin-x86_64" ; TARGET="x86_64-apple-darwin"       ;;
     Linux-x86_64|Linux-amd64)        LABEL="linux-x86_64"  ; TARGET="x86_64-unknown-linux-gnu"  ;;
+    Linux-aarch64|Linux-arm64)       LABEL="linux-arm64"   ; TARGET="aarch64-unknown-linux-gnu" ;;
     *)
         err "unsupported platform: $OS / $ARCH_RAW"
-        err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64."
+        err "  cua-driver-rs ships prebuilts for: darwin-arm64, darwin-x86_64, linux-x86_64, linux-arm64."
         err "  Windows users: install via install.ps1 (irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex)."
         exit 1
         ;;
@@ -512,7 +513,7 @@ done
 # the baked line hasn't been updated yet (dev / pre-release checkouts).
 #
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.5.5"
+CUA_DRIVER_RS_BAKED_VERSION="0.5.7"
 # ~~~ END_BAKED_VERSION ~~~
 
 if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then

@@ -32,6 +32,8 @@ class GenericComputerInterface(BaseComputerInterface):
         vm_name: Optional[str] = None,
         logger_name: str = "computer.interface.generic",
         api_port: Optional[int] = None,
+        api_base_url: Optional[str] = None,
+        api_headers: Optional[Dict[str, str]] = None,
     ):
         super().__init__(ip_address, username, password, api_key, vm_name)
         self._ws = None
@@ -52,6 +54,14 @@ class GenericComputerInterface(BaseComputerInterface):
         # Store custom ports
         self._api_port = api_port
 
+        # Optional explicit base URL (e.g. behind an authenticated reverse proxy with a
+        # path prefix) and arbitrary extra headers (e.g. ``Authorization: Bearer ...``).
+        # When ``api_base_url`` is set, the REST/WebSocket URIs are derived from it
+        # (preserving its scheme, host, port and path prefix) instead of being rebuilt
+        # from ``ip_address`` + port.
+        self._api_base_url = api_base_url.rstrip("/") if api_base_url else None
+        self._api_headers = dict(api_headers) if api_headers else {}
+
         # Optional default delay time between commands (in seconds)
         self.delay = 0.0
 
@@ -67,13 +77,48 @@ class GenericComputerInterface(BaseComputerInterface):
         elif isinstance(self.delay, float) or isinstance(self.delay, int) and self.delay > 0:
             await asyncio.sleep(self.delay)
 
+    @staticmethod
+    def _ws_headers_kwarg() -> str:
+        """Return the websockets.connect kwarg used to pass custom upgrade headers.
+
+        websockets>=11 renamed ``extra_headers`` to ``additional_headers`` (the old
+        name was removed in 14.0). Detect which one the installed version accepts.
+        """
+        import inspect
+
+        try:
+            params = inspect.signature(websockets.connect).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "additional_headers" in params:
+            return "additional_headers"
+        return "extra_headers"
+
+    @staticmethod
+    def _base_url_to_ws(base_url: str) -> str:
+        """Convert an http(s) base URL to its ws(s) equivalent, preserving the path prefix."""
+        if base_url.startswith("https://"):
+            return "wss://" + base_url[len("https://") :]
+        if base_url.startswith("http://"):
+            return "ws://" + base_url[len("http://") :]
+        # No recognized scheme; assume it is already a ws(s) URL.
+        return base_url
+
     @property
     def ws_uri(self) -> str:
-        """Get the WebSocket URI using the current IP address.
+        """Get the WebSocket URI for the Computer API Server.
+
+        When an explicit ``api_base_url`` was provided (e.g. an authenticated,
+        path-prefixed reverse proxy), the URI is derived from it by swapping the
+        scheme to ws(s) and appending ``/ws`` to the full path prefix. Otherwise
+        the URI is rebuilt from ``ip_address`` + port as before.
 
         Returns:
             WebSocket URI for the Computer API Server
         """
+        if self._api_base_url:
+            return f"{self._base_url_to_ws(self._api_base_url)}/ws"
+
         protocol = "wss" if self.api_key else "ws"
         # Use custom API port if provided, otherwise use defaults based on API key
         port = (
@@ -85,11 +130,18 @@ class GenericComputerInterface(BaseComputerInterface):
 
     @property
     def rest_uri(self) -> str:
-        """Get the REST URI using the current IP address.
+        """Get the REST URI for the Computer API Server.
+
+        When an explicit ``api_base_url`` was provided, the URI is derived from it
+        by appending ``/cmd`` to the full path prefix. Otherwise the URI is rebuilt
+        from ``ip_address`` + port as before.
 
         Returns:
             REST URI for the Computer API Server
         """
+        if self._api_base_url:
+            return f"{self._api_base_url}/cmd"
+
         protocol = "https" if self.api_key else "http"
         # Use custom API port if provided, otherwise use defaults based on API key
         port = (
@@ -764,9 +816,12 @@ class GenericComputerInterface(BaseComputerInterface):
             # Web search
             await interface.playwright_exec("web_search", {"query": "computer use agent"})
         """
-        protocol = "https" if self.api_key else "http"
-        port = str(self._api_port) if self._api_port else ("8443" if self.api_key else "8000")
-        url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
+        if self._api_base_url:
+            url = f"{self._api_base_url}/playwright_exec"
+        else:
+            protocol = "https" if self.api_key else "http"
+            port = str(self._api_port) if self._api_port else ("8443" if self.api_key else "8000")
+            url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
 
         payload = {"command": command, "params": params or {}}
         headers = {"Content-Type": "application/json", **cua_version_headers()}
@@ -774,6 +829,9 @@ class GenericComputerInterface(BaseComputerInterface):
             headers["X-API-Key"] = self.api_key
         if self.vm_name:
             headers["X-Container-Name"] = self.vm_name
+        # Merge arbitrary extra headers (e.g. ``Authorization: Bearer ...``) last so
+        # callers can override defaults if needed.
+        headers.update(self._api_headers)
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -821,16 +879,24 @@ class GenericComputerInterface(BaseComputerInterface):
                                 f"Attempting WebSocket connection to {self.ws_uri} (attempt {retry_count})"
                             )
 
+                        connect_kwargs = dict(
+                            max_size=1024 * 1024 * 10,  # 10MB limit
+                            max_queue=32,
+                            ping_interval=self._ping_interval,
+                            ping_timeout=self._ping_timeout,
+                            close_timeout=5,
+                            compression=None,  # Disable compression to reduce overhead
+                        )
+                        # Send arbitrary extra headers (e.g. ``Authorization: Bearer ...``)
+                        # on the WebSocket upgrade request so proxies that authenticate the
+                        # upgrade can accept the connection. Newer websockets versions use
+                        # ``additional_headers``; older ones use ``extra_headers``.
+                        if self._api_headers:
+                            connect_kwargs[self._ws_headers_kwarg()] = list(
+                                self._api_headers.items()
+                            )
                         self._ws = await asyncio.wait_for(
-                            websockets.connect(
-                                self.ws_uri,
-                                max_size=1024 * 1024 * 10,  # 10MB limit
-                                max_queue=32,
-                                ping_interval=self._ping_interval,
-                                ping_timeout=self._ping_timeout,
-                                close_timeout=5,
-                                compression=None,  # Disable compression to reduce overhead
-                            ),
+                            websockets.connect(self.ws_uri, **connect_kwargs),
                             timeout=120,
                         )
                         self.logger.info("WebSocket connection established")
@@ -1015,10 +1081,14 @@ class GenericComputerInterface(BaseComputerInterface):
                     headers["X-API-Key"] = self.api_key
                 if self.vm_name:
                     headers["X-Container-Name"] = self.vm_name
+                # Merge arbitrary extra headers (e.g. ``Authorization: Bearer ...``).
+                headers.update(self._api_headers)
 
                 # Send the request
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(self.rest_uri, json=payload, headers=headers) as response:
+                    async with session.post(
+                        self.rest_uri, json=payload, headers=headers
+                    ) as response:
                         # Get the response text
                         response_text = await response.text()
 
@@ -1027,8 +1097,10 @@ class GenericComputerInterface(BaseComputerInterface):
 
                         # Empty body: proxy cut off the streaming response; retry
                         if not response_text and attempt < max_empty_retries - 1:
-                            self.logger.warning(f"[REST] empty body for cmd={command} attempt={attempt}, retrying")
-                            await asyncio.sleep(2 ** attempt)
+                            self.logger.warning(
+                                f"[REST] empty body for cmd={command} attempt={attempt}, retrying"
+                            )
+                            await asyncio.sleep(2**attempt)
                             continue
 
                         # Check if it starts with "data: "
@@ -1038,14 +1110,18 @@ class GenericComputerInterface(BaseComputerInterface):
                             try:
                                 return json.loads(json_str)
                             except json.JSONDecodeError:
-                                self.logger.warning(f"[REST] JSON decode error for cmd={command} body={response_text[:200]!r}")
+                                self.logger.warning(
+                                    f"[REST] JSON decode error for cmd={command} body={response_text[:200]!r}"
+                                )
                                 return {
                                     "success": False,
                                     "error": "Server returned malformed response",
                                     "message": response_text,
                                 }
                         else:
-                            self.logger.warning(f"[REST] unexpected response cmd={command} status={response.status} body={response_text[:300]!r}")
+                            self.logger.warning(
+                                f"[REST] unexpected response cmd={command} status={response.status} body={response_text[:300]!r}"
+                            )
                             # Return error response
                             return {
                                 "success": False,
@@ -1054,7 +1130,9 @@ class GenericComputerInterface(BaseComputerInterface):
                             }
 
             except Exception as e:
-                self.logger.warning(f"[REST] exception cmd={command} attempt={attempt} {type(e).__name__}: {e}")
+                self.logger.warning(
+                    f"[REST] exception cmd={command} attempt={attempt} {type(e).__name__}: {e}"
+                )
                 return {"success": False, "error": "Request failed", "message": str(e)}
 
         return {"success": False, "error": "Server returned malformed response", "message": ""}

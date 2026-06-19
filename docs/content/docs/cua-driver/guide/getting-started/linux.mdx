@@ -1,17 +1,19 @@
 ---
-title: Linux pre-release
-description: Display server (X11 / Wayland), AT-SPI prerequisites, autostart, and headless workflows for the Linux pre-release backend.
+title: Linux
+description: Display server (X11 / Wayland), AT-SPI prerequisites, autostart, and headless workflows for the Linux backend.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The Linux backend is available as a **pre-release** target. It has Linux implementations under [`crates/platform-linux/`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux/src), but it has not completed the same official release and platform validation pass as macOS and Windows. Use it for early testing, expect gaps, and report issues before relying on it in production workflows.
+The Linux backend drives **X11** apps in the background — clicks and keystrokes are injected to the target window via AT-SPI and `XSendEvent`, without raising it, activating it, or moving the real pointer (the same no-foreground contract as macOS and Windows). It runs the full tool surface: click, type, scroll, screenshot, recording, `launch_app`, and window enumeration. The implementations live under [`crates/platform-linux/`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-linux/src).
 
-For the install one-liner itself, see [Installation](/cua-driver/guide/getting-started/installation) — the canonical script auto-detects Linux and routes to the pre-release Rust backend.
+Native **Wayland** input and capture are opt-in (`CUA_DRIVER_RS_ENABLE_WAYLAND=1`) and still maturing; on Wayland sessions the default path is the XWayland compatibility server (see **Display server** below).
+
+For the install one-liner itself, see [Installation](/cua-driver/guide/getting-started/installation) — the canonical script auto-detects Linux and routes to the Rust backend.
 
 ## Display server: X11 vs Wayland vs XWayland
 
-Cua Driver's window enumeration, input synthesis, and screen capture talk to your display server directly. The Linux pre-release backend targets **X11** (including the XWayland compatibility server on Wayland sessions), and probes which one you're on at startup:
+Cua Driver's window enumeration, input synthesis, and screen capture talk to your display server directly. The Linux backend targets **X11** (including the XWayland compatibility server on Wayland sessions), and probes which one you're on at startup:
 
 ```bash
 cua-driver doctor
@@ -19,9 +21,9 @@ cua-driver doctor
 
 The `display server` probe surfaces:
 
-- **`DISPLAY` set, `WAYLAND_DISPLAY` unset** — pure X11 session. This is the expected path for the current pre-release backend.
+- **`DISPLAY` set, `WAYLAND_DISPLAY` unset** — pure X11 session. This is the expected path for the Linux backend.
 - **`WAYLAND_DISPLAY` set, `DISPLAY` set** — Wayland session with XWayland. cua-driver talks to XWayland (treats the session as X11). Native-Wayland-only apps that bypass XWayland aren't visible to the tools — call this out as a known limitation.
-- **`WAYLAND_DISPLAY` set, `DISPLAY` unset** — pure Wayland session, no XWayland. **Not supported today**. Run an X11 session, or install / enable XWayland.
+- **`WAYLAND_DISPLAY` set, `DISPLAY` unset** — pure Wayland session, no XWayland. Unsupported by default. There is an **experimental native-Wayland backend** (toplevel enumeration + virtual-pointer / virtual-keyboard input on wlroots compositors like sway and labwc) behind an opt-in flag — see [Experimental native Wayland](#experimental-native-wayland). Otherwise, run an X11 session or install / enable XWayland.
 - **Neither set** — headless. Window-driving tools will return errors. See [Headless workflow](#headless-workflow) for `Xvfb`.
 
 <Callout type="warn">
@@ -32,6 +34,18 @@ The `display server` probe surfaces:
   `list_windows` and aren't clickable. If your target app is one of those, run an X11 session (most
   distros let you pick X11 vs Wayland at the login screen).
 </Callout>
+
+### Experimental native Wayland
+
+A native-Wayland backend is shipping behind an opt-in flag. It enumerates toplevels via `zwlr_foreign_toplevel_manager_v1` and injects input via the wlroots virtual-pointer / virtual-keyboard protocols, so on **wlroots compositors** (sway, labwc, Hyprland, …) it can `list_windows` and drive input without XWayland. Screen capture and full AT-SPI parity are still landing, so it is **off by default** and a pure-Wayland session reports as unsupported until you opt in.
+
+Enable it by starting the daemon with the flag set:
+
+```bash
+CUA_DRIVER_RS_ENABLE_WAYLAND=1 cua-driver serve
+```
+
+`cua-driver doctor` reflects the state — a pure-Wayland session shows the backend as `OFF` (with the flag to set) or `ENABLED`. Treat it as experimental: report gaps rather than relying on it in production.
 
 ## AT-SPI prerequisite
 
@@ -143,7 +157,7 @@ export DISPLAY=:99
 dbus-launch --exit-with-session cua-driver serve
 ```
 
-This is a useful recipe for local CI experiments with the Linux pre-release backend.
+This is a useful recipe for local CI experiments with the Linux backend.
 
 <Callout type="info">
   **Tools that don't need a display.** Even without `DISPLAY` set, the non-graphical tools
@@ -154,7 +168,7 @@ This is a useful recipe for local CI experiments with the Linux pre-release back
 
 ## Distro-specific notes
 
-The canonical install script (`/bin/bash -c "$(curl -fsSL …/install.sh)"`) downloads a Linux x86_64 binary tarball from GitHub Releases, drops it into `~/.cua-driver/packages/releases/<v>-x86_64-unknown-linux-gnu/`, and symlinks `~/.local/bin/cua-driver`. Because Linux support is pre-release, expect distro-specific gaps and prerequisites.
+The canonical install script (`/bin/bash -c "$(curl -fsSL …/install.sh)"`) downloads a Linux x86_64 binary tarball from GitHub Releases, drops it into `~/.cua-driver/packages/releases/<v>-x86_64-unknown-linux-gnu/`, and symlinks `~/.local/bin/cua-driver`. Linux desktops vary, so run `cua-driver doctor` after install to confirm the distro-specific prerequisites (display server, AT-SPI bus, ffmpeg).
 
 The bit that varies is **what accessibility / display tooling is pre-installed**:
 
@@ -163,15 +177,15 @@ The bit that varies is **what accessibility / display tooling is pre-installed**
 - **Arch / Manjaro** — minimal install; you'll likely need to explicitly install `at-spi2-core` and ensure `dbus-launch` runs as part of your session startup.
 - **Alpine / busybox-style** — slimmest of all; needs `dbus`, `dbus-x11`, `at-spi2-core` plus likely an explicit `dbus-launch --exit-with-session` wrapper.
 
-If `cua-driver doctor` is happy after install, you have a reasonable starting point for testing the pre-release backend.
+If `cua-driver doctor` is happy after install, you have a reasonable starting point for testing the Linux backend.
 
 ## Per-tool Linux implementation matrix
 
-See [`libs/cua-driver/rust/PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) for the per-tool Linux implementation matrix. Treat it as implementation tracking, not an official support certification; the backend remains pre-release until Linux testing and release coverage are complete.
+See [`libs/cua-driver/rust/PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) for the per-tool Linux implementation matrix. Treat it as the per-tool implementation matrix; native Wayland input and capture are the main area still maturing.
 
 ## See also
 
-- [Installation](/cua-driver/guide/getting-started/installation) — canonical one-liner that handles the Linux pre-release backend
+- [Installation](/cua-driver/guide/getting-started/installation) — canonical one-liner that handles the Linux backend
 - [Autostart](/cua-driver/guide/getting-started/autostart) — concept page (Windows-only verb family; Linux uses systemd)
 - [Process model](/cua-driver/guide/getting-started/process-model) — Linux has none of the macOS-TCC or Windows-Session-0 weirdness; this page explains what those problems are and why Linux sidesteps them
 - [`PARITY.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/PARITY.md) — per-tool platform implementation matrix

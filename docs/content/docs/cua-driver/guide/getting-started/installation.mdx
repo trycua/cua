@@ -1,19 +1,19 @@
 ---
 title: Installation
-description: Install Cua Driver on macOS, Windows, or the Linux pre-release backend
+description: Install Cua Driver on macOS, Windows, or the Linux backend
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Install Cua Driver with the command for your platform. macOS and Windows are the official install targets; Linux is available as a pre-release backend while platform testing is still in progress.
+Install Cua Driver with the command for your platform. macOS, Windows, and Linux are all supported install targets. (On Linux, native Wayland input and capture are opt-in and still maturing — see the [Linux guide](/cua-driver/guide/getting-started/linux).)
 
 | Platform          | Command                                                                                                             |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
 | macOS             | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
-| Linux pre-release | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
+| Linux | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"` |
 | Windows           | `irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 \| iex`                  |
 
-**macOS / Linux pre-release**
+**macOS / Linux**
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
@@ -27,7 +27,7 @@ irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/in
 
 On macOS, the installer drops `CuaDriver.app` into `/Applications` and symlinks the binary at `~/.local/bin/cua-driver`. The bundle is signed under `com.trycua.driver`, so TCC grants survive every release.
 
-On Linux, the pre-release backend installer downloads the release into `~/.cua-driver/packages/releases/`, retargets `~/.cua-driver/packages/current`, and symlinks `~/.local/bin/cua-driver`.
+On Linux, the Linux backend installer downloads the release into `~/.cua-driver/packages/releases/`, retargets `~/.cua-driver/packages/current`, and symlinks `~/.local/bin/cua-driver`.
 
 <Callout type="info">
   **Install home is `~/.cua-driver` on every platform.** Earlier `cua-driver-rs` releases (before
@@ -39,11 +39,12 @@ On Linux, the pre-release backend installer downloads the release into `~/.cua-d
   override is still honored for back-compat.
 </Callout>
 
-<Callout type="warn">
-  **Linux is pre-release.** Linux artifacts and install paths are published for early testing, but
-  Linux has not completed the same official release and platform validation pass as macOS and
-  Windows. Expect gaps, report issues, and avoid treating Linux as a supported production target
-  until it is promoted out of pre-release.
+<Callout type="info">
+  **Linux:** the backend targets X11 and runs the full tool surface — input, screenshots, and
+  recording — in the background. Native **Wayland** input and capture are opt-in
+  (`CUA_DRIVER_RS_ENABLE_WAYLAND=1`) and still maturing; on Wayland sessions the default path is
+  XWayland. Run `cua-driver doctor` for distro prerequisites (AT-SPI bus, ffmpeg). See the
+  [Linux guide](/cua-driver/guide/getting-started/linux).
 </Callout>
 
 On Windows, the installer downloads the release into `%USERPROFILE%\.cua-driver\packages\releases\`, retargets the `current` junction, and exposes `cua-driver.exe` through `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`.
@@ -67,7 +68,7 @@ The install runs **without sudo/admin**. On macOS and Linux the CLI symlink live
   changed.
 </Callout>
 
-Both canonical installers live under `libs/cua-driver/scripts/`. The shell installer covers macOS and the Linux pre-release backend; `install.ps1` covers Windows.
+Both canonical installers live under `libs/cua-driver/scripts/`. The shell installer covers macOS and the Linux backend; `install.ps1` covers Windows.
 
 The Windows installer auto-detects host architecture (x64 / arm64) via `[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture` and downloads the matching `cua-driver-rs-<v>-windows-{x86_64,arm64}.zip` from GitHub Releases.
 
@@ -462,7 +463,7 @@ release for them to recommend.
 | Platform          | Requirements                                                                                               |
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |
 | macOS             | macOS 14 (Sonoma) or later; Apple Silicon or Intel; Accessibility and Screen Recording grants.             |
-| Linux pre-release | x86_64 Linux desktop session; X11 or XWayland; AT-SPI for accessibility-tree tools.                        |
+| Linux | x86_64 Linux desktop session; X11 or XWayland; AT-SPI for accessibility-tree tools.                        |
 | Windows           | Windows 10/11 or Server with an interactive desktop session; PowerShell; UI Automation enabled by default. |
 
 Plan for roughly 50 MB for the app bundle or package directory, plus any retained old versions on Linux / Windows.
@@ -477,7 +478,7 @@ Most workflows benefit from a persistent daemon. Element-indexed workflows requi
 open -n -g -a CuaDriver --args serve
 ```
 
-**Linux pre-release**
+**Linux**
 
 ```bash
 cua-driver serve &

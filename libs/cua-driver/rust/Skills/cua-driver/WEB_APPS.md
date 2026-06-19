@@ -4,7 +4,8 @@
 > JavaScript bridges, and Chromium / WebKit / Electron / Tauri patterns
 > on macOS. For Windows web-app automation (Edge, Chrome with
 > PostMessage / WebView2), see `WINDOWS.md` → "Web apps on Windows". For
-> Linux: `LINUX.md` (BETA — limited browser automation today).
+> Linux: `LINUX.md` (the cross-platform `page` tool below uses AT-SPI
+> + CDP the same way).
 >
 > The `page` tool itself is **cross-platform** — Windows + Linux back
 > `get_text` / `query_dom` with UIA / AT-SPI respectively, and

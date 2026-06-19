@@ -1054,6 +1054,38 @@ impl Tool for TypeTextTool {
         }
         let text_len = text.chars().count();
 
+        // Prefer the focused widget — the element the user just clicked. If a
+        // NON-editable input holds keyboard focus (a spreadsheet cell, a
+        // terminal, a canvas), the focus-free AT-SPI editable search below would
+        // grab the wrong field (e.g. gnumeric's name box instead of the selected
+        // cell, or skip a terminal entirely), so synth-type into the focused
+        // widget instead: terminals via pty injection, everything else via
+        // XSendEvent to the focused window. A focused *editable* (Some(true)) or
+        // nothing focused (None) falls through to the existing AT-SPI-first flow.
+        let focus_kind = tokio::task::spawn_blocking(move || {
+            crate::atspi::focused_is_editable(pid).ok().flatten()
+        }).await.ok().flatten();
+        if focus_kind == Some(false) {
+            let text_f = text.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                if inject_terminal_input(pid, xid, &text_f)? {
+                    return Ok(());
+                }
+                // XTest (real input to the focused window), NOT XSendEvent: GTK/Qt
+                // drop synthetic key events, so a spreadsheet cell / canvas would
+                // stay empty. The click that gave this widget focus already put it
+                // under the X input focus, so XTest-to-focus lands correctly.
+                crate::input::send_type_text_xtest(&text_f)
+            }).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) into the focused widget."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // Try AT-SPI EditableText first (focus-free, works for Qt6/GTK4).
         let text_clone = text.clone();
         let atspi_result = tokio::task::spawn_blocking(move || {
@@ -2799,14 +2831,20 @@ impl Tool for CheckPermissionsTool {
             "X11 display: {}\nWayland: {}\nAT-SPI (D-Bus): {}\nXSendEvent injection: {}",
             if x11_ok { "✅ connected" } else { "❌ DISPLAY not set or X11 unavailable" },
             match &wayland_display {
-                Some(s) => format!("✅ native Wayland session (WAYLAND_DISPLAY={s})"),
+                Some(s) if crate::wayland::wayland_enabled() =>
+                    format!("✅ native Wayland session (WAYLAND_DISPLAY={s}) — experimental backend ENABLED"),
+                Some(s) => format!(
+                    "⚠️  native Wayland session (WAYLAND_DISPLAY={s}) — experimental backend OFF; \
+                     set {}=1 to enable it",
+                    crate::wayland::ENABLE_WAYLAND_ENV
+                ),
                 None => "❌ not a Wayland session".to_string(),
             },
             if atspi_ok { "✅ D-Bus session available" } else { "⚠️  D-Bus session not detected" },
             if x11_ok { "✅ available" } else { "❌ requires X11" }
         );
         ToolResult::text(status_text)
-            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "atspi": atspi_ok, "xsend_event": x11_ok }))
+            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "wayland_enabled": crate::wayland::wayland_enabled(), "atspi": atspi_ok, "xsend_event": x11_ok }))
     }
 }
 
@@ -2855,13 +2893,19 @@ impl Tool for SetConfigTool {
         SCFG_DEF.get_or_init(|| ToolDef {
             name: "set_config".into(),
             description: "Update cua-driver-rs configuration. capture_mode / \
-                max_image_dimension take effect immediately. The experimental_pip \
-                keys persist to ~/.cua-driver/config.json and apply on next \
+                max_image_dimension take effect immediately.\n\n\
+                Two input shapes (both accepted, matching Windows/Swift):\n\
+                - **{key, value}** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 800}` \
+                  — single leaf write.\n\
+                - **Legacy per-field**: `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}`.\n\n\
+                The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next \
                 daemon restart (the PiP backend is initialised once at startup; \
                 Linux ships only the trait stub today — see issue #1729).".into(),
             input_schema: json!({"type":"object","properties":{
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Default capture mode for get_window_state."},
-                "max_image_dimension":{"type":"integer","description":"Max dimension for screenshot resizing (0 = no limit)."},
+                "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
+                "value":{"description":"New value for `key`. JSON type depends on the key."},
+                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape. Default capture mode for get_window_state."},
+                "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
                 "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
             },"additionalProperties":false}),
@@ -2872,6 +2916,52 @@ impl Tool for SetConfigTool {
         use cua_driver_core::tool_args::ArgsExt;
         let mut cfg = self.state.config.write().unwrap();
         let mut parts = Vec::new();
+        // {key, value} shape (what the Swift/macOS and Windows callers send).
+        // Linux previously read only the legacy per-field keys below, so a
+        // `{"key":"max_image_dimension","value":800}` write was silently
+        // dropped (issue #1923). Dispatch on `key` to the same fields.
+        if let (Some(key), Some(val)) = (
+            args.get("key").and_then(|v| v.as_str()),
+            args.get("value"),
+        ) {
+            match key {
+                "capture_mode" => match val.as_str() {
+                    Some(s) => { cfg.capture_mode = s.to_owned(); parts.push(format!("capture_mode={s}")); }
+                    None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
+                },
+                "max_image_dimension" => match val.as_u64() {
+                    Some(n) => { cfg.max_image_dimension = n as u32; parts.push(format!("max_image_dimension={n}")); }
+                    None => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
+                },
+                "experimental_pip" => match val.as_bool() {
+                    Some(b) => {
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
+                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+                        }
+                        parts.push(format!("experimental_pip={b} (next restart)"));
+                    }
+                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
+                },
+                "experimental_pip_geometry" => match val.as_str() {
+                    Some(s) => {
+                        if pip_preview::PipGeometry::parse(s).is_none() {
+                            return ToolResult::error(format!(
+                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
+                            ));
+                        }
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
+                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+                        }
+                        parts.push(format!("experimental_pip_geometry={s} (next restart)"));
+                    }
+                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
+                },
+                other => return ToolResult::error(format!(
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                )),
+            }
+        }
+        // Legacy per-field shape.
         if let Some(mode) = args.opt_str("capture_mode") {
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;

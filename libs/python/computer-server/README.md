@@ -32,9 +32,15 @@ python -m computer_server
 # Or with custom port
 python -m computer_server --port 8080
 
+# Allow external access explicitly
+python -m computer_server --host 0.0.0.0
+
 # With resolution scaling (useful for Retina displays or VMs)
 python -m computer_server --width 1512 --height 982
 ```
+
+By default the server binds to `127.0.0.1`. Deployments that need access from
+other hosts should pass `--host 0.0.0.0` or another explicit interface.
 
 This provides:
 

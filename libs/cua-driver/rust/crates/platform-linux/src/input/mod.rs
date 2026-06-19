@@ -1433,6 +1433,48 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     Ok(())
 }
 
+/// Type `text` into whatever window currently holds X keyboard focus, using the
+/// XTest extension. Unlike [`send_type_text`] (synthetic XSendEvent, which GTK/Qt
+/// silently drop for key input), XTest injects *real* input events, so they
+/// actually reach the focused widget — a spreadsheet cell, a terminal, a canvas —
+/// that exposes no AT-SPI EditableText interface to fill. There is no window
+/// argument because XTest always delivers to the focused window; the caller
+/// focuses the target by clicking it first. `\n`/`\t` map to Return/Tab.
+pub fn send_type_text_xtest(text: &str) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, _) = RustConnection::connect(None)?;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    // Shift keycode (modifier index 0) for shifted characters.
+    let modmap = conn.get_modifier_mapping()?.reply()?;
+    let kpm = modmap.keycodes_per_modifier() as usize;
+    let shift_kc = modmap
+        .keycodes
+        .get(..kpm)
+        .and_then(|s| s.iter().copied().find(|&k| k != 0))
+        .unwrap_or(50);
+    for ch in text.chars() {
+        let cp = match ch {
+            '\n' => 0xff0d, // XK_Return
+            '\t' => 0xff09, // XK_Tab
+            c => c as u32,
+        };
+        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, cp) else {
+            continue;
+        };
+        if needs_shift {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+        }
+        conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+        if needs_shift {
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+        }
+        conn.flush()?;
+        sleep(Duration::from_millis(KEY_DELAY_MS));
+    }
+    Ok(())
+}
+
 /// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     let (conn, _) = RustConnection::connect(None)?;

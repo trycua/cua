@@ -714,8 +714,21 @@ async fn async_main() -> anyhow::Result<()> {
     let registry = Arc::new(build_registry(cursor_cfg));
     registry.init_self_weak();
     maybe_init_pip();
-    cua_driver_core::server::run(registry).await?;
-    Ok(())
+    let result = cua_driver_core::server::run(registry).await;
+    if let Err(e) = &result {
+        tracing::error!("MCP server error: {e}");
+    }
+
+    // The stdio MCP server loop has ended — the client disconnected (stdin
+    // EOF) or a fatal I/O error occurred. The cursor overlay runs on its own
+    // detached thread with an independent Win32 message loop (and we raised the
+    // multimedia timer resolution via `timeBeginPeriod`), so simply returning
+    // is not guaranteed to tear it down promptly: that thread is never joined
+    // and would otherwise keep its render loop alive as an orphan, accumulating
+    // CPU after the client is gone (issue #1808). Force a clean process exit so
+    // the overlay thread dies with us the moment the transport closes — mirrors
+    // the macOS `std::process::exit(0)` after `server::run`.
+    std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
 // ── Registry builder (non-macOS) ──────────────────────────────────────────

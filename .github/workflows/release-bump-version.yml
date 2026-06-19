@@ -261,6 +261,31 @@ jobs:
           fi
           bump2version $CONFIG_FLAG ${{ inputs.bump_type }}
 
+      - name: Sync Cargo.lock into the cua-driver-rs bump commit
+        # bump2version edits only `[workspace.package] version` in Cargo.toml,
+        # leaving Cargo.lock's workspace-member versions stale. The next plain
+        # `cargo build` anyone runs then re-locks them and diverges from the
+        # committed lockfile — which used to break the nix build's cargoHash.
+        # Re-lock the members now and fold the change into the bump commit so the
+        # lockfile never ships out of sync with the manifest. (cargo is
+        # preinstalled on ubuntu runners; `--workspace` touches members only, not
+        # registry deps, so this never silently bumps dependencies.)
+        if: ${{ inputs.service == 'cua-driver-rs' }}
+        run: |
+          cd ${{ steps.package.outputs.directory }}
+          cargo update --workspace
+          if ! git diff --quiet Cargo.lock; then
+            TAG=$(git tag --points-at HEAD | head -1)
+            git add Cargo.lock
+            git commit --amend --no-edit
+            # bump2version tagged the pre-amend commit; move the tag onto the
+            # amended commit so the release pipeline builds the synced lockfile.
+            [ -n "$TAG" ] && git tag -f "$TAG" HEAD
+            echo "Re-locked Cargo.lock and moved tag ${TAG:-<none>} to the amended bump commit."
+          else
+            echo "Cargo.lock already in sync; nothing to fold in."
+          fi
+
       - name: Collect created tag
         id: collect_tags
         run: |

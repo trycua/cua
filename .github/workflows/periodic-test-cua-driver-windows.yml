@@ -17,7 +17,6 @@ on:
   pull_request:
     paths:
       - examples/sandboxes/test_windows_cloud_driver.py
-      - examples/sandboxes/fixtures/calculator-2plus2/**
       - .github/workflows/periodic-test-cua-driver-windows.yml
       - .github/workflows/build-cua-driver-windows.yml
 
@@ -80,7 +79,6 @@ jobs:
           CUA_LOG_LEVEL: DEBUG
           DRIVER_EXE: ${{ github.workspace }}/driver-bin/cua-driver.exe
           DRIVER_UIA_EXE: ${{ github.workspace }}/driver-bin/cua-driver-uia.exe
-          TRAJECTORY_DIR: ${{ github.workspace }}/examples/sandboxes/fixtures/calculator-2plus2
           SCREENSHOT_OUT: ${{ github.workspace }}/screenshot.png
           RESULT_JSON: ${{ github.workspace }}/result.json
         run: >-

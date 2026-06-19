@@ -7,25 +7,23 @@ cloud VM boots). This one exercises the **cua-driver built from source on
     1. provision an ephemeral Windows cloud VM   Sandbox.ephemeral(Image.windows("11"))
     2. push the freshly-built cua-driver onto it  sb.files.upload(...)
     3. start the driver daemon                    cua-driver serve  (detached)
-    4. replay a PRE-PROVIDED trajectory           cua-driver call replay_trajectory
-       that opens Calculator and computes 2 + 2
+    4. drive Windows Calculator to compute 2 + 2  launch_app -> Invoke the UWP
+       buttons by UIA element_index -> read the result from the UIA tree
     5. screenshot the result + write result.json  (the workflow uploads the
        screenshot to S3 and posts the outcome to am.cua.ai)
 
-The trajectory is a *pre-provided* asset committed at
-``examples/sandboxes/fixtures/calculator-2plus2/`` (the ``trajectories/`` dir is
-gitignored as generated output, so the committed fixture lives under
-``fixtures/``). It must use
-keyboard/pixel actions — ``element_index`` values are per-session and do NOT
-survive replay (see ``libs/cua-driver/rust/Skills/cua-driver/RECORDING.md``).
-Until a real recording (with ``session.json``) is committed there, this test
-skips the replay rather than failing.
+Why drive **inline** instead of replaying a recorded trajectory?
+``cua-driver`` recording is currently **macOS-only** (the Windows port returns
+"not yet supported"), so a Windows trajectory can't be recorded and replayed.
+And UWP apps (Win11 Calculator) **ignore PostMessage clicks**, so buttons are
+invoked by UIA ``element_index`` (the documented reliable path) rather than by
+pixel clicks or keystrokes. See
+``libs/cua-driver/rust/Skills/cua-driver/WINDOWS.md``.
 
 Env (all optional except CUA_API_KEY):
     CUA_API_KEY      cloud provisioning key (CI reuses PERIODIC_TEST_CUA_API_KEY)
     DRIVER_EXE       host path to the built cua-driver.exe      (default driver-bin/cua-driver.exe)
     DRIVER_UIA_EXE   host path to the built cua-driver-uia.exe  (default driver-bin/cua-driver-uia.exe)
-    TRAJECTORY_DIR   host path to the committed trajectory dir
     SCREENSHOT_OUT   where to write the result screenshot        (default ./screenshot.png)
     RESULT_JSON      where to write the result summary           (default ./result.json)
 """
@@ -56,7 +54,9 @@ CALC_AUMID = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
 GUEST_DIR = r"C:\cua"
 GUEST_DRIVER = r"C:\cua\cua-driver.exe"
 GUEST_UIA = r"C:\cua\cua-driver-uia.exe"
-GUEST_TRAJ = r"C:\cua\traj"
+# UIA accessible names of the Win11 Calculator buttons we Invoke to enter 2 + 2 =.
+# Keyboard input is unreliable on UWP, so we click the buttons by element_index.
+CALC_BUTTONS = ["Two", "Plus", "Two", "Equals"]
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -74,28 +74,22 @@ def _driver_paths() -> tuple[Path, Path]:
     )
 
 
-def _trajectory_dir() -> Path:
-    return Path(_env("TRAJECTORY_DIR", "examples/sandboxes/fixtures/calculator-2plus2"))
+def _ok(res) -> bool:
+    return bool(getattr(res, "success", False))
 
 
-def _trajectory_ready(traj: Path) -> bool:
-    # A real cua-driver trajectory always has a session.json at its root; the
-    # README placeholder alone does not count as "provided".
-    return traj.is_dir() and (traj / "session.json").is_file()
-
-
-def _trajectory_files(traj: Path) -> list[Path]:
-    return [p for p in traj.rglob("*") if p.is_file() and p.name != "README.md"]
+def _out(res) -> str:
+    return getattr(res, "stdout", "") or ""
 
 
 async def _run(sb, cmd: str):
     logger.info("guest$ %s", cmd)
     res = await sb.shell.run(cmd)
     logger.info(
-        "  -> success=%s rc=%s stdout=%r stderr=%r",
+        "  -> success=%s rc=%s\n     stdout=%s\n     stderr=%s",
         getattr(res, "success", None),
         getattr(res, "returncode", None),
-        (getattr(res, "stdout", "") or "")[:400],
+        _out(res)[:800],
         (getattr(res, "stderr", "") or "")[:400],
     )
     return res
@@ -122,18 +116,35 @@ async def _driver_call(sb, tool: str, args: dict):
     )
 
 
-def _parse_json_stdout(stdout: str):
-    stdout = stdout or ""
-    try:
-        return json.loads(stdout)
-    except Exception:  # noqa: BLE001 - fall back to a bracket slice
-        start, end = stdout.find("{"), stdout.rfind("}")
-        if 0 <= start < end:
-            try:
-                return json.loads(stdout[start : end + 1])
-            except Exception:  # noqa: BLE001
-                return None
-        return None
+def _find_calc_window(stdout: str) -> tuple[int | None, int | None]:
+    """Parse (pid, window_id) of the Calculator window from list_windows output.
+
+    list_windows prints one line per window:
+        - <app> (pid 6004) "Calculator" [window_id: 459672]
+    """
+    for line in stdout.splitlines():
+        low = line.lower()
+        if "calculator" in low and "window_id" in low:
+            m = re.search(r"pid\s+(\d+).*?window_id:\s*(\d+)", line)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+    return None, None
+
+
+def _element_index(tree: str, name: str) -> int | None:
+    """Find the UIA element_index whose accessible name is exactly ``name``.
+
+    get_window_state renders each node as e.g. ``[12] Button "Two"``.
+    """
+    m = re.search(rf'\[(\d+)\][^\n"]*"{re.escape(name)}"', tree)
+    return int(m.group(1)) if m else None
+
+
+def _display_value(stdout: str) -> str | None:
+    """Read the Calculator result. Win11 Calculator names its display element
+    ``Display is <value>`` in the UIA tree (a Calculator string, not a driver one)."""
+    m = re.search(r"Display is ([^\"\n]+)", stdout)
+    return m.group(1).strip() if m else None
 
 
 @pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
@@ -142,19 +153,18 @@ async def test_windows_cloud_driver():
     if not exe.is_file():
         pytest.skip(f"driver binary not found at {exe} — build it or set DRIVER_EXE")
 
-    traj = _trajectory_dir()
-    if not _trajectory_ready(traj):
-        pytest.skip(
-            f"no pre-provided trajectory at {traj} (missing session.json) — "
-            "commit the recorded trajectory before this test can replay it"
-        )
-    traj_files = _trajectory_files(traj)
-
     screenshot_out = Path(_env("SCREENSHOT_OUT", "screenshot.png"))
     result_json = Path(_env("RESULT_JSON", "result.json"))
     screenshot_out.parent.mkdir(parents=True, exist_ok=True)
     result_json.parent.mkdir(parents=True, exist_ok=True)
-    result: dict = {"passed": False, "replayed": False, "display": None, "error": None}
+    result: dict = {
+        "passed": False,
+        "launched": False,
+        "uia_elements": 0,
+        "clicked": False,
+        "display": None,
+        "error": None,
+    }
 
     t0 = time.monotonic()
     logger.info("Creating ephemeral Windows cloud VM (windows 11, kind=vm)")
@@ -169,62 +179,81 @@ async def test_windows_cloud_driver():
                 time.monotonic() - t0,
             )
             try:
-                # 1. push the freshly-built driver + the pre-provided trajectory
+                # 1. push the freshly-built driver onto the VM
                 await _run(sb, _ps(f"New-Item -ItemType Directory -Force -Path '{GUEST_DIR}' | Out-Null"))
                 await sb.files.upload(str(exe), GUEST_DRIVER)
                 if uia.is_file():
                     await sb.files.upload(str(uia), GUEST_UIA)
-                for f in traj_files:
-                    rel = str(f.relative_to(traj)).replace("/", "\\")
-                    guest = f"{GUEST_TRAJ}\\{rel}"
-                    parent = guest.rsplit("\\", 1)[0]
-                    await _run(sb, _ps(f"New-Item -ItemType Directory -Force -Path '{parent}' | Out-Null"))
-                    await sb.files.upload(str(f), guest)
 
-                # 2. sanity: the binary runs in-guest
+                # 2. the binary runs on Windows
                 ver = await _run(sb, f'"{GUEST_DRIVER}" --version')
-                assert getattr(ver, "success", False), f"cua-driver --version failed: {ver.stderr}"
+                assert _ok(ver), f"cua-driver --version failed: {_out(ver)} {getattr(ver, 'stderr', '')}"
 
-                # 3. start the daemon detached in the interactive session
+                # 3. start the daemon detached in the interactive session, poll status
                 await _run(sb, _ps(f"Start-Process -FilePath '{GUEST_DRIVER}' -ArgumentList 'serve' -WindowStyle Hidden"))
                 up = False
                 for _ in range(30):
-                    s = await _run(sb, f'"{GUEST_DRIVER}" status')
-                    if getattr(s, "success", False):
+                    if _ok(await _run(sb, f'"{GUEST_DRIVER}" status')):
                         up = True
                         break
                     await asyncio.sleep(2)
                 assert up, "cua-driver daemon did not come up"
+                # diagnostics: session id (must be >=1 for UIA), COM/UIA reachability
+                await _run(sb, f'"{GUEST_DRIVER}" doctor')
 
-                # 4. replay the pre-provided trajectory (opens Calculator, 2 + 2)
-                rep = await _driver_call(sb, "replay_trajectory", {"dir": GUEST_TRAJ, "delay_ms": 500})
-                result["replayed"] = bool(getattr(rep, "success", False))
-                assert result["replayed"], f"replay_trajectory failed: {rep.stderr or rep.stdout}"
+                # 4. launch the UWP Calculator via the driver (no focus steal)
+                la = await _driver_call(sb, "launch_app", {"aumid": CALC_AUMID})
+                assert _ok(la), f"launch_app failed: {_out(la)}"
+                result["launched"] = True
 
-                # 5. best-effort verification of the result via the UIA tree
-                try:
-                    la = await _driver_call(sb, "launch_app", {"aumid": CALC_AUMID})
-                    meta = _parse_json_stdout(getattr(la, "stdout", "")) or {}
-                    pid = meta.get("pid")
-                    wins = meta.get("windows") or []
-                    wid = wins[0].get("window_id") if wins else None
+                # 5. resolve the Calculator window (pid + HWND) via list_windows
+                pid = wid = None
+                for _ in range(15):
+                    lw = await _driver_call(sb, "list_windows", {})
+                    pid, wid = _find_calc_window(_out(lw))
                     if pid and wid:
-                        ws = await _driver_call(sb, "get_window_state", {"pid": pid, "window_id": wid})
-                        m = re.search(r"Display is ([^\n\"]+)", getattr(ws, "stdout", "") or "")
-                        if m:
-                            result["display"] = m.group(1).strip()
-                except Exception as e:  # noqa: BLE001 - verification is best-effort
-                    logger.warning("display verification skipped: %s", e)
+                        break
+                    await asyncio.sleep(2)
+                assert pid and wid, "Calculator window did not appear in list_windows"
 
-                # 6. screenshot for the notification
+                # 6. snapshot the UIA tree (proves UIA enumeration works) + find buttons
+                ws = await _driver_call(sb, "get_window_state", {"pid": pid, "window_id": wid})
+                assert _ok(ws), f"get_window_state failed: {_out(ws)}"
+                m = re.search(r"elements=(\d+)", _out(ws))
+                result["uia_elements"] = int(m.group(1)) if m else 0
+                assert result["uia_elements"] > 0, f"empty UIA tree: {_out(ws)[:500]}"
+                tree = _out(ws)
+
+                # 7. compute 2 + 2 by Invoking the buttons by element_index (UWP-safe).
+                #    Indices come from the single snapshot above; Calculator's button
+                #    grid is static, so they stay valid across the clicks.
+                for name in CALC_BUTTONS:
+                    idx = _element_index(tree, name)
+                    assert idx is not None, f'Calculator button "{name}" not found in UIA tree'
+                    ck = await _driver_call(sb, "click", {"pid": pid, "window_id": wid, "element_index": idx})
+                    assert _ok(ck), f"click {name}[{idx}] failed: {_out(ck)}"
+                    await asyncio.sleep(0.3)
+                result["clicked"] = True
+
+                # 8. read the result back from the UIA tree
+                disp = None
+                for _ in range(5):
+                    ds = await _driver_call(sb, "get_window_state", {"pid": pid, "window_id": wid, "query": "Display"})
+                    disp = _display_value(_out(ds))
+                    if disp:
+                        break
+                    await asyncio.sleep(1)
+                result["display"] = disp
+
+                # 9. screenshot for the notification
                 png = await sb.screenshot()
                 screenshot_out.write_bytes(png)
                 assert png[:4] == b"\x89PNG", f"screenshot not PNG: {png[:4]!r}"
 
-                disp = result["display"]
-                result["passed"] = result["replayed"] and (disp is None or disp.endswith("4"))
-                if disp is not None:
-                    assert disp.endswith("4"), f"calculator display was {disp!r}, expected to end with 4"
+                # 10. verify the arithmetic landed
+                assert disp is not None, "could not read the Calculator display from the UIA tree"
+                assert disp.endswith("4"), f"calculator display was {disp!r}, expected to end with 4"
+                result["passed"] = True
             except Exception as e:  # noqa: BLE001
                 result["error"] = f"{type(e).__name__}: {e}"
                 # best-effort screenshot so the notification still has a picture

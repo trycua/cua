@@ -271,7 +271,7 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
   </Tab>
   <Tab value="TypeScript">
 
-    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+    <Tabs items={['Cloud Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
         Set your Cua API key (same key used for model inference):
         ```bash
@@ -282,46 +282,17 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
         ```typescript
         import { Computer, OSType } from '@trycua/computer';
 
+        const apiKey = process.env.CUA_API_KEY;
+        if (!apiKey) {
+          throw new Error("CUA_API_KEY is required");
+        }
+
         const computer = new Computer({
+          apiKey,
           osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
           name: "your-sandbox-name"  // from CLI or website
         });
         await computer.run(); // Connect to the sandbox
-        ```
-      </Tab>
-      <Tab value="Linux on Docker">
-        ```typescript
-        import { Computer, OSType, ProviderType } from '@trycua/computer';
-
-        const computer = new Computer({
-          osType: OSType.LINUX,
-          providerType: ProviderType.DOCKER,
-          image: "trycua/cua-xfce:latest"  // or "trycua/cua-ubuntu:latest"
-        });
-        await computer.run(); // Launch & connect to the sandbox
-        ```
-      </Tab>
-      <Tab value="macOS Sandbox">
-        ```typescript
-        import { Computer, OSType, ProviderType } from '@trycua/computer';
-
-        const computer = new Computer({
-          osType: OSType.MACOS,
-          providerType: ProviderType.LUME,
-          name: "macos-sequoia-cua:latest"
-        });
-        await computer.run(); // Launch & connect to the sandbox
-        ```
-      </Tab>
-      <Tab value="Windows Sandbox">
-        ```typescript
-        import { Computer, OSType, ProviderType } from '@trycua/computer';
-
-        const computer = new Computer({
-          osType: OSType.WINDOWS,
-          providerType: ProviderType.WINDOWS_SANDBOX
-        });
-        await computer.run(); // Launch & connect to the sandbox
         ```
       </Tab>
       <Tab value="Your host desktop">
@@ -331,17 +302,19 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
         python -m computer_server
         ```
 
-        Then, use the `Computer` object to connect:
+        The TypeScript SDK does not expose `useHostComputerServer`. Connect to the local
+        `computer_server` with the interface class for your host OS:
         ```typescript
-        import { Computer } from '@trycua/computer';
+        import { MacOSComputerInterface } from '@trycua/computer';
+        // Use LinuxComputerInterface or WindowsComputerInterface on those hosts.
 
-        const computer = new Computer({ useHostComputerServer: true });
-        await computer.run(); // Connect to the host desktop
+        const computer = new MacOSComputerInterface("localhost");
+        await computer.waitForReady(); // Connect to the host desktop
         ```
       </Tab>
     </Tabs>
 
-    Once connected, you can perform interactions:
+    For cloud sandbox `Computer` instances, perform interactions through `computer.interface`:
     ```typescript
     try {
       // Take a screenshot of the computer's current display
@@ -355,10 +328,25 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
     }
     ```
 
+    For host desktop interfaces, call the same methods directly:
+    ```typescript
+    try {
+      const screenshot = await computer.screenshot();
+      await computer.leftClick(100, 100);
+      await computer.typeText("Hello!");
+    } finally {
+      computer.disconnect();
+    }
+    ```
+
   </Tab>
 </Tabs>
 
 ## Common Operations
+
+TypeScript examples below use the cloud `Computer` shape. If you connected with a host desktop
+interface, call the same TypeScript methods directly on `computer`, such as
+`await computer.screenshot()` or `await computer.leftClick(x, y)`.
 
 | Operation    | Python                                          | TypeScript                                      |
 | ------------ | ----------------------------------------------- | ----------------------------------------------- |
@@ -367,8 +355,8 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
 | Right click  | `await computer.interface.right_click(x, y)`    | `await computer.interface.rightClick(x, y)`     |
 | Double click | `await computer.interface.double_click(x, y)`   | `await computer.interface.doubleClick(x, y)`    |
 | Type text    | `await computer.interface.type_text("text")`    | `await computer.interface.typeText("text")`     |
-| Press key    | `await computer.interface.key("Enter")`         | `await computer.interface.key("Enter")`         |
-| Scroll       | `await computer.interface.scroll(x, y, clicks)` | `await computer.interface.scroll(x, y, clicks)` |
+| Press key    | `await computer.interface.key("Enter")`         | `await computer.interface.pressKey("Enter")`    |
+| Scroll       | `await computer.interface.scroll(x, y, clicks)` | `await computer.interface.scroll(x, y)`         |
 
 ## Lifecycle Methods
 

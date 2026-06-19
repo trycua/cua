@@ -35,7 +35,7 @@ jobs:
     uses: ./.github/workflows/build-cua-driver-windows.yml
 
   smoke:
-    name: Provision Windows + replay trajectory
+    name: Provision Windows + drive Calculator (2+2)
     needs: build-driver
     runs-on: ubuntu-latest
     timeout-minutes: 35

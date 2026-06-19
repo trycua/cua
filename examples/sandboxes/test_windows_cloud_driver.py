@@ -169,10 +169,10 @@ async def test_windows_cloud_driver():
     t0 = time.monotonic()
     logger.info("Creating ephemeral Windows cloud VM (windows 11, kind=vm)")
     try:
-        async with Sandbox.ephemeral(
-            Image.windows("11"),
-            name=f"cua-driver-win-{os.environ.get('GITHUB_RUN_ID', 'local')}",
-        ) as sb:
+        # No name= : like the Linux test, let the cloud transport create the VM
+        # and resolve its name. Passing name= switches to attach-to-existing mode
+        # (GET /vms/<name>) and 404s because nothing created it yet.
+        async with Sandbox.ephemeral(Image.windows("11")) as sb:
             logger.info(
                 "VM ready: name=%s in %.1fs",
                 getattr(sb, "name", "unknown"),

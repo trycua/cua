@@ -42,9 +42,12 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Checkout
+        # Default ref = the triggering revision: the PR head on pull_request runs
+        # (so workflow/test changes are actually exercised) and main on
+        # schedule/dispatch. An explicit `ref: main` skipped the PR's own changes
+        # — and on the introducing PR the test file didn't yet exist on main, so
+        # the run errored.
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Download driver binaries
         uses: actions/download-artifact@v4
@@ -52,7 +55,11 @@ jobs:
           name: cua-driver-windows-x86_64
           path: driver-bin
 
+      # Screenshot upload + alerts run only on scheduled/dispatch runs. PR runs
+      # skip them: the OIDC role isn't assumable from PRs, and PR runs skip the
+      # replay (no trajectory fixture yet) so there's no screenshot to publish.
       - name: Configure AWS Credentials via OIDC
+        if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::296062593712:role/github-actions-cua-driver-windows
@@ -92,7 +99,7 @@ jobs:
 
       - name: Upload screenshot to S3 + presign
         id: s3
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         shell: bash
         run: |
           if [ -f screenshot.png ]; then
@@ -106,6 +113,9 @@ jobs:
 
       # Post the outcome to am.cua.ai -> #notifications. PR runs stay quiet
       # (they still publish the artifact); only scheduled/dispatch runs notify.
+      # curl keeps the Linux test's fire-and-forget shape (no --fail, so a flaky
+      # alert endpoint can't flip a green run red / double-page) but adds
+      # timeouts + retries so a transient blip self-heals instead of hanging.
       - name: Notify am.cua.ai (success)
         if: success() && github.event_name != 'pull_request'
         shell: bash
@@ -113,7 +123,8 @@ jobs:
           IMAGE_URL: ${{ steps.s3.outputs.image_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+          curl -s --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 \
+            -X POST https://am.cua.ai/api/v2/alerts \
             -H 'Content-Type: application/json' \
             -d "[{
               \"labels\": {
@@ -137,7 +148,8 @@ jobs:
           IMAGE_URL: ${{ steps.s3.outputs.image_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+          curl -s --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 5 \
+            -X POST https://am.cua.ai/api/v2/alerts \
             -H 'Content-Type: application/json' \
             -d "[{
               \"labels\": {

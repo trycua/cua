@@ -70,13 +70,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # S3 publish gives ad-hoc/scheduled builds a grabbable presigned URL. Skip
+      # it on PRs: the OIDC role isn't assumable from PR runs, and when the smoke
+      # test reuses this build it consumes the uploaded artifact, not S3.
       - name: Configure AWS Credentials via OIDC
+        if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::296062593712:role/github-actions-cua-driver-windows
           aws-region: us-west-2
 
       - name: Publish build to S3 + presign
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           PREFIX="cua-driver-windows/builds/${{ github.run_id }}-${{ github.run_attempt }}"

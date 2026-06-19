@@ -152,6 +152,8 @@ async def test_windows_cloud_driver():
 
     screenshot_out = Path(_env("SCREENSHOT_OUT", "screenshot.png"))
     result_json = Path(_env("RESULT_JSON", "result.json"))
+    screenshot_out.parent.mkdir(parents=True, exist_ok=True)
+    result_json.parent.mkdir(parents=True, exist_ok=True)
     result: dict = {"passed": False, "replayed": False, "display": None, "error": None}
 
     t0 = time.monotonic()

@@ -3,7 +3,7 @@
 This directory holds a cua-driver **trajectory** that the Windows smoke test
 (`examples/sandboxes/test_windows_cloud_driver.py`) replays via
 
-```
+```text
 cua-driver call replay_trajectory {"dir": "C:\\cua\\traj", "delay_ms": 500}
 ```
 
@@ -18,7 +18,7 @@ CI stays green before the asset is supplied).
 
 ## Expected layout
 
-```
+```text
 calculator-2plus2/
   session.json
   turn-00001/

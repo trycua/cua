@@ -30,9 +30,8 @@ fn screen_recording_capturable() -> bool {
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
 /// process* (the LaunchServices launching app), not the executable path.
 /// So `check_permissions` answered in-process reflects:
-///   - the **CuaDriver daemon** (`com.trycua.driver`) when we're the bundle
-///     binary reparented to launchd (ppid == 1) — the real driver status;
-///     this is the forced bundle/daemon path.
+///   - the **CuaDriver daemon** (`com.trycua.driver`) when this process is
+///     its own responsible process — the real driver status.
 ///   - the **calling app** otherwise — e.g. the terminal/IDE that spawned
 ///     `cua-driver call …`. That grant is NOT the driver's, which is why a
 ///     standalone check can read `true` while `tccutil … com.trycua.driver`
@@ -45,14 +44,17 @@ fn permission_source() -> serde_json::Value {
         .and_then(|p| std::fs::canonicalize(p).ok())
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_default();
+    let disclaimed =
+        std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
     let is_driver_daemon =
-        exe.contains("/CuaDriver.app/Contents/MacOS/") && ppid == 1;
+        (exe.contains("/CuaDriver.app/Contents/MacOS/") && ppid == 1) || disclaimed;
 
     let (attribution, note) = if is_driver_daemon {
         (
             "driver-daemon",
             "These booleans reflect the CuaDriver daemon's own TCC identity \
-             (com.trycua.driver) — the process that does the work.",
+             (com.trycua.driver) because this process is its own responsible \
+             process.",
         )
     } else {
         (
@@ -162,5 +164,28 @@ impl Tool for CheckPermissionsTool {
                 "screen_recording_capturable": screen_recording_capturable,
                 "source":                      source,
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_source_reports_driver_daemon_when_disclaimed() {
+        let name = cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV;
+        let original = std::env::var_os(name);
+
+        std::env::set_var(name, "1");
+        let source = permission_source();
+        assert_eq!(
+            source.get("attribution").and_then(|v| v.as_str()),
+            Some("driver-daemon")
+        );
+
+        match original {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
     }
 }

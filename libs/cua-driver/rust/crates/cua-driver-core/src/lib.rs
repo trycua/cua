@@ -10,6 +10,8 @@
 //! - Each request has `jsonrpc: "2.0"`, `id` (any), `method`, optional `params`
 //! - Notifications (no `id`) are silently ignored
 
+pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
+
 pub mod cdp;
 pub mod element_cache;
 pub mod ffmpeg_install;

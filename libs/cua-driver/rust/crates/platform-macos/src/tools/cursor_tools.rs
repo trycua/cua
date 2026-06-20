@@ -11,32 +11,38 @@ use std::sync::Arc;
 
 use super::ToolState;
 
-/// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
-/// by declaring a `session`; without one, every cursor op short-circuits on this
-/// empty key (see `overlay::send_command` / `CursorRegistry`).
-pub(crate) const NO_CURSOR: &str = "";
-
-/// Resolve the cursor key for a tool invocation, or [`NO_CURSOR`] (`""`) for an
-/// anonymous call.
+/// Resolve the cursor key for a tool invocation. Always returns a non-empty
+/// key, so the agent cursor is shown by default.
 ///
-/// A cursor is tied to a **caller-declared session**, never to the MCP
-/// connection. Precedence: an explicit `session` arg, then its legacy alias
-/// `cursor_id`. We deliberately do NOT fall back to the connection-injected
-/// `_session_id` (the recording/config lifecycle fallback) or to a seeded
-/// `"default"` cursor — so `""` means "no session declared → no cursor", while
-/// the underlying action (click/type/…) still executes. The same id works
-/// identically over MCP, the CLI (`--session`), or the raw socket, and follows
-/// the run across any number of apps/windows.
+/// Precedence: an explicit `session` arg, then its legacy alias `cursor_id`,
+/// then the connection-injected `_session_id` the daemon mirrors onto every
+/// call, then a stable per-daemon fallback ([`default_cursor_session`]). So a
+/// caller that never declares a session still gets a consistent cursor for the
+/// run (e.g. raw CLI `call`s). The same id works identically over MCP, the CLI
+/// (`--session`), or the raw socket, and follows the run across any number of
+/// apps/windows. Opt out per session with `set_agent_cursor_enabled`.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     use cua_driver_core::tool_args::ArgsExt;
-    for key in ["session", "cursor_id"] {
+    // Explicit cursor identity first (`session`, or its legacy `cursor_id` alias),
+    // then the per-run `_session_id` the daemon mirrors onto every call, then a
+    // stable per-daemon fallback. So the agent cursor is shown by DEFAULT with an
+    // id that stays consistent across a run, even when the caller never declared a
+    // session (e.g. raw CLI `call`s). Opt out per session with set_agent_cursor_enabled.
+    for key in ["session", "cursor_id", "_session_id"] {
         if let Some(v) = args.opt_str(key) {
             if !v.is_empty() {
                 return v;
             }
         }
     }
-    NO_CURSOR.to_owned()
+    default_cursor_session()
+}
+
+/// Stable per-daemon cursor session, minted once per `serve` process. Used when a
+/// call carries no session identity at all, so every such call shares one cursor.
+fn default_cursor_session() -> String {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| format!("auto-{:x}", std::process::id())).clone()
 }
 
 // ── SetAgentCursorEnabled ─────────────────────────────────────────────────────
@@ -517,17 +523,21 @@ impl Tool for GetAgentCursorStateTool {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_cursor_key, NO_CURSOR};
+    use super::resolve_cursor_key;
     use serde_json::json;
 
     #[test]
-    fn anonymous_resolves_to_no_cursor() {
-        // No session/cursor_id declared → NO_CURSOR (""): the action still runs
-        // but no cursor is shown. The connection-injected `_session_id` is NOT a
-        // cursor source anymore (it stays the recording/config lifecycle key).
-        assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
-        assert_eq!(resolve_cursor_key(&json!({ "x": 1 })), NO_CURSOR);
-        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), NO_CURSOR);
+    fn anonymous_defaults_to_a_stable_cursor_session() {
+        // No session/cursor_id declared → a stable per-daemon "auto-…" cursor
+        // session (never the empty key), so the agent cursor shows by default.
+        // The id is consistent across calls within the process.
+        let a = resolve_cursor_key(&json!({}));
+        let b = resolve_cursor_key(&json!({ "x": 1 }));
+        assert!(a.starts_with("auto-"), "got {a}");
+        assert_ne!(a, "");
+        assert_eq!(a, b, "the anonymous default must stay the same across calls");
+        // The minted per-run `_session_id` now DOES drive the cursor (consistent run id).
+        assert_eq!(resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })), "mcp-1-2");
     }
 
     #[test]
@@ -608,15 +618,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_strings_fall_through_to_no_cursor() {
-        // An empty `session` falls through to `cursor_id`; both empty → NO_CURSOR.
+    fn empty_strings_fall_through_to_the_default_cursor() {
+        // An empty `session` falls through to `cursor_id`; both empty → the stable
+        // per-daemon default (never the empty key, so a cursor is still shown).
         assert_eq!(
             resolve_cursor_key(&json!({ "session": "", "cursor_id": "c1" })),
             "c1"
         );
-        assert_eq!(
-            resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })),
-            NO_CURSOR
-        );
+        let both_empty = resolve_cursor_key(&json!({ "session": "", "cursor_id": "" }));
+        assert!(both_empty.starts_with("auto-"), "got {both_empty}");
+        assert_ne!(both_empty, "");
     }
 }

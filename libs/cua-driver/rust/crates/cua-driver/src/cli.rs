@@ -1533,8 +1533,8 @@ pub fn run_permissions_cmd(
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
 /// process*, so the ONLY process that can read `com.trycua.driver`'s real
-/// grants is the bundle daemon (launched via LaunchServices, reparented to
-/// launchd). When the daemon is up we query it and report its
+/// grants is the daemon running as its own responsible process. When the
+/// daemon is up we query it and report its
 /// `driver-daemon`-attributed answer. When it is NOT up we deliberately
 /// report `unknown` rather than fall back to an in-process check — that
 /// fallback would report the *calling terminal's* grants and could print
@@ -1559,12 +1559,11 @@ fn run_permissions_status(json: bool) {
             .filter(|r| r.ok)
             .and_then(|r| r.result)
             .and_then(|res| res.get("structuredContent").cloned())
-            // Trust the booleans ONLY when the answering process is the launchd
-            // bundle daemon (`driver-daemon`). A daemon spawned from a terminal
-            // (`cua-driver serve` by hand) answers with `caller` attribution —
-            // those are the terminal's grants, not the driver's, so we discard
-            // them and fall through to `unknown` rather than report a false
-            // `granted`. A missing `source` (non-macOS, no TCC) is trusted as-is.
+            // Trust the booleans ONLY when the answering daemon is its own
+            // responsible process (`driver-daemon`). Otherwise those grants
+            // belong to the launching app, so we discard them and fall through
+            // to `unknown`. A missing `source` (non-macOS, no TCC) is trusted
+            // as-is.
             .filter(|s| {
                 s.get("source")
                     .and_then(|src| src.get("attribution"))

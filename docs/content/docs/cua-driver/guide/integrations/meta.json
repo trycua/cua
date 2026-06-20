@@ -1,0 +1,7 @@
+{
+  "title": "Integrations",
+  "description": "Wire cua-driver into MCP clients and other agent harnesses",
+  "icon": "Plug",
+  "defaultOpen": false,
+  "pages": ["mcp-clients"]
+}

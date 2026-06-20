@@ -169,8 +169,8 @@ pub fn init(cfg: CursorConfig) {
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // Empty key = anonymous (no session declared) → no cursor. Drop the command
-    // so a cursor-less run never paints. See cursor_tools::NO_CURSOR.
+    // Empty key is the explicit no-cursor sentinel → drop the command so a
+    // cursor-less run never paints.
     if key.is_empty() {
         return;
     }
@@ -290,7 +290,7 @@ fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
-    // Empty key = anonymous (no session) → no cursor to animate.
+    // Empty key is the explicit no-cursor sentinel → nothing to animate.
     if key.is_empty() {
         return;
     }

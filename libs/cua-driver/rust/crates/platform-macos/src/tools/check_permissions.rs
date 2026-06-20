@@ -44,10 +44,19 @@ fn permission_source() -> serde_json::Value {
         .and_then(|p| std::fs::canonicalize(p).ok())
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_default();
+    // The trustworthy, non-spoofable signal is the executable path: a caller
+    // can't run from inside the code-signed `CuaDriver.app` bundle without
+    // controlling that install. The disclaim env var is caller-controlled, so
+    // it is treated only as a corroborating signal that explains why a
+    // bundle-resident daemon has `ppid != 1` (it re-exec'd itself with
+    // responsibility disclaim, so launchd is no longer its parent). On its own
+    // — outside the bundle — the env var must NOT grant daemon attribution, or
+    // a caller could pre-set it and spoof the TCC source. Fail closed to
+    // "caller" whenever the bundle signal is absent.
+    let inside_bundle = exe.contains("/CuaDriver.app/Contents/MacOS/");
     let disclaimed =
         std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
-    let is_driver_daemon =
-        (exe.contains("/CuaDriver.app/Contents/MacOS/") && ppid == 1) || disclaimed;
+    let is_driver_daemon = inside_bundle && (ppid == 1 || disclaimed);
 
     let (attribution, note) = if is_driver_daemon {
         (
@@ -172,7 +181,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn permission_source_reports_driver_daemon_when_disclaimed() {
+    fn disclaim_env_var_alone_does_not_grant_daemon_attribution() {
+        // The disclaim env var is caller-controlled, so on its own it must not
+        // make `check_permissions` claim the booleans reflect the daemon's TCC
+        // identity. Daemon attribution additionally requires the binary to live
+        // inside the code-signed `CuaDriver.app` bundle — the test runner does
+        // not, so even with the env var present we must fail closed to "caller".
         let name = cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV;
         let original = std::env::var_os(name);
 
@@ -180,7 +194,8 @@ mod tests {
         let source = permission_source();
         assert_eq!(
             source.get("attribution").and_then(|v| v.as_str()),
-            Some("driver-daemon")
+            Some("caller"),
+            "env-var presence alone must not yield daemon attribution"
         );
 
         match original {

@@ -195,6 +195,10 @@ jobs:
           # objdump / readelf may not be installed in minimal containers;
           # strings is more universally available.
           strings cua-driver | grep -E "^GLIBC_[0-9]" | sort -V | tail -5 || true
+          echo "=== Binary shared-library dependencies (ldd) ==="
+          # ldd shows all dynamic deps and flags any missing ones.  This is
+          # purely informational — failures here are diagnosed at smoke-test time.
+          ldd ./cua-driver 2>&1 || true
 
       - name: Smoke-test --version
         if: needs.resolve-version.outputs.version != 'none'
@@ -202,7 +206,6 @@ jobs:
           echo "=== cua-driver --version ==="
           # This is the primary ABI-floor gate: if the binary can't even print
           # its version the glibc requirement is too high for this distro.
-          ./cua-driver --version
           VERSION_OUT=$(./cua-driver --version)
           echo "Output: $VERSION_OUT"
           # Sanity-check that the output contains a version number.

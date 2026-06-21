@@ -74,7 +74,7 @@ Numbers is a **macOS-only** app with **no clean automation API** for building a 
     Give the agent the task in plain language:
 
     ```text
-    Fetch the last 30 days of AAPL daily closing prices. Open Numbers, create a new spreadsheet, enter Date and Close columns, add a 2D line chart, then export the document as a PDF to ~/reports/aapl-analysis.pdf.
+    Using cua-driver, fetch the last 30 days of AAPL daily closing prices. Open Numbers, create a new spreadsheet, enter Date and Close columns, add a 2D line chart, then export the document as a PDF to ~/reports/aapl-analysis.pdf.
     ```
 
     The agent drives Numbers with `launch_app`, `list_windows`, `click`, `type_text`, `set_value`, and `get_window_state`.

@@ -37,6 +37,9 @@ on:
   push:
     # Run on main (path-filtered) AND on release tags so a newly-published
     # binary is immediately validated against the distro matrix.
+    # NOTE: GitHub Actions ignores the `paths` filter for tag pushes — the
+    # workflow always runs on any cua-driver-rs-v* tag regardless of which
+    # files changed. This is expected and correct behaviour here.
     branches: [main]
     tags:
       - "cua-driver-rs-v*"
@@ -127,24 +130,24 @@ jobs:
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates binutils"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils"
           # RPM family
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils"
 
     steps:
       - name: Skip if no release binary
@@ -187,7 +190,6 @@ jobs:
           echo "=== cua-driver --version ==="
           # This is the primary ABI-floor gate: if the binary can't even print
           # its version the glibc requirement is too high for this distro.
-          ./cua-driver --version
           VERSION_OUT=$(./cua-driver --version)
           echo "Output: $VERSION_OUT"
           # Sanity-check that the output contains a version number.
@@ -206,7 +208,7 @@ jobs:
           # expected and NOT a failure. What we test here is that:
           #   a. The binary loads and runs the doctor subcommand at all.
           #   b. It exits with a parseable status (not a SIGILL / glibc symbol
-          #      error which would manifst as exit code 127 or similar).
+          #      error which would manifest as exit code 127 or similar).
           set +e
           ./cua-driver doctor 2>&1
           EXIT_CODE=$?

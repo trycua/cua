@@ -1,0 +1,164 @@
+---
+title: Drive your first app
+description: Install Cua Driver, connect your agent, and ask it in plain English to drive a desktop app in the background on macOS, Windows, or Linux.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Drive your first app
+
+You do not type **Cua Driver** CLI commands by hand. Cua Driver is a backend that an agent harness (Claude Code, Codex, Hermes, and others) drives for you. In this tutorial you install Cua Driver, connect your agent, and ask it in plain English to open a calculator and read a result back. Works the same on macOS, Windows, and Linux.
+
+## 1. Install Cua Driver
+
+Use the same one-line installer on every platform; it picks the right path for the host and needs no administrator access.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+    Requires macOS 14 (Sonoma) or later.
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+    ```
+
+    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app:
+
+    ```bash
+    open -n -g -a CuaDriver --args serve
+    ```
+
+    Then grant Accessibility and Screen Recording:
+
+    ```bash
+    cua-driver permissions grant
+    ```
+  </Tab>
+  <Tab value="Windows">
+    Requires Windows 10/11 with an interactive desktop session and PowerShell.
+
+    ```powershell
+    irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+    ```
+
+    Start the daemon from an interactive desktop session, not an SSH session. **The daemon must run in Session 1 or later**; a daemon started over SSH usually lands in Session 0 and cannot drive the GUI.
+
+    ```powershell
+    cua-driver serve
+    ```
+  </Tab>
+  <Tab value="Linux">
+    Requires an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2.
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+    ```
+
+    Start the daemon from inside your graphical desktop session:
+
+    ```bash
+    cua-driver serve
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+  Full install steps, PATH setup, and permission details live in the install guide. See [Install Cua Driver](/how-to-guides/driver/install).
+</Callout>
+
+## 2. Verify it is working
+
+Before you hand control to an agent, confirm the driver can see your desktop. Run the cross-platform probe:
+
+```bash
+cua-driver doctor
+```
+
+Then list the running GUI apps the driver can reach:
+
+```bash
+cua-driver call list_apps
+```
+
+If you see your running apps listed, the plumbing works. That is the only CLI you run by hand; from here the agent does the driving.
+
+## 3. Connect your agent
+
+Register Cua Driver with your agent harness once.
+
+<Tabs items={['Claude Code', 'Codex', 'Hermes']}>
+  <Tab value="Claude Code">
+    Install the Claude Code skill. This is turnkey: the skill teaches Claude Code how to drive apps through Cua Driver, and you then ask in plain English.
+
+    ```bash
+    cua-driver skills install
+    ```
+
+    Prefer plain MCP instead of the skill? Generate the registration command:
+
+    ```bash
+    cua-driver mcp-config --client claude
+    ```
+  </Tab>
+  <Tab value="Codex">
+    Print the Codex registration command:
+
+    ```bash
+    cua-driver mcp-config --client codex
+    ```
+
+    It prints a command you run to register the server:
+
+    ```bash
+    codex mcp add cua-driver -- cua-driver mcp
+    ```
+  </Tab>
+  <Tab value="Hermes">
+    Print the Hermes snippet:
+
+    ```bash
+    cua-driver mcp-config --client hermes
+    ```
+
+    Paste it under mcp_servers in ~/.hermes/config.yaml:
+
+    ```yaml
+    mcp_servers:
+      cua-driver:
+        command: "cua-driver"
+        args: ["mcp"]
+    ```
+
+    Then reload MCP servers inside Hermes:
+
+    ```text
+    /reload-mcp
+    ```
+  </Tab>
+</Tabs>
+
+Using Cursor, Gemini/Antigravity, OpenCode, OpenClaw, or Pi instead? See [Connect your agent](/how-to-guides/driver/connect-your-agent).
+
+## 4. Ask your agent to drive an app
+
+Now ask your agent in plain English. Type this prompt to Claude Code, Codex, or Hermes:
+
+```text
+Open the calculator and compute 17 x 23, then tell me the answer.
+```
+
+The agent uses Cua Driver to launch the calculator (Calculator on macOS and Windows, the system calculator on Linux), read the window's accessibility tree, click the number and operator keys, and read the result back from the display. All of it runs in the background. The agent picks the right calculator app for your OS, so the same prompt works on all three platforms.
+
+## 5. Confirm what happened
+
+The agent reports 391. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is the *no-foreground contract*: the agent drives the app while you keep working. See [The no-foreground contract](/explanation/the-no-foreground-contract).
+
+## What you did
+
+You installed Cua Driver, verified it could see your desktop, connected your agent harness, and asked in plain English for a result computed inside a real desktop app. The agent did the driving through Cua Driver, in the background, on your platform.
+
+## Next steps
+
+- [Connect your agent](/how-to-guides/driver/connect-your-agent): register Cua Driver with Cursor, Antigravity, OpenCode, OpenClaw, Pi, and more.
+- [The no-foreground contract](/explanation/the-no-foreground-contract): why the agent never steals focus or moves your cursor.
+- [How-to guides](/how-to-guides): keep the driver running, update it, and more.

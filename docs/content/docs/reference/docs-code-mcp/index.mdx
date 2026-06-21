@@ -1,0 +1,107 @@
+---
+title: Docs & Code MCP Server
+description: "Reference for the hosted Cua Docs & Code MCP Server: endpoint, the four read-only query tools, database tables, and version indexing."
+---
+
+The Docs & Code MCP Server is a hosted MCP server exposing **read-only** search over Cua's documentation and versioned source code. The endpoint is `https://vk-mcp.cua.ai/mcp` over the streamable-HTTP transport. The Docs & Code MCP Server is backed by SQLite FTS5 for keyword search and LanceDB embeddings using `all-MiniLM-L6-v2`, 384-dimensional vectors, for semantic search. It is re-crawled daily via Modal. All tools are read-only. SQL tools accept SELECT queries only.
+
+## Tools
+
+### query_docs_db
+
+SQL query against the documentation database, read-only and SELECT only.
+
+Parameters:
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `sql` | string | SQL SELECT query against the docs database. |
+
+Returns a list of rows as objects keyed by column name.
+
+This tool targets the docs database, including the `pages` table and the `pages_fts` FTS5 virtual table.
+
+### query_docs_vectors
+
+Vector similarity search over the documentation embeddings, read-only.
+
+Parameters:
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `query` | string | Natural language query, embedded and matched against documentation vectors. |
+| `limit` | int | Maximum number of matches. Default `10`, maximum `100`. |
+| `where` | string, optional | SQL-like filter, for example `category = 'cua'`. |
+| `select` | list of strings, optional | Columns to return. The vector column is always excluded. |
+
+Returns matching document chunks with a `_distance` similarity score.
+
+### query_code_db
+
+SQL query against the code database, read-only and SELECT only.
+
+Parameters:
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `sql` | string | SQL SELECT query against the code database. |
+
+Returns a list of rows as objects keyed by column name.
+
+This tool targets the code database, including the `code_files` table and the `code_files_fts` FTS5 virtual table.
+
+### query_code_vectors
+
+Vector similarity search over the code embeddings, read-only.
+
+Parameters:
+
+| Name | Type | Description |
+| --- | --- | --- |
+| `query` | string | Natural language query, embedded and matched against code vectors. |
+| `limit` | int | Maximum number of matches. Default `10`, maximum `100`. |
+| `where` | string, optional | SQL-like filter, for example `version = '0.7.3'`. |
+| `select` | list of strings, optional | Columns to return. |
+| `component` | string, optional | Component name to restrict the search. |
+
+Returns matching code chunks with a `_distance` similarity score.
+
+## Database tables
+
+The SQL tools query two SQLite tables and their FTS5 companions.
+
+### pages
+
+Documentation pages.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | INTEGER PRIMARY KEY | Row identifier. |
+| `url` | TEXT | Unique full URL of the page. |
+| `title` | TEXT | Page title. |
+| `category` | TEXT | Category, for example `cua`, `cuabench`, or `llms.txt`. |
+| `content` | TEXT | Plain text content with markdown stripped. |
+
+The `pages_fts` FTS5 virtual table mirrors `pages` for full text search. The `content` column is indexed. The `url`, `title`, and `category` columns are unindexed.
+
+### code_files
+
+Versioned source code files.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | INTEGER PRIMARY KEY | Row identifier. |
+| `component` | TEXT | Component name, for example `agent` or `computer`. |
+| `version` | TEXT | Version string, for example `0.7.3`. |
+| `file_path` | TEXT | Path to the file within the component. |
+| `content` | TEXT | Full source content. |
+| `language` | TEXT | Programming language. |
+| `UNIQUE(component, version, file_path)` | constraint | Unique source file identity within a component version. |
+
+The `code_files_fts` FTS5 virtual table mirrors `code_files` for full text search. The `content` column is indexed. The `component`, `version`, and `file_path` columns are unindexed.
+
+## Version indexing
+
+Source code is indexed per released version. Each row in `code_files` is keyed by `(component, version, file_path)`, so the same file exists once per version it appeared in. Components are named units such as `agent` and `computer`. Versions are release strings such as `0.7.3`, drawn from the project's git tags.
+
+A query can target one version, compare across versions, or enumerate them, for example `SELECT DISTINCT version FROM code_files WHERE component = 'agent'`. The index is rebuilt daily.

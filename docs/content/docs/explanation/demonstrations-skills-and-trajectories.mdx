@@ -1,0 +1,58 @@
+---
+title: 'Demonstrations, skills, and trajectories'
+description: 'Cua has three different recording systems that get conflated. This page explains what each one records, where it lives, and when to use it.'
+---
+
+Several cua features use the words "record" and "trajectory", but they do not record the same thing. One system records a human demonstration and turns it into a reusable skill. Another records the agent's action-tool calls at the driver boundary. A third records the agent loop itself, including model outputs and computer observations.
+
+The **actor being recorded** is the central distinction. Demonstration skills capture a human and produce a **generalizing document**. Cua Driver recordings and agent trajectories capture the agent, but at different layers: Cua Driver records the tools sent to the desktop, while `TrajectorySaverCallback` records the agent run around those tools.
+
+## Demonstration Skills
+
+Demonstration skills are exposed through the `cua skills record`, `list`, `read`, `replay`, `delete`, and `clean` CLI commands. The implementation lives in `cua-cli`.
+
+This system records a human demonstrating a task by hand over VNC. During recording, the human uses the remote desktop normally. Afterward, cua extracts frames at each input event and uses a vision-language model to caption the step. Each caption describes the observation, intent, action, and expected result for that moment in the demonstration.
+
+The output is a reusable skill under `~/.cua/skills/<name>/`. The main artifact is `SKILL.md`, which contains frontmatter with the skill name and description, a `Steps` section made from the captioned steps, and an `Agent Prompt`. The same skill directory also contains a `trajectory/` folder with the MP4 video, `events.json`, `trajectory.json`, and per-step screenshots.
+
+Replay has two different meanings here. `cua skills replay` opens the MP4 so a person can watch the demonstration. It does not re-drive the original mouse and keyboard input. Actual reuse happens by reading `SKILL.md`, prefixing it as context to a `ComputerAgent` run, and then giving the agent a new task with new inputs. The agent follows the demonstrated pattern and adapts the parameters. This is the cua analog of OpenAI Codex record-and-replay: show a workflow once, get a reusable skill, not a verbatim playback script.
+
+Use demonstration skills when the valuable thing is human know-how. They fit multi-step GUI workflows that should generalize across similar tasks, especially when the important knowledge is the order of operations, the visual cues, and the decision points rather than exact screen coordinates.
+
+See [Record a demonstration](/how-to-guides/skills/record-a-demonstration) for the how-to guide.
+
+## Cua Driver Trajectory Recording
+
+Cua Driver trajectory recording is exposed through the `cua-driver recording start`, `stop`, `status`, and `render` subcommands, and through the equivalent MCP tools `start_recording`, `stop_recording`, `get_recording_state`, and `replay_trajectory`. It requires a running Cua Driver daemon. Recording state is per-process and kept in memory, so restarting the daemon resets it.
+
+This system records the agent's action-tool calls. While recording is enabled, every action tool call writes a numbered `turn-NNNNN` folder under the selected `output_dir`. Recording fires for every non-read-only action tool, such as `click`, `right_click`, `scroll`, `type_text`, `press_key`, `hotkey`, and `set_value`. Read-only tools such as `get_window_state` and `list_windows` are not recorded.
+
+Each turn folder contains `action.json`, which stores the tool name, full arguments, result, process id, click point, and timestamp. It also contains `screenshot.png`, a post-action capture of the target window, and `app_state.json`, a post-action AX or UIA tree snapshot that is omitted on Linux. Click-family actions also write `click.png`, a screenshot with a red dot at the click point. Video capture is off by default. Pass `record_video: true` to also capture the main display as `recording.mp4`, written as H.264 at 30 fps.
+
+Replay is literal at the driver boundary. `replay_trajectory` walks the turn folders in order and re-invokes each recorded tool with its recorded arguments. The main controls are `delay_ms`, which spaces out actions, and `stop_on_error`, which decides whether replay stops on the first failed action.
+
+The important caveat is **element addressing**. `element_index` values do not survive across sessions because indices are assigned per `get_window_state` snapshot and are keyed on `pid` and `window_id`. Element-indexed actions therefore do not resolve reliably on replay. Pixel clicks and keyboard tools replay cleanly. For that reason, Cua Driver recording is best treated as a regression and evidence artifact rather than a guaranteed durable automation script.
+
+Use Cua Driver recording when the relevant question is exactly what the agent sent to the desktop and what the desktop looked like afterward. It is useful for demos, comparing a future run against a saved run across builds, and collecting tool-level training data.
+
+See the Cua Driver [trajectory recording CLI reference](/reference/cua-driver/cli-reference#trajectory-recording) and [recording MCP tools](/reference/cua-driver/mcp-tools#start_recording) for the command and tool surfaces.
+
+## Agent Trajectories
+
+Agent trajectories are produced by `TrajectorySaverCallback` in the `cua-agent` package. The callback is attached to a `ComputerAgent`, so recording is wired into the agent run itself rather than managed by a separate daemon. The CLI surface for saved sessions is `cua trajectory ls`, `view`, and `clean`, implemented across `cua-agent` and `cua-cli`.
+
+This system records the agent loop's `(state, action, next_state)` data as the run proceeds. The saved files include messages, model outputs, computer calls, call outputs, and screenshots. It captures the reasoning and observation context around the desktop operations, not only the driver calls themselves.
+
+Inspection is session-oriented. `cua trajectory ls` lists saved sessions. `cua trajectory view` zips a session and opens it in the cua.ai trajectory viewer in the browser. `cua trajectory clean` removes old sessions.
+
+Use agent trajectories when the relevant question is *why* an agent behaved as it did. They are the right artifact for debugging model decisions, reviewing the chain of observations and actions in a run, and collecting training or evaluation data from real agent sessions.
+
+## Which One Do I Want
+
+The systems differ by the actor recorded and the layer where the recording happens. Demonstration skills record a human and produce `SKILL.md`, which is meant to generalize. Cua Driver recordings and agent trajectories record the agent. Cua Driver records at the tool-call boundary for replay and regression. Agent trajectories record at the agent-loop boundary for debugging and data analysis.
+
+| System | Records | Artifact | Replay means | Use for |
+| --- | --- | --- | --- | --- |
+| Demonstration skills | Human demo over VNC | `~/.cua/skills/<name>/SKILL.md` plus `trajectory/` assets | Watch the MP4 with `cua skills replay`, or reuse by giving `SKILL.md` to a `ComputerAgent` as context | Teaching a reusable GUI workflow from one human demonstration |
+| Cua Driver recording | Agent action-tool calls | `turn-NNNNN` folders under `output_dir`, plus `recording.mp4` by default | Re-invoke recorded driver tools in order with `replay_trajectory` | Demos, regression diffs, and tool-level data collection |
+| Agent trajectories | Agent loop state, actions, next states, messages, model outputs, computer calls, outputs, and screenshots | Saved trajectory session files | Inspect sessions with `cua trajectory view` in the trajectory viewer | Debugging agent behavior and collecting training or eval data |

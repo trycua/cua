@@ -1,0 +1,114 @@
+---
+title: Install Cua Driver
+description: Install Cua Driver on macOS, Windows, or Linux with a one-line script.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver supports macOS, Windows, and Linux. Use the same **one-line installer** on each platform; the script selects the right install path for the host and *does not require administrator access*.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+**Requirements:** macOS 14 (Sonoma) or later on Apple Silicon or Intel.
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+```
+
+The installer places `CuaDriver.app` in `/Applications` and creates the `~/.local/bin/cua-driver` symlink. The app bundle uses the `com.trycua.driver` signing identity, so macOS TCC permissions for Accessibility and Screen Recording remain attached across upgrades.
+
+If `~/.local/bin` is missing from your PATH, the installer detects your shell (`zsh`, `bash`, or `fish`) and adds the matching `export PATH=…` line to your rc file. Reload the shell with `source ~/.zshrc` or open a new terminal window.
+
+  </Tab>
+  <Tab value="Windows">
+
+**Requirements:** Windows 10/11 or Windows Server with an interactive desktop session and PowerShell.
+
+```powershell
+irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+```
+
+The installer downloads the release under `%USERPROFILE%\.cua-driver\packages\releases\` and exposes `cua-driver.exe` from `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin`. It runs without administrator privileges, detects whether the host is x64 or arm64, and appends the install directory to your User-scope `Path` so new PowerShell windows can resolve `cua-driver.exe`.
+
+To skip the PATH change, pass the no-update flag:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1))) -NoPathUpdate
+```
+
+  </Tab>
+  <Tab value="Linux">
+
+**Requirements:** an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2 for accessibility-tree tools.
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+```
+
+The installer downloads the binary to `~/.cua-driver/packages/releases/`, points `~/.cua-driver/packages/current` at that release, and creates the `~/.local/bin/cua-driver` symlink. It does not use sudo.
+
+X11 is fully supported. Native Wayland input and capture remain opt-in with `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and are still maturing; Wayland sessions use XWayland by default. After installation, run `cua-driver doctor` to check distro-specific requirements such as the AT-SPI bus and ffmpeg.
+
+  </Tab>
+</Tabs>
+
+## Verify the install
+
+```bash
+cua-driver --version
+# cua-driver 0.5.x
+```
+
+For a full environment and install report:
+
+```bash
+cua-driver doctor
+# [ok  ] binary: cua-driver 0.5.x (aarch64-macos)
+# [ok  ] install dir: /Users/you/.local/bin/cua-driver
+# [ok  ] home dir: /Users/you/.cua-driver (3 release dirs cached)
+# ...
+```
+
+`doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
+
+## Grant TCC permissions (macOS only)
+
+**Start the daemon first** so macOS attributes the TCC request to `CuaDriver.app` instead of your terminal:
+
+```bash
+open -n -g -a CuaDriver --args serve
+```
+
+Then grant both permissions:
+
+```bash
+cua-driver permissions grant
+```
+
+That command launches CuaDriver through LaunchServices and waits while you approve Accessibility and Screen Recording in the macOS dialogs.
+
+You can also trigger the prompts yourself:
+
+```bash
+cua-driver check_permissions
+```
+
+macOS opens the Accessibility and Screen Recording prompts. Grant both permissions, then run the check again:
+
+```bash
+cua-driver check_permissions
+# ✅ Accessibility: granted.
+# ✅ Screen Recording: granted.
+```
+
+<Callout type="info">
+  `cua-driver permissions status` reads the driver's actual grant state through the daemon. When no daemon is running, it reports `❓ unknown` instead of reporting your terminal's grants, and it does not claim `granted` unless the driver has that permission.
+</Callout>
+
+## Next steps
+
+- [Keep Cua Driver running](/how-to-guides/driver/keep-running): configure autostart so the daemon comes back after reboots.
+- [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent): register it with Claude Code, Cursor, Codex, and other clients.
+- [Update Cua Driver](/how-to-guides/driver/update): check for new releases and apply them.

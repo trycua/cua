@@ -1,0 +1,116 @@
+---
+title: Build a report in a native app
+description: Generate a financial report in Numbers on macOS by driving the native app with Cua Driver.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Numbers is a **macOS-only** app with **no clean automation API** for building a spreadsheet, charting it, and exporting a polished PDF. With Cua Driver, the agent drives the *real Numbers app on a real Mac*, the same way a person would, through the GUI.
+
+<Callout type="warn">
+  This recipe is macOS-only. Numbers, Keynote, and Pages do not exist on Linux or Windows, so you need a real Mac now, or a cloud macOS desktop later.
+</Callout>
+
+<Steps>
+  <Step>
+    ### Check Numbers.app
+
+    On your Mac, make sure Numbers.app is installed:
+
+    ```bash
+    open -a Numbers
+    ```
+
+    Numbers ships with macOS. If you removed it, install it again from the App Store before continuing.
+  </Step>
+
+  <Step>
+    ### Install Cua Driver
+
+    Install `cua-driver` with the one-line installer:
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+    ```
+
+    Verify the CLI is available:
+
+    ```bash
+    cua-driver --version
+    # cua-driver 0.5.x
+    ```
+  </Step>
+
+  <Step>
+    ### Grant macOS permissions
+
+    Grant Accessibility and Screen Recording to the driver, then verify both grants:
+
+    ```bash
+    cua-driver call check_permissions
+    ```
+
+    If either permission is missing, approve it in macOS System Settings, then run the check again.
+
+    For long-running report jobs, configure the daemon so macOS attributes the permissions to the driver process. See [Keep Cua Driver running](/how-to-guides/driver/keep-running).
+  </Step>
+
+  <Step>
+    ### Register the MCP server
+
+    Register `cua-driver` as a stdio MCP server in your agent:
+
+    ```bash
+    claude mcp add --transport stdio cua-driver -- cua-driver mcp
+    ```
+
+    Other MCP clients use the same `cua-driver mcp` command with their own config format. See [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent).
+  </Step>
+
+  <Step>
+    ### Ask the agent to build the report
+
+    Give the agent the task in plain language:
+
+    ```text
+    Fetch the last 30 days of AAPL daily closing prices. Open Numbers, create a new spreadsheet, enter Date and Close columns, add a 2D line chart, then export the document as a PDF to ~/reports/aapl-analysis.pdf.
+    ```
+
+    The agent drives Numbers with `launch_app`, `list_windows`, `click`, `type_text`, `set_value`, and `get_window_state`.
+
+    Cua Driver **does not include HTTP or filesystem tools**. To fetch prices, the agent can drive Terminal and run `curl`, or drive a browser and copy the data from the page. For example:
+
+    ```bash
+    curl "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1mo"
+    ```
+
+    This Yahoo Finance endpoint is unofficial and may require a `User-Agent` header. If your data source needs authentication or a different format, have the agent use Terminal or the browser to retrieve it, then paste or enter the rows into Numbers.
+
+    AppleScript can help with small app commands if the agent runs it through Terminal, but the main workflow is still the agent driving the Numbers GUI through Cua Driver.
+  </Step>
+
+  <Step>
+    ### Confirm the PDF
+
+    Confirm the exported report exists:
+
+    ```bash
+    ls -lh ~/reports/aapl-analysis.pdf
+    ```
+
+    Open it to verify the chart and table landed in the PDF:
+
+    ```bash
+    open ~/reports/aapl-analysis.pdf
+    ```
+  </Step>
+</Steps>
+
+## Scale this out
+
+One Mac builds one Numbers report at a time. To generate many reports at once, for example one per ticker, client, or reporting period, move the same workflow onto **Cua Sandbox** cloud macOS desktops and fan them out.
+
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently, [Choose and build a sandbox image](/how-to-guides/sandbox/images) to bake Numbers and any helper tools into the macOS image, and [Drive a sandbox with the SDK](/tutorials/run-an-agent-in-a-sandbox) to run an agent in each desktop.
+
+A cloud macOS desktop is the only way to scale Numbers automation, since Numbers cannot run on Linux containers.

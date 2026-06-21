@@ -1,0 +1,143 @@
+---
+title: Keep Cua Driver running
+description: Register Cua Driver as a persistent daemon that starts automatically and survives reboots.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use a **persistent daemon** for element-indexed workflows. The per-pid element cache lives inside the process, so one-shot CLI invocations *drop that cache between calls*. The daemon also gives macOS the right TCC attribution and gives Windows an interactive-session proxy.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+`cua-driver autostart` is not implemented for macOS yet. Write a LaunchAgent with `install-local.sh --autostart`:
+
+```bash
+bash libs/cua-driver/scripts/install-local.sh --autostart
+```
+
+You can also create the plist yourself. Save this file at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trycua.cua-driver</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/CuaDriver.app/Contents/MacOS/cua-driver</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+Load the LaunchAgent:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+```
+
+<Callout type="info">
+  A LaunchAgent daemon starts under `launchd` and is attributed to `com.trycua.driver`. Grant Accessibility and Screen Recording once, and those grants persist across reboots. If you start prompts from a terminal without a LaunchAgent, macOS attributes them to the terminal instead of the driver, so the grants do not apply to Cua Driver.
+</Callout>
+
+  </Tab>
+  <Tab value="Windows">
+
+Run these commands once from an interactive session, either RDP or the local console:
+
+```powershell
+cua-driver autostart enable
+cua-driver autostart kick
+```
+
+`enable` registers a Scheduled Task named `cua-driver-serve` with `LogonType: Interactive`. That keeps the daemon in Session 1+ instead of Session 0. The command is idempotent, so running it again after an upgrade updates the binary path automatically.
+
+`kick` starts the task immediately, so you do not need to wait for the next logon.
+
+Check the task state when you need it:
+
+```powershell
+cua-driver autostart status
+# registered (running)
+```
+
+Remove the autostart registration:
+
+```powershell
+cua-driver autostart disable
+```
+
+<Callout type="info">
+  `LogonType: Interactive` is required. Alternatives such as `S4U` or `Password` put the daemon in Session 0, where GUI tools return empty arrays. See [Drive a Windows app over SSH](/how-to-guides/driver/windows-ssh) for the SSH proxy workflow that uses this setup.
+</Callout>
+
+The Scheduled Task keeps running after an RDP disconnect. A disconnected session remains in `Disc` state and is still a live interactive session. The daemon stops only on explicit logoff or reboot; the next interactive logon triggers the task again.
+
+  </Tab>
+  <Tab value="Linux">
+
+`cua-driver autostart` is Windows-only today. Create a systemd user unit by hand.
+
+Save this unit at `~/.config/systemd/user/cua-driver.service`:
+
+```ini
+[Unit]
+Description=cua-driver background daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cua-driver serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+Reload systemd, enable the unit, and start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now cua-driver.service
+systemctl --user status cua-driver.service
+```
+
+On CI runners or headless machines where the daemon should survive user logout, enable linger:
+
+```bash
+loginctl enable-linger $USER
+```
+
+  </Tab>
+</Tabs>
+
+## Verify it's running
+
+```bash
+cua-driver status
+# Cua Driver daemon is running
+#   socket: /Users/you/Library/Caches/cua-driver/cua-driver.sock
+#   pid: 12345
+```
+
+On Windows the socket path is `\\.\pipe\cua-driver` and `status` also reports the session number.
+
+## Stop it cleanly
+
+```bash
+cua-driver stop
+```
+
+This sends a shutdown signal to the daemon process. The autostart entry, whether LaunchAgent, Scheduled Task, or systemd unit, remains registered and starts it again on the next logon or trigger.

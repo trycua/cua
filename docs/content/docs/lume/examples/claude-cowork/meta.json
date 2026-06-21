@@ -1,6 +1,0 @@
-{
-  "title": "Claude Cowork",
-  "description": "Use Claude Cowork with Lume MCP connector",
-  "icon": "Bot",
-  "pages": ["sandbox", "numbers-stock-analysis"]
-}

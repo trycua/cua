@@ -1,0 +1,103 @@
+---
+title: Sandbox lifecycle
+description: Choose the right Sandbox SDK lifecycle pattern for temporary, persistent, and reconnectable sandboxes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use the **lifecycle pattern** that matches whether you want the sandbox *deleted after the job*, *kept for later*, or *attached to while it is already running*.
+
+## Create and auto-destroy a sandbox
+
+Use `Sandbox.ephemeral` for scripts, CI, and one-off tasks.
+
+```python
+import asyncio
+from cua import Sandbox, Image
+
+async def main():
+    async with Sandbox.ephemeral(Image.linux()) as sb:
+        result = await sb.shell.run('echo hello')
+        print(result.stdout)  # 'hello\n'
+    # sandbox deleted here
+
+asyncio.run(main())
+```
+
+`Sandbox.ephemeral` is **auto-destroyed** when the `async with` block exits. Its context manager tears the sandbox down automatically.
+
+## Create a persistent sandbox
+
+Use `Sandbox.create` when the sandbox **must outlive the script**. Call `await sb.disconnect()` to drop the connection while the sandbox keeps running.
+
+```python
+sb = await Sandbox.create(Image.linux(), name='my-dev-sandbox')
+await sb.shell.run('apt-get install -y vim')
+await sb.disconnect()  # sandbox keeps running
+```
+
+Delete the sandbox when you are done with it.
+
+```python
+async with Sandbox.connect('my-dev-sandbox') as sb:
+    await sb.destroy()
+```
+
+| Method | Effect | When |
+|--------|--------|------|
+| `await sb.disconnect()` | keeps running | reconnect later |
+| `await sb.destroy()` | permanently destroyed | done with it |
+| `await Sandbox.delete(name)` | permanently destroyed (by name, no connect) | classmethod |
+
+## Reconnect to a running sandbox
+
+Use `Sandbox.connect` to attach to an already-running sandbox.
+
+<Callout type="info">
+  Sandbox.connect never starts or stops the sandbox. It only manages the network connection.
+</Callout>
+
+Reconnect by name.
+
+```python
+async with Sandbox.connect('my-dev-sandbox') as sb:
+    result = await sb.shell.run('vim --version')
+    print(result.stdout)
+```
+
+`Sandbox.connect` supports both `await` and `async with`. Its context manager calls `disconnect()` automatically, so the sandbox keeps running after the connection closes.
+
+```python
+async with Sandbox.connect('my-sandbox') as sb:
+    await sb.shell.run('echo reconnected')
+# connection dropped, sandbox keeps running
+```
+
+## List running sandboxes
+
+List available sandboxes, then filter to local runtimes when needed.
+
+```python
+sandboxes = await Sandbox.list()
+for info in sandboxes:
+    print(info.name, info.os_type, info.status)
+
+# list only local sandboxes
+sandboxes = await Sandbox.list(local=True)
+```
+
+## Cloud vs local
+
+Use cloud by default. Set `CUA_API_KEY` in the environment before creating cloud sandboxes.
+
+```python
+# cloud (default)
+async with Sandbox.ephemeral(Image.linux()) as sb: ...
+```
+
+Pass `local=True` for local runtimes such as Docker, Lume, or QEMU.
+
+```python
+# local Docker
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb: ...
+```

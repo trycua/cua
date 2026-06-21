@@ -13,22 +13,37 @@ export const revalidate = 3600;
 
 /** Fetch the current GitHub star count for trycua/cua.
  *  Falls back to the last known value if the request fails.
+ *
+ *  Set GITHUB_TOKEN in your environment to raise the API rate limit
+ *  from 60 req/hr (unauthenticated) to 5 000 req/hr (authenticated).
  */
 async function getGitHubStars(): Promise<string> {
   const FALLBACK = '13.1k';
   try {
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    if (process.env.GITHUB_TOKEN) {
+      headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+    }
     const res = await fetch('https://api.github.com/repos/trycua/cua', {
-      headers: { Accept: 'application/vnd.github+json' },
+      headers,
       next: { revalidate: 3600 },
     });
     if (!res.ok) return FALLBACK;
     const data = (await res.json()) as { stargazers_count?: number };
     const count = data.stargazers_count;
     if (typeof count !== 'number') return FALLBACK;
-    // Format: <1000 → plain number, else Xk or X.Xk
-    if (count < 1000) return String(count);
-    const k = count / 1000;
-    return k % 1 === 0 ? `${k}k` : `${k.toFixed(1)}k`;
+    // Format: <1 000 → plain, <1 000 000 → Xk / X.Xk, else X.XM
+    if (count < 1_000) return String(count);
+    if (count < 1_000_000) {
+      const k = count / 1_000;
+      // Use toFixed(1) then strip a trailing ".0" so 14 000 → "14k" not "14.0k"
+      return `${parseFloat(k.toFixed(1))}k`;
+    }
+    const m = count / 1_000_000;
+    return `${parseFloat(m.toFixed(1))}M`;
   } catch {
     return FALLBACK;
   }

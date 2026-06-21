@@ -106,3 +106,30 @@ fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
     let reply = conn.get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)?.reply()?;
     Ok(String::from_utf8_lossy(&reply.value).into_owned())
 }
+
+/// Return the WM_CLASS pair for `xid` as `(instance, class)`.
+///
+/// X11's `WM_CLASS` property is two NUL-separated strings; the first is
+/// the instance name, the second is the class name. Either field can
+/// be empty. Used by [`crate::terminal::is_terminal_window`] to detect
+/// terminal emulators that share a process tree with another GUI
+/// (e.g. Ghostty's `WM_CLASS = "ghostty\0Ghostty\0"`).
+///
+/// Returns `None` when no X connection is available, the window has no
+/// WM_CLASS atom set, or the property could not be read.
+pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let reply = conn
+        .get_property(false, xid as u32, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
+        .ok()?
+        .reply()
+        .ok()?;
+    let raw = reply.value;
+    let mut parts = raw.split(|&b| b == 0).filter(|s| !s.is_empty());
+    let instance = parts.next().map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
+    let class = parts.next().map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
+    if instance.is_empty() && class.is_empty() {
+        return None;
+    }
+    Some((instance, class))
+}

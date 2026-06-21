@@ -790,19 +790,13 @@ fn process_name(pid: u32) -> Option<String> {
 }
 
 fn is_terminal_process(pid: u32) -> bool {
-    matches!(
-        process_name(pid).as_deref(),
-        Some(
-            "xfce4-terminal"
-                | "gnome-terminal-server"
-                | "xterm"
-                | "konsole"
-                | "kitty"
-                | "alacritty"
-                | "wezterm-gui"
-                | "tilix"
-        )
-    )
+    // Canonical list lives in `crate::terminal::TERMINAL_PROCESS_NAMES`
+    // — keeps the additive contract centralised. Adding a new terminal
+    // here means appending one string in `crate::terminal`.
+    match process_name(pid).as_deref() {
+        Some(name) => crate::terminal::is_terminal_process_name(name),
+        None => false,
+    }
 }
 
 fn terminal_descendant_ttys(pid: u32) -> Vec<PathBuf> {
@@ -1156,7 +1150,8 @@ impl Tool for TypeTextTool {
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via EIS compositor)."
-                )),
+                ))
+                .with_structured(json!({ "path": "key_events", "characters": text_len })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1173,7 +1168,42 @@ impl Tool for TypeTextTool {
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
-                )),
+                ))
+                .with_structured(json!({ "path": "key_events", "characters": text_len })),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
+        // Terminal short-circuit: when the target window's WM_CLASS marks it
+        // as a terminal emulator (Ghostty / Alacritty / kitty / …), skip the
+        // AT-SPI path entirely. Terminals expose an editable text area that
+        // AT-SPI `insertText` would aim at, but the write never reaches the
+        // pty, so the user sees "type acknowledged but nothing appeared".
+        // Try pty-master injection first (most reliable), then XTest key
+        // synthesis. Either way the structured response reports
+        // `path: "key_events"` so callers can verify the route taken.
+        let pid_is_terminal = is_terminal_process(pid);
+        let wm_class_is_terminal = tokio::task::spawn_blocking(move || {
+            crate::terminal::is_terminal_window(xid)
+        }).await.unwrap_or(false);
+        if pid_is_terminal || wm_class_is_terminal {
+            let text_len = text.chars().count();
+            let text_t = text.clone();
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                // pty-master injection is preferred — it skips the X event
+                // queue entirely. Falls through to XTest if the terminal
+                // isn't reachable that way (descendant pty unresolvable).
+                if inject_terminal_input(pid, xid, &text_t)? {
+                    return Ok(());
+                }
+                crate::input::send_type_text_xtest(&text_t)
+            }).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
+                ))
+                .with_structured(json!({ "path": "key_events", "characters": text_len })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1221,7 +1251,8 @@ impl Tool for TypeTextTool {
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) into the focused widget."
-                )),
+                ))
+                .with_structured(json!({ "path": "key_events", "characters": text_len })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1236,7 +1267,8 @@ impl Tool for TypeTextTool {
         match atspi_result {
             Ok(Ok(())) => {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
-                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."));
+                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."))
+                    .with_structured(json!({ "path": "ax", "characters": text_len }));
             }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
@@ -1264,34 +1296,41 @@ impl Tool for TypeTextTool {
 
         match qt5_result {
             Ok(Ok(())) => {
-                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."));
+                return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."))
+                    .with_structured(json!({ "path": "ax", "characters": text_len }));
             }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
             }
         }
 
-        let result = tokio::task::spawn_blocking(move || {
+        // Track which path the final fallback chain took, so the
+        // structured response stays honest. The closure can't borrow
+        // a local mutably across `spawn_blocking`, so funnel the
+        // decision through the success type instead.
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
-                return Ok(());
+                return Ok("key_events");
             }
             // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
             // focused widget, so background XSendEvent typing doesn't land. Fill
             // the editable field via AT-SPI instead — focus-free and toolkit-
             // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
             if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
-                return Ok(());
+                return Ok("ax");
             }
             // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
             // returned false). This is the Tk-specific override, like CDP for Chromium.
             if crate::input::inject_tk_send(&text).unwrap_or(false) {
-                return Ok(());
+                return Ok("key_events");
             }
-            crate::input::send_type_text(xid, &text)
+            crate::input::send_type_text(xid, &text)?;
+            Ok("key_events")
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Typed {text_len} character(s) (via X11 fallback).")),
+            Ok(Ok(path)) => ToolResult::text(format!("Typed {text_len} character(s) (via X11 fallback)."))
+                .with_structured(json!({ "path": path, "characters": text_len })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

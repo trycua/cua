@@ -152,15 +152,27 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         ],
 
         // ── input.keyboard ───────────────────────────────────────────
+        // `type_text` claims `terminal_safe` because every platform
+        // implementation detects terminal-emulator targets (bundle id
+        // on macOS, WM_CLASS / process name on Linux, window class on
+        // Windows) and routes past the accessibility-text channel to
+        // key-event synthesis — bypassing the silent-drop that
+        // otherwise affects Ghostty / iTerm2 / Terminal.app / Windows
+        // Terminal / mintty / GVim, etc. See the per-platform
+        // `terminal` module for the matched list and the structured
+        // `path: "ax" | "key_events"` field on the response.
         "type_text" => &[
             "input.keyboard.type",
+            "input.keyboard.type.terminal_safe",
             "accessibility.element_tokens",
         ],
         // `type_text_chars` is a deprecated alias resolved at invoke
         // time on macOS/Windows. On Linux it's still registered (see
-        // platform-linux/impl_.rs). When present, surface the same
-        // capability as `type_text` so consumers don't pick a
-        // platform-specific tool name.
+        // platform-linux/impl_.rs). The Linux implementation runs
+        // XSendEvent per-character without the terminal short-circuit,
+        // so we deliberately do NOT claim `terminal_safe` here — the
+        // contract is intentionally narrower than `type_text`'s. It
+        // still accepts `element_token`, hence the tokens claim.
         "type_text_chars" => &[
             "input.keyboard.type",
             "accessibility.element_tokens",
@@ -544,6 +556,7 @@ mod capability_tests {
         "input.pointer.button",
         // keyboard
         "input.keyboard.type",
+        "input.keyboard.type.terminal_safe",
         "input.keyboard.hotkey",
         "input.keyboard.press",
         // screen
@@ -744,6 +757,40 @@ mod capability_tests {
         assert_eq!(entry["annotations"]["openWorldHint"], true);
         // New key — the whole point of this PR.
         assert!(entry["capabilities"].is_array());
+    }
+
+    #[test]
+    fn type_text_claims_terminal_safe_capability() {
+        // The terminal-emulator fallback shipped per platform must be
+        // discoverable as a capability so consumers can pick `type_text`
+        // confidently over `type_text_chars` (whose Linux implementation
+        // is the bare per-char XSendEvent path, with no terminal
+        // short-circuit). Freezing the token name here makes a
+        // future-PR rename a hard test failure.
+        let caps = default_capabilities_for("type_text");
+        let cap_strs: Vec<&str> = caps.iter().map(String::as_str).collect();
+        assert!(
+            cap_strs.contains(&"input.keyboard.type"),
+            "type_text must keep the base capability: {cap_strs:?}"
+        );
+        assert!(
+            cap_strs.contains(&"input.keyboard.type.terminal_safe"),
+            "type_text must claim terminal_safe (PR additive surface): {cap_strs:?}"
+        );
+    }
+
+    #[test]
+    fn type_text_chars_does_not_claim_terminal_safe() {
+        // The contract is intentionally narrower: type_text_chars on
+        // Linux uses a per-character XSendEvent path that does not
+        // route past the AT-SPI/value channel on terminals. Tightening
+        // this gate prevents a future drive-by edit from over-claiming.
+        let caps = default_capabilities_for("type_text_chars");
+        let cap_strs: Vec<&str> = caps.iter().map(String::as_str).collect();
+        assert!(
+            !cap_strs.contains(&"input.keyboard.type.terminal_safe"),
+            "type_text_chars must NOT claim terminal_safe: {cap_strs:?}"
+        );
     }
 
     #[test]

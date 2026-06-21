@@ -43,6 +43,10 @@ pub mod a11y;
 #[cfg(target_os = "linux")]
 pub mod wayland;
 
+// `terminal` is OS-independent (pure string matching + a thin x11 hook).
+// Keeping it un-gated lets the unit tests run on any host.
+pub mod terminal;
+
 pub fn register_tools() -> ToolRegistry {
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();

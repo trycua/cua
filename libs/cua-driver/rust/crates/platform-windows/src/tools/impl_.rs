@@ -2631,6 +2631,29 @@ impl Tool for TypeTextTool {
             }
         }
 
+        // 0. Terminal short-circuit: Windows Terminal, mintty, ConsoleWindowClass,
+        //    GVim / NeoVim — all consume keys through console / VT pipelines that
+        //    PostMessage(WM_CHAR) doesn't reach. The `set_value` UIA path also
+        //    silently no-ops on most of these. Go straight to SendInput Unicode
+        //    via `inject_text_cloaked` (capability-first; brief focus, foreground
+        //    restored). See `crate::terminal::TERMINAL_CLASS_PREFIXES`.
+        if crate::terminal::is_terminal_hwnd(hwnd) {
+            drop(_noact);
+            let text_t = text.clone();
+            let r = tokio::task::spawn_blocking(move || crate::input::inject_text_cloaked(hwnd, &text_t)).await;
+            return match r {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (terminal emulator, cloaked focus)."
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "key_events",
+                    "characters": text_len,
+                })),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // CUA-543 routing: PostMessage WM_CHAR doesn't reach modern
         // XAML / WinUI3 hosts. When the target is one of those AND the
         // caller has supplied an element_index, route through UIA
@@ -2668,7 +2691,11 @@ impl Tool for TypeTextTool {
             if set_ok {
                 return ToolResult::text(format!(
                     "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern (element_index=[{idx}])."
-                ));
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "ax",
+                    "characters": text_len,
+                }));
             }
             // ValuePattern unavailable → fall through to the WM_CHAR path.
         }
@@ -2685,7 +2712,11 @@ impl Tool for TypeTextTool {
             return match r {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (WPF, cloaked focus)."
-                )),
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "key_events",
+                    "characters": text_len,
+                })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
@@ -2698,7 +2729,11 @@ impl Tool for TypeTextTool {
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage ({_delay_ms}ms delay)."
-            )),
+            ))
+            .with_structured(serde_json::json!({
+                "path": "key_events",
+                "characters": text_len,
+            })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

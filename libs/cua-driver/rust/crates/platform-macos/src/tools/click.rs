@@ -43,7 +43,7 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
         description:
-            "Left-click against a target pid. **Prefer `element_index` over pixel \
+            "Click against a target pid. **Prefer `element_index` over pixel \
              coordinates** — element_index works on backgrounded / minimized / hidden / \
              off-Space windows, surfaces a stable handle that survives rebuilds, and tells \
              you what you're clicking via the cached element's role + label. Reach for \
@@ -58,6 +58,12 @@ fn def() -> &'static ToolDef {
                by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
                pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen \
                window to anchor the conversion.\n\n\
+             button: \"left\" (default), \"right\", or \"middle\". Defaults to left so the \
+             field is fully back-compat — omit it and you get the legacy left-click behaviour. \
+             Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. \
+             AX path: \"right\" maps to AXShowMenu (same surface as the dedicated `right_click` \
+             tool); \"middle\" has no AX equivalent and falls back to a pixel middle-click at the \
+             element's center.\n\
              action: press (default), show_menu, pick, confirm, cancel, open.\n\
              from_zoom: set true after a zoom call to auto-translate zoom-image pixel \
              coordinates to full-window space."
@@ -68,11 +74,17 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
-                "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index." },
+                "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state." },
+                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
                 "x":             { "type": "number",  "description": "Window-local screenshot X coordinate." },
                 "y":             { "type": "number",  "description": "Window-local screenshot Y coordinate." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
+                "button":        {
+                    "type": "string",
+                    "enum": ["left", "right", "middle"],
+                    "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu and falls back to a pixel middle-click at the element's center for \"middle\"."
+                },
                 "count":         { "type": "integer", "description": "Click count (pixel path only). Default 1." },
                 "modifier": {
                     "type": "array",
@@ -108,11 +120,46 @@ impl Tool for ClickTool {
         // the calling session's cursor, not the shared "default" one.
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
+        // Surface 6: resolve element_token / element_index precedence
+        // BEFORE the pixel-path fallback. Token wins on disagreement; a
+        // stale token returns an explicit error instead of silently
+        // falling back to the integer (Surface 6 hard constraint).
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id, _via_token) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg, false),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: wid, element_index: idx, via_token,
+            } => (Some(idx), wid, via_token),
+        };
         let x             = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64));
         let y             = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|i| i as f64));
         let action        = args.str_or("action", "press");
+        // Surface 5: optional `button` arg, default "left" preserves legacy behaviour.
+        // Pixel path: routes to left/right/middle CGEvent primitives.
+        // AX path: "right" delegates to AXShowMenu (same surface as right_click);
+        // "middle" has no AX equivalent and falls back to a pixel middle-click
+        // at the element's screen-space center.
+        let button_str    = args.str_or("button", "left").to_lowercase();
+        // Reject unknown buttons explicitly so silent left-click fall-through can't
+        // mask a typo. Keep "" → default left for old clients that never sent the field.
+        if !matches!(button_str.as_str(), "" | "left" | "right" | "middle") {
+            return ToolResult::error(format!(
+                "click: unknown button \"{button_str}\" — expected one of left, right, middle."
+            ));
+        }
+        let button_str = if button_str.is_empty() { "left".to_string() } else { button_str };
         let count         = args.u64_or("count", 1) as usize;
         let from_zoom     = args.bool_or("from_zoom", false);
         let debug_image_out = args.opt_str("debug_image_out");
@@ -133,12 +180,55 @@ impl Tool for ClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
+            // Surface 5: button=right on the AX path → AXShowMenu (the same surface
+            // the dedicated `right_click` tool dispatches). Threads through the
+            // identical perform_ax_click code path with the action remapped.
+            let effective_action = if button_str == "right" && action == "press" {
+                "show_menu".to_string()
+            } else {
+                action.clone()
+            };
+
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.
             let center_ptr = element_ptr;
             let center = tokio::task::spawn_blocking(move || unsafe {
                 crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
             }).await.ok().flatten();
+
+            // Surface 5: button=middle on the AX path has no AX equivalent.
+            // Fall back to a pixel middle-click at the element's screen-space center
+            // so the request still produces a real middle-button event (browser tab
+            // close, autoscroll, etc.). If we can't resolve a center, error rather
+            // than silently degrade to AXPress.
+            if button_str == "middle" {
+                let (cx, cy) = match center {
+                    Some(c) => c,
+                    None => return ToolResult::error(
+                        "click(button=middle) on element_index: could not resolve element \
+                         center for the pixel-middle-click fallback. Pass x, y directly."
+                    ),
+                };
+                crate::cursor::overlay::send_command(
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                );
+                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), cx, cy).await;
+                self.state.cursor_registry.update_position(&cursor_key, cx, cy);
+
+                let mods_owned = modifiers.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                }).await;
+                return match result {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Posted middle-click to pid {pid} at element [{idx}] center."
+                    )),
+                    Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
+                    Err(e)     => ToolResult::error(format!("Task error: {e}")),
+                };
+            }
 
             if let Some((cx, cy)) = center {
                 // Pin overlay above target window first.
@@ -163,7 +253,8 @@ impl Tool for ClickTool {
             let snapshot = WindowChangeDetector::snapshot(prior_front);
 
             // Run AX work on a blocking thread (can't block async executor).
-            let action_clone = action.clone();
+            // Use `effective_action` so button=right rewrites press → show_menu.
+            let action_clone = effective_action.clone();
             // Thread the resolved session cursor key into the blocking AX path
             // so its ShowFocusRect + ClickPulse land on THIS session's cursor,
             // not the shared "default" one (which would light the wrong cursor
@@ -330,6 +421,10 @@ impl Tool for ClickTool {
             let snapshot = WindowChangeDetector::snapshot(prior_front);
 
             let mods_owned = modifiers.clone();
+            // Surface 5: route to the right/middle CGEvent primitives when
+            // button != left. Left-button path stays on the existing Chromium-
+            // routed `click_at_xy_with_window_local` for back-compat.
+            let button_kind = button_str.clone();
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
                 prior_front,
@@ -337,18 +432,39 @@ impl Tool for ClickTool {
                 || async move {
                     tokio::task::spawn_blocking(move || {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                        // When we know the window_id, pass the window-local coordinates so
-                        // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
-                        // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
-                        // for better backgrounded-target delivery.
-                        if let Some(wid) = window_id {
-                            return crate::input::mouse::click_at_xy_with_window_local(
-                                pid, screen_x, screen_y,
-                                win_local_x, win_local_y,
-                                wid, count, &m,
-                            );
+                        match button_kind.as_str() {
+                            "right" => {
+                                if let Some(_wid) = window_id {
+                                    return crate::input::mouse::right_click_at_xy_with_window_local(
+                                        pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                                    );
+                                }
+                                crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
+                            }
+                            "middle" => {
+                                if let Some(_wid) = window_id {
+                                    return crate::input::mouse::middle_click_at_xy_with_window_local(
+                                        pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                                    );
+                                }
+                                crate::input::mouse::middle_click_at_xy(pid, screen_x, screen_y, &m)
+                            }
+                            // "left" (default) or anything else — preserve legacy left-click path.
+                            _ => {
+                                // When we know the window_id, pass the window-local coordinates so
+                                // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
+                                // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
+                                // for better backgrounded-target delivery.
+                                if let Some(wid) = window_id {
+                                    return crate::input::mouse::click_at_xy_with_window_local(
+                                        pid, screen_x, screen_y,
+                                        win_local_x, win_local_y,
+                                        wid, count, &m,
+                                    );
+                                }
+                                crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
+                            }
                         }
-                        crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
                     })
                     .await
                 },
@@ -357,12 +473,17 @@ impl Tool for ClickTool {
 
             let changes = snapshot.detect_async().await;
 
+            let button_label = match button_str.as_str() {
+                "right"  => "right-click",
+                "middle" => "middle-click",
+                _        => "click",
+            };
             match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Posted click to pid {pid}.{}",
+                    "✅ Posted {button_label} to pid {pid}.{}",
                     changes.result_suffix()
                 )),
-                Ok(Err(e)) => ToolResult::error(format!("Click failed: {e}")),
+                Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
@@ -478,5 +599,72 @@ fn map_action(action: &str) -> &'static str {
         "cancel"                   => "AXCancel",
         "open"                     => "AXOpen",
         _                          => "AXPress",
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Surface 5: schema must advertise the new `button` field with the three
+    /// canonical values and default to "left". Hermes / Codex / Claude Code
+    /// consumers branch on this enum being present.
+    #[test]
+    fn schema_advertises_button_enum() {
+        let d = def();
+        let props = d.input_schema.get("properties").expect("properties");
+        let button = props.get("button").expect("button field present");
+        let kind = button.get("type").and_then(|v| v.as_str());
+        assert_eq!(kind, Some("string"));
+        let enum_vals: Vec<&str> = button
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("button.enum present")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(enum_vals.contains(&"left"));
+        assert!(enum_vals.contains(&"right"));
+        assert!(enum_vals.contains(&"middle"));
+    }
+
+    /// Surface 5 hard constraint: the tool description must mention the
+    /// `button` argument and the "left" default so MCP introspection (which
+    /// pipes description into LLM prompts) carries the back-compat note.
+    #[test]
+    fn description_mentions_button_default() {
+        let d = def();
+        let desc = d.description.to_ascii_lowercase();
+        assert!(desc.contains("button"), "description should mention button arg");
+        assert!(desc.contains("left"), "description should mention left default");
+        assert!(desc.contains("middle"), "description should mention middle button");
+    }
+
+    /// Existing default behaviour preserved: no `button` field on the call →
+    /// resolves to "left" inside invoke. We can't drive the AX path without a
+    /// live macOS Window Server, but we CAN check the same arg-parsing logic
+    /// the invoke uses produces "left" for empty / absent input.
+    #[test]
+    fn button_defaults_to_left_when_absent() {
+        use cua_driver_core::tool_args::ArgsExt;
+        let args = serde_json::json!({ "pid": 1234 });
+        let button_str_raw = args.str_or("button", "left").to_lowercase();
+        let resolved = if button_str_raw.is_empty() { "left".to_string() } else { button_str_raw };
+        assert_eq!(resolved, "left");
+    }
+
+    /// Round-trip the three canonical values through the same parse the invoke
+    /// uses, so any future refactor that changes str_or semantics breaks here
+    /// before it breaks consumers.
+    #[test]
+    fn button_round_trips_right_and_middle() {
+        use cua_driver_core::tool_args::ArgsExt;
+        for v in ["left", "right", "middle"] {
+            let args = serde_json::json!({ "pid": 1234, "button": v });
+            let s = args.str_or("button", "left").to_lowercase();
+            assert_eq!(s, v);
+        }
     }
 }

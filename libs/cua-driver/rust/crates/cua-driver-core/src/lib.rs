@@ -14,6 +14,7 @@ pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DI
 
 pub mod cdp;
 pub mod element_cache;
+pub mod element_token;
 pub mod ffmpeg_install;
 pub mod image_utils;
 pub mod page;

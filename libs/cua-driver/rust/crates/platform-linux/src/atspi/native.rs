@@ -215,9 +215,25 @@ async fn app_for_pid<'a>(
 
 /// Depth-first, pre-order walk of an application's windows. Mirrors the old
 /// pyatspi `walk`/`collect` traversal so element indices stay stable.
+#[allow(dead_code)]
 async fn collect_visited<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
+) -> Result<Option<Vec<Visited<'a>>>> {
+    collect_visited_bounded(conn, pid, None, None).await
+}
+
+/// `collect_visited` with caller-supplied caps.
+/// - `max_elements = None` keeps the historical 5 000-node budget.
+/// - `max_depth = None` keeps depth uncapped (the historical behaviour);
+///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
+/// Issue #22865: caps protect against Electron / large web apps that produce
+/// 10k+ element trees and blow context windows.
+async fn collect_visited_bounded<'a>(
+    conn: &'a AccessibilityConnection,
+    pid: u32,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
 ) -> Result<Option<Vec<Visited<'a>>>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
@@ -235,8 +251,9 @@ async fn collect_visited<'a>(
     };
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
-    // Guard against pathological/looping trees.
-    let mut budget = 5000usize;
+    // Guard against pathological/looping trees. Defaults to 5 000 (the
+    // historical hard-coded budget); callers can override via max_elements.
+    let mut budget = max_elements.unwrap_or(5000usize);
     // Time budget alongside the node budget: when an app is unresponsive to
     // AT-SPI (most commonly because it holds a modal grab and isn't servicing
     // D-Bus), every per-node `call()` burns the full CALL_TIMEOUT before being
@@ -382,9 +399,14 @@ async fn collect_visited<'a>(
         let child_in_web_doc = in_web_doc || is_document_role(&role);
 
         // Enqueue children (fetched above) before moving `acc` into `visited`.
-        if let Some(Ok(children)) = children_r {
-            for c in children.into_iter().rev() {
-                stack.push((c, depth + 1, child_in_web_doc));
+        // Honor max_depth (#22865): skip enqueueing descendants whose depth
+        // would exceed the cap.
+        let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
+        if descend {
+            if let Some(Ok(children)) = children_r {
+                for c in children.into_iter().rev() {
+                    stack.push((c, depth + 1, child_in_web_doc));
+                }
             }
         }
 
@@ -410,13 +432,30 @@ async fn collect_visited<'a>(
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
 /// Format matches the historical pyatspi output exactly so downstream parsing
 /// (`extract_text_from_markdown`, `query_dom`) is unaffected.
+///
+/// `parent_at_depth` tracks the most recently emitted actionable index at
+/// each depth, so descendants can look up their parent_element_index without
+/// a second pass.
 fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
     let mut md = String::new();
     let mut nodes = Vec::new();
     let mut idx = 0usize;
+    // Sparse stack: parent_at_depth[d] = Some(idx) for the actionable node
+    // most recently emitted at depth d. When a new node appears at depth d,
+    // its parent_element_index is the closest ancestor at depth < d that has
+    // an entry. We invalidate deeper entries on each emit so stale siblings
+    // don't leak across subtrees.
+    let mut parent_at_depth: Vec<Option<usize>> = Vec::new();
 
     for v in visited {
         let indent = "  ".repeat(v.depth);
+        // Resolve parent: walk parent_at_depth from v.depth-1 down to 0.
+        let parent_element_index = if v.depth == 0 {
+            None
+        } else {
+            (0..v.depth).rev().find_map(|d| parent_at_depth.get(d).copied().flatten())
+        };
+
         if !v.actions.is_empty() {
             let act_str = v.actions.join(",");
             let val_part = match &v.value {
@@ -436,7 +475,18 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,
+                depth: v.depth,
+                parent_element_index,
             });
+            // Record this actionable index at its depth, and invalidate any
+            // deeper entries from a previous subtree.
+            while parent_at_depth.len() <= v.depth {
+                parent_at_depth.push(None);
+            }
+            parent_at_depth[v.depth] = Some(idx);
+            for deeper in (v.depth + 1)..parent_at_depth.len() {
+                parent_at_depth[deeper] = None;
+            }
             idx += 1;
         } else if !v.name.is_empty() {
             md.push_str(&format!(
@@ -459,12 +509,23 @@ fn format_value(v: f64) -> String {
 // ── Public (sync) entry points ───────────────────────────────────────────────
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
+    walk_tree_bounded(pid, None, None)
+}
+
+/// Walk the AT-SPI tree with caller-supplied node + depth caps.
+/// `max_elements = None` keeps the historical 5 000-node default; `max_depth
+/// = None` keeps the historical unbounded depth. Issue #22865.
+pub fn walk_tree_bounded(
+    pid: u32,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+) -> Result<Option<(String, Vec<AtspiNode>)>> {
     runtime().block_on(async {
         let work = async {
             let conn = AccessibilityConnection::new()
                 .await
                 .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            match collect_visited(&conn, pid).await? {
+            match collect_visited_bounded(&conn, pid, max_elements, max_depth).await? {
                 Some(visited) => Ok(Some(render(&visited))),
                 None => Ok(None),
             }

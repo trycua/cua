@@ -63,11 +63,15 @@ fn def() -> &'static ToolDef {
                 "text": { "type": "string",  "description": "Text to insert at the target's cursor." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Required when element_index is used."
+                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
                 },
                 "element_index": {
                     "type": "integer",
                     "description": "Element index from last get_window_state. Directs the write to a specific field. Requires window_id."
+                },
+                "element_token": {
+                    "type": "string",
+                    "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."
                 },
                 "delay_ms": {
                     "type": "integer",
@@ -97,11 +101,30 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
+        // Surface 6: element_token / element_index precedence resolution.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "type_text",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: wid, element_index: idx, via_token: _,
+            } => (Some(idx), wid),
+        };
         let delay_ms      = args.u64_or("delay_ms", 30);
 
-        // Validate element_index requires window_id.
+        // Validate element_index requires window_id (still applies for
+        // the legacy integer path; token path already resolved window_id).
         if element_index.is_some() && window_id.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used."

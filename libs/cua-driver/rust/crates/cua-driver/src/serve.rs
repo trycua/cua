@@ -530,22 +530,40 @@ pub async fn run_serve(
                             }
                             "list" => {
                                 // Include full ToolDef (input_schema + annotation
-                                // hints) so MCP proxy callers can build a complete
-                                // `tools/list` response from one daemon round-trip.
-                                // Older clients that only read name/description
-                                // still work — the extra fields are ignored.
+                                // hints + capabilities) so MCP proxy callers can
+                                // build a complete `tools/list` response from
+                                // one daemon round-trip. Older clients that only
+                                // read name/description still work — the extra
+                                // fields are ignored.
+                                //
+                                // `capabilities` is sourced from the centralised
+                                // `cua_driver_core::tool::default_capabilities_for`
+                                // name → tokens map so the daemon and in-process
+                                // paths emit identical capability arrays.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| serde_json::json!({
-                                        "name": name,
-                                        "description": def.description,
-                                        "input_schema": def.input_schema,
-                                        "read_only": def.read_only,
-                                        "destructive": def.destructive,
-                                        "idempotent": def.idempotent,
-                                        "open_world": def.open_world,
-                                    }))
+                                    .map(|(name, def)| {
+                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        serde_json::json!({
+                                            "name": name,
+                                            "description": def.description,
+                                            "input_schema": def.input_schema,
+                                            "read_only": def.read_only,
+                                            "destructive": def.destructive,
+                                            "idempotent": def.idempotent,
+                                            "open_world": def.open_world,
+                                            "capabilities": caps,
+                                        })
+                                    })
                                     .collect();
-                                let resp = DaemonResponse::ok(serde_json::json!({"tools": tools}));
+                                // Mirror `tools_list` envelope: include
+                                // capability_version + schema_version so MCP
+                                // proxy callers can pass them through verbatim
+                                // (one daemon round-trip, complete response).
+                                let resp = DaemonResponse::ok(serde_json::json!({
+                                    "tools": tools,
+                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
+                                    "schema_version": "1",
+                                }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1061,19 +1079,31 @@ pub async fn run_serve(
                                 // Include full ToolDef so MCP proxy callers can
                                 // build a complete `tools/list` response from
                                 // one daemon round-trip. See the unix branch
-                                // above for rationale.
+                                // above for rationale (capabilities map, etc.).
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| serde_json::json!({
-                                        "name": name,
-                                        "description": def.description,
-                                        "input_schema": def.input_schema,
-                                        "read_only": def.read_only,
-                                        "destructive": def.destructive,
-                                        "idempotent": def.idempotent,
-                                        "open_world": def.open_world,
-                                    }))
+                                    .map(|(name, def)| {
+                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        serde_json::json!({
+                                            "name": name,
+                                            "description": def.description,
+                                            "input_schema": def.input_schema,
+                                            "read_only": def.read_only,
+                                            "destructive": def.destructive,
+                                            "idempotent": def.idempotent,
+                                            "open_world": def.open_world,
+                                            "capabilities": caps,
+                                        })
+                                    })
                                     .collect();
-                                let resp = DaemonResponse::ok(serde_json::json!({"tools": tools}));
+                                // Mirror `tools_list` envelope: include
+                                // capability_version + schema_version so MCP
+                                // proxy callers can pass them through verbatim
+                                // (one daemon round-trip, complete response).
+                                let resp = DaemonResponse::ok(serde_json::json!({
+                                    "tools": tools,
+                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
+                                    "schema_version": "1",
+                                }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;

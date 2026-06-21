@@ -57,15 +57,16 @@ fn def() -> &'static ToolDef {
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "window_id", "element_index", "value"],
+            "required": ["pid", "value"],
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer" },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID for the window whose get_window_state produced the element_index."
+                    "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
                 },
-                "element_index": { "type": "integer" },
+                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Must be supplied unless element_token is provided." },
+                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
@@ -87,9 +88,40 @@ impl Tool for SetValueTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
-        let window_id = match args.require_u32("window_id") { Ok(v) => v, Err(e) => return e };
-        let element_index = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
         let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
+
+        // Surface 6: element_token / element_index precedence. Neither
+        // is now schema-required so the resolver can centralize the
+        // "missing addressing" error message.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "set_value",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None =>
+                return ToolResult::error(
+                    "set_value requires element_index (+ window_id) or element_token to \
+                     address the target element."
+                ),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: Some(wid), element_index: idx, via_token: _,
+            } => (idx, wid),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: None, ..
+            } => return ToolResult::error(
+                "set_value requires window_id when element_index is used \
+                 (omit only when supplying element_token, which carries it)."
+            ),
+        };
 
         // Retain out of the cache so a concurrent get_window_state can't free
         // the element mid-action (use-after-free → daemon crash). Guard lives

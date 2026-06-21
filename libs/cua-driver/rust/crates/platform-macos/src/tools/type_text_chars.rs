@@ -28,8 +28,9 @@ fn def() -> &'static ToolDef {
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "text":          { "type": "string",  "description": "Text to type." },
                 "delay_ms":      { "type": "integer", "description": "Milliseconds between characters (default 30)." },
-                "window_id":     { "type": "integer", "description": "Window ID for element focus." },
+                "window_id":     { "type": "integer", "description": "Window ID for element focus. Optional when element_token is supplied." },
                 "element_index": { "type": "integer", "description": "Element to focus before typing." },
+                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
                 "type_chars_only": { "type": "boolean", "description": "Skip AX focus, type directly. Default false." }
             },
             "additionalProperties": false
@@ -54,8 +55,26 @@ impl Tool for TypeTextCharsTool {
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        // Surface 6: element_token / element_index precedence resolution.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "type_text_chars",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: wid, element_index: idx, via_token: _,
+            } => (Some(idx), wid),
+        };
         let type_chars_only = args.bool_or("type_chars_only", false);
 
         // Pre-focus element if requested.

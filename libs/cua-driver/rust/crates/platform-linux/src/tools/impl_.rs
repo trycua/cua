@@ -344,13 +344,32 @@ impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
         GWS_DEF.get_or_init(|| ToolDef {
             name: "get_window_state".into(),
-            description: "Walk a running app's AT-SPI tree and return a Markdown rendering of its UI. Also captures a screenshot.".into(),
+            description: "Walk a running app's AT-SPI tree and return BOTH a \
+                structured `elements` array (preferred) AND a Markdown rendering of \
+                the same tree (back-compat). Every actionable element is tagged \
+                with [element_index N] in the markdown and as `element_index` in \
+                the structured array.\n\n\
+                PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
+                per indexed row with `element_index`, `role`, `label`, \
+                `frame: {x,y,w,h}` when AT-SPI reports usable bounds, \
+                `parent_index`, `depth`). The markdown `tree_markdown` stays \
+                available and unchanged in shape for existing text-parsing \
+                callers — but new fields will only be added to the structured \
+                side.\n\n\
+                Also captures a screenshot.\n\n\
+                Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
+                mitigate context-window blow-up on Electron / large web apps \
+                that produce 10k+ element trees (#22865). When applied, BOTH \
+                the markdown and the structured elements are truncated \
+                identically. Omit both for current default behaviour.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"X11 XID from list_windows."},
                 "capture_mode":{"type":"string","enum":["som","vision","ax"],
                     "description":"som=tree+screenshot (default), vision=screenshot only, ax=tree only."},
-                "query":{"type":"string"}
+                "query":{"type":"string"},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees (#22865)."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps (#22865)."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -366,6 +385,10 @@ impl Tool for GetWindowStateTool {
         };
         let capture_mode = args.str_or("capture_mode", &default_mode);
         let query = args.opt_str("query");
+        // Optional caps — when omitted, the AT-SPI walker uses its built-in
+        // defaults (#22865).
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize);
 
         // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
         let do_tree = capture_mode != "vision";
@@ -374,7 +397,7 @@ impl Tool for GetWindowStateTool {
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
-                Some(crate::atspi::walk_tree(pid, xid, query.as_deref()))
+                Some(crate::atspi::walk_tree_bounded(pid, xid, query.as_deref(), max_elements, max_depth))
             } else {
                 None
             };
@@ -416,9 +439,21 @@ impl Tool for GetWindowStateTool {
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    // Additive `elements` array: one entry per tree node that
-                    // has an element_index AND a successfully-resolved screen
-                    // bounds (AT-SPI Component.GetExtents(Screen)).
+                    // Surface 6: register a snapshot in the global token
+                    // registry so each actionable element can be addressed
+                    // by an opaque per-snapshot `element_token` alongside
+                    // its existing integer `element_index`. The integer
+                    // surface stays unchanged — the token is additive.
+                    let snapshot_id = cua_driver_core::element_token::global()
+                        .register_snapshot(pid as i32, xid as u32, count);
+
+                    // Structured `elements` array: one entry per actionable node.
+                    // Shape: `{element_index, element_token, role, label,
+                    // depth, parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // included whenever AT-SPI Component.GetExtents(Screen)
+                    // reported usable bounds; omitted otherwise (some
+                    // toolkits leave bounds unset on hidden / virtual
+                    // elements).
                     use std::collections::HashMap;
                     let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
                         .into_iter()
@@ -429,17 +464,47 @@ impl Tool for GetWindowStateTool {
                         .iter()
                         .filter_map(|n| {
                             let idx = n.element_index?;
-                            let (x, y, w, h) = bounds_by_idx.get(&idx).copied()?;
-                            Some(json!({
+                            // `label` mirrors what a human reading the markdown row
+                            // would call this element: name first, then value,
+                            // then description.
+                            let label = n.name.clone()
+                                .or_else(|| n.value.clone())
+                                .or_else(|| n.description.clone());
+                            let mut entry = json!({
                                 "element_index": idx,
+                                // Surface 6: opaque token paired to the
+                                // integer index. See cua-driver-core's
+                                // `element_token` module for the format
+                                // and validity contract.
+                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
                                 "role": n.role,
-                                "name": n.name,
-                                "x": x, "y": y,
-                                "width": w, "height": h,
-                            }))
+                                "depth": n.depth,
+                            });
+                            if let Some(label) = label {
+                                entry["label"] = json!(label);
+                            }
+                            if let Some(parent) = n.parent_element_index {
+                                entry["parent_index"] = json!(parent);
+                            }
+                            if let Some((x, y, w, h)) = bounds_by_idx.get(&idx).copied() {
+                                entry["frame"] = json!({ "x": x, "y": y, "w": w, "h": h });
+                            }
+                            Some(entry)
                         })
                         .collect();
                     structured["elements"] = json!(elements);
+                    // Surface 6: snapshot id mirror for debug correlation.
+                    structured["snapshot_id"] = json!(
+                        cua_driver_core::element_token::token_for(snapshot_id, 0)
+                            .trim_end_matches(":0")
+                            .to_string()
+                    );
+                    structured["_note"] = json!(
+                        "Prefer `elements` — `tree_markdown` will continue to work \
+                         but new fields will only be added to the structured side. \
+                         Issue #22865: use `max_elements` / `max_depth` to bound the \
+                         AT-SPI walk on apps with very large trees."
+                    );
                 }
 
                 if let Some((b64, w, h, orig_w)) = shot_opt {
@@ -451,6 +516,10 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    // Surface 7: mirror the MCP image part's `mimeType` onto
+                    // the structured payload so consumers don't have to sniff
+                    // magic bytes off the base64 to know the format.
+                    structured["screenshot_mime_type"] = json!("image/png");
                 }
 
                 ToolResult { content, is_error: None, structured_content: Some(structured) }
@@ -840,7 +909,12 @@ impl Tool for ClickTool {
                 window_id) and is replaced by the next get_window_state of the same window — \
                 re-snapshot every turn before clicking.\n\n\
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords \
-                back to full-window space.".into(),
+                back to full-window space.\n\n\
+                button: \"left\" (default), \"right\", or \"middle\". Defaults to left so the \
+                field is fully back-compat. X11: routes through XSendEvent ButtonPress/Release \
+                with the matching button code. Native Wayland: only left-button is supported \
+                via the virtual-pointer protocol — right/middle return an error rather than \
+                silently degrading to left.".into(),
             input_schema: json!({
                 "type":"object","required":["pid"],"properties":{
                     "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
@@ -850,7 +924,8 @@ impl Tool for ClickTool {
                     "x":{"type":"number"},
                     "y":{"type":"number"},
                     "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
-                    "button":{"type":"string","enum":["left","right","middle"]},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
                 },"additionalProperties":false
@@ -863,11 +938,46 @@ impl Tool for ClickTool {
         let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;
-        let button = parse_mouse_button(args.str_or("button", "left").as_str());
+        // Surface 5: reject unknown buttons so a typo can't silently fall through
+        // to a left-click. Empty string keeps back-compat with old clients.
+        let button_str_raw = args.str_or("button", "left").to_lowercase();
+        if !matches!(button_str_raw.as_str(), "" | "left" | "right" | "middle") {
+            return ToolResult::error(format!(
+                "click: unknown button \"{button_str_raw}\" — expected one of left, right, middle."
+            ));
+        }
+        let button_str = if button_str_raw.is_empty() { "left" } else { button_str_raw.as_str() };
+        let button = parse_mouse_button(button_str);
 
-        if let Some(idx) = args.opt_u64("element_index") {
-            let idx = idx as usize;
-            let xid_hint = args.opt_u64("window_id");
+        // Surface 6: element_token / element_index precedence resolution.
+        // We resolve before the legacy `opt_u64("element_index")` branch
+        // so a token-only call (no integer arg) still takes the element path.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id");
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg.map(|v| v as u32),
+            "click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx_resolved: Option<usize> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let window_id_resolved: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64),
+            cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
+        };
+
+        if let Some(idx) = elem_idx_resolved {
+            let xid_hint = window_id_resolved;
             // For element_index: try AT-SPI perform_action first (background-safe).
             // Always get bounds to send the overlay ClickPulse at the element center.
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
@@ -948,6 +1058,18 @@ impl Tool for ClickTool {
             // x/y can't be mapped to a global pointer position; activating the
             // window the caller targeted is the focus-based equivalent.
             if crate::wayland::is_wayland() {
+                // Surface 5: the Wayland virtual-pointer path here only emits a
+                // left-button press at the output centre. Surface a real error
+                // instead of silently dropping a right/middle request onto a
+                // left-click, so the Hermes-side audit gap closes.
+                if button != 1 {
+                    let label = mouse_button_name(button);
+                    anyhow::bail!(
+                        "{label}-button click is not supported on this platform \
+                         (native Wayland virtual-pointer path: left-button only). \
+                         Use the X11 backend, or run the target under XWayland."
+                    );
+                }
                 return crate::wayland::click(xid);
             }
             crate::input::send_click(xid, xi, yi, count, button)
@@ -976,7 +1098,8 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity)."}
+                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity)."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -991,7 +1114,25 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        let xid_opt = args.opt_u64("window_id");
+        // Surface 6: resolve element_token / element_index for the
+        // optional pre-typing focus glide below. The token also carries
+        // the window_id when supplied so the caller can omit window_id.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "type_text",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (resolved_elem_idx, resolved_window_id) = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, window_id, .. } =>
+                (Some(*element_index), window_id.map(|v| v as u64)),
+            cua_driver_core::element_token::ResolvedElement::None => (None, None),
+        };
+        let xid_opt = resolved_window_id.or_else(|| args.opt_u64("window_id"));
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -1038,9 +1179,9 @@ impl Tool for TypeTextTool {
             };
         }
         // Pulse the agent cursor onto the field being typed into (when an
-        // element_index is supplied) so the viewer sees *where* typing happens.
-        if let Some(idx) = args.opt_u64("element_index") {
-            let idx = idx as usize;
+        // element_index OR element_token is supplied — token resolution
+        // already ran above so `resolved_elem_idx` covers both).
+        if let Some(idx) = resolved_elem_idx {
             crate::overlay::send_command(cursor_overlay::OverlayCommand::PinAbove(xid));
             if let Ok(Ok((sx, sy))) =
                 tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
@@ -1173,7 +1314,9 @@ impl Tool for PressKeyTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "key":{"type":"string"},
-                    "modifiers":{"type":"array","items":{"type":"string"}}
+                    "modifiers":{"type":"array","items":{"type":"string"}},
+                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. Resolves window_id when window_id is omitted."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -1185,7 +1328,29 @@ impl Tool for PressKeyTool {
         let pid = args.u64_or("pid", 0) as u32;
         let key = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
         let mods: Vec<String> = args.str_array("modifiers");
-        let xid_opt = args.opt_u64("window_id");
+
+        // Surface 6: resolve element_token / element_index for the window-id
+        // hint. press_key targets a window via XSendEvent, so we only need
+        // the resolved window_id — element_index itself is not used to
+        // address an AX node here (no focus-grab path).
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id");
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg.map(|v| v as u32),
+            "press_key",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let xid_opt = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or(window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
+        };
         let xid = match xid_opt {
             Some(x) => x,
             None => {
@@ -1326,10 +1491,11 @@ impl Tool for SetValueTool {
             name: "set_value".into(),
             description: "Set value of an AT-SPI element via SetValue action.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","window_id","element_index","value"],"properties":{
+                "type":"object","required":["pid","value"],"properties":{
                     "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "element_index":{"type":"integer"},
+                    "window_id":{"type":"integer","description":"Required when element_index is used; optional when element_token is supplied (the token carries it)."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state. Must be supplied unless element_token is provided."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "value":{"type":"string"}
                 },"additionalProperties":false
             }),
@@ -1340,8 +1506,25 @@ impl Tool for SetValueTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
-        let idx = match args.require_u64("element_index") { Ok(v) => v as usize, Err(e) => return e };
         let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "set_value",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let idx = match resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => element_index,
+            cua_driver_core::element_token::ResolvedElement::None =>
+                return ToolResult::error(
+                    "set_value requires element_index or element_token to address the target element."
+                ),
+        };
         let value_for_task = value.clone();
         // Pulse the agent cursor onto the target element before writing, so a
         // value write gets the same visual feedback as a click — the viewer can
@@ -1390,7 +1573,8 @@ impl Tool for ScrollTool {
                     "by":{"type":"string","enum":["line","page"]},
                     "amount":{"type":"integer","minimum":1,"maximum":50},
                     "window_id":{"type":"integer"},
-                    "element_index":{"type":"integer"}
+                    "element_index":{"type":"integer"},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: false, open_world: true,
@@ -1402,7 +1586,26 @@ impl Tool for ScrollTool {
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
-        let xid_opt = args.opt_u64("window_id");
+        // Surface 6: resolve element_token / element_index. The Linux
+        // scroll implementation today doesn't actually pre-focus the
+        // element (X11 scroll buttons go to the window root), but the
+        // token still needs to be accepted + validated so a stale
+        // token surfaces an error instead of silently no-op'ing.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "scroll",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let xid_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -1461,6 +1664,7 @@ impl Tool for DoubleClickTool {
                 "x":{"type":"number"},
                 "y":{"type":"number"},
                 "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -1470,9 +1674,29 @@ impl Tool for DoubleClickTool {
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
-        if let Some(idx) = args.opt_u64("element_index") {
-            let idx = idx as usize;
-            let xid_hint = args.opt_u64("window_id");
+        // Surface 6: element_token / element_index precedence.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "double_click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx_resolved = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let window_id_resolved: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
+        if let Some(idx) = elem_idx_resolved {
+            let xid_hint = window_id_resolved;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
                 resolve_element_local_coords(pid, idx, xid_hint)
             }).await;
@@ -1499,7 +1723,7 @@ impl Tool for DoubleClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        let xid = match args.opt_u64("window_id") {
+        let xid = match window_id_resolved {
             Some(v) => v, None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
         let from_zoom = args.bool_or("from_zoom", false);
@@ -1562,6 +1786,7 @@ impl Tool for RightClickTool {
                 "x":{"type":"number"},
                 "y":{"type":"number"},
                 "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys to hold."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
@@ -1572,9 +1797,29 @@ impl Tool for RightClickTool {
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
-        if let Some(idx) = args.opt_u64("element_index") {
-            let idx = idx as usize;
-            let xid_hint = args.opt_u64("window_id");
+        // Surface 6: element_token / element_index precedence.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "right_click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx_resolved = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let window_id_resolved: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
+        if let Some(idx) = elem_idx_resolved {
+            let xid_hint = window_id_resolved;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
                 resolve_element_local_coords(pid, idx, xid_hint)
             }).await;
@@ -1601,7 +1846,7 @@ impl Tool for RightClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        let xid = match args.opt_u64("window_id") {
+        let xid = match window_id_resolved {
             Some(v) => v, None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
         let from_zoom = args.bool_or("from_zoom", false);
@@ -3123,7 +3368,12 @@ impl Tool for ZoomTool {
                         Content::text(format!("Zoom ({x1:.0},{y1:.0})–({x2:.0},{y2:.0}) → {w}×{h} px JPEG.")),
                     ],
                     is_error: None,
-                    structured_content: Some(json!({ "width": w, "height": h, "format": "jpeg" })),
+                    // Surface 7: `mime_type` mirrors the MCP image part's `mimeType`
+                    // onto the structured payload (additive — `format` stays).
+                    structured_content: Some(json!({
+                        "width": w, "height": h, "format": "jpeg",
+                        "mime_type": "image/jpeg"
+                    })),
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Zoom failed: {e}")),
@@ -3346,4 +3596,39 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register_recording_tools();
     r.register_session_tools();
     r
+}
+
+#[cfg(test)]
+mod click_button_schema_tests {
+    use super::ClickTool;
+    use cua_driver_core::tool::Tool;
+
+    /// Surface 5: schema must advertise the three canonical button values and
+    /// describe the back-compat default. Linux already routed button=middle/right
+    /// pre-Surface-5; this freezes the schema shape so the contract can't drift.
+    #[test]
+    fn schema_advertises_button_enum_and_description() {
+        let tool = ClickTool { state: super::ToolState::new() };
+        let d = tool.def();
+        let props = d.input_schema.get("properties").expect("properties");
+        let button = props.get("button").expect("button field present");
+        assert_eq!(button.get("type").and_then(|v| v.as_str()), Some("string"));
+        let enum_vals: Vec<&str> = button
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("button.enum present")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for need in ["left", "right", "middle"] {
+            assert!(enum_vals.contains(&need), "missing {need} in button.enum");
+        }
+        let desc = button
+            .get("description")
+            .and_then(|v| v.as_str())
+            .expect("button.description present");
+        let lc = desc.to_ascii_lowercase();
+        assert!(lc.contains("left"), "description should mention default");
+        assert!(lc.contains("wayland"), "description should call out wayland fallback");
+    }
 }

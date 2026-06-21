@@ -49,7 +49,8 @@ fn def() -> &'static ToolDef {
                     "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
                 },
                 "window_id": { "type": "integer" },
-                "element_index": { "type": "integer" }
+                "element_index": { "type": "integer" },
+                "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." }
             },
             "additionalProperties": false
         }),
@@ -69,8 +70,26 @@ impl Tool for PressKeyTool {
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         let key_raw = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
         let mut modifiers: Vec<String> = args.str_array("modifiers");
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        // Surface 6: element_token / element_index precedence resolution.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "press_key",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: wid, element_index: idx, via_token: _,
+            } => (Some(idx), wid),
+        };
 
         // Remap "+" / "plus" → "=" + Shift (same physical key on US layout).
         let key = if key_raw == "+" || key_raw == "plus" {

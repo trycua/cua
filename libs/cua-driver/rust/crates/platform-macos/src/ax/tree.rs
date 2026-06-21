@@ -15,17 +15,24 @@ use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-/// Maximum depth for AX tree walks. Deep menus and complex web views can
-/// nest deeply; 25 covers realistic app chrome without exploding on
+/// Default maximum depth for AX tree walks. Deep menus and complex web views
+/// can nest deeply; 25 covers realistic app chrome without exploding on
 /// pathological trees (mirrors Swift reference implementation).
-const MAX_DEPTH: usize = 25;
+///
+/// Callers can override per-call via `walk_tree`'s `max_depth` parameter to
+/// trade fidelity for context-window budget on AX-heavy apps (Electron,
+/// Obsidian, large web apps — issue #22865).
+pub const DEFAULT_MAX_DEPTH: usize = 25;
 
-/// Maximum total nodes visited during a single AX walk. Chromium-family apps
-/// (Arc, VS Code, Chrome) can expose thousands of nodes; capping at 2 000
+/// Default maximum total nodes visited during a single AX walk. Chromium-family
+/// apps (Arc, VS Code, Chrome) can expose thousands of nodes; capping at 2 000
 /// keeps the walk bounded while still covering realistic app chrome.
 /// When the cap is hit the walk stops early and the partial tree is returned
 /// with a warning line appended (mirrors Swift reference implementation).
-const MAX_ELEMENTS: usize = 2_000;
+///
+/// Callers can override per-call via `walk_tree`'s `max_elements` parameter
+/// (issue #22865).
+pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 
 /// How long to let a freshly-enabled Chromium/Electron app build its
 /// web-content AX tree before we read it. The tree is materialized
@@ -62,6 +69,16 @@ pub struct AXNode {
     pub actions: Vec<String>,
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
+    /// Depth in the rendered markdown tree (matches the indent level used in
+    /// `tree_markdown`). Layout containers AXScrollArea/AXGroup collapse so
+    /// children share the parent's depth.
+    pub depth: usize,
+    /// `element_index` of the nearest actionable ancestor, if any. Walks the
+    /// rendered tree (so it skips collapsed layout containers).
+    pub parent_element_index: Option<usize>,
+    /// Screen-coordinate bounding rect `[x, y, width, height]` captured at
+    /// walk time. `None` when AX didn't report a usable position+size.
+    pub frame: Option<[f64; 4]>,
 }
 
 pub struct TreeWalkResult {
@@ -86,13 +103,31 @@ pub struct TreeWalkResult {
 /// # Safety
 /// Calls macOS AX API. Must be called on a thread that has a CF run loop.
 pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeWalkResult {
+    walk_tree_bounded(pid, window_id, query, DEFAULT_MAX_ELEMENTS, DEFAULT_MAX_DEPTH)
+}
+
+/// Walk the AX tree with caller-supplied caps. See [`walk_tree`] for the
+/// common case (defaults apply). `max_elements`/`max_depth` clamp the
+/// rendered tree breadth-wise (DFS truncated when the element counter hits
+/// the cap) and depth-wise (nodes whose markdown indent would exceed the cap
+/// are omitted). Markdown and the `nodes` vec are truncated identically.
+///
+/// Issue #22865: caps protect against Electron / Obsidian / large web apps
+/// that produce 10k+ element trees and blow context windows.
+pub fn walk_tree_bounded(
+    pid: i32,
+    window_id: Option<u32>,
+    query: Option<&str>,
+    max_elements: usize,
+    max_depth: usize,
+) -> TreeWalkResult {
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
-    // Shared visited-node counter passed into walk_element to enforce MAX_ELEMENTS.
+    // Shared visited-node counter passed into walk_element to enforce the cap.
     let mut visited_count = 0usize;
     // Set to true only when walk_element actually stops early due to the cap —
-    // avoids a false-positive when the tree naturally ends on exactly MAX_ELEMENTS.
+    // avoids a false-positive when the tree naturally ends on exactly the cap.
     let mut truncated = false;
 
     unsafe {
@@ -151,7 +186,18 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 
         // Walk each top-level child at depth 0.
         for child in walk_these {
-            walk_element(child, 0, &mut nodes, &mut lines, &mut index_counter, &mut visited_count, &mut truncated);
+            walk_element(
+                child,
+                0,
+                None,
+                &mut nodes,
+                &mut lines,
+                &mut index_counter,
+                &mut visited_count,
+                &mut truncated,
+                max_elements,
+                max_depth,
+            );
         }
 
         // Release all top-level elements (copy_children / copy_ax_windows both retain).
@@ -172,7 +218,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 
     if truncated_flag {
         tree_markdown.push_str(&format!(
-            "\n⚠️  AX tree truncated at {MAX_ELEMENTS} nodes \
+            "\n⚠️  AX tree truncated at {max_elements} nodes \
              (app has a very large accessibility tree — Arc, Electron, or similar). \
              Element indices above are still valid. Use pixel clicks for elements \
              not visible in this partial tree."
@@ -182,19 +228,23 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
     TreeWalkResult { tree_markdown, nodes, truncated: truncated_flag }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
+    parent_index: Option<usize>,
     nodes: &mut Vec<AXNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     visited_count: &mut usize,
     truncated: &mut bool,
+    max_elements: usize,
+    max_depth: usize,
 ) {
-    if depth > MAX_DEPTH { return; }
+    if depth > max_depth { return; }
     // Enforce total-node cap — mirrors Swift's maxElements guard.
     // Set the truncated flag only when we actually stop early.
-    if *visited_count >= MAX_ELEMENTS {
+    if *visited_count >= max_elements {
         *truncated = true;
         return;
     }
@@ -205,10 +255,23 @@ unsafe fn walk_element(
 
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
-        // Still recurse — children may be interesting.
+        // Still recurse — children may be interesting. Layout containers
+        // collapse, so children inherit the parent's depth AND the same
+        // parent_index (no actionable node was emitted here).
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth, nodes, lines, counter, visited_count, truncated);
+            walk_element(
+                child,
+                depth,
+                parent_index,
+                nodes,
+                lines,
+                counter,
+                visited_count,
+                truncated,
+                max_elements,
+                max_depth,
+            );
             CFRelease(child as CFTypeRef);
         }
         return;
@@ -241,13 +304,25 @@ unsafe fn walk_element(
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
         for child in children {
-            walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
+            walk_element(
+                child,
+                depth + 1,
+                parent_index,
+                nodes,
+                lines,
+                counter,
+                visited_count,
+                truncated,
+                max_elements,
+                max_depth,
+            );
             CFRelease(child as CFTypeRef);
         }
         return;
     }
 
     let element_ptr = element as usize;
+    let frame = element_screen_rect(element);
     let node = if is_actionable {
         let idx = *counter;
         *counter += 1;
@@ -264,6 +339,9 @@ unsafe fn walk_element(
             help: help.clone(),
             actions: actions.clone(),
             element_ptr,
+            depth,
+            parent_element_index: parent_index,
+            frame,
         }
     } else {
         AXNode {
@@ -276,8 +354,16 @@ unsafe fn walk_element(
             help: help.clone(),
             actions: vec![],
             element_ptr,
+            depth,
+            parent_element_index: parent_index,
+            frame,
         }
     };
+
+    // Track this node as the parent for its descendants only when it was
+    // assigned an element_index (mirrors what the markdown shows: only
+    // indexed rows are addressable in click(element_index=N)).
+    let next_parent = node.element_index.or(parent_index);
 
     let line = format_node_line(&node);
     lines.push((depth, line));
@@ -285,7 +371,18 @@ unsafe fn walk_element(
 
     let children = copy_children(element);
     for child in children {
-        walk_element(child, depth + 1, nodes, lines, counter, visited_count, truncated);
+        walk_element(
+            child,
+            depth + 1,
+            next_parent,
+            nodes,
+            lines,
+            counter,
+            visited_count,
+            truncated,
+            max_elements,
+            max_depth,
+        );
         CFRelease(child as CFTypeRef);
     }
 }

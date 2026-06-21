@@ -203,3 +203,40 @@ Agent cursor: a per-SESSION overlay cursor visualises where a run is acting with
 If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
     )
 }
+
+#[cfg(test)]
+mod image_mime_type_tests {
+    use super::Content;
+
+    /// Surface 7 contract: image parts serialize an explicit `mimeType` field
+    /// (not `mime_type`, not `format`) so MCP consumers don't have to sniff
+    /// magic bytes off the base64 PNG/JPEG to know what they're holding.
+    /// This locks in the JSON shape — any rename or drop breaks here first.
+    #[test]
+    fn image_png_serializes_with_explicit_mime_type() {
+        let c = Content::image_png("ZmFrZQ==".into());
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
+        assert_eq!(v.get("mimeType").and_then(|t| t.as_str()), Some("image/png"));
+        assert_eq!(v.get("data").and_then(|t| t.as_str()), Some("ZmFrZQ=="));
+    }
+
+    #[test]
+    fn image_jpeg_serializes_with_explicit_mime_type() {
+        let c = Content::image_jpeg("ZmFrZQ==".into());
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("image"));
+        assert_eq!(v.get("mimeType").and_then(|t| t.as_str()), Some("image/jpeg"));
+    }
+
+    /// Text parts must not grow a mimeType field — the field belongs to
+    /// image parts only. Guards against an accidental serde_json renamer
+    /// that emits a shared shape across the enum.
+    #[test]
+    fn text_does_not_carry_mime_type() {
+        let c = Content::text("hi");
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("text"));
+        assert!(v.get("mimeType").is_none(), "text content must not carry mimeType");
+    }
+}

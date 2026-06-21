@@ -30,6 +30,7 @@ mod cli;
 mod doctor;
 mod mcp_http;
 mod proxy;
+mod responsibility;
 mod serve;
 mod skills;
 mod telemetry;
@@ -226,6 +227,7 @@ fn main() {
             return;
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+            responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
@@ -571,6 +573,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+            responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();

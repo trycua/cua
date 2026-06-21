@@ -222,6 +222,12 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(GetAgentCursorStateTool));
     r.register(Box::new(SetAgentCursorStyleTool));
     r.register(Box::new(CheckPermissionsTool));
+    // health_report is cross-platform — the Windows provider here lets
+    // non-Windows hosts running the stubbed registry still advertise
+    // the documented schema_version="1" contract.
+    r.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
+        std::sync::Arc::new(crate::health_report::WindowsHealthProvider),
+    )));
     r.register(Box::new(GetConfigTool));
     r.register(Box::new(SetConfigTool));
     r.register(Box::new(GetAccessibilityTreeTool));

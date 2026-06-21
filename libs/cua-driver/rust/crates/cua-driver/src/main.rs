@@ -197,6 +197,12 @@ fn main() {
             cli::run_mcp_config(client.as_deref());
             return;
         }
+        cli::Command::Manifest { pretty } => {
+            // Surface 8: machine-readable CLI manifest. Read-only — no
+            // registry build needed, no daemon contact.
+            cli::run_manifest(pretty);
+            return;
+        }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             // Register callbacks (needed if the tool does screenshots/recording).
             cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
@@ -561,6 +567,12 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::McpConfig { client } => {
             cli::run_mcp_config(client.as_deref());
+            return Ok(());
+        }
+        cli::Command::Manifest { pretty } => {
+            // Surface 8: machine-readable CLI manifest. Read-only — no
+            // registry build needed.
+            cli::run_manifest(pretty);
             return Ok(());
         }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {

@@ -39,8 +39,8 @@
 //!   supplies one via the optional argument).
 
 use crate::{
-    CursorConfig, CursorShape, MotionConfig, OverlayCommand, Palette, PathPlanner, PathState,
-    PlannedPath, Spring,
+    BuiltinShape, CursorConfig, CursorShape, MotionConfig, OverlayCommand, Palette, PathPlanner,
+    PathState, PlannedPath, Spring,
 };
 
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
@@ -517,6 +517,10 @@ pub struct FocusRect {
 /// drawing — Windows passes the virtual-screen `(virt_x, virt_y)` so the
 /// pixmap is laid out in window-local coordinates.  macOS / Linux pass
 /// `(0.0, 0.0)`.
+///
+/// `backing_scale` is the destination-pixmap-pixels per logical-point ratio
+/// (e.g. 2.0 on a retina display where the pixmap is sized at physical
+/// pixels). Pass `1.0` when the pixmap is sized at logical pixels.
 pub fn render_frame(
     core: &RenderStateCore,
     width: u32,
@@ -524,12 +528,13 @@ pub fn render_frame(
     origin_x: f64,
     origin_y: f64,
     focus_rect: Option<FocusRect>,
+    backing_scale: f32,
 ) -> tiny_skia::Pixmap {
     let w = width.max(1);
     let h = height.max(1);
     let mut pm = tiny_skia::Pixmap::new(w, h)
         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-    paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect);
+    paint_cursor(&mut pm, core, origin_x, origin_y, focus_rect, backing_scale);
     pm
 }
 
@@ -541,6 +546,18 @@ pub fn render_frame(
 ///
 /// `origin_x` / `origin_y` are subtracted from `core.pos` before drawing
 /// (Windows passes the virtual-screen origin; macOS / Linux pass `(0.0, 0.0)`).
+/// Both are in **logical** screen points, just like `core.pos`.
+///
+/// `backing_scale` is the destination-pixmap-pixels per logical-point ratio.
+/// On a 2× retina macOS display the caller sizes the pixmap at the screen's
+/// PHYSICAL pixel dimensions (logical × backing_scale) and passes `2.0` so
+/// the cursor renders at native resolution instead of being upsampled by
+/// Core Animation. When the pixmap is sized at LOGICAL pixels, pass `1.0`.
+///
+/// Everything that operates in pixmap-pixel space (the cursor anchor `px/py`,
+/// bloom radius, click-pulse ring radius, stroke widths, focus-rect coords,
+/// arrow `display_size`) is multiplied by `backing_scale` so the cursor still
+/// occupies the same on-screen logical footprint but at higher pixel fidelity.
 ///
 /// Quiescent / hidden cursors early-return before touching the pixmap, so an
 /// idle session costs essentially nothing in the per-frame composite loop.
@@ -550,17 +567,23 @@ pub fn paint_cursor(
     origin_x: f64,
     origin_y: f64,
     focus_rect: Option<FocusRect>,
+    backing_scale: f32,
 ) {
     if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
         return;
     }
 
-    let (px, py) = (core.pos.0 - origin_x, core.pos.1 - origin_y);
+    let s = backing_scale.max(1.0) as f64; // logical-pt → pixmap-pixel scale
+    let sf = s as f32;
+
+    // Cursor anchor in pixmap-pixel space: subtract the (logical) origin
+    // first, then scale into pixmap pixels.
+    let (px, py) = ((core.pos.0 - origin_x) * s, (core.pos.1 - origin_y) * s);
     let heading = core.heading;
     let alpha_scale = core.idle_alpha as f32;
 
     // --- Bloom (radial gradient behind the arrow) ---
-    let bloom_r: f32 = if core.pressed { 34.0 } else { 22.0 };
+    let bloom_r: f32 = if core.pressed { 34.0 * sf } else { 22.0 * sf };
     // Use runtime bloom_override if set, otherwise fall back to palette.
     let (br, bg, bb) = if let Some([r, g, b, _]) = core.bloom_override {
         (r, g, b)
@@ -614,7 +637,7 @@ pub fn paint_cursor(
         ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
         ring_paint.anti_alias = true;
         let stroke = tiny_skia::Stroke {
-            width: 3.0,
+            width: 3.0 * sf,
             ..Default::default()
         };
         let core_fill =
@@ -623,7 +646,7 @@ pub fn paint_cursor(
         fill_paint.shader = tiny_skia::Shader::SolidColor(core_fill);
         fill_paint.anti_alias = true;
         let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, 6.5);
+        pb.push_circle(px as f32, py as f32, 6.5 * sf);
         if let Some(path) = pb.finish() {
             pm.fill_path(
                 &path,
@@ -634,7 +657,7 @@ pub fn paint_cursor(
             );
         }
         let mut pb = tiny_skia::PathBuilder::new();
-        pb.push_circle(px as f32, py as f32, 13.0);
+        pb.push_circle(px as f32, py as f32, 13.0 * sf);
         if let Some(path) = pb.finish() {
             pm.stroke_path(
                 &path,
@@ -657,9 +680,12 @@ pub fn paint_cursor(
         // Cyan: #5EC0E8
         let (cr, cg, cb) = (0x5Eu8, 0xC0u8, 0xE8u8);
 
-        if let Some(rect) =
-            tiny_skia::Rect::from_xywh(fx as f32, fy as f32, fw as f32, fh as f32)
-        {
+        if let Some(rect) = tiny_skia::Rect::from_xywh(
+            (fx * s) as f32,
+            (fy * s) as f32,
+            (fw * s) as f32,
+            (fh * s) as f32,
+        ) {
             // Faint fill
             let mut fill_paint = tiny_skia::Paint::default();
             fill_paint.shader = tiny_skia::Shader::SolidColor(
@@ -674,7 +700,7 @@ pub fn paint_cursor(
             );
             border_paint.anti_alias = true;
             let stroke = tiny_skia::Stroke {
-                width: 2.5,
+                width: 2.5 * sf,
                 ..Default::default()
             };
             let mut pb = tiny_skia::PathBuilder::new();
@@ -693,7 +719,9 @@ pub fn paint_cursor(
 
     // --- Click pulse ring ---
     if let Some(t) = core.click_t {
-        let ring_r = (bloom_r + 20.0 * t as f32) * (1.0 - t as f32 * 0.5);
+        // bloom_r already includes backing_scale; the +20pt expansion is
+        // logical so scale it explicitly here.
+        let ring_r = (bloom_r + 20.0 * sf * t as f32) * (1.0 - t as f32 * 0.5);
         let alpha = ((1.0 - t) * 180.0 * alpha_scale as f64) as u8;
         let [cr, cg, cb, _] = core.palette.cursor_mid;
         let ring_color = tiny_skia::Color::from_rgba8(cr, cg, cb, alpha);
@@ -701,7 +729,7 @@ pub fn paint_cursor(
         ring_paint.shader = tiny_skia::Shader::SolidColor(ring_color);
         ring_paint.anti_alias = true;
         let stroke = tiny_skia::Stroke {
-            width: 2.0,
+            width: 2.0 * sf,
             ..Default::default()
         };
         let mut pb = tiny_skia::PathBuilder::new();
@@ -717,38 +745,79 @@ pub fn paint_cursor(
         }
     }
 
-    // --- Arrow (custom shape or default gradient arrow) ---
-    if let Some(ref shape) = core.shape {
-        // Custom icon: draw as a 32×32 image centered at (px, py), opacity-faded.
-        let sz = 32.0_f32;
-        if let Some(pix) =
-            tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height)
-        {
-            let transform = tiny_skia::Transform::from_rotate_at(
-                heading.to_degrees() as f32 + 180.0,
+    // --- Arrow / silhouette ---
+    //
+    // Three-way precedence:
+    //   1. Per-instance custom asset loaded from `--cursor-icon <path>`
+    //      (or runtime `set_agent_cursor_style.image_path`) wins.
+    //   2. Else the built-in selected by `--cursor-shape`:
+    //      - `arrow` (default): call `draw_default_arrow` — procedural
+    //        gradient diamond, sharp at any backing scale because nothing
+    //        rasterises.
+    //      - `teardrop`: blit the cached `CursorShape::teardrop()` pixmap
+    //        — rasterised once at 2× the display target.
+    //   3. (No other built-ins today.)
+    //
+    // Arrow is the default until the teardrop's retina path is fully
+    // sorted; opt-in via `--cursor-shape teardrop`.
+    let shape: Option<&CursorShape> = match (core.shape.as_ref(), core.cfg.builtin_shape) {
+        (Some(custom), _) => Some(custom),
+        (None, BuiltinShape::Teardrop) => Some(CursorShape::teardrop()),
+        (None, BuiltinShape::Arrow) => {
+            let grad_override = if core.gradient_colors.is_empty() {
+                None
+            } else {
+                Some(&core.gradient_colors)
+            };
+            draw_default_arrow(
+                pm,
+                &core.palette,
+                grad_override,
                 px as f32,
                 py as f32,
-            )
-            .pre_translate(px as f32 - sz / 2.0, py as f32 - sz / 2.0);
-            let mut paint = tiny_skia::PixmapPaint::default();
-            paint.opacity = alpha_scale;
-            pm.draw_pixmap(0, 0, pix, &paint, transform, None);
-        }
-    } else {
-        let grad_override = if core.gradient_colors.is_empty() {
+                heading as f32,
+                alpha_scale,
+            );
             None
-        } else {
-            Some(&core.gradient_colors)
-        };
-        draw_default_arrow(
-            pm,
-            &core.palette,
-            grad_override,
-            px as f32,
-            py as f32,
-            heading as f32,
-            alpha_scale,
-        );
+        }
+    };
+    let shape = match shape {
+        Some(s) => s,
+        None => return,
+    };
+    // Display size in pixels. 26 logical points is a touch larger than a
+    // default OS arrow — large enough to spot during agent action without
+    // overwhelming the workspace. The source raster is shape.width ×
+    // shape.height (64×64 for built-ins), so the transform scales down by
+    // display_size/shape.width. We multiply by `backing_scale` so the arrow
+    // rasterises at the destination pixmap's native resolution (e.g. 52 px
+    // on a 2× retina display) — Core Animation then maps 1:1 to the screen
+    // instead of upsampling a logical-pixel pixmap.
+    let display_size = 26.0_f32 * sf;
+    let scale = display_size / shape.width as f32;
+    if let Some(pix) =
+        tiny_skia::PixmapRef::from_bytes(&shape.pixels, shape.width, shape.height)
+    {
+        // T = Translate(px, py) * Rotate(angle) * Scale(s) * Translate(-w/2, -h/2)
+        // Centres the source on its own origin, scales to display_size, rotates
+        // around the scaled centre, lands the centre at (px, py).
+        //
+        // +90° offset compensates for the SVG's intrinsic orientation: the
+        // cursor-up silhouette points UP at rest (CSS y-down angle -π/2),
+        // whereas the procedural arrow's rotation convention assumes the
+        // shape points RIGHT at rest (angle 0). Without the +90°, motion-
+        // right rotation would leave the tip still pointing up.
+        let rotation_deg = heading.to_degrees() as f32 + 180.0 + 90.0;
+        let transform = tiny_skia::Transform::from_translate(
+            -(shape.width as f32) / 2.0,
+            -(shape.height as f32) / 2.0,
+        )
+        .post_scale(scale, scale)
+        .post_rotate(rotation_deg)
+        .post_translate(px as f32, py as f32);
+        let mut paint = tiny_skia::PixmapPaint::default();
+        paint.opacity = alpha_scale;
+        pm.draw_pixmap(0, 0, pix, &paint, transform, None);
     }
 }
 
@@ -912,5 +981,67 @@ mod glide_duration_tests {
             let long = arrival_secs(0.0, 1400.0, swift);
             assert!(long > short + 0.2, "swift={swift} short={short} long={long}");
         }
+    }
+}
+
+#[cfg(test)]
+mod backing_scale_tests {
+    use super::*;
+    use crate::CursorConfig;
+
+    /// Count opaque (alpha > 0) pixels in the pixmap — a proxy for the
+    /// cursor's on-pixmap footprint that's independent of palette / gradient.
+    fn opaque_pixel_count(pm: &tiny_skia::Pixmap) -> u32 {
+        pm.data()
+            .chunks_exact(4)
+            .filter(|px| px[3] > 0)
+            .count() as u32
+    }
+
+    fn render_at(backing_scale: f32, logical_size: u32) -> tiny_skia::Pixmap {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        // Place the cursor at the centre of the logical area and disable
+        // idle-fade so the arrow paints at full alpha regardless of timing.
+        let centre = logical_size as f64 / 2.0;
+        core.pos = (centre, centre);
+        core.idle_alpha = 1.0;
+        core.visible = true;
+
+        // The pixmap is sized in *pixmap* pixels (logical × backing_scale)
+        // — that's the macOS retina pipeline: allocate at physical pixels,
+        // then let paint_cursor scale into them.
+        let pm_size = (logical_size as f32 * backing_scale) as u32;
+        let mut pm = tiny_skia::Pixmap::new(pm_size, pm_size).unwrap();
+        paint_cursor(&mut pm, &core, 0.0, 0.0, None, backing_scale);
+        pm
+    }
+
+    /// Doubling `backing_scale` doubles every linear dimension of the cursor's
+    /// pixel footprint, so the opaque-pixel COUNT should grow ~4× (one factor
+    /// of 2 per axis). Exact equality isn't expected — the embedded SVG
+    /// downscales from a 52-px source, anti-aliased edges round at integer
+    /// boundaries, and the bloom gradient has a soft cutoff — but the ratio
+    /// should sit clearly above 3.0 (well past the ~2.0 ceiling we'd hit if
+    /// only one dimension were scaling). This is the regression guard for
+    /// the retina-blur fix: if a future refactor reverts paint_cursor to
+    /// emitting logical-pixel art into a physical-pixel pixmap, the ratio
+    /// collapses back toward 1.0.
+    #[test]
+    fn backing_scale_two_grows_opaque_footprint_roughly_fourfold() {
+        let pm_1x = render_at(1.0, 200);
+        let pm_2x = render_at(2.0, 200);
+
+        let n_1x = opaque_pixel_count(&pm_1x);
+        let n_2x = opaque_pixel_count(&pm_2x);
+
+        assert!(n_1x > 0, "1× render should paint SOMETHING (got {n_1x})");
+        assert!(n_2x > 0, "2× render should paint SOMETHING (got {n_2x})");
+
+        let ratio = n_2x as f64 / n_1x as f64;
+        assert!(
+            ratio > 3.0 && ratio < 5.0,
+            "2× backing_scale should produce ~4× more opaque pixels — \
+             got n_1x={n_1x}, n_2x={n_2x}, ratio={ratio:.2}"
+        );
     }
 }

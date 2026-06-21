@@ -781,12 +781,18 @@ unsafe extern "system" fn wnd_proc(
                         let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
                             .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                         for (_k, rs) in &map.cursors {
+                            // TODO: thread `GetDpiForWindow` / per-monitor
+                            // DPI awareness here so cursors render crisp on
+                            // HiDPI Windows displays. For now we default to
+                            // 1.0 — preserves pre-retina-fix behaviour on
+                            // Windows.
                             cursor_overlay::paint_cursor(
                                 &mut pm,
                                 &rs.core,
                                 map.virt_x as f64,
                                 map.virt_y as f64,
                                 None, // focus-rect is macOS-only
+                                1.0,
                             );
                         }
 

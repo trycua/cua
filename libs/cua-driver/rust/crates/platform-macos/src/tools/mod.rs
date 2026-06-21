@@ -20,7 +20,7 @@ mod scroll;
 // path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
 // etc.) live elsewhere under CuaDriverCore::Capture and are reached
 // through GetWindowStateTool.
-mod get_screen_size;
+pub(crate) mod get_screen_size;
 mod get_cursor_position;
 mod move_cursor;
 mod cursor_tools;

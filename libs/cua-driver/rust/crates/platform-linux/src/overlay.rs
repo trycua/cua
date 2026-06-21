@@ -427,7 +427,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 let mut pm = tiny_skia::Pixmap::new(map.scr_w.max(1), map.scr_h.max(1))
                     .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                 for rs in map.cursors.values() {
-                    cursor_overlay::paint_cursor(&mut pm, &rs.core, 0.0, 0.0, None);
+                    // TODO: thread X11/Wayland scale-factor here so cursors
+                    // render at native resolution on HiDPI Linux displays
+                    // (`XRRGetCrtcInfo` reports per-output DPI; the GNOME
+                    // scale-factor setting is exposed via the screen-scaling
+                    // protocol). For now we default to 1.0 — preserves
+                    // pre-retina-fix behaviour on Linux.
+                    cursor_overlay::paint_cursor(&mut pm, &rs.core, 0.0, 0.0, None, 1.0);
                 }
                 pm
             })

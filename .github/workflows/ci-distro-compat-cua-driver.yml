@@ -124,25 +124,28 @@ jobs:
       matrix:
         include:
           # Debian family
-          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6) are required
-          # because cua-driver is dynamically linked against the X11 input
-          # stack. They are the runtime counterparts of the build-time deps
-          # (libx11-dev libxi-dev libxtst-dev libxext-dev) used in the CD
-          # workflow. Without them the dynamic linker fails before main() and
-          # --version exits 127, which the smoke-test correctly treats as an
-          # ABI error. Installing only curl+ca-certificates is not enough.
+          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6) and the
+          # Wayland client lib (libwayland-client0) are required because
+          # cua-driver is dynamically linked against the X11 input stack and
+          # the native Wayland backend (added in #1910). They are the runtime
+          # counterparts of the build-time deps
+          # (libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev) used
+          # in the CD workflow. Without them the dynamic linker fails before
+          # main() and --version exits 127, which the smoke-test correctly
+          # treats as an ABI error. Installing only curl+ca-certificates is not
+          # enough.
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0"
           # RPM family
           # Rocky Linux 9 ships curl-minimal in the base image which conflicts
           # with the full curl package. Use --allowerasing to let dnf replace
@@ -152,11 +155,11 @@ jobs:
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libwayland-client"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libwayland-client"
 
     steps:
       - name: Skip if no release binary
@@ -218,7 +221,7 @@ jobs:
           # expected and NOT a failure. What we test here is that:
           #   a. The binary loads and runs the doctor subcommand at all.
           #   b. It exits with a parseable status (not a SIGILL / glibc symbol
-          #      error which would manifst as exit code 127 or similar).
+          #      error which would manifest as exit code 127 or similar).
           set +e
           ./cua-driver doctor 2>&1
           EXIT_CODE=$?

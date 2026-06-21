@@ -144,10 +144,15 @@ jobs:
             glibc_version: "2.39"
             pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6"
           # RPM family
+          # Rocky Linux 9 ships curl-minimal in the base image which conflicts
+          # with the full curl package. Use --allowerasing to let dnf replace
+          # curl-minimal with curl, or skip curl and use curl-minimal (already
+          # present). We use --allowerasing so the install is explicit and
+          # consistent with what a user would do on a fresh Rocky install.
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"

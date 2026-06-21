@@ -127,29 +127,33 @@ jobs:
       matrix:
         include:
           # Debian family
+          # cua-driver links against several X11 extension libs at startup:
+          #   libX11 (core), libXi (XInput), libXtst (XTest), libXfixes,
+          #   libXrandr, libXcomposite, libXext.  All must be present or the
+          #   binary exits 127 before reaching main().
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6 libxi6 libxtst6 libxfixes3 libxrandr2 libxcomposite1 libxext6"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6 libxi6 libxtst6 libxfixes3 libxrandr2 libxcomposite1 libxext6"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6 libxi6 libxtst6 libxfixes3 libxrandr2 libxcomposite1 libxext6"
           # RPM family
           # Note: rockylinux:9 ships curl-minimal which conflicts with curl; use --allowerasing
           # to let dnf replace curl-minimal with the full curl package.
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --allowerasing --setopt=install_weak_deps=False curl ca-certificates binutils libX11"
+            pkg_install: "dnf install -y --allowerasing --setopt=install_weak_deps=False curl ca-certificates binutils libX11 libXi libXtst libXfixes libXrandr libXcomposite libXext"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils libX11"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils libX11 libXi libXtst libXfixes libXrandr libXcomposite libXext"
 
     steps:
       - name: Skip if no release binary
@@ -185,6 +189,10 @@ jobs:
           # objdump / readelf may not be installed in minimal containers;
           # strings is more universally available.
           strings cua-driver | grep -E "^GLIBC_[0-9]" | sort -V | tail -5 || true
+          echo "=== Binary shared-library dependencies (ldd) ==="
+          # ldd shows all dynamic deps and flags any missing ones.  This is
+          # purely informational — failures here are diagnosed at smoke-test time.
+          ldd ./cua-driver 2>&1 || true
 
       - name: Smoke-test --version
         if: needs.resolve-version.outputs.version != 'none'

@@ -130,24 +130,26 @@ jobs:
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates binutils"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates binutils libx11-6"
           # RPM family
+          # Note: rockylinux:9 ships curl-minimal which conflicts with curl; use --allowerasing
+          # to let dnf replace curl-minimal with the full curl package.
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils"
+            pkg_install: "dnf install -y --allowerasing --setopt=install_weak_deps=False curl ca-certificates binutils libX11"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates binutils libX11"
 
     steps:
       - name: Skip if no release binary

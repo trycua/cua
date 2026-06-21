@@ -1,0 +1,122 @@
+---
+title: Update Cua Driver
+description: Check whether a newer Cua Driver release is available and install it.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver gives you three update paths: a passive banner at launch time, a CLI command that only checks, and a separate command that installs the update. Keep the **check and apply steps separate** so you can decide when to change the installed binary.
+
+## Check for updates
+
+```bash
+cua-driver check-update
+```
+
+When you're behind:
+
+```
+Current: 0.3.1
+Latest:  0.3.2
+
+Update available. Run `cua-driver update --apply` to install.
+Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2
+```
+
+When you're current:
+
+```
+Current: 0.3.1
+Latest:  0.3.1
+
+You're on the latest release.
+```
+
+Flags:
+- `--json`: return a machine-readable payload, shown below.
+- `--no-cache`: skip the 20-hour on-disk cache and force a fresh GitHub check.
+
+The command exits with `0` when the check succeeds. Read `update_available` in the JSON payload to learn whether a release is available. Non-zero exit codes mean the check failed, for example because the network was unavailable or parsing failed.
+
+## Apply the update
+
+```bash
+cua-driver update --apply
+```
+
+Output:
+
+```
+Current version: 0.3.1
+Checking for updates…
+New version available: 0.3.2
+Downloading and installing Cua Driver 0.3.2…
+Installed Cua Driver 0.3.2.
+```
+
+`update --apply` calls the canonical installer script, the same one-line installer used for the first install.
+
+If the daemon was running before the update, restart it so it uses the new binary:
+
+```bash
+cua-driver stop && cua-driver serve
+```
+
+On Windows with autostart enabled, the Scheduled Task uses the new binary on its next invocation. `autostart enable` is idempotent, and the task path resolves through the `current` junction.
+
+## Scripted check (CI / agents)
+
+```bash
+cua-driver check-update --json
+```
+
+```json
+{
+  "current_version": "0.3.1",
+  "latest_version": "0.3.2",
+  "update_available": true,
+  "source": "github_releases",
+  "checked_at": "2026-05-27T14:30:00Z",
+  "cache_hit": false,
+  "install_command": "curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh | bash",
+  "release_notes_url": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2",
+  "error": null
+}
+```
+
+When the installed version is current, `install_command` and `release_notes_url` are `null`.
+
+Use the JSON form from a bash script:
+
+```bash
+if cua-driver check-update --json | jq -e '.update_available' > /dev/null; then
+    echo "Cua Driver is outdated — applying update"
+    cua-driver update --apply
+fi
+```
+
+The same payload is available over MCP through the `check_for_update` tool. MCP does not provide an `apply` variant because installing through MCP would replace the running server process.
+
+## Passive banner
+
+Every `cua-driver mcp`, `serve`, and `doctor` invocation starts a background version check. If it finds a newer release, Cua Driver prints a two-line banner to stderr:
+
+```
+✨ cua-driver v0.3.2 is available (you have v0.3.1).
+   Update with: cua-driver update
+   Release notes: https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.3.2
+```
+
+The check uses a 20-hour cache and never blocks startup. One-shot commands such as `--version`, `call`, and `list-tools` skip it so piped output remains clean.
+
+Disable the check for one invocation:
+
+```bash
+CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve
+```
+
+Disable it permanently:
+
+```bash
+cua-driver config set update_check_enabled false
+```

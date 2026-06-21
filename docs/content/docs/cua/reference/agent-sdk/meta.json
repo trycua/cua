@@ -1,6 +1,0 @@
-{
-  "title": "Agent SDK",
-  "description": "Python API for building computer-use agents",
-  "icon": "Bot",
-  "pages": ["changelog"]
-}

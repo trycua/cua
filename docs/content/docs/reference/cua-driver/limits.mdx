@@ -1,0 +1,89 @@
+---
+title: Known Limits
+description: Documented behavioral limits of Cua Driver and available workarounds
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua Driver's *no-foreground contract* holds for every app it reaches via AX or via the SkyLight-routed pixel click. Four categories of target fall outside that envelope.
+
+---
+
+## Chromium coerces synthetic right-clicks on web content
+
+**Symptom:** `right_click({pid, x, y})` on a Chrome, Edge, Brave, or Arc tab's web content fires a left-click instead of opening the context menu.
+
+**Cause:** Chromium's renderer-IPC filter drops the right-click subtype bit on events that don't come through the HID tap. Every synthesized-event path on macOS hits this wall.
+
+**Workarounds, in order of preference:**
+
+1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX dispatch sidesteps the renderer filter entirely.
+2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This breaks the no-foreground-steal promise for that one click.
+
+<Callout type="info">
+  Element-indexed right-click (`right_click` with `element_index`) works fine. The limit is
+  specifically pixel right-click on non-AX Chromium web content.
+</Callout>
+
+---
+
+## Canvas apps need brief frontmost activation
+
+**Affected:** Blender (GHOST event source), Unity editor / Unity games, most native games, some WebGL-heavy Electron apps.
+
+**Symptom:** `click({pid, x, y})` on a Blender viewport silently no-ops. The window is visible and `launch_app` works, but clicks vanish.
+
+**Cause:** These apps only accept events from `cghidEventTap` with a leading `mouseMoved`. They explicitly filter out per-pid-routed events, which is the path Cua Driver uses for backgrounded dispatch. There is no per-pid recipe that reaches them.
+
+**Workaround:** Bring the app to the foreground before clicking, then use pixel `click({pid, x, y})`. Where the target exposes AX-addressable controls, prefer `right_click` or element actions, which sidestep the renderer filter without foregrounding.
+
+<Callout type="warn">
+  When automating Blender or a native game, the no-foreground-steal contract does not apply: these apps must be foregrounded to receive clicks, so do this only when the user is not actively working on the machine.
+</Callout>
+
+---
+
+## Off-Space SwiftUI windows strip their AX tree
+
+**Symptom:** `get_window_state({pid, window_id})` on a window on a different Space (e.g. System Settings parked on Space 2 while on Space 1) returns a minimal tree that contains only the menu bar, or just the `AXApplication` root.
+
+**Cause:** macOS 14+ strips AX detail from non-current-Space SwiftUI windows as a privacy/performance tradeoff. AppKit apps are not affected. There is no workaround that keeps the window off-Space.
+
+**Response shape:** Every `get_window_state` response on an off-current-Space window carries `off_space: true`, so callers can decide to switch Space, pick a different window, or skip the turn.
+
+**Workarounds:**
+
+1. Switch the user to the target's Space first. This breaks the no-Space-bounce promise.
+2. Target an AppKit equivalent of the app if one exists.
+3. Limit off-Space automation to AppKit apps where the tree stays populated.
+
+---
+
+## Minimized windows silently drop keyboard commits
+
+**Symptom:** `press_key({pid, element_index, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
+
+**Cause:** AX reads and AX-dispatched clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
+
+**Workarounds:**
+
+1. Use `set_value({pid, element_index, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
+2. AX-click a commit-equivalent button (Go, Submit, Send, OK) rather than relying on Return.
+3. Un-minimize the window (`hotkey({pid, keys: ["cmd", "m"]})` or click the Dock icon). This breaks the background contract for that window.
+
+<Callout type="info">
+  `set_value` is the correct approach 90% of the time. It sidesteps both the minimized-focus issue and the general "which event commits this field" ambiguity.
+</Callout>
+
+---
+
+## Permission boundaries
+
+Cua Driver is constrained by the macOS permission model. Two relevant grants:
+
+| Grant | Required for |
+| ----- | ------------ |
+| **Accessibility** (System Settings → Privacy & Security → Accessibility) | Every AX read, every element-indexed click, every keyboard/text primitive. Without it, `check_permissions` returns `accessibility: false` and every tool returns a structured error. |
+| **Screen Recording** | Screenshots and the `som`/`vision` capture modes. Without it, `get_window_state` in those modes returns a tree but no PNG. Pure `ax` mode still works. |
+
+Grants are tied to the `CuaDriver.app` bundle identity (`com.trycua.driver`). Rebuilding Cua Driver from source preserves the grants because `build-app.sh` pins a stable bundle id.

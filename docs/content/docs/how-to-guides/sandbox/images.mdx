@@ -1,0 +1,145 @@
+---
+title: Choose and build a sandbox image
+description: Select a sandbox base image and add packages, files, setup commands, ports, and inspection.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use an **Image** to define the OS and software environment for a sandbox before you start it.
+
+## Choose a base image
+
+An Image describes the OS and software environment. Images are *immutable* and *chainable*. Each builder method returns a new Image.
+
+Start with the built-in constructor that matches the operating system and isolation level you need.
+
+```python
+from cua import Image
+
+Image.linux()                        # Ubuntu 24.04 VM (default, QEMU)
+Image.linux(kind='container')        # Ubuntu 24.04 container (lighter, Docker/XFCE)
+Image.linux('ubuntu', '22.04')       # Older Ubuntu
+Image.macos()                        # macOS Tahoe (version '26', latest)
+Image.macos('15')                    # macOS Sequoia
+Image.windows()                      # Windows 11
+Image.android()                      # Android 14
+```
+
+| Image | Kind | Notes |
+|-------|------|-------|
+| Image.linux() | VM | Default (QEMU), supports /dev/kvm |
+| Image.linux(kind='container') | container | Lighter, Docker/XFCE |
+| Image.macos() | VM | Apple Virtualization / Lume |
+| Image.windows() | VM | QEMU or Hyper-V |
+| Image.android() | VM | QEMU Android emulator |
+
+## Install packages
+
+Use the package manager for the target operating system.
+
+```python
+Image.linux().apt_install('curl', 'git', 'ffmpeg')
+Image.macos().brew_install('ffmpeg', 'jq')
+Image.windows().choco_install('nodejs', 'git')
+Image.windows().winget_install('Microsoft.VisualStudioCode')
+Image.android().apk_install('/path/to/app.apk')
+```
+
+Install Python packages with `pip_install()` or `uv_install()`.
+
+```python
+Image.linux().pip_install('numpy', 'pandas', 'playwright')
+Image.linux().uv_install('numpy', 'pandas')  # faster, installs into cua-server project
+```
+
+## Set environment variables
+
+Set non-sensitive environment variables with `.env()`.
+
+```python
+Image.linux().env(DATABASE_URL='postgres://localhost/mydb', LOG_LEVEL='debug')
+```
+
+<Callout type="warn">
+  Avoid putting real secrets in .env() because anyone who can read the Image spec can see the values.
+</Callout>
+
+## Run setup commands
+
+Run arbitrary shell commands during setup with `.run()`.
+
+```python
+Image.linux().run('curl -fsSL https://deb.nodesource.com/setup_20.x | bash -')
+```
+
+## Copy files
+
+Copy local files into the image with `.copy()`.
+
+```python
+Image.linux().copy('./config.json', '/app/config.json')
+```
+
+## Expose ports
+
+Expose every port the sandbox workload must listen on.
+
+```python
+Image.linux().expose(8080).expose(5432)
+```
+
+## Chain builder calls
+
+Chaining: builder calls are composable, each returns a new Image:
+
+```python
+img = (
+    Image.linux()
+    .apt_install('curl', 'git', 'ffmpeg')
+    .pip_install('requests', 'Pillow')
+    .env(MY_TOKEN='abc123', DEBUG='1')
+    .run('mkdir -p /app/data')
+    .expose(8080)
+)
+```
+
+Fork a base image for different use cases:
+
+```python
+base = Image.linux().apt_install('curl', 'git')
+dev  = base.pip_install('ipython', 'rich').env(DEBUG='1')
+prod = base.pip_install('gunicorn').run('useradd -m appuser')
+```
+
+## Use a custom OCI image
+
+Use `Image.from_registry()` when your base image already exists in a registry.
+
+```python
+Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest')
+Image.from_registry('ubuntu:22.04')
+# chain builder on top
+img = Image.from_registry('ubuntu:22.04').apt_install('curl')
+```
+
+## Use a local disk image
+
+Use `Image.from_file()` for qcow2, vhdx, raw, or iso disk images. URLs are also supported and cached automatically.
+
+```python
+Image.from_file('/path/to/disk.qcow2', os_type='linux')
+Image.from_file('/path/to/windows.vhdx', os_type='windows')
+Image.from_file('https://example.com/disk.qcow2', os_type='linux')
+```
+
+Images are cached in `~/.cua/cua-sandbox/image-cache/`.
+
+## Inspect an image
+
+Call `.to_dict()` to inspect the final image spec before using it.
+
+```python
+img = Image.linux().apt_install('curl').pip_install('requests')
+print(img.to_dict())
+# {'os_type': 'linux', 'distro': 'ubuntu', 'version': '24.04', 'kind': 'container', 'layers': [...]}
+```

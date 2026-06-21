@@ -1,6 +1,0 @@
-{
-  "title": "Platform-Specific",
-  "description": "Platform-specific examples and integrations",
-  "icon": "Laptop",
-  "pages": ["windows-app-behind-vpn"]
-}

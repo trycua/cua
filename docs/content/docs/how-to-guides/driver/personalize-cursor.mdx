@@ -1,0 +1,59 @@
+---
+title: Personalize the Cua cursor
+description: Swap the agent cursor shape and palette — use the brand default, override at runtime, or bring your own SVG/PNG/ICO.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+By default the cua agent cursor is the **cua-brand** pointer — an upward-pointing teardrop with a gradient body and white outline. It rotates to follow motion direction and renders at native resolution on retina displays. You can swap the body color at runtime, replace the shape with your own asset, or scale the bloom halo independently.
+
+## Change the cursor look at runtime
+
+Every per-instance cursor accepts a runtime style override via the `set_agent_cursor_style` MCP tool. An agent or harness can call it mid-session; the next paint frame picks up the new style.
+
+```json
+{
+  "gradient_colors": ["#FF6B6B", "#FFD93D"],
+  "bloom_color":     "#FF6B6B"
+}
+```
+
+- `gradient_colors`: array of CSS hex strings used as the cursor body's tip-to-tail gradient. An empty array reverts to the brand default (`#F0FBFF` → `#66D9FF` → `#35C6D8`).
+- `bloom_color`: hex string for the radial halo behind the cursor. Empty string reverts.
+- `image_path`: path to a PNG / JPEG / SVG / ICO file. When set, replaces the brand pointer with your asset. Empty string reverts.
+
+## Use your own cursor asset
+
+Pass `--cursor-icon <path>` to `cua-driver serve` (or set `image_path` on `set_agent_cursor_style` at runtime). Supported formats: `.svg`, `.png`, `.jpeg`, `.ico`. The asset is rasterised once at startup into a 52×52 RGBA buffer and used in place of the brand pointer.
+
+```bash
+cua-driver serve --cursor-icon ~/my-cursor.svg
+```
+
+<Callout type="info" title="Tip orientation">
+Custom cursor assets are rendered with no rotation compensation — the driver assumes your asset's tip points to the **right** at rest. If your SVG has a tip pointing up, up-left, or anywhere else, the cursor will appear rotated off-axis during motion. Two options:
+
+1. **Re-author your SVG** so the tip points right at the unrotated default. The driver's rotation logic then aligns the tip with motion direction automatically.
+2. **Stick with PNG / static art** if you don't care about motion-aligned rotation — the cursor will render at a fixed orientation regardless of motion direction. This is what most OS cursor packs do.
+</Callout>
+
+## How the default renders
+
+- **Path**: classic upward teardrop with a notched bottom (Streamline Iconoir `cursor-up`).
+- **Body**: linear gradient from `#F0FBFF` at the tip to `#35C6D8` at the tail.
+- **Outline**: white 1.5px stroke, rounded caps and joins.
+- **Bloom**: soft radial halo behind the cursor, tinted from the palette's bloom color.
+- **Rotation**: the SVG points up at rest; a `+90°` paint-time offset aligns the tip with motion direction so the cursor faces where it's heading.
+- **Resolution**: source rasterised at 2× the display target (52 px) and rendered at backing-aware physical resolution on retina, for pixel-perfect crispness.
+
+## Things that aren't currently personalizable
+
+- **Multiple agent cursors with distinct palettes.** Only one built-in palette today. If you want per-agent distinct cursors, file an issue with the use case.
+- **Cursor display size.** Fixed at 26 logical pixels (52 physical on retina). The runtime `cursor_size` field controls the **dot-style** cursor's radius and doesn't apply to the shape-based render path.
+- **Motion-path curve shape.** Glide duration, post-click dwell, idle-hide delay, and spring damping are tunable via `set_agent_cursor_motion`, but the underlying bezier shape of the path is hardcoded.
+
+## See also
+
+- [Connect your agent](./connect-your-agent.mdx) — register cua-driver with Claude Code, Codex, Hermes, and others.
+- [`set_agent_cursor_style` MCP tool reference](../../reference/cua-driver/mcp-tools.mdx) — full parameter list and return shape.

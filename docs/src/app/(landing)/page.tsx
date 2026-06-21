@@ -8,6 +8,32 @@ export const metadata: Metadata = {
     'Give every agent a cloud desktop. Built for Claude Code, Codex, OpenClaw, and computer-use agents.',
 };
 
+// Revalidate the page every hour so the star count stays fresh
+export const revalidate = 3600;
+
+/** Fetch the current GitHub star count for trycua/cua.
+ *  Falls back to the last known value if the request fails.
+ */
+async function getGitHubStars(): Promise<string> {
+  const FALLBACK = '13.1k';
+  try {
+    const res = await fetch('https://api.github.com/repos/trycua/cua', {
+      headers: { Accept: 'application/vnd.github+json' },
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) return FALLBACK;
+    const data = (await res.json()) as { stargazers_count?: number };
+    const count = data.stargazers_count;
+    if (typeof count !== 'number') return FALLBACK;
+    // Format: <1000 → plain number, else Xk or X.Xk
+    if (count < 1000) return String(count);
+    const k = count / 1000;
+    return k % 1 === 0 ? `${k}k` : `${k.toFixed(1)}k`;
+  } catch {
+    return FALLBACK;
+  }
+}
+
 // Navigation card data
 const navCards = [
   {
@@ -60,7 +86,9 @@ const featuredExamples = [
   },
 ];
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const stars = await getGitHubStars();
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[var(--bg-base)] text-[var(--ink-body)]">
       <div className="pointer-events-none absolute inset-0 -top-14">
@@ -97,7 +125,7 @@ export default function LandingPage() {
                   >
                     <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z" />
                   </svg>
-                  13.1k
+                  {stars}
                 </span>
               </a>
 

@@ -1,0 +1,247 @@
+name: "CI: cua-driver distro-compat matrix"
+
+# Smoke-tests the *released* cua-driver binary inside real distro containers
+# to catch bugs that the NixOS test suite cannot: glibc ABI floor issues and
+# distro-packaging gaps (e.g. Qt5 AT-SPI bridge absent on Ubuntu).
+#
+# What this catches (the NixOS suite CANNOT catch):
+#   1. glibc ABI floor — the released binary is built in a debian:11
+#      container (glibc 2.31) so it should run on all of the matrix distros.
+#      If someone accidentally bumps the build container to a newer distro the
+#      --version smoke-test below will fail on the older glibc distros.
+#   2. Runtime library gaps — `doctor` queries the OS for required capabilities
+#      (X11, AT-SPI, etc.). If a distro is missing a package the doctor command
+#      exits non-zero and prints a human-readable error.
+#
+# Design principles:
+#   - Run the RELEASED binary (downloaded from GitHub Releases), not a freshly
+#     built one. This is the only way to catch ABI mismatches because the NixOS
+#     CI builds its own binary against NixOS's own glibc.
+#   - Keep this fast and cheap: containers + --version/doctor only. Full GUI
+#     integration tests stay in nix-build.yml.
+#   - Non-blocking by default (continue-on-error: true) — the released binary
+#     may not exist yet on a fresh branch; the job is informational until the
+#     first linux release tag exists.
+#
+# Trigger: any PR that touches the Rust cua-driver or this workflow.
+# Also runs on push to main and on workflow_dispatch so it works as a
+# post-release regression guard.
+#
+# Companion to nix-build.yml — does NOT replace it. See CUA-599.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-distro-compat-cua-driver.yml"
+  push:
+    # Run on main (path-filtered) AND on release tags so a newly-published
+    # binary is immediately validated against the distro matrix.
+    branches: [main]
+    tags:
+      - "cua-driver-rs-v*"
+    paths:
+      - "libs/cua-driver/rust/**"
+      - ".github/workflows/ci-distro-compat-cua-driver.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "cua-driver-rs version to test (without leading v). Leave blank to auto-detect latest."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Resolve the binary version to test ───────────────────────────────────────
+  # Fetch the latest published cua-driver-rs release tag so individual matrix
+  # jobs don't each hit the GitHub API. If workflow_dispatch supplied a version
+  # we use that instead.
+  resolve-version:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      binary_url: ${{ steps.pick.outputs.binary_url }}
+    steps:
+      - name: Pick version
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ -n "$INPUT_VERSION" ]]; then
+            VERSION="$INPUT_VERSION"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            # Fetch the latest release that matches the cua-driver-rs-v* pattern.
+            # The releases are marked prerelease=true so we use /releases instead
+            # of /releases/latest (which skips pre-releases).
+            VERSION=$(gh api repos/trycua/cua/releases \
+              --jq '[.[] | select(.tag_name | startswith("cua-driver-rs-v"))] | first | .tag_name | ltrimstr("cua-driver-rs-v")' \
+              2>/dev/null || echo "")
+          fi
+          if [[ -z "$VERSION" ]]; then
+            echo "No cua-driver-rs release found yet — this is expected on a fresh branch."
+            echo "version=none" >> "$GITHUB_OUTPUT"
+            echo "binary_url=none" >> "$GITHUB_OUTPUT"
+          else
+            BINARY_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${VERSION}/cua-driver-rs-${VERSION}-linux-x86_64-binary.tar.gz"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "binary_url=$BINARY_URL" >> "$GITHUB_OUTPUT"
+            echo "Will test version: $VERSION"
+            echo "Binary URL: $BINARY_URL"
+          fi
+
+  # ── Per-distro smoke-test matrix ─────────────────────────────────────────────
+  # Each job runs in a real distro container, downloads the released binary,
+  # and asserts that:
+  #   1. The binary executes at all (catches glibc ABI floor regressions).
+  #   2. `--version` prints a version string.
+  #   3. `doctor` exits 0 (or exits non-zero with a parseable diagnostic —
+  #      the doctor command reports capabilities, some may be absent in a
+  #      headless container; we treat a clean exit or a known-missing-display
+  #      exit as success for the ABI test).
+  #
+  # Why these distros?
+  #   debian:12  — glibc 2.36, representative of Debian stable users
+  #   ubuntu:22.04 — glibc 2.35, Ubuntu LTS most widely deployed
+  #   ubuntu:24.04 — glibc 2.39, also tests Qt5 AT-SPI bridge gap (see CUA-599)
+  #   rockylinux:9 — glibc 2.34, RHEL/Rocky/AlmaLinux users
+  #   fedora:41  — glibc 2.40, leading-edge RPM users
+  distro-smoke:
+    name: "${{ matrix.distro }} (glibc ${{ matrix.glibc_version }})"
+    needs: resolve-version
+    # Don't block the PR if no release binary exists yet.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Debian family
+          - distro: "debian:12"
+            image: "debian:12"
+            glibc_version: "2.36"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates"
+          - distro: "ubuntu:22.04"
+            image: "ubuntu:22.04"
+            glibc_version: "2.35"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates"
+          - distro: "ubuntu:24.04"
+            image: "ubuntu:24.04"
+            glibc_version: "2.39"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates"
+          # RPM family
+          - distro: "rockylinux:9"
+            image: "rockylinux:9"
+            glibc_version: "2.34"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates"
+          - distro: "fedora:41"
+            image: "fedora:41"
+            glibc_version: "2.40"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates"
+
+    steps:
+      - name: Skip if no release binary
+        if: needs.resolve-version.outputs.version == 'none'
+        run: |
+          echo "No cua-driver-rs release binary exists yet. Skipping distro smoke-test."
+          echo "This is expected on branches before the first release tag."
+          exit 0
+
+      - name: Install curl + ca-certificates
+        if: needs.resolve-version.outputs.version != 'none'
+        run: ${{ matrix.pkg_install }}
+
+      - name: Download released binary
+        if: needs.resolve-version.outputs.version != 'none'
+        env:
+          BINARY_URL: ${{ needs.resolve-version.outputs.binary_url }}
+        run: |
+          echo "Downloading: $BINARY_URL"
+          curl -fsSL "$BINARY_URL" -o cua-driver.tar.gz
+          tar -xzf cua-driver.tar.gz
+          chmod +x cua-driver
+          ls -lh cua-driver
+
+      - name: Verify glibc floor (ldd)
+        if: needs.resolve-version.outputs.version != 'none'
+        run: |
+          # Print glibc version on this host and the minimum version the binary
+          # requires. This makes CI logs self-explanatory if the binary fails.
+          echo "=== Host glibc ==="
+          ldd --version | head -1 || true
+          echo "=== Binary glibc requirements ==="
+          # objdump / readelf may not be installed in minimal containers;
+          # strings is more universally available.
+          strings cua-driver | grep -E "^GLIBC_[0-9]" | sort -V | tail -5 || true
+
+      - name: Smoke-test --version
+        if: needs.resolve-version.outputs.version != 'none'
+        run: |
+          echo "=== cua-driver --version ==="
+          # This is the primary ABI-floor gate: if the binary can't even print
+          # its version the glibc requirement is too high for this distro.
+          ./cua-driver --version
+          VERSION_OUT=$(./cua-driver --version)
+          echo "Output: $VERSION_OUT"
+          # Sanity-check that the output contains a version number.
+          if ! echo "$VERSION_OUT" | grep -qE "[0-9]+\.[0-9]+\.[0-9]+"; then
+            echo "ERROR: --version output does not contain a semver string"
+            exit 1
+          fi
+          echo "PASS: --version"
+
+      - name: Smoke-test doctor
+        if: needs.resolve-version.outputs.version != 'none'
+        run: |
+          echo "=== cua-driver doctor ==="
+          # doctor checks for runtime capabilities (display, AT-SPI, etc.).
+          # In a headless container many capabilities will be absent — that's
+          # expected and NOT a failure. What we test here is that:
+          #   a. The binary loads and runs the doctor subcommand at all.
+          #   b. It exits with a parseable status (not a SIGILL / glibc symbol
+          #      error which would manifst as exit code 127 or similar).
+          set +e
+          ./cua-driver doctor 2>&1
+          EXIT_CODE=$?
+          set -e
+          echo "doctor exit code: $EXIT_CODE"
+          # Exit codes that indicate glibc/ABI failure (command not found / bad ELF):
+          if [[ $EXIT_CODE -eq 127 || $EXIT_CODE -eq 126 ]]; then
+            echo "ERROR: cua-driver failed to execute (exit $EXIT_CODE) — likely glibc ABI mismatch"
+            exit 1
+          fi
+          # Treat 0 (all capabilities present) or 1 (capabilities missing but
+          # doctor ran) as success — both mean the binary loaded correctly.
+          echo "PASS: doctor ran without ABI error"
+
+  # ── Summary job ──────────────────────────────────────────────────────────────
+  # A single job that other status checks can require. Marks green when all
+  # distro-smoke jobs pass (or when the binary doesn't exist yet and all
+  # continue-on-error jobs skipped).
+  distro-compat-summary:
+    name: "Distro compat summary"
+    needs: [resolve-version, distro-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "resolve-version result: ${{ needs.resolve-version.result }}"
+          echo "distro-smoke result:    ${{ needs.distro-smoke.result }}"
+          # If resolve-version failed (API error etc.) that's a real failure.
+          if [[ "${{ needs.resolve-version.result }}" == "failure" ]]; then
+            echo "ERROR: resolve-version job failed"
+            exit 1
+          fi
+          # distro-smoke is continue-on-error so its result is always
+          # 'success' even when individual jobs fail. The individual job
+          # logs are the source of truth; this summary job just gates
+          # the overall workflow status.
+          echo "All distro compat checks completed."

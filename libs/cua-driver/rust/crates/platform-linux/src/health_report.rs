@@ -147,33 +147,61 @@ async fn check_ax_capability() -> CheckEntry {
 }
 
 async fn check_screen_capture_capability() -> CheckEntry {
-    // Native Wayland: capture goes through wlr-screencopy. Confirm the
-    // manager is advertised so doctor doesn't flag the backend as broken
-    // just because X11 isn't reachable.
+    // Native Wayland: capture flows through a cascade — wlroots screencopy
+    // (sway / labwc / kwin 5.27+ / hyprland) → ext-image-copy-capture-v1
+    // (sway 1.10+ / labwc 0.8+ / niri / KDE 6.2+ / GNOME 47+) →
+    // xdg-desktop-portal Screenshot (GNOME / KDE / COSMIC + portal backend).
+    // Report which tier is reachable so users on mutter / kwin don't see a
+    // misleading "screen capture will fail" just because wlroots isn't
+    // present.
     if is_wayland_session() {
         let snap = tokio::task::spawn_blocking(probe_wayland_managers)
             .await
             .ok()
             .and_then(|r| r.ok());
-        return match snap {
-            Some(m) if m.screencopy && m.wl_shm => CheckEntry::pass(
+        match &snap {
+            Some(m) if m.screencopy && m.wl_shm => {
+                return CheckEntry::pass(
+                    NAME_SCREEN_CAPTURE_CAPABILITY,
+                    "Wayland session: zwlr_screencopy_manager_v1 + wl_shm advertised; \
+                     native output capture is functional.",
+                );
+            }
+            Some(m) if m.ext_image_copy_capture && m.ext_output_image_capture_source => {
+                return CheckEntry::pass(
+                    NAME_SCREEN_CAPTURE_CAPABILITY,
+                    "Wayland session: ext-image-copy-capture-v1 + \
+                     ext-output-image-capture-source-v1 advertised; cross-DE \
+                     native output capture is functional.",
+                );
+            }
+            _ => {}
+        }
+        // No wlr screencopy AND no ext-image-copy-capture. Probe the
+        // portal as the last native tier. The probe is read-only — it
+        // checks for a name owner on the bus, does NOT take a screenshot.
+        let portal_ok = tokio::task::spawn_blocking(crate::wayland::portal_screenshot::probe_portal)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false);
+        if portal_ok {
+            return CheckEntry::pass(
                 NAME_SCREEN_CAPTURE_CAPABILITY,
-                "Wayland session: zwlr_screencopy_manager_v1 + wl_shm advertised; \
-                 native output capture is functional.",
-            ),
-            Some(_) => CheckEntry::fail(
-                NAME_SCREEN_CAPTURE_CAPABILITY,
-                "Wayland session: compositor does not advertise \
-                 zwlr_screencopy_manager_v1 / wl_shm; native screen capture will fail.",
-                "Use a wlroots-based compositor (sway, labwc, hyprland) or install \
-                 `grim` as a fallback.",
-            ),
-            None => CheckEntry::fail(
-                NAME_SCREEN_CAPTURE_CAPABILITY,
-                "Wayland session: failed to connect to the compositor; screen capture will fail.",
-                "Verify WAYLAND_DISPLAY points at a running compositor socket.",
-            ),
-        };
+                "Wayland session: no native screencopy globals, but \
+                 xdg-desktop-portal Screenshot is reachable; capture will go \
+                 through the portal (one consent prompt per session).",
+            );
+        }
+        return CheckEntry::fail(
+            NAME_SCREEN_CAPTURE_CAPABILITY,
+            "Wayland session: no native screencopy globals, and \
+             xdg-desktop-portal is not reachable on the session bus; \
+             screen capture will fail.",
+            "Use a wlroots-based compositor (sway, labwc, hyprland, kwin 5.27+) \
+             or install xdg-desktop-portal-gnome / xdg-desktop-portal-kde / \
+             xdg-desktop-portal-wlr.",
+        );
     }
     // On Linux the canonical capture path is X11 GetImage / xwd / scrot
     // — all require an open X11 connection. The probe is the same one

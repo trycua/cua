@@ -1269,6 +1269,12 @@ pub struct WaylandManagers {
     pub screencopy: bool,
     pub virtual_pointer: bool,
     pub wl_shm: bool,
+    /// Staging `ext-image-copy-capture-v1` manager — sway 1.10+, labwc
+    /// 0.8+, niri, KDE 6.2+, GNOME mutter 47+.
+    pub ext_image_copy_capture: bool,
+    /// Companion `ext-output-image-capture-source-v1` source manager —
+    /// required to capture a `wl_output` via the staging protocol.
+    pub ext_output_image_capture_source: bool,
 }
 
 /// Perform a single registry roundtrip and report which of the manager
@@ -1282,12 +1288,65 @@ pub fn probe_managers() -> anyhow::Result<WaylandManagers> {
     conn.display().get_registry(&qh, ());
     let mut state = State::default();
     queue.roundtrip(&mut state)?;
+    // Reuse the existing State for wlroots managers, then do a parallel
+    // probe for staging ext-image-copy-capture interfaces by walking the
+    // raw registry events (no binding required — we only need presence).
+    let ext_probe = probe_ext_interfaces().unwrap_or_default();
     Ok(WaylandManagers {
         foreign_toplevel: state.manager.is_some(),
         screencopy: state.scrcopy_manager.is_some(),
         virtual_pointer: state.vptr_manager.is_some(),
         wl_shm: state.shm.is_some(),
+        ext_image_copy_capture: ext_probe.image_copy_capture,
+        ext_output_image_capture_source: ext_probe.output_image_capture_source,
     })
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct ExtInterfaceProbe {
+    image_copy_capture: bool,
+    output_image_capture_source: bool,
+}
+
+/// Probe registry for `ext-image-copy-capture-v1` + companion source manager
+/// presence without binding them. Cheap (one roundtrip) and side-effect
+/// free.
+fn probe_ext_interfaces() -> anyhow::Result<ExtInterfaceProbe> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<ExtProbeState>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = ExtProbeState::default();
+    queue.roundtrip(&mut state)?;
+    Ok(state.probe)
+}
+
+#[derive(Default)]
+struct ExtProbeState {
+    probe: ExtInterfaceProbe,
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for ExtProbeState {
+    fn event(
+        state: &mut Self,
+        _: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global { interface, .. } = event {
+            match interface.as_str() {
+                "ext_image_copy_capture_manager_v1" => {
+                    state.probe.image_copy_capture = true;
+                }
+                "ext_output_image_capture_source_manager_v1" => {
+                    state.probe.output_image_capture_source = true;
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 // Suppress dead-code warning for the unused BTN_LEFT alias kept for backward

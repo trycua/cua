@@ -97,3 +97,9 @@ crossbeam-channel = "0.5"
 # ScreenCast and RemoteDesktop `restore_token`s so users see the consent
 # dialog only once per install, not once per process.
 dirs = "5"
+
+[dev-dependencies]
+# Used by the `screenshot_cascade` example to surface the
+# `tracing::debug!` lines emitted by each tier of the dispatch as it
+# falls through.
+tracing-subscriber = { workspace = true }

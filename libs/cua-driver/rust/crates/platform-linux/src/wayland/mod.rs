@@ -706,7 +706,10 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
             }
         }
     }
-    crate::capture::screenshot_display_bytes()
+    // Final fallback: X11 root window. Call the X11-only path explicitly
+    // so we don't re-enter screenshot_display_bytes (which routes back here
+    // on Wayland — would loop forever).
+    crate::capture::screenshot_display_bytes_x11()
 }
 
 /// Per-window capture dispatcher. On X11 forwards to the existing window

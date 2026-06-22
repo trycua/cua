@@ -358,10 +358,14 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
             "$HOME/.agents/skills/$SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$SKILL_PACK_NAME" \
             "$HOME/.config/opencode/skills/$SKILL_PACK_NAME" \
+            "$HOME/.gemini/skills/$SKILL_PACK_NAME" \
+            "$HOME/.hermes/skills/$SKILL_PACK_NAME" \
             "$HOME/.claude/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.agents/skills/$LEGACY_SKILL_PACK_NAME" \
             "$HOME/.openclaw/skills/$LEGACY_SKILL_PACK_NAME" \
-            "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME"; do
+            "$HOME/.config/opencode/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.gemini/skills/$LEGACY_SKILL_PACK_NAME" \
+            "$HOME/.hermes/skills/$LEGACY_SKILL_PACK_NAME"; do
             if [[ -L "$SKILL_LINK" ]]; then
                 rm -f "$SKILL_LINK"
                 log "removed skill symlink $SKILL_LINK"
@@ -616,7 +620,9 @@ for SKILL_LINK in \
     "$HOME/.claude/skills/cua-driver" \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
-    "$HOME/.config/opencode/skills/cua-driver"; do
+    "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/skills/cua-driver" \
+    "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$SKILL_LINK" ]] && [[ "$(readlink "$SKILL_LINK")" == "$SKILL_TARGET_EXPECTED" ]]; then
         rm -f "$SKILL_LINK"
         log "removed $SKILL_LINK"

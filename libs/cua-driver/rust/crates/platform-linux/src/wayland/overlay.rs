@@ -18,6 +18,7 @@
 //! spring physics + click pulse advance smoothly even when no new
 //! Position command has arrived.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Instant;
@@ -35,7 +36,7 @@ use wayland_client::{
         wl_shm_pool::WlShmPool,
         wl_surface::WlSurface,
     },
-    Connection, Dispatch, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, Layer, ZwlrLayerShellV1},
@@ -122,7 +123,22 @@ struct OverlayState {
     /// Cross-platform render core: position, animation, gradient arrow,
     /// bloom, click pulse, idle-fade. Shared verbatim with the X11 path.
     core: RenderStateCore,
+    /// In-flight wl_shm buffers awaiting `wl_buffer.release` from the
+    /// compositor. Keyed by `WlBuffer` object id; value is the
+    /// `(mmap ptr, mmap size, memfd fd)` triple that must be unmapped +
+    /// closed once the compositor signals it's done with the buffer.
+    /// Replaces the per-redraw `mem::forget` leak: the previous frame's
+    /// memory is reclaimed as soon as the compositor releases it.
+    pending_buffers: HashMap<u32, (*mut libc::c_void, usize, i32)>,
 }
+
+// SAFETY: the raw pointers in pending_buffers point at mmap regions owned
+// exclusively by this thread (the owner thread). OverlayState is never
+// shared across threads — wayland-client's EventQueue<State> is !Send so
+// it stays pinned to the owner thread. The Send/Sync bounds wayland-client
+// requires for State types apply to the struct as a whole, hence the
+// explicit assertion.
+unsafe impl Send for OverlayState {}
 
 impl Default for OverlayState {
     fn default() -> Self {
@@ -137,6 +153,7 @@ impl Default for OverlayState {
             layer_surface: None,
             configured: false,
             core: RenderStateCore::new(CursorConfig::default()),
+            pending_buffers: HashMap::new(),
         }
     }
 }
@@ -342,23 +359,16 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
         (),
     );
 
+    // Track the (mmap, fd) by buffer object id so the wl_buffer.release
+    // event Dispatch handler can clean up exactly when the compositor is
+    // done with the underlying memory — no leak, no use-after-free.
+    let buffer_id = buffer.id().protocol_id();
+    state.pending_buffers.insert(buffer_id, (ptr, size, fd));
+
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
     pool.destroy();
-
-    // The compositor holds onto the buffer until it sends `wl_buffer.release`.
-    // Freeing the mmap immediately is a use-after-free race that sway
-    // surfaces as "compositor is not releasing buffers immediately" plus
-    // glitchy or invisible rendering.
-    //
-    // v1: intentionally LEAK the mmap each redraw. ~7 MiB at 1920x1080 — a
-    // few hundred MiB per minute at 60 Hz, fine for the agent-cursor
-    // overlay use case where state changes are typically infrequent
-    // (one MoveTo per click). Follow-up: implement a wl_buffer.release
-    // listener that recycles a 2-buffer pool, freeing the previous mmap
-    // only after the compositor has released it.
-    std::mem::forget((ptr, size, fd));
     Ok(())
 }
 
@@ -495,13 +505,24 @@ impl Dispatch<WlShmPool, ()> for OverlayState {
 
 impl Dispatch<WlBuffer, ()> for OverlayState {
     fn event(
-        _: &mut Self,
-        _: &WlBuffer,
-        _: <WlBuffer as wayland_client::Proxy>::Event,
+        state: &mut Self,
+        buffer: &WlBuffer,
+        event: <WlBuffer as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) {}
+    ) {
+        use wayland_client::protocol::wl_buffer;
+        if matches!(event, wl_buffer::Event::Release) {
+            // Compositor is done with the underlying mmap. Free it +
+            // close the memfd + destroy the wayland object.
+            let id = buffer.id().protocol_id();
+            if let Some((ptr, size, fd)) = state.pending_buffers.remove(&id) {
+                super::cleanup_mmap(ptr, size, fd);
+            }
+            buffer.destroy();
+        }
+    }
 }
 
 impl Dispatch<WlRegion, ()> for OverlayState {

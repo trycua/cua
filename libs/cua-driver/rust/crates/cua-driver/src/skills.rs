@@ -50,6 +50,13 @@
 //!                (`agy`) and Antigravity IDE; same dir Google Gemini CLI
 //!                used before the May-2026 transition, so existing
 //!                installs migrate forward unchanged.
+//! - Hermes:      `~/.hermes/skills/` — NousResearch/hermes-agent.
+//!                The user-level skill space Hermes resolves at agent
+//!                load time (separate from the repo-bundled
+//!                `hermes-agent/skills/` tree, which is read-only and
+//!                version-controlled). Hermes' own `computer-use`
+//!                skill teaches its wrapper vocabulary; the
+//!                cua-driver pack provides the platform deep dives.
 //!
 //! Only acts on a given agent when its parent skills dir already
 //! exists (i.e. the agent itself is installed). Never clobbers an
@@ -198,6 +205,15 @@ const AGENTS: &[Agent] = &[
     // (the same path Gemini CLI used pre-May-2026). Registering the
     // single shared path means both surfaces pick up the same symlink.
     Agent { label: "Antigravity", parent: AgentParent::Home(".gemini/skills") },
+    // Hermes (NousResearch/hermes-agent) resolves user skills from
+    // `~/.hermes/skills/` at agent load time — the same directory its
+    // `/skills install …` slash command and `hermes skills install`
+    // CLI write to. Hermes' bundled `skills/computer-use/SKILL.md`
+    // teaches the Hermes `computer_use` action vocabulary; the
+    // cua-driver pack symlinked here adds the platform-specific deep
+    // dives (MACOS.md / WINDOWS.md / LINUX.md / RECORDING.md /
+    // WEB_APPS.md / TESTS.md) that Hermes deliberately doesn't clone.
+    Agent { label: "Hermes",      parent: AgentParent::Home(".hermes/skills") },
 ];
 
 impl Agent {
@@ -290,7 +306,7 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         }
     }
     if !linked_any {
-        println!("(No agent skills dirs present yet — install Claude Code / Codex / OpenClaw / OpenCode then re-run.)");
+        println!("(No agent skills dirs present yet — install Claude Code / Codex / OpenClaw / OpenCode / Antigravity / Hermes then re-run.)");
     }
     Ok(())
 }

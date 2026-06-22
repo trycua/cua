@@ -12,6 +12,7 @@
 
 pub mod persistent_vptr;
 pub mod portal_screenshot;
+pub mod overlay;
 
 use std::collections::HashMap;
 
@@ -601,7 +602,7 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
 /// Allocate an anonymous shared-memory file of `size` bytes and mmap it RW.
 /// Returns the raw fd and the mmap pointer; the caller is responsible for
 /// passing both to [`cleanup_mmap`] when done.
-fn anon_shm(size: usize) -> anyhow::Result<(i32, *mut libc::c_void)> {
+pub(crate) fn anon_shm(size: usize) -> anyhow::Result<(i32, *mut libc::c_void)> {
     // memfd_create is Linux-only and is the cleanest path; fall back to
     // shm_open if memfd isn't available for any reason.
     let name = b"cua-scrcopy\0";
@@ -635,7 +636,7 @@ fn anon_shm(size: usize) -> anyhow::Result<(i32, *mut libc::c_void)> {
 
 /// Unmap and close the screencopy backing buffer; safe to call with the
 /// sentinel values left from a never-allocated buffer.
-fn cleanup_mmap(ptr: *mut libc::c_void, len: usize, fd: i32) {
+pub(crate) fn cleanup_mmap(ptr: *mut libc::c_void, len: usize, fd: i32) {
     if !ptr.is_null() && len > 0 {
         unsafe { libc::munmap(ptr, len) };
     }
@@ -646,7 +647,7 @@ fn cleanup_mmap(ptr: *mut libc::c_void, len: usize, fd: i32) {
 
 /// Borrow a raw fd as an `OwnedFd` for wl_shm.create_pool. The pool keeps its
 /// own reference; we close our copy via [`cleanup_mmap`].
-unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
+pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
     use std::os::fd::FromRawFd;
     // Duplicate so the protocol stack and the caller each own a closeable fd.
     let dup = libc::dup(fd);

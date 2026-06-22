@@ -13,6 +13,7 @@
 pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod overlay;
+pub mod ext_screencopy;
 
 use std::collections::HashMap;
 
@@ -674,16 +675,26 @@ pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
 /// 3. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        // Tier 1: native wlroots screencopy.
+        // Tier 1: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
                 tracing::debug!(
-                    "wlroots screencopy unavailable ({e}); falling through to xdg-desktop-portal"
+                    "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
                 );
             }
         }
-        // Tier 2: xdg-desktop-portal (GNOME, KDE, COSMIC, …).
+        // Tier 2: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
+        // hyprland, KDE 6.2+, GNOME 47+).
+        match ext_screencopy::screenshot_via_ext_copy() {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                tracing::debug!(
+                    "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
+                );
+            }
+        }
+        // Tier 3: xdg-desktop-portal (GNOME, KDE, COSMIC fallback).
         match portal_screenshot::screenshot_via_portal() {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {

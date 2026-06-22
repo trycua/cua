@@ -10,6 +10,10 @@ readme = "README.md"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
     "httpx>=0.27.0",
     "aiohttp>=3.9.3",
@@ -131,3 +135,4 @@ distribution = true
 
 [tool.pdm.build]
 includes = ["cua_agent/"]
+source-includes = ["README.md", "LICENSE"]

@@ -127,8 +127,15 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     if key.is_empty() {
         return;
     }
+    let msg = OverlayMsg::Cmd(KeyedOverlayCommand { key: key.clone(), cmd: cmd.clone() });
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
+        let _ = tx.try_send(msg.clone());
+    }
+    // Also forward to the native-Wayland layer-shell overlay when Wayland
+    // is opted in. The wayland overlay's `forward` is a no-op when its
+    // owner thread isn't started yet (which is the normal X11-only case).
+    if crate::wayland::is_wayland() {
+        let _ = crate::wayland::overlay::forward(&msg);
     }
 }
 
@@ -245,6 +252,16 @@ pub fn run_on_thread() {
 
     if !cfg.enabled {
         return;
+    }
+
+    // Native Wayland: start the layer-shell overlay thread in parallel
+    // with the X11 path. send_command_for forwards to both; whichever has
+    // a live compositor connection renders. On a pure-Wayland session the
+    // X11 thread bails out fast in run_overlay_thread (no DISPLAY); on
+    // pure-X11 sessions the Wayland thread bails out fast (no
+    // WAYLAND_DISPLAY).
+    if crate::wayland::is_wayland() {
+        crate::wayland::overlay::ensure_started();
     }
 
     std::thread::Builder::new()

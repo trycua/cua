@@ -38,8 +38,17 @@ pkgs.rustPlatform.buildRustPackage {
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win
   # which are gated behind cfg(target_os) and won't compile on Linux.
   # Using -p cua-driver ensures Cargo only resolves Linux dependencies.
-  cargoBuildFlags = [ "-p" "cua-driver" ];
-  cargoTestFlags = [ "-p" "cua-driver" ];
+  #
+  # Enable the `portal-libei` feature so the Nix build pulls the
+  # GNOME/KDE portal stack (PipeWire ScreenCast per-window capture +
+  # libei RemoteDesktop input). nixpkgs provides a recent enough
+  # PipeWire (>= 0.3.40 needed by libspa-sys) and libei, so this feature
+  # builds fine here. The cross-platform release CD leaves it off — its
+  # debian:11 container ships PipeWire 0.3.19 (too old for libspa-sys
+  # 0.8) and lacks libei entirely, but the wlroots screencopy +
+  # virtual-pointer paths still cover sway/Hyprland/labwc/wayfire/dwl.
+  cargoBuildFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
+  cargoTestFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
 
   # Mostly pure Rust:
   #   x11rb     -> RustConnection (no libxcb C binding)

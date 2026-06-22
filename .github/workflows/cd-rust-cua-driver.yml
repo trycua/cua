@@ -74,6 +74,13 @@ jobs:
       - name: Install base tooling (container is bare)
         run: |
           apt-get update
+          # The PipeWire / libei deps the native-Wayland portal path uses
+          # are intentionally NOT installed here: bullseye ships PipeWire
+          # 0.3.19 (too old for libspa-sys 0.8, which needs >= 0.3.40) and
+          # has no libei-dev at all. They sit behind the `portal-libei`
+          # Cargo feature (disabled by default) and are wired in via the
+          # Nix build. The wlroots screencopy + virtual-pointer paths and
+          # the X11 fallback work without them.
           apt-get install -y --no-install-recommends \
             git ca-certificates curl build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev

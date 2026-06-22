@@ -81,6 +81,13 @@ pub fn ensure_started() {
 /// every variant the X11 path handles; only `ShowFocusRect` (macOS-only)
 /// is silently dropped here.
 pub fn forward(msg: &OverlayMsg) -> bool {
+    // Lazy startup: spawning the layer-shell owner thread + connecting to
+    // the Wayland compositor takes 100-300ms. Doing that at cua-driver mcp
+    // boot (the old eager-init path) was tipping the borderline CI
+    // cursor-click-gif test over its 20s budget. ensure_started is
+    // idempotent so calling it on every forward is fine — the OnceLock
+    // bypasses the spawn after the first call.
+    ensure_started();
     let Some(tx) = tx() else { return false };
     match msg {
         OverlayMsg::Remove(k) => {

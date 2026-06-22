@@ -254,15 +254,16 @@ pub fn run_on_thread() {
         return;
     }
 
-    // Native Wayland: start the layer-shell overlay thread in parallel
-    // with the X11 path. send_command_for forwards to both; whichever has
-    // a live compositor connection renders. On a pure-Wayland session the
-    // X11 thread bails out fast in run_overlay_thread (no DISPLAY); on
-    // pure-X11 sessions the Wayland thread bails out fast (no
-    // WAYLAND_DISPLAY).
-    if crate::wayland::is_wayland() {
-        crate::wayland::overlay::ensure_started();
-    }
+    // Wayland layer-shell overlay is started LAZILY on the first
+    // send_command_for() that targets a Wayland session (see the
+    // wayland::overlay::forward() path). Starting it eagerly here added
+    // ~100-300ms to cua-driver mcp startup — enough to push the CI
+    // `cursor-click-gif` test (20s budget for the full launch_app →
+    // click → type sequence) over its limit, intermittently. The
+    // forward() path's own ensure_started() OnceLock guarantees the
+    // thread spins up on demand without losing any commands (the
+    // first send_command_for that triggers it spawns the thread,
+    // future commands reuse it).
 
     std::thread::Builder::new()
         .name("cua-overlay-x11".into())

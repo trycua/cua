@@ -2480,7 +2480,7 @@ fn config_file_path() -> std::path::PathBuf {
 }
 
 /// Read persisted config from disk.  Returns an empty object if absent/unreadable.
-fn read_config_file() -> serde_json::Value {
+pub(crate) fn read_config_file() -> serde_json::Value {
     let path = config_file_path();
     std::fs::read_to_string(&path)
         .ok()

@@ -10,6 +10,8 @@
 //! `wayland-protocols-wlr`; until then `screenshot_window_dispatch` returns a
 //! typed error on pure Wayland.
 
+pub mod persistent_vptr;
+
 use std::collections::HashMap;
 
 use wayland_client::{

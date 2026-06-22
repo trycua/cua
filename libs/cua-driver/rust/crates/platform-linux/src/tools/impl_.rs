@@ -2236,7 +2236,15 @@ impl Tool for MouseButtonDownTool {
 
         let xi = x as i32;
         let yi = y as i32;
-        let result = tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await;
+        // Native Wayland: route through the persistent virtual-pointer module
+        // so the held button survives across tool calls; the X11 path keeps
+        // the existing input::send_button_down behaviour.
+        let result = if crate::wayland::is_wayland() {
+            let cid = cursor_id.clone();
+            tokio::task::spawn_blocking(move || crate::wayland::persistent_vptr::press(&cid, xid, xi, yi, button)).await
+        } else {
+            tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await
+        };
         match result {
             Ok(Ok(())) => {
                 let hold = MouseHoldState { cursor_id: cursor_id.clone(), pid, xid, button, x, y };
@@ -2343,13 +2351,24 @@ impl Tool for MouseDragTool {
         let mut result: anyhow::Result<()> = Ok(());
         let mut prev_x = from_x;
         let mut prev_y = from_y;
+        let is_wl = crate::wayland::is_wayland();
         for i in 1..=steps {
             let t = i as f64 / steps as f64;
             let ix = from_x + (to_x - from_x) * t;
             let iy = from_y + (to_y - from_y) * t;
-            let move_result = tokio::task::spawn_blocking(move || {
-                crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
-            }).await;
+            // Native Wayland: route motion through the persistent virtual-
+            // pointer so the held button stays held across the entire drag;
+            // X11 keeps the existing input::send_motion path.
+            let cid_inner = cursor_id.clone();
+            let move_result = if is_wl {
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::persistent_vptr::move_to(&cid_inner, ix.round() as i32, iy.round() as i32)
+                }).await
+            } else {
+                tokio::task::spawn_blocking(move || {
+                    crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
+                }).await
+            };
             match move_result {
                 Ok(Ok(())) => {
                     if let Ok(Ok((sx, sy))) =
@@ -2466,7 +2485,15 @@ impl Tool for MouseButtonUpTool {
         let button = hold.button;
         let xi = x as i32;
         let yi = y as i32;
-        let result = tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button)).await;
+        // Native Wayland: release through the persistent virtual-pointer so
+        // the same vptr device that emitted the press also emits the release
+        // (single logical drag rather than a click pair).
+        let result = if crate::wayland::is_wayland() {
+            let cid = cursor_id.clone();
+            tokio::task::spawn_blocking(move || crate::wayland::persistent_vptr::release(&cid, button)).await
+        } else {
+            tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button)).await
+        };
         match result {
             Ok(Ok(())) => {
                 hold.x = x;

@@ -347,10 +347,18 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     surface.commit();
     pool.destroy();
 
-    // The buffer is released by the compositor via wl_buffer::release.
-    // We can't free the mmap until then; cleanup is best-effort at process
-    // exit via OS cleanup of the memfd.
-    super::cleanup_mmap(ptr, size, fd);
+    // The compositor holds onto the buffer until it sends `wl_buffer.release`.
+    // Freeing the mmap immediately is a use-after-free race that sway
+    // surfaces as "compositor is not releasing buffers immediately" plus
+    // glitchy or invisible rendering.
+    //
+    // v1: intentionally LEAK the mmap each redraw. ~7 MiB at 1920x1080 — a
+    // few hundred MiB per minute at 60 Hz, fine for the agent-cursor
+    // overlay use case where state changes are typically infrequent
+    // (one MoveTo per click). Follow-up: implement a wl_buffer.release
+    // listener that recycles a 2-buffer pool, freeing the previous mmap
+    // only after the compositor has released it.
+    std::mem::forget((ptr, size, fd));
     Ok(())
 }
 

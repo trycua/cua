@@ -100,6 +100,14 @@ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
 
 /// Capture the primary display (root window) as raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
+    // Native Wayland: prefer the wlr-screencopy path (with the grim fallback
+    // baked in). Falls through to the X11 paths below when Wayland is off or
+    // the capture fails.
+    if crate::wayland::is_wayland() {
+        if let Ok(bytes) = crate::wayland::screenshot_bytes() {
+            return Ok(bytes);
+        }
+    }
     // Try `import -window root png:-` (ImageMagick).
     let out = Command::new("import")
         .args(["-window", "root", "png:-"])

@@ -65,12 +65,14 @@ pub fn wm_class_matches_terminal(instance: &str, class: &str) -> bool {
 }
 
 /// Returns `true` if the window with X11 id `xid` belongs to a
-/// terminal emulator, based on its `WM_CLASS` property. Returns
-/// `false` when no X connection is available or the property is
-/// unset.
+/// terminal emulator, based on its `WM_CLASS` property. On native
+/// Wayland the dispatcher folds the foreign-toplevel `app_id` into
+/// both fields so the substring match still works for terminals like
+/// Ghostty / kitty / alacritty. Returns `false` when no connection is
+/// available or the property is unset.
 #[cfg(target_os = "linux")]
 pub fn is_terminal_window(xid: u64) -> bool {
-    match crate::x11::wm_class_for_window(xid) {
+    match crate::wayland::wm_class_dispatch(xid) {
         Some((instance, class)) => wm_class_matches_terminal(&instance, &class),
         None => false,
     }

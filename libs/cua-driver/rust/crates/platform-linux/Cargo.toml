@@ -73,6 +73,11 @@ libspa = "0.8"
 # documented as "incomplete and subject to change" — budget for churn on
 # the next bump. Re-exports `enumflags2` we use for `BitFlags<DeviceType>`.
 reis = { version = "0.7", features = ["tokio"] }
+# Calloop event loop drives the EIS worker thread — reis's example uses
+# calloop::EventLoop + Generic source to multiplex EIS protocol reads
+# with command-channel polling. reis 0.7 also ships a calloop adapter
+# but we use the plain Generic source for clarity.
+calloop = "0.14"
 # Used directly in the ashpd RemoteDesktop call to compose
 # `BitFlags::from(DeviceType::Keyboard) | DeviceType::Pointer`. reis also
 # re-exports this same major version; pinning explicitly prevents

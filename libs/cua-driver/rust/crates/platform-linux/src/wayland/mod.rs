@@ -15,6 +15,7 @@ pub mod portal_screenshot;
 pub mod overlay;
 pub mod ext_screencopy;
 pub mod portal_screencast;
+pub mod libei;
 
 use std::collections::HashMap;
 

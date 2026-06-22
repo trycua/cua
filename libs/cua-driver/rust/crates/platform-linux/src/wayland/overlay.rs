@@ -355,8 +355,18 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     // when the cursor is hidden / off-screen / idle-faded, so the pixmap
     // is left fully transparent in those cases (which is also what we want
     // for the click-through layer surface).
-    let mut pm = tiny_skia::Pixmap::new(w, h)
-        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    let pm_result = tiny_skia::Pixmap::new(w, h);
+    let mut pm = match pm_result {
+        Some(p) => p,
+        // tiny_skia::Pixmap::new only fails on OOM at sizes that fit u32.
+        // We refuse to fall back to a 1x1 pixmap because the subsequent
+        // RGBA → BGRA loop indexes `src[i+3]` over the full `size` range —
+        // a 1x1 source would crash. Surface the allocation failure
+        // properly instead.
+        None => anyhow::bail!(
+            "tiny_skia::Pixmap::new({w}, {h}) failed — out of memory for the overlay buffer"
+        ),
+    };
     // backing_scale=1.0 matches the X11 path; per-output Wayland scale is
     // a follow-up (would consume `wl_output.scale` and `preferred_buffer
     // _scale` from wl_surface v6).

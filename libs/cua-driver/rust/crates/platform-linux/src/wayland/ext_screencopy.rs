@@ -119,12 +119,31 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
         );
     }
 
+    // Checked arithmetic on compositor-provided sizes. A malicious or
+    // buggy compositor could announce dimensions that overflow `usize` on
+    // multiplication — we refuse to allocate in that case rather than
+    // wrapping and reading past the buffer.
     let stride = if state.stride > 0 {
         state.stride
     } else {
-        state.width * 4
+        state.width
+            .checked_mul(4)
+            .ok_or_else(|| anyhow::anyhow!("compositor advertised width that overflows stride: {}", state.width))?
     };
-    let size = (stride as usize) * (state.height as usize);
+    if stride < state.width.saturating_mul(4) {
+        anyhow::bail!(
+            "compositor stride {} is smaller than width*4 {}; refusing to allocate (would alias rows)",
+            stride, state.width.saturating_mul(4)
+        );
+    }
+    let size = (stride as usize)
+        .checked_mul(state.height as usize)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "compositor buffer size overflows usize: stride={} height={}",
+                stride, state.height
+            )
+        })?;
 
     // Allocate the wl_shm buffer.
     let (fd, ptr) = super::anon_shm(size)?;

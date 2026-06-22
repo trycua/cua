@@ -2806,6 +2806,21 @@ impl Tool for GetCursorPositionTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
+        // Native Wayland: there's no protocol for clients to query the real
+        // global cursor position. Fall back to the synthetic registry that
+        // records every `motion_absolute` this process emits.
+        if crate::wayland::is_wayland() {
+            return match crate::wayland::last_synth_cursor_pos() {
+                Some((x, y)) => ToolResult::text(
+                    format!("✅ Cursor at ({x}, {y}) (synthetic — last move_cursor in this process)")
+                ).with_structured(json!({
+                    "x": x, "y": y, "source": "synthetic"
+                })),
+                None => ToolResult::text(
+                    "Cursor position unknown on Wayland — no move_cursor has been issued in this process yet.".to_string()
+                ).with_structured(json!({ "source": "synthetic", "available": false })),
+            };
+        }
         let result = tokio::task::spawn_blocking(|| {
             use x11rb::connection::Connection;
             use x11rb::protocol::xproto::ConnectionExt as _;
@@ -2818,7 +2833,7 @@ impl Tool for GetCursorPositionTool {
         match result {
             // Text format matches Swift `GetCursorPositionTool` 1:1.
             Ok(Ok((x, y))) => ToolResult::text(format!("✅ Cursor at ({x}, {y})"))
-                .with_structured(json!({ "x": x, "y": y })),
+                .with_structured(json!({ "x": x, "y": y, "source": "x11" })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2849,6 +2864,7 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
+        let window_id = args.get("window_id").and_then(|v| v.as_u64());
         let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
         // End pointing upper-left (45°) — matches Swift's
@@ -2862,7 +2878,21 @@ impl Tool for MoveCursorTool {
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
             },
         );
-        ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
+        // Native Wayland: also warp the real cursor via zwlr_virtual_pointer.
+        // Off-thread because the wayland-client roundtrip is blocking. Best-effort
+        // — overlay update + registry write already succeeded; surface a warning
+        // only if the warp itself failed.
+        let real_warp_note = if crate::wayland::is_wayland() {
+            let xi = x.round() as i32;
+            let yi = y.round() as i32;
+            match tokio::task::spawn_blocking(move || crate::wayland::move_cursor_absolute(window_id, xi, yi)).await {
+                Ok(Ok(())) => " (real cursor warped via virtual-pointer)",
+                Ok(Err(_)) | Err(_) => " (overlay updated; real-cursor warp failed)",
+            }
+        } else {
+            ""
+        };
+        ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}).{real_warp_note}"))
     }
 }
 

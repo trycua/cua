@@ -38,3 +38,53 @@ meval = "0.2"
 # when running under a Wayland compositor with no X11 (no DISPLAY).
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# Wayland staging protocols: ext-foreign-toplevel-list-v1,
+# ext-image-capture-source-v1, ext-image-copy-capture-v1 (per-window
+# screenshot on modern wlroots/GNOME/KDE) and wp-fractional-scale-v1 +
+# wp-viewporter (HiDPI for the layer-shell overlay). The transitive pull
+# from wayland-protocols-wlr does NOT enable `staging`; declaring it here
+# unifies the feature globally.
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+# xdg-desktop-portal client: display-screenshot tier
+# (org.freedesktop.portal.Screenshot), per-window ScreenCast
+# (org.freedesktop.portal.ScreenCast), and the libei input session
+# (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). `tokio` shares the
+# driver's async runtime.
+ashpd = { version = "0.13", features = ["tokio", "screencast", "remote_desktop"] }
+# Parse `file://` URIs returned by org.freedesktop.portal.Screenshot.
+# ashpd re-exports `url` transitively; declared explicitly so ashpd
+# version bumps cannot silently break the resolver.
+url = "2"
+# PipeWire client for the ScreenCast per-window capture path — dequeues
+# frames from the node id returned by `open_pipe_wire_remote`. Pinned to
+# 0.8 (last well-documented release; 0.10 had docs.rs build failures in
+# mid-2026). Needs libpipewire-0.3 headers at build time.
+pipewire = "0.8"
+# Companion to pipewire 0.8 — needed to construct the SPA_PARAM_EnumFormat
+# pod (SPA_VIDEO_FORMAT_BGRx at announced width/height) we hand to
+# `Stream::connect`.
+libspa = "0.8"
+# Pure-Rust libei/libeis bindings for the GNOME/KDE input path (handshake
+# → seat → device → pointer_absolute/button/scroll/keyboard/text). API is
+# documented as "incomplete and subject to change" — budget for churn on
+# the next bump. Re-exports `enumflags2` we use for `BitFlags<DeviceType>`.
+reis = { version = "0.7", features = ["tokio"] }
+# Used directly in the ashpd RemoteDesktop call to compose
+# `BitFlags::from(DeviceType::Keyboard) | DeviceType::Pointer`. reis also
+# re-exports this same major version; pinning explicitly prevents
+# duplicate-crate hazards.
+enumflags2 = "0.7"
+# Keymap fallback path for libei keyboard input when the EIS server does
+# NOT advertise `ei_text` (libei < 1.6, i.e. older GNOME / KDE Plasma 6.0).
+# Mirrors the reis `type-text.rs` example's keycode reverse-mapping.
+xkbcommon = "0.9"
+# Bounded MPSC command/reply channel for the persistent virtual-pointer
+# owner thread. EventQueue<State> is !Send, so the persistent device must
+# live on its own thread; crossbeam gives us a Send sender and synchronous
+# reply channels that preserve the "tool call blocks until compositor
+# roundtripped" contract the X11 path provides.
+crossbeam-channel = "0.5"
+# Resolve `$XDG_STATE_HOME` (with platform fallback) for persisting the
+# ScreenCast and RemoteDesktop `restore_token`s so users see the consent
+# dialog only once per install, not once per process.
+dirs = "5"

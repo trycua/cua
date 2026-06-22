@@ -822,6 +822,53 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
     Ok(())
 }
 
+/// Last cursor position the agent warped to via `move_cursor_absolute`.
+/// Wayland exposes no protocol for clients to read the real global cursor
+/// position; a Wayland-conformant `get_cursor_position` can therefore only
+/// report what THIS process synthesized. Updated every `motion_absolute`
+/// emitted from `move_cursor_absolute` / `click` / `drag`.
+static SYNTH_CURSOR_POS: std::sync::OnceLock<std::sync::Mutex<Option<(i32, i32)>>> =
+    std::sync::OnceLock::new();
+
+fn record_synth_cursor(x: i32, y: i32) {
+    let cell = SYNTH_CURSOR_POS.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut g) = cell.lock() {
+        *g = Some((x, y));
+    }
+}
+
+/// Returns the last `(x, y)` this process warped the cursor to via the
+/// Wayland virtual-pointer protocol, or `None` if no warp has happened in
+/// this process. The reading is "synthetic": Wayland forbids clients from
+/// querying the real cursor position, so this value diverges from reality
+/// the moment the user moves their physical mouse. Callers should surface
+/// `source: "synthetic"` in the structured payload.
+pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
+    SYNTH_CURSOR_POS.get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+}
+
+/// Warp the cursor to absolute output coordinates `(x, y)` using
+/// `zwlr_virtual_pointer_v1::motion_absolute`. Clamps to the output bounds
+/// reported by `open_vptr_session`. Emits a motion + frame and roundtrips so
+/// the compositor commits the warp before returning. Records the position in
+/// the synthetic-cursor registry so `last_synth_cursor_pos` can report it.
+pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session(window_id.map(|w| w as u32))?;
+    let (w, h) = (sess.output_w, sess.output_h);
+    let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
+    let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
+    sess.vptr.motion_absolute(0, px, py, w, h);
+    sess.vptr.frame();
+    sess.queue.roundtrip(&mut sess.state)?;
+    record_synth_cursor(px as i32, py as i32);
+    sess.vptr.destroy();
+    sess.queue.roundtrip(&mut sess.state)?;
+    Ok(())
+}
+
 /// Press-drag-release on a native Wayland toplevel. Emits one button press at
 /// `(from_x, from_y)`, then `steps` interpolated motion events along the
 /// straight segment to `(to_x, to_y)`, then a release. Coordinates are

@@ -1048,23 +1048,12 @@ impl Tool for ClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || {
             // Native Wayland: focus+raise the target toplevel (foreign-toplevel
-            // `activate`). Wayland hides cross-window geometry, so window-local
-            // x/y can't be mapped to a global pointer position; activating the
-            // window the caller targeted is the focus-based equivalent.
+            // `activate`), then drive `count` virtual-pointer button events at
+            // the requested coordinates. Wayland hides cross-window geometry,
+            // so callers should pass output-relative coords; (0,0) preserves
+            // the legacy "click the activated window's centre" behaviour.
             if crate::wayland::is_wayland() {
-                // Surface 5: the Wayland virtual-pointer path here only emits a
-                // left-button press at the output centre. Surface a real error
-                // instead of silently dropping a right/middle request onto a
-                // left-click, so the Hermes-side audit gap closes.
-                if button != 1 {
-                    let label = mouse_button_name(button);
-                    anyhow::bail!(
-                        "{label}-button click is not supported on this platform \
-                         (native Wayland virtual-pointer path: left-button only). \
-                         Use the X11 backend, or run the target under XWayland."
-                    );
-                }
-                return crate::wayland::click(xid);
+                return crate::wayland::click(xid, xi, yi, count as u32, button);
             }
             crate::input::send_click(xid, xi, yi, count, button)
         }).await;
@@ -1506,7 +1495,17 @@ impl Tool for HotkeyTool {
         };
 
         let key_display = format!("{}+{}", mods.join("+"), key);
+        let key_for_wayland = key.clone();
+        let mods_for_wayland = mods.clone();
         let result = tokio::task::spawn_blocking(move || {
+            if crate::wayland::is_wayland() {
+                // Native Wayland: route the modifier combo through wtype's
+                // -M/-k/-m sequence — the closest equivalent to the X11
+                // state-mask path. window_id is irrelevant once focused.
+                let mut combo: Vec<String> = mods_for_wayland.clone();
+                combo.push(key_for_wayland.clone());
+                return crate::wayland::hotkey(&combo);
+            }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             crate::input::send_key(xid, &key, &m)
         }).await;
@@ -1663,7 +1662,12 @@ impl Tool for ScrollTool {
         let button: u8 = match direction.as_str() {
             "up" => 4, "left" => 6, "right" => 7, _ => 5,
         };
+        let direction_for_wayland = direction.clone();
+        let amount_u32 = amount as u32;
         let result = tokio::task::spawn_blocking(move || {
+            if crate::wayland::is_wayland() {
+                return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
+            }
             crate::input::send_click(xid, 0, 0, amount, button)
         }).await;
         match result {
@@ -1752,7 +1756,15 @@ impl Tool for DoubleClickTool {
                             cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
                         );
                     }
-                    match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 2, 1)).await {
+                    let lxi = lx as i32;
+                    let lyi = ly as i32;
+                    let click_result = tokio::task::spawn_blocking(move || {
+                        if crate::wayland::is_wayland() {
+                            return crate::wayland::click(xid, lxi, lyi, 2, 1);
+                        }
+                        crate::input::send_click(xid, lxi, lyi, 2, 1)
+                    }).await;
+                    match click_result {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked element [{idx}].")),
                         Ok(Err(e)) => ToolResult::error(e.to_string()),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -1793,7 +1805,12 @@ impl Tool for DoubleClickTool {
             );
         }
         let (xi, yi) = (x as i32, y as i32);
-        let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 2, 1)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            if crate::wayland::is_wayland() {
+                return crate::wayland::click(xid, xi, yi, 2, 1);
+            }
+            crate::input::send_click(xid, xi, yi, 2, 1)
+        }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({x:.1}, {y:.1}).")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -1875,7 +1892,15 @@ impl Tool for RightClickTool {
                             cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
                         );
                     }
-                    match tokio::task::spawn_blocking(move || crate::input::send_click(xid, lx as i32, ly as i32, 1, 3)).await {
+                    let lxi = lx as i32;
+                    let lyi = ly as i32;
+                    let click_result = tokio::task::spawn_blocking(move || {
+                        if crate::wayland::is_wayland() {
+                            return crate::wayland::click(xid, lxi, lyi, 1, 3);
+                        }
+                        crate::input::send_click(xid, lxi, lyi, 1, 3)
+                    }).await;
+                    match click_result {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked element [{idx}].")),
                         Ok(Err(e)) => ToolResult::error(e.to_string()),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -1916,7 +1941,12 @@ impl Tool for RightClickTool {
             );
         }
         let (xi, yi) = (x as i32, y as i32);
-        let result = tokio::task::spawn_blocking(move || crate::input::send_click(xid, xi, yi, 1, 3)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            if crate::wayland::is_wayland() {
+                return crate::wayland::click(xid, xi, yi, 1, 3);
+            }
+            crate::input::send_click(xid, xi, yi, 1, 3)
+        }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked at ({x:.1}, {y:.1}).")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -2012,6 +2042,31 @@ impl Tool for DragTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::SetPressed(true),
         );
+
+        // Native Wayland: emit press + interpolated motion + release as one
+        // virtual-pointer sequence (output-relative coords). Returns early so
+        // we don't fall into the X11 XSendEvent loop below.
+        if crate::wayland::is_wayland() {
+            let (fxi, fyi) = (from_x.round() as i32, from_y.round() as i32);
+            let (txi, tyi) = (to_x.round() as i32, to_y.round() as i32);
+            let steps_u32 = steps as u32;
+            let drag_result = tokio::task::spawn_blocking(move || {
+                crate::wayland::drag(xid, fxi, fyi, txi, tyi, steps_u32, button)
+            }).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(false),
+            );
+            return match drag_result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Posted drag ({button_str}) to pid {pid} \
+                     from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
+                     in {duration_ms}ms / {steps} steps."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
 
         let press_result = tokio::task::spawn_blocking(move || {
             crate::input::send_button_down(xid, from_x.round() as i32, from_y.round() as i32, button)
@@ -2181,7 +2236,15 @@ impl Tool for MouseButtonDownTool {
 
         let xi = x as i32;
         let yi = y as i32;
-        let result = tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await;
+        // Native Wayland: route through the persistent virtual-pointer module
+        // so the held button survives across tool calls; the X11 path keeps
+        // the existing input::send_button_down behaviour.
+        let result = if crate::wayland::is_wayland() {
+            let cid = cursor_id.clone();
+            tokio::task::spawn_blocking(move || crate::wayland::persistent_vptr::press(&cid, xid, xi, yi, button)).await
+        } else {
+            tokio::task::spawn_blocking(move || crate::input::send_button_down(xid, xi, yi, button)).await
+        };
         match result {
             Ok(Ok(())) => {
                 let hold = MouseHoldState { cursor_id: cursor_id.clone(), pid, xid, button, x, y };
@@ -2288,13 +2351,24 @@ impl Tool for MouseDragTool {
         let mut result: anyhow::Result<()> = Ok(());
         let mut prev_x = from_x;
         let mut prev_y = from_y;
+        let is_wl = crate::wayland::is_wayland();
         for i in 1..=steps {
             let t = i as f64 / steps as f64;
             let ix = from_x + (to_x - from_x) * t;
             let iy = from_y + (to_y - from_y) * t;
-            let move_result = tokio::task::spawn_blocking(move || {
-                crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
-            }).await;
+            // Native Wayland: route motion through the persistent virtual-
+            // pointer so the held button stays held across the entire drag;
+            // X11 keeps the existing input::send_motion path.
+            let cid_inner = cursor_id.clone();
+            let move_result = if is_wl {
+                tokio::task::spawn_blocking(move || {
+                    crate::wayland::persistent_vptr::move_to(&cid_inner, ix.round() as i32, iy.round() as i32)
+                }).await
+            } else {
+                tokio::task::spawn_blocking(move || {
+                    crate::input::send_motion(xid, ix.round() as i32, iy.round() as i32, Some(button))
+                }).await
+            };
             match move_result {
                 Ok(Ok(())) => {
                     if let Ok(Ok((sx, sy))) =
@@ -2411,7 +2485,15 @@ impl Tool for MouseButtonUpTool {
         let button = hold.button;
         let xi = x as i32;
         let yi = y as i32;
-        let result = tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button)).await;
+        // Native Wayland: release through the persistent virtual-pointer so
+        // the same vptr device that emitted the press also emits the release
+        // (single logical drag rather than a click pair).
+        let result = if crate::wayland::is_wayland() {
+            let cid = cursor_id.clone();
+            tokio::task::spawn_blocking(move || crate::wayland::persistent_vptr::release(&cid, button)).await
+        } else {
+            tokio::task::spawn_blocking(move || crate::input::send_button_up(xid, xi, yi, button)).await
+        };
         match result {
             Ok(Ok(())) => {
                 hold.x = x;
@@ -2534,6 +2616,16 @@ impl Tool for ParallelMouseDragTool {
         // injections (window-local, no X11 MPX/geometry needed).
         if crate::wayland::is_inject_mode() {
             return parallel_drag_inject(&args).await;
+        }
+        // Native Wayland without the inject socket: MPX/XI2 + uinput master
+        // pointers don't exist on Wayland. Surface a typed error instead of
+        // silently calling the X11 path that's guaranteed to fail.
+        if crate::wayland::is_wayland() {
+            return ToolResult::error(
+                "parallel_mouse_drag requires the cua-compositor inject socket on Wayland \
+                 (set CUA_INJECT_SOCKET to the cua-compositor control socket), \
+                 or run the target under X11."
+            );
         }
         match tokio::task::spawn_blocking(crate::input::check_parallel_pointer_support).await {
             Ok(Ok(())) => {}
@@ -2741,6 +2833,21 @@ impl Tool for GetCursorPositionTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
+        // Native Wayland: there's no protocol for clients to query the real
+        // global cursor position. Fall back to the synthetic registry that
+        // records every `motion_absolute` this process emits.
+        if crate::wayland::is_wayland() {
+            return match crate::wayland::last_synth_cursor_pos() {
+                Some((x, y)) => ToolResult::text(
+                    format!("✅ Cursor at ({x}, {y}) (synthetic — last move_cursor in this process)")
+                ).with_structured(json!({
+                    "x": x, "y": y, "source": "synthetic"
+                })),
+                None => ToolResult::text(
+                    "Cursor position unknown on Wayland — no move_cursor has been issued in this process yet.".to_string()
+                ).with_structured(json!({ "source": "synthetic", "available": false })),
+            };
+        }
         let result = tokio::task::spawn_blocking(|| {
             use x11rb::connection::Connection;
             use x11rb::protocol::xproto::ConnectionExt as _;
@@ -2753,7 +2860,7 @@ impl Tool for GetCursorPositionTool {
         match result {
             // Text format matches Swift `GetCursorPositionTool` 1:1.
             Ok(Ok((x, y))) => ToolResult::text(format!("✅ Cursor at ({x}, {y})"))
-                .with_structured(json!({ "x": x, "y": y })),
+                .with_structured(json!({ "x": x, "y": y, "source": "x11" })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2784,6 +2891,7 @@ impl Tool for MoveCursorTool {
         use cua_driver_core::tool_args::ArgsExt;
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
+        let window_id = args.get("window_id").and_then(|v| v.as_u64());
         let cursor_id = resolve_cursor_key(&args);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
         // End pointing upper-left (45°) — matches Swift's
@@ -2797,7 +2905,21 @@ impl Tool for MoveCursorTool {
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
             },
         );
-        ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."))
+        // Native Wayland: also warp the real cursor via zwlr_virtual_pointer.
+        // Off-thread because the wayland-client roundtrip is blocking. Best-effort
+        // — overlay update + registry write already succeeded; surface a warning
+        // only if the warp itself failed.
+        let real_warp_note = if crate::wayland::is_wayland() {
+            let xi = x.round() as i32;
+            let yi = y.round() as i32;
+            match tokio::task::spawn_blocking(move || crate::wayland::move_cursor_absolute(window_id, xi, yi)).await {
+                Ok(Ok(())) => " (real cursor warped via virtual-pointer)",
+                Ok(Err(_)) | Err(_) => " (overlay updated; real-cursor warp failed)",
+            }
+        } else {
+            ""
+        };
+        ToolResult::text(format!("Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}).{real_warp_note}"))
     }
 }
 
@@ -3384,7 +3506,11 @@ impl Tool for ZoomTool {
 
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let png = crate::capture::screenshot_window_bytes(xid)?;
+            // Route through the Wayland-aware window capture dispatcher so
+            // pure-Wayland sessions surface a typed "per-window capture not
+            // supported yet" error instead of accidentally calling the
+            // X11-only path with a foreign-toplevel id.
+            let png = crate::wayland::screenshot_window_dispatch(xid)?;
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
         }).await;
 
@@ -3470,6 +3596,20 @@ impl Tool for TypeTextCharsTool {
         };
         let text_len = text.chars().count();
         let result = tokio::task::spawn_blocking(move || {
+            if crate::wayland::is_wayland() {
+                // Per-char `wtype` loop with the requested delay — mirrors the
+                // X11 XSendEvent per-char path. Sleeping here is fine because
+                // we're inside spawn_blocking.
+                let mut buf = [0u8; 4];
+                for ch in text.chars() {
+                    let s = ch.encode_utf8(&mut buf);
+                    crate::wayland::type_text(s)?;
+                    if delay_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    }
+                }
+                return Ok(());
+            }
             crate::input::send_type_text_with_delay(xid, &text, delay_ms)
         }).await;
         match result {

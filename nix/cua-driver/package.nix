@@ -46,14 +46,31 @@ pkgs.rustPlatform.buildRustPackage {
   #   ureq      -> rustls (no openssl)
   #   tiny-skia -> pure Rust 2D graphics
   #   ring      -> compiles own C/asm via stdenv's cc
-  # Except the `x11` crate (raw Xlib FFI for MPX multi-cursor drags), whose
-  # build.rs locates libX11/libXi/libXtst via pkg-config.
-  nativeBuildInputs = [ pkgs.pkg-config ];
+  # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) needs
+  # libX11/libXi/libXtst via pkg-config. The Wayland-parity work
+  # (round 2/3 — wayland::portal_screencast / wayland::libei) adds:
+  #   pipewire 0.8 -> needs libpipewire-0.3 + libspa headers via pkg-config
+  #                   + bindgen (clang) for SPA pod generation
+  #   reis 0.7     -> pure Rust libei binding, but the workspace pulls
+  #                   libei-dev transitively through ashpd's tokio feature
+  nativeBuildInputs = with pkgs; [
+    pkg-config
+    # bindgen needs a libclang at build time for the libpipewire / libspa
+    # SPA pod codegen. rust-bindgen also picks up `stdbool.h` etc. from
+    # clang's resource dir, not glibc.
+    rustPlatform.bindgenHook
+  ];
   buildInputs = with pkgs; [
     libx11
     libxi
     libxtst
     libxext
+    # Wayland-parity additions: PipeWire is needed by the portal
+    # ScreenCast capture path (wayland::portal_screencast). pipewire
+    # already pulls libspa transitively in nixpkgs.
+    pipewire
+    # libei via reis — same as the ashpd RemoteDesktop+EIS flow.
+    libei
   ];
 
   # Skip tests that require a running X11 display or AT-SPI bus

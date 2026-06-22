@@ -921,6 +921,15 @@ fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
 /// X11 origin), so the existing behaviour is preserved for non-GTK4 toolkits
 /// and the change can never make correct coordinates worse.
 async fn gtk4_screen_offset(visited: &[Visited<'_>], pid: u32, xid: u64) -> (i32, i32) {
+    // Native Wayland forbids a client from querying another window's screen
+    // origin (privacy by design), so the X11-based offset recovery below
+    // can't run. Return (0, 0) — GTK4 element bounds will be window-local
+    // rather than screen-relative on Wayland, which mirrors how every other
+    // tool reports coords on this backend.
+    if crate::wayland::is_wayland() {
+        let _ = (visited, pid, xid);
+        return (0, 0);
+    }
     // The frame is the toplevel window accessible. Prefer an explicit "frame"
     // role; fall back to the first node that exposes a Component interface.
     let frame = visited

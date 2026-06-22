@@ -4,25 +4,31 @@ import type { NextRequest } from 'next/server';
 // Redirect section roots to their first content page
 // These paths don't include basePath because middleware receives paths without it
 const redirects: Record<string, string> = {
-  '/': '/docs/cua/guide/get-started/what-is-cua',
-  '/cua': '/docs/cua/guide/get-started/what-is-cua',
-  '/cua/guide': '/docs/cua/guide/get-started/what-is-cua',
-  '/cua/examples': '/docs/cua/examples/automation/form-filling',
-  '/cua/reference': '/docs/cua/reference/computer-sdk',
-  '/cua-driver': '/docs/cua-driver/guide/getting-started/introduction',
-  '/cua-driver/guide': '/docs/cua-driver/guide/getting-started/introduction',
-  '/cua-driver/reference': '/docs/cua-driver/reference/cli-reference',
-  '/cuabench': '/docs/cuabench/guide/getting-started/introduction',
-  '/cuabench/guide': '/docs/cuabench/guide/getting-started/introduction',
-  '/cuabench/reference': '/docs/cuabench/reference/cli-reference',
-  '/lume': '/docs/lume/guide/getting-started/introduction',
-  '/lume/guide': '/docs/lume/guide/getting-started/introduction',
-  '/lume/examples': '/docs/lume/examples/claude-code/sandbox',
-  '/lume/reference': '/docs/lume/reference/cli-reference',
-  // Legacy redirects for old URLs without /cua prefix
-  '/guide': '/docs/cua/guide/get-started/what-is-cua',
-  '/examples': '/docs/cua/examples/automation/form-filling',
-  '/reference': '/docs/cua/reference/computer-sdk',
+  // Redirect root to the new Diátaxis docs entry point
+  '/': '/docs/tutorials/drive-your-first-app',
+  // Diátaxis section roots
+  '/tutorials': '/docs/tutorials/drive-your-first-app',
+  '/explanation': '/docs/explanation/what-is-computer-use',
+  '/how-to-guides': '/docs/how-to-guides/driver/install',
+  '/reference': '/docs/reference/cua-driver/cli-reference',
+  // Legacy section redirects (pre-Diátaxis)
+  '/cua': '/docs/tutorials/drive-your-first-app',
+  '/cua/guide': '/docs/tutorials/drive-your-first-app',
+  '/cua/examples': '/docs/how-to-guides/recipes/fill-a-form-from-a-local-file',
+  '/cua/reference': '/docs/reference/sandbox-sdk/index',
+  '/cua-driver': '/docs/tutorials/drive-your-first-app',
+  '/cua-driver/guide': '/docs/tutorials/drive-your-first-app',
+  '/cua-driver/reference': '/docs/reference/cua-driver/cli-reference',
+  '/cuabench': '/docs/tutorials/drive-your-first-app',
+  '/cuabench/guide': '/docs/tutorials/drive-your-first-app',
+  '/cuabench/reference': '/docs/reference/cua-driver/cli-reference',
+  '/lume': '/docs/tutorials/drive-your-first-app',
+  '/lume/guide': '/docs/tutorials/drive-your-first-app',
+  '/lume/examples': '/docs/how-to-guides/sandbox/lifecycle',
+  '/lume/reference': '/docs/reference/cua-driver/cli-reference',
+  // Legacy redirects for old URLs without product prefix
+  '/guide': '/docs/tutorials/drive-your-first-app',
+  '/examples': '/docs/how-to-guides/recipes/fill-a-form-from-a-local-file',
 };
 
 export function middleware(request: NextRequest) {

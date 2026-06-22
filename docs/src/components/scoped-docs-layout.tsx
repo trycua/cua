@@ -5,19 +5,12 @@ import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import type { Root, Node, Folder } from 'fumadocs-core/page-tree';
 import type { ReactNode } from 'react';
 
-// Must match the navTabs prefixes defined in custom-header.tsx
+// Diátaxis section prefixes — must match the content paths in docs/content/docs/
 const SECTION_PREFIXES = [
-  '/cua/guide',
-  '/cua/examples',
-  '/cua/reference',
-  '/cuabench/guide',
-  '/cuabench/examples',
-  '/cuabench/reference',
-  '/lume/guide',
-  '/lume/examples',
-  '/lume/reference',
-  '/cuabot/guide',
-  '/cuabot/reference',
+  '/tutorials',
+  '/explanation',
+  '/how-to-guides',
+  '/reference',
 ];
 
 function hasDescendantWithPrefix(nodes: Node[], prefix: string): boolean {

@@ -8,53 +8,21 @@ import { cn } from 'fumadocs-ui/utils/cn';
 import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
 import { ChevronsUpDown, Check, Menu } from 'lucide-react';
 import { useSidebar } from 'fumadocs-ui/provider';
-import LogoBlack from '@/assets/cuala-icon-black.svg';
-import LogoWhite from '@/assets/cuala-icon-white.svg';
-import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
-import CuaBenchLogoWhite from '@/assets/cuabench-logo-white.svg';
+import LogoBlack from '@/assets/logo-black.svg';
+import LogoWhite from '@/assets/logo-white.svg';
 import McpBlack from '@/assets/mcp-black.svg';
 import McpWhite from '@/assets/mcp-white.svg';
-import LumeIconBlack from '@/assets/lume-icon-black.svg';
-import LumeIconWhite from '@/assets/lume-icon-white.svg';
-import CuaBotLogoBlack from '@/assets/cuabot-logo-black.svg';
-import CuaBotLogoWhite from '@/assets/cuabot-logo-white.svg';
-import CuaDriverIconBlack from '@/assets/cua-driver-icon-black.png';
-import CuaDriverIconWhite from '@/assets/cua-driver-icon-white.png';
 
+// Single unified docs site — Diátaxis structure
+// (Old per-product switcher replaced after the Diátaxis content rewrite)
 const docsSites = [
-  {
-    name: 'Cua Driver',
-    label: 'Docs',
-    href: '/cua-driver/guide/getting-started/introduction',
-    prefix: '/cua-driver',
-    isDefault: true,
-    description: 'Background computer-use',
-    logoBlack: CuaDriverIconBlack,
-    logoWhite: CuaDriverIconWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/cua-driver/guide/getting-started/introduction',
-        prefix: '/cua-driver/guide',
-      },
-      {
-        name: 'Reference',
-        href: '/cua-driver/reference/cli-reference',
-        prefix: '/cua-driver/reference',
-      },
-    ],
-  },
   {
     name: 'Cua',
     label: 'Docs',
-    href: '/cua/guide/get-started/what-is-cua',
-    prefix: '/cua',
-    isDefault: false,
-    description: 'Computer Use Agent SDK',
+    href: '/tutorials/drive-your-first-app',
+    prefix: '/',
+    isDefault: true,
+    description: 'Computer-use automation platform',
     logoBlack: LogoBlack,
     logoWhite: LogoWhite,
     iconWidth: 24,
@@ -62,97 +30,10 @@ const docsSites = [
     dropdownIconWidth: 28,
     dropdownIconHeight: 28,
     navTabs: [
-      { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
-      { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
-      { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
-    ],
-  },
-  {
-    name: 'Cua Bench',
-    label: 'Docs',
-    href: '/cuabench/guide/getting-started/introduction',
-    prefix: '/cuabench',
-    isDefault: false,
-    description: 'Benchmarking toolkit',
-    logoBlack: CuaBenchLogoBlack,
-    logoWhite: CuaBenchLogoWhite,
-    iconWidth: 36,
-    iconHeight: 22,
-    dropdownIconWidth: 42,
-    dropdownIconHeight: 25,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/cuabench/guide/getting-started/introduction',
-        prefix: '/cuabench/guide',
-      },
-      {
-        name: 'Examples',
-        href: '/cuabench/examples/custom-agent',
-        prefix: '/cuabench/examples',
-      },
-      {
-        name: 'Reference',
-        href: '/cuabench/reference/cli-reference',
-        prefix: '/cuabench/reference',
-      },
-    ],
-  },
-  {
-    name: 'Lume',
-    label: 'Docs',
-    href: '/lume/guide/getting-started/introduction',
-    prefix: '/lume',
-    isDefault: false,
-    description: 'macOS VM CLI and Framework',
-    logoBlack: LumeIconBlack,
-    logoWhite: LumeIconWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/lume/guide/getting-started/introduction',
-        prefix: '/lume/guide',
-      },
-      {
-        name: 'Examples',
-        href: '/lume/examples',
-        prefix: '/lume/examples',
-      },
-      {
-        name: 'Reference',
-        href: '/lume/reference/cli-reference',
-        prefix: '/lume/reference',
-      },
-    ],
-  },
-  {
-    name: 'Cua-Bot',
-    label: 'Docs',
-    href: '/cuabot/guide/getting-started/introduction',
-    prefix: '/cuabot',
-    isDefault: false,
-    description: 'Co-op computer-use for any agent',
-    logoBlack: CuaBotLogoBlack,
-    logoWhite: CuaBotLogoWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/cuabot/guide/getting-started/introduction',
-        prefix: '/cuabot/guide',
-      },
-      {
-        name: 'Reference',
-        href: '/cuabot/reference',
-        prefix: '/cuabot/reference',
-      },
+      { name: 'Tutorials', href: '/tutorials/drive-your-first-app', prefix: '/tutorials' },
+      { name: 'Explanation', href: '/explanation/what-is-computer-use', prefix: '/explanation' },
+      { name: 'How-to guides', href: '/how-to-guides/driver/install', prefix: '/how-to-guides' },
+      { name: 'Reference', href: '/reference/cua-driver/cli-reference', prefix: '/reference' },
     ],
   },
 ];
@@ -333,9 +214,9 @@ export function CustomHeader() {
 
           {/* MCP - hidden on mobile */}
           <Link
-            href="/cua/vibe-coding-mcp"
+            href="/reference/cua-driver/mcp-tools"
             className="cds-icon-button hidden h-9 w-9 items-center justify-center rounded-xl sm:inline-flex"
-            title="Vibe Coding MCP"
+            title="MCP Tools Reference"
           >
             <Image src={McpBlack} alt="MCP" width={20} height={20} className="block dark:hidden" />
             <Image src={McpWhite} alt="MCP" width={20} height={20} className="hidden dark:block" />

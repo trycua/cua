@@ -74,18 +74,16 @@ jobs:
       - name: Install base tooling (container is bare)
         run: |
           apt-get update
-          # libpipewire-0.3-dev + libspa-0.2-dev: needed by libspa-sys /
-          # pipewire-rs for the portal ScreenCast path (wayland::portal_screencast).
-          # Bullseye ships PipeWire 0.3.19 which is new enough for libpipewire-0.3.pc.
-          # clang + libclang-dev: rust-bindgen needs a libclang to generate
-          # SPA pod bindings (libspa-sys' build.rs runs bindgen).
-          # libei-dev is intentionally NOT installed: it isn't in bullseye
-          # (added in trixie). reis is pure-Rust so this is fine at build time;
-          # the libei runtime client is loaded via portal RemoteDesktop's fd.
+          # The PipeWire / libei deps the native-Wayland portal path uses
+          # are intentionally NOT installed here: bullseye ships PipeWire
+          # 0.3.19 (too old for libspa-sys 0.8, which needs >= 0.3.40) and
+          # has no libei-dev at all. They sit behind the `portal-libei`
+          # Cargo feature (disabled by default) and are wired in via the
+          # Nix build. The wlroots screencopy + virtual-pointer paths and
+          # the X11 fallback work without them.
           apt-get install -y --no-install-recommends \
             git ca-certificates curl build-essential pkg-config \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
-            libpipewire-0.3-dev libspa-0.2-dev clang libclang-dev
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
       - uses: actions/checkout@v4
       - name: Determine version
         id: version

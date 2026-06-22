@@ -14,7 +14,16 @@ pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod overlay;
 pub mod ext_screencopy;
+// `portal_screencast` (PipeWire per-window capture) and `libei` (GNOME/KDE
+// input via xdg-desktop-portal RemoteDesktop) need libpipewire-0.3 and reis
+// at build time, which the cross-platform release container (debian:11,
+// GLIBC_2.31 floor) can't satisfy without bumping the floor. They're behind
+// the `portal-libei` feature so the published binaries stay portable; the
+// Nix build (which already has modern PipeWire + libei from nixpkgs)
+// enables it. Wlroots screencopy + virtual-pointer remain unconditional.
+#[cfg(feature = "portal-libei")]
 pub mod portal_screencast;
+#[cfg(feature = "portal-libei")]
 pub mod libei;
 
 use std::collections::HashMap;

@@ -14,6 +14,7 @@ pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod overlay;
 pub mod ext_screencopy;
+pub mod portal_screencast;
 
 use std::collections::HashMap;
 

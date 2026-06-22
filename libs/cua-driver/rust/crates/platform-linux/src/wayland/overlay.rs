@@ -158,6 +158,12 @@ impl Default for OverlayState {
     }
 }
 
+fn dbg(msg: &str) {
+    if std::env::var("CUA_OVERLAY_DEBUG").is_ok() {
+        eprintln!("[cua-overlay-wl] {msg}");
+    }
+}
+
 fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<OverlayState>();
@@ -229,6 +235,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     if !state.configured {
         anyhow::bail!("layer surface never received configure event");
     }
+    dbg(&format!("configured: w={} h={}", state.output_w, state.output_h));
 
     // Main loop. Tick the render core at ~60Hz so motion + spring physics
     // + click pulse animate smoothly; redraw every tick when the cursor is
@@ -246,6 +253,27 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
             match rx.try_recv() {
                 Ok(WlOverlayCmd::Shutdown) => { shutdown = true; break; }
                 Ok(WlOverlayCmd::Cmd { cmd, .. }) => {
+                    // Seed: if the cursor is still at the off-screen sentinel
+                    // `(-200, -200)` from `RenderStateCore::new`, snap to a
+                    // point near the MoveTo / SnapTo target so the spring
+                    // animation starts on-screen. Mirrors X11 overlay.rs's
+                    // `seed_start_if_sentinel` helper — without it, the
+                    // spring oscillates around the sentinel and the cursor
+                    // never reaches the screen.
+                    let seed_target = match &cmd {
+                        OverlayCommand::MoveTo { x, y, .. }
+                        | OverlayCommand::SnapTo { x, y, .. }
+                        | OverlayCommand::ClickPulse { x, y } => Some((*x, *y)),
+                        _ => None,
+                    };
+                    if let Some((tx, ty)) = seed_target {
+                        if state.core.pos.0 < -50.0 {
+                            const SEED_OFFSET: f64 = 16.0;
+                            let sx = (tx - SEED_OFFSET).max(2.0);
+                            let sy = (ty - SEED_OFFSET).max(2.0);
+                            state.core.pos = (sx, sy);
+                        }
+                    }
                     // apply_command_base consumes every variant the X11
                     // path handles. `move_to_snap_sentinel` / `click_pulse
                     // _sentinel_only` are both `false` here — same as X11.
@@ -334,6 +362,34 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     // _scale` from wl_surface v6).
     cursor_overlay::paint_cursor(&mut pm, &state.core, 0.0, 0.0, None, 1.0);
 
+    // Debug mode: CUA_OVERLAY_DEBUG=1 paints a 100x100 magenta square at
+    // the cursor position regardless of the gradient-arrow render. Used to
+    // confirm the layer-shell surface is actually compositing visibly when
+    // the gradient-arrow output looks invisible on a particular host.
+    let debug_block = std::env::var("CUA_OVERLAY_DEBUG").ok().is_some();
+    if debug_block {
+        // FIXED position so we can verify the rendering pipeline works
+        // independently of whatever state.core.pos is reporting.
+        let cx = 500i32;
+        let cy = 300i32;
+        let half = 100i32;
+        for dy in -half..half {
+            for dx in -half..half {
+                let px = cx + dx;
+                let py = cy + dy;
+                if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
+                    continue;
+                }
+                let off = ((py as usize) * (w as usize) + (px as usize)) * 4;
+                // Solid magenta in tiny_skia's RGBA layout — pre-swap.
+                pm.data_mut()[off] = 0xFF;     // R
+                pm.data_mut()[off + 1] = 0x00; // G
+                pm.data_mut()[off + 2] = 0xFF; // B
+                pm.data_mut()[off + 3] = 0xFF; // A
+            }
+        }
+    }
+
     // RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
     // (premultiplied); wl_shm Argb8888 is little-endian = BGRA in memory.
     // Mirrors the inverse swap in ext_screencopy::encode_buffer_to_png.
@@ -365,6 +421,7 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     let buffer_id = buffer.id().protocol_id();
     state.pending_buffers.insert(buffer_id, (ptr, size, fd));
 
+    dbg(&format!("redraw w={w} h={h} stride={stride} buf_id={buffer_id} pos=({:.1},{:.1}) visible={}", state.core.pos.0, state.core.pos.1, state.core.visible));
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();

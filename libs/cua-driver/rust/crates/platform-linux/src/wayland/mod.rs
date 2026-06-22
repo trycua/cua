@@ -11,6 +11,7 @@
 //! typed error on pure Wayland.
 
 pub mod persistent_vptr;
+pub mod portal_screenshot;
 
 use std::collections::HashMap;
 
@@ -663,14 +664,35 @@ pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
     }
 }
 
-/// Display-level capture dispatcher: native Wayland (screencopy) when
-/// applicable, else X11's root-window path.
+/// Display-level capture dispatcher. Cascade:
+/// 1. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+///    consent).
+/// 2. Wayland but no wlroots screencopy globals (GNOME/KDE/COSMIC):
+///    xdg-desktop-portal Screenshot via ashpd. Triggers consent prompt
+///    on first use per session.
+/// 3. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() {
-        screenshot_bytes()
-    } else {
-        crate::capture::screenshot_display_bytes()
+        // Tier 1: native wlroots screencopy.
+        match screenshot_bytes() {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                tracing::debug!(
+                    "wlroots screencopy unavailable ({e}); falling through to xdg-desktop-portal"
+                );
+            }
+        }
+        // Tier 2: xdg-desktop-portal (GNOME, KDE, COSMIC, …).
+        match portal_screenshot::screenshot_via_portal() {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                tracing::debug!(
+                    "xdg-desktop-portal Screenshot unavailable ({e}); falling through to X11"
+                );
+            }
+        }
     }
+    crate::capture::screenshot_display_bytes()
 }
 
 /// Per-window capture dispatcher. On X11 forwards to the existing window

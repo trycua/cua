@@ -50,7 +50,11 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 # (org.freedesktop.portal.ScreenCast), and the libei input session
 # (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). `tokio` shares the
 # driver's async runtime.
-ashpd = { version = "0.13", features = ["tokio", "screencast", "remote_desktop"] }
+ashpd = { version = "0.13", features = ["tokio", "screencast", "remote_desktop", "screenshot"] }
+# zbus is pulled transitively via ashpd + atspi but declared directly so
+# the portal-probe path in wayland::portal_screenshot can talk to the
+# session bus without going through ashpd's higher-level builders.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 # Parse `file://` URIs returned by org.freedesktop.portal.Screenshot.
 # ashpd re-exports `url` transitively; declared explicitly so ashpd
 # version bumps cannot silently break the resolver.

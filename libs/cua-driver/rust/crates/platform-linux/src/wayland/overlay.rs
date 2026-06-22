@@ -159,7 +159,7 @@ impl Default for OverlayState {
 }
 
 fn dbg(msg: &str) {
-    if std::env::var("CUA_OVERLAY_DEBUG").is_ok() {
+    if std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
         eprintln!("[cua-overlay-wl] {msg}");
     }
 }
@@ -362,17 +362,16 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     // _scale` from wl_surface v6).
     cursor_overlay::paint_cursor(&mut pm, &state.core, 0.0, 0.0, None, 1.0);
 
-    // Debug mode: CUA_OVERLAY_DEBUG=1 paints a 100x100 magenta square at
-    // the cursor position regardless of the gradient-arrow render. Used to
-    // confirm the layer-shell surface is actually compositing visibly when
-    // the gradient-arrow output looks invisible on a particular host.
-    let debug_block = std::env::var("CUA_OVERLAY_DEBUG").ok().is_some();
-    if debug_block {
-        // FIXED position so we can verify the rendering pipeline works
-        // independently of whatever state.core.pos is reporting.
-        let cx = 500i32;
-        let cy = 300i32;
-        let half = 100i32;
+    // CUA_OVERLAY_DEBUG=1 paints a 60x60 magenta square at the cursor's
+    // current pos on top of the gradient arrow. Useful when validating
+    // layer-shell visibility on a new compositor — the gradient arrow is
+    // small at native scale and easy to miss in a screenshot, while the
+    // magenta block is impossible to miss.
+    if std::env::var_os("CUA_OVERLAY_DEBUG").is_some() {
+        let (cx, cy) = state.core.pos;
+        let cx = cx as i32;
+        let cy = cy as i32;
+        let half = 30i32;
         for dy in -half..half {
             for dx in -half..half {
                 let px = cx + dx;
@@ -381,7 +380,6 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
                     continue;
                 }
                 let off = ((py as usize) * (w as usize) + (px as usize)) * 4;
-                // Solid magenta in tiny_skia's RGBA layout — pre-swap.
                 pm.data_mut()[off] = 0xFF;     // R
                 pm.data_mut()[off + 1] = 0x00; // G
                 pm.data_mut()[off + 2] = 0xFF; // B
@@ -390,7 +388,7 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
         }
     }
 
-    // RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
+// RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
     // (premultiplied); wl_shm Argb8888 is little-endian = BGRA in memory.
     // Mirrors the inverse swap in ext_screencopy::encode_buffer_to_png.
     let src = pm.data();

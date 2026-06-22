@@ -49,7 +49,8 @@ fn def() -> &'static ToolDef {
                     "description": "Number of keystroke repetitions. Default: 3."
                 },
                 "window_id": { "type": "integer" },
-                "element_index": { "type": "integer" }
+                "element_index": { "type": "integer" },
+                "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." }
             },
             "additionalProperties": false
         }),
@@ -70,8 +71,26 @@ impl Tool for ScrollTool {
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let by = args.str_or("by", "line");
         let amount = args.u64_or("amount", 3) as usize;
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        // Surface 6: element_token / element_index precedence.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "scroll",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: wid, element_index: idx, via_token: _,
+            } => (Some(idx), wid),
+        };
 
         // Resolve the pre-focus element pointer (if requested) outside
         // the suppression closure — only the focus_element() write itself

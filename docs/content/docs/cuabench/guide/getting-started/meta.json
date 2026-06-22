@@ -1,7 +1,0 @@
-{
-  "title": "Getting Started",
-  "description": "Get started with Cua-Bench",
-  "icon": "Rocket",
-  "defaultOpen": true,
-  "pages": ["introduction", "installation", "first-steps"]
-}

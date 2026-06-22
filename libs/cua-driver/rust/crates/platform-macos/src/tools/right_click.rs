@@ -45,9 +45,13 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Element index from last get_window_state. Routes through AXShowMenu. Requires window_id."
                 },
+                "element_token": {
+                    "type": "string",
+                    "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."
+                },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Required when element_index is used."
+                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
                 },
                 "x": {
                     "type": "number",
@@ -81,8 +85,26 @@ impl Tool for RightClickTool {
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
+        // Surface 6: element_token / element_index precedence resolution.
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg     = args.opt_u64("window_id").map(|v| v as u32);
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            window_id_arg,
+            "right_click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: wid, element_index: idx, via_token: _,
+            } => (Some(idx), wid),
+        };
         let x             = args.opt_f64("x");
         let y             = args.opt_f64("y");
         let has_xy        = x.is_some() && y.is_some();

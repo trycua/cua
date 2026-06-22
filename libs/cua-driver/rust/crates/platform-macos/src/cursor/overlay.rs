@@ -83,6 +83,12 @@ struct RenderMap {
     cursors: IndexMap<CursorKey, RenderState>,
     win_w: f64,
     win_h: f64,
+    /// `NSScreen.backingScaleFactor` of the screen the overlay window sits on.
+    /// 1.0 on a non-retina display, 2.0 on a typical retina Mac. Drives the
+    /// physical-pixel pixmap sizing + `paint_cursor` `backing_scale` so the
+    /// rendered cursor is crisp at native resolution instead of being
+    /// bilinear-upsampled by Core Animation from a logical-pixel buffer.
+    backing_scale: f64,
     /// Frozen launch-time config used as the template for lazily-created
     /// cursors (its palette is overridden per-key via `Palette::for_instance`).
     template: CursorConfig,
@@ -161,6 +167,7 @@ pub fn init(cfg: CursorConfig) {
         cursors,
         win_w: 0.0,
         win_h: 0.0,
+        backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
         template: cfg,
         ended: std::collections::HashSet::new(),
     });
@@ -497,6 +504,24 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let screen_frame: NSRect = msg_send![main_screen, frame];
     let win_w = screen_frame.size.width;
     let win_h = screen_frame.size.height;
+    // NSScreen.backingScaleFactor is the most direct source of truth — it's
+    // what AppKit will use for the layer's native backing surface anyway.
+    // Fall back to the CG estimator (pixel mode width ÷ logical bounds) when
+    // the AppKit call returns a non-positive value, since downstream paint
+    // math divides by this and a 0.0 would zero out the cursor.
+    let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
+    if !(backing_scale > 0.0) {
+        use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
+        let display_id = CGMainDisplayID();
+        let bounds = CGDisplayBounds(display_id);
+        backing_scale = crate::tools::get_screen_size::get_backing_scale(
+            display_id,
+            bounds.size.width as i64,
+        );
+        if !(backing_scale > 0.0) {
+            backing_scale = 1.0;
+        }
+    }
 
     // ---- NSWindow: single alloc + initWithContentRect:... ----
     let win: *mut AnyObject = {
@@ -535,8 +560,12 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _: () = msg_send![content_view, setWantsLayer: true];
     let layer: *mut AnyObject = msg_send![content_view, layer];
 
-    // Set layer geometry
-    let _: () = msg_send![layer, setContentsScale: 1.0_f64];
+    // Set layer geometry. contentsScale tells Core Animation that the CGImage
+    // we hand to setContents: is already at retina (`backing_scale`×) pixel
+    // density — without this, CA would treat our physical-pixel pixmap as a
+    // 1× asset and bilinear-downsample it back to logical pixels on screen,
+    // re-introducing the blur this pipeline exists to eliminate.
+    let _: () = msg_send![layer, setContentsScale: backing_scale];
     // kCAGravityTopLeft — the string literal "topLeft"
     let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
         stringWithUTF8String: b"topLeft\0".as_ptr()
@@ -549,6 +578,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         if let Some(m) = guard.as_mut() {
             m.win_w = win_w;
             m.win_h = win_h;
+            m.backing_scale = backing_scale;
         }
     }
 
@@ -689,10 +719,17 @@ fn render_loop(
             let pixmap = {
                 let guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_ref() {
-                    let w = win_w.max(1.0) as u32;
-                    let h = win_h.max(1.0) as u32;
+                    // Allocate the pixmap at the screen's PHYSICAL pixel
+                    // dimensions so the cursor rasterises at retina resolution.
+                    // The cursor's logical coordinates are scaled into pixmap
+                    // pixels inside `paint_cursor` (it multiplies px/py/sizes
+                    // by `backing_scale`).
+                    let scale = map.backing_scale.max(1.0);
+                    let w = (win_w * scale).max(1.0) as u32;
+                    let h = (win_h * scale).max(1.0) as u32;
                     let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
                         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                    let backing_scale_f32 = scale as f32;
                     for (_k, rs) in &map.cursors {
                         let focus = rs.focus_rect.map(|rect| FocusRect {
                             rect,
@@ -702,6 +739,7 @@ fn render_loop(
                             &mut pm, &rs.core, 0.0,
                             0.0, // macOS uses screen-local coords (no origin offset)
                             focus,
+                            backing_scale_f32,
                         );
                     }
                     pm
@@ -961,6 +999,7 @@ mod tests {
             cursors,
             win_w: 100.0,
             win_h: 100.0,
+            backing_scale: 1.0,
             template: CursorConfig::default(),
             ended: std::collections::HashSet::new(),
         }

@@ -540,6 +540,26 @@ pub fn activate_pid(pid: i32) -> bool {
     }
 }
 
+/// Return the bundle identifier of the running process for `pid`, via
+/// `NSRunningApplication.runningApplicationWithProcessIdentifier(pid)?.bundleIdentifier`.
+///
+/// Returns `None` when:
+/// - the pid is unknown to NSWorkspace (non-AppKit processes, e.g. raw
+///   command-line tools)
+/// - the running app exposes no bundle id (rare: unbundled `.app`-less
+///   processes).
+///
+/// Used by [`crate::terminal::is_terminal_pid`] to route `type_text` past
+/// the AX path when the target window belongs to a terminal emulator.
+pub fn bundle_id_for_pid(pid: i32) -> Option<String> {
+    use objc2_app_kit::NSRunningApplication;
+    unsafe {
+        let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+        let ns = app.bundleIdentifier()?;
+        Some(ns.to_string())
+    }
+}
+
 /// Return the localized application name for a running process by PID.
 /// Uses `ps -p {pid} -o comm=` which gives the command name without path.
 /// Returns `None` if the PID is unknown or the command fails.

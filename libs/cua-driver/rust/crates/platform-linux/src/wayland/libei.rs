@@ -268,8 +268,11 @@ fn open_eis_context() -> anyhow::Result<reis::ei::Context> {
             .response()
             .map_err(|e| anyhow::anyhow!("portal start response error (user denied?): {e}"))?;
 
-        // Best-effort persist of the restore_token so the next session
-        // can skip the consent dialog.
+        // Best-effort persist of the restore_token. Without this, every
+        // process restart re-prompts the user for consent — with it, ashpd
+        // 0.13's PersistMode::Application + the stored token together
+        // skip the dialog for the lifetime of the persistence grant
+        // (typically per login session on GNOME, indefinite on KDE).
         if let Some(tok) = started.restore_token() {
             let _ = write_restore_token(tok);
         }
@@ -354,11 +357,36 @@ struct SeatData {
     capabilities: HashMap<String, u64>,
 }
 
+/// One announced ei_device::Region — a single monitor's pixel rectangle
+/// inside the seat's logical coordinate space. Multi-monitor sessions
+/// announce one Region per output; we route each absolute (x, y) to the
+/// region containing it so the cursor lands on the correct monitor.
+#[derive(Clone, Copy, Debug)]
+struct RegionRect {
+    offset_x: f32,
+    offset_y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl RegionRect {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        let xf = x as f32;
+        let yf = y as f32;
+        xf >= self.offset_x
+            && xf < self.offset_x + self.width
+            && yf >= self.offset_y
+            && yf < self.offset_y + self.height
+    }
+}
+
 #[derive(Default)]
 struct DeviceData {
     device_type: Option<reis::ei::device::DeviceType>,
-    region_w: f32,
-    region_h: f32,
+    /// Every Region the device announces between its creation and its
+    /// first Done event. Empty until the EIS server has sent at least
+    /// one Region.
+    regions: Vec<RegionRect>,
     interfaces: HashMap<String, reis::Object>,
 }
 
@@ -458,12 +486,16 @@ impl EisState {
                     reis::ei::device::Event::Interface { object } => {
                         data.interfaces.insert(object.interface().to_owned(), object);
                     }
-                    reis::ei::device::Event::Region { offset_x: _, offset_y: _, width, hight, scale: _ } => {
+                    reis::ei::device::Event::Region { offset_x, offset_y, width, hight, scale: _ } => {
                         // reis 0.7 keeps the misspelled "hight" field name
                         // for ABI compatibility — see the protocol comment.
                         if width > 0 && hight > 0 {
-                            data.region_w = width as f32;
-                            data.region_h = hight as f32;
+                            data.regions.push(RegionRect {
+                                offset_x: offset_x as f32,
+                                offset_y: offset_y as f32,
+                                width: width as f32,
+                                height: hight as f32,
+                            });
                         }
                     }
                     reis::ei::device::Event::Resumed { serial } => {
@@ -490,15 +522,14 @@ impl EisState {
     }
 
     fn run_command(&mut self, cmd: &Cmd) -> anyhow::Result<()> {
-        let device = self.pointer_device()
-            .ok_or_else(|| anyhow::anyhow!("no EIS pointer device negotiated yet — wait for handshake"))?;
         let _ = self.sequence.wrapping_add(1);
         match cmd {
             Cmd::Click { x, y, button, .. } => {
+                let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
                 if let Some(ptr_abs) = device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device) {
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
-                    ptr_abs.motion_absolute(*x as f32, *y as f32);
+                    ptr_abs.motion_absolute(rel_x, rel_y);
                 }
                 if let Some(btn) = device_interface::<reis::ei::Button>(&self.devices, &device) {
                     btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
@@ -509,15 +540,18 @@ impl EisState {
                 device.stop_emulating(self.last_serial);
             }
             Cmd::MoveAbsolute { x, y, .. } => {
+                let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
                 if let Some(ptr_abs) = device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device) {
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
-                    ptr_abs.motion_absolute(*x as f32, *y as f32);
+                    ptr_abs.motion_absolute(rel_x, rel_y);
                     device.frame(self.last_serial, 0);
                     device.stop_emulating(self.last_serial);
                 }
             }
             Cmd::Scroll { dx, dy, .. } => {
+                let device = self.any_pointer_device()
+                    .ok_or_else(|| anyhow::anyhow!("no EIS pointer device negotiated yet — wait for handshake"))?;
                 if let Some(scroll) = device_interface::<reis::ei::Scroll>(&self.devices, &device) {
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
@@ -527,6 +561,8 @@ impl EisState {
                 }
             }
             Cmd::TypeText { text, .. } => {
+                let device = self.any_pointer_device()
+                    .ok_or_else(|| anyhow::anyhow!("no EIS device negotiated yet — wait for handshake"))?;
                 if let Some(text_iface) = device_interface::<reis::ei::Text>(&self.devices, &device) {
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
@@ -536,6 +572,8 @@ impl EisState {
                 }
             }
             Cmd::PressKey { keycode, .. } => {
+                let device = self.any_pointer_device()
+                    .ok_or_else(|| anyhow::anyhow!("no EIS device negotiated yet — wait for handshake"))?;
                 if let Some(kb) = device_interface::<reis::ei::Keyboard>(&self.devices, &device) {
                     device.start_emulating(self.sequence, self.last_serial);
                     self.sequence = self.sequence.wrapping_add(1);
@@ -554,7 +592,41 @@ impl EisState {
         Ok(())
     }
 
-    fn pointer_device(&self) -> Option<reis::ei::Device> {
+    /// Pick a pointer device whose announced Region contains `(x, y)`,
+    /// and translate the absolute screen coordinates into the device's
+    /// region-local pixel coordinates.
+    ///
+    /// Multi-monitor seats announce one Region per output; routing each
+    /// (x, y) by containment is what lets a click on monitor #2 actually
+    /// land on monitor #2. When no device's region contains the point —
+    /// e.g. coords just past the edge of an output, or a session with
+    /// a single device that hasn't announced any regions yet — we fall
+    /// back to the first pointer device with the raw coordinates, which
+    /// matches the pre-multi-monitor behaviour.
+    fn pointer_device_for(&self, x: f64, y: f64) -> anyhow::Result<(reis::ei::Device, f32, f32)> {
+        let is_pointer = |data: &DeviceData| matches!(
+            data.device_type,
+            Some(reis::ei::device::DeviceType::Virtual) | Some(reis::ei::device::DeviceType::Physical)
+        );
+        for (device, data) in self.devices.iter() {
+            if !is_pointer(data) {
+                continue;
+            }
+            for region in &data.regions {
+                if region.contains(x, y) {
+                    let rel_x = x as f32 - region.offset_x;
+                    let rel_y = y as f32 - region.offset_y;
+                    return Ok((device.clone(), rel_x, rel_y));
+                }
+            }
+        }
+        // Fallback: first pointer device, raw coords (single-region behaviour).
+        let device = self.any_pointer_device()
+            .ok_or_else(|| anyhow::anyhow!("no EIS pointer device negotiated yet — wait for handshake"))?;
+        Ok((device, x as f32, y as f32))
+    }
+
+    fn any_pointer_device(&self) -> Option<reis::ei::Device> {
         self.devices.iter()
             .find(|(_, data)| matches!(
                 data.device_type,

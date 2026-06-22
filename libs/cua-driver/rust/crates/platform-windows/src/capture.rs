@@ -220,11 +220,35 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 }
 
 unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Vec<u8>, bool)> {
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic};
     use windows::Win32::Foundation::RECT;
 
     let hwnd_raw = hwnd;
     let hwnd = HWND(hwnd as *mut _);
+
+    // Bail loudly on minimized (iconic) windows BEFORE attempting any
+    // capture path. On Windows, `GetWindowRect` on an iconic HWND returns
+    // the off-screen "iconic position" (typically `(-32000, -32000,
+    // -31840, -31972)` i.e. w=160, h=28, both positive) and `PrintWindow`
+    // paints nothing into the bitmap. The result is a heavily-compressed
+    // all-black ~28x160 PNG (~300 bytes) that an upstream agent can't tell
+    // apart from a real "blank screen" capture — wasting model turns
+    // retrying against a window that's literally minimized to the taskbar.
+    //
+    // The WGC sibling path at `wgc.rs:58` already short-circuits this case;
+    // the GDI/PrintWindow fallback below + the screen-region BitBlt fallback
+    // both happily produced the degenerate PNG. Guarding here covers both
+    // and matches the WGC error shape so callers can `list_windows` or
+    // raise the window before retrying.
+    if IsIconic(hwnd).as_bool() {
+        bail!(
+            "cannot capture minimized window 0x{hwnd_raw:x}: it has no \
+             rendered content. Restore the window first via list_windows \
+             / raise_window. The PrintWindow GDI path and the screen-region \
+             BitBlt fallback both return an all-black bitmap for iconic \
+             windows."
+        );
+    }
 
     // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the
     // PrintWindow GDI path returns black (DirectComposition isn't in

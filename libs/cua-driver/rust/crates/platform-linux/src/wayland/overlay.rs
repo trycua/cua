@@ -1,28 +1,29 @@
 //! Native-Wayland agent-cursor overlay via `zwlr_layer_shell_v1`.
 //!
-//! v1 of the layer-shell overlay path. Replaces the X11-only `overlay.rs`
-//! render loop on wlroots compositors (sway, labwc, kwin 5.27+, hyprland)
-//! by creating a full-screen, click-through, always-on-top `wl_surface`
-//! anchored to the first output via `zwlr_layer_shell_v1`. The surface
-//! renders a small tinted dot at the current cursor position so the user
-//! can see where the agent is acting.
+//! Replaces the X11-only `overlay.rs` render loop on wlroots compositors
+//! (sway, labwc, kwin 5.27+, hyprland) by creating a full-screen,
+//! click-through, always-on-top `wl_surface` anchored to the first output
+//! via `zwlr_layer_shell_v1`. The surface renders the same gradient-arrow
+//! cursor as the X11 path by sharing `cursor_overlay::RenderStateCore` —
+//! bloom, click-pulse, idle-fade, and motion all work identically.
 //!
-//! Rich gradient-arrow rendering (matching the X11 path) is a follow-up;
-//! the surface lifecycle, configure handshake, click-through input region,
-//! and command dispatch are all in place here. GNOME mutter does not
-//! expose `zwlr_layer_shell_v1` — those sessions either fall through to
-//! the X11 path (XWayland) or the nested-compositor mode that spawns
-//! labwc internally.
+//! GNOME mutter does not expose `zwlr_layer_shell_v1` — those sessions
+//! either fall through to the X11 path (XWayland) or the nested-compositor
+//! mode that spawns labwc internally.
 //!
 //! Architecture mirrors the existing `wayland/persistent_vptr.rs`: one
 //! owner thread (`cua-overlay-wl`) holds the wayland Connection +
 //! EventQueue + layer surface; commands flow in over a `crossbeam-channel`.
+//! The render core is ticked at ~60Hz via a calloop timer so motion +
+//! spring physics + click pulse advance smoothly even when no new
+//! Position command has arrived.
 
 use std::sync::OnceLock;
 use std::thread;
+use std::time::Instant;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use cursor_overlay::{OverlayCommand, OverlayMsg, CursorKey};
+use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, CursorKey, RenderStateCore};
 use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
@@ -41,13 +42,12 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
-/// Commands the overlay owner thread accepts. These are a strict subset of
-/// the full [`OverlayCommand`] surface — v1 wires position updates and
-/// enabled toggling; richer visuals (gradient, click pulse, focus rect)
-/// are deferred to a follow-up slice and silently dropped here.
+/// Commands the overlay owner thread accepts. The richer commands the
+/// cross-platform [`RenderStateCore`] understands (MoveTo, ClickPulse,
+/// SetPressed) are forwarded as-is so the layer-shell overlay matches the
+/// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Position { key: CursorKey, x: f64, y: f64 },
-    SetEnabled { key: CursorKey, enabled: bool },
+    Cmd { key: CursorKey, cmd: OverlayCommand },
     Remove { key: CursorKey },
     Shutdown,
 }
@@ -75,10 +75,10 @@ pub fn ensure_started() {
     });
 }
 
-/// Translate a generic [`OverlayMsg`] (the cross-platform command shape) to
-/// the subset this overlay path implements. Returns true if the message
-/// was forwarded; false if it was silently dropped (richer visual the v1
-/// layer-shell path doesn't render yet).
+/// Translate a generic [`OverlayMsg`] (the cross-platform command shape)
+/// to the layer-shell owner thread. The owner-thread render core consumes
+/// every variant the X11 path handles; only `ShowFocusRect` (macOS-only)
+/// is silently dropped here.
 pub fn forward(msg: &OverlayMsg) -> bool {
     let Some(tx) = tx() else { return false };
     match msg {
@@ -86,28 +86,16 @@ pub fn forward(msg: &OverlayMsg) -> bool {
             let _ = tx.try_send(WlOverlayCmd::Remove { key: k.clone() });
             true
         }
-        OverlayMsg::Cmd(kc) => match &kc.cmd {
-            OverlayCommand::MoveTo { x, y, .. } | OverlayCommand::SnapTo { x, y, .. } => {
-                let _ = tx.try_send(WlOverlayCmd::Position {
-                    key: kc.key.clone(),
-                    x: *x,
-                    y: *y,
-                });
-                true
+        OverlayMsg::Cmd(kc) => {
+            if matches!(&kc.cmd, OverlayCommand::ShowFocusRect(_)) {
+                return false;
             }
-            OverlayCommand::SetEnabled(en) => {
-                let _ = tx.try_send(WlOverlayCmd::SetEnabled {
-                    key: kc.key.clone(),
-                    enabled: *en,
-                });
-                true
-            }
-            // ClickPulse, SetPressed, SetMotion, SetPalette, PinAbove,
-            // SetShape, SetGradient, ShowFocusRect are not rendered by the
-            // v1 layer-shell path — drop silently so callers don't see
-            // errors.
-            _ => false,
-        },
+            let _ = tx.try_send(WlOverlayCmd::Cmd {
+                key: kc.key.clone(),
+                cmd: kc.cmd.clone(),
+            });
+            true
+        }
     }
 }
 
@@ -121,7 +109,6 @@ pub fn shutdown() {
 
 // ── owner thread ─────────────────────────────────────────────────────────
 
-#[derive(Default)]
 struct OverlayState {
     compositor: Option<WlCompositor>,
     shm: Option<WlShm>,
@@ -132,9 +119,26 @@ struct OverlayState {
     surface: Option<WlSurface>,
     layer_surface: Option<ZwlrLayerSurfaceV1>,
     configured: bool,
-    cursor_x: i32,
-    cursor_y: i32,
-    enabled: bool,
+    /// Cross-platform render core: position, animation, gradient arrow,
+    /// bloom, click pulse, idle-fade. Shared verbatim with the X11 path.
+    core: RenderStateCore,
+}
+
+impl Default for OverlayState {
+    fn default() -> Self {
+        Self {
+            compositor: None,
+            shm: None,
+            layer_shell: None,
+            output: None,
+            output_w: 0,
+            output_h: 0,
+            surface: None,
+            layer_surface: None,
+            configured: false,
+            core: RenderStateCore::new(CursorConfig::default()),
+        }
+    }
 }
 
 fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
@@ -143,10 +147,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let qh = queue.handle();
     let _registry = conn.display().get_registry(&qh, ());
 
-    let mut state = OverlayState {
-        enabled: true,
-        ..OverlayState::default()
-    };
+    let mut state = OverlayState::default();
     queue.roundtrip(&mut state)?;
     for _ in 0..3 {
         queue.roundtrip(&mut state)?;
@@ -212,33 +213,56 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         anyhow::bail!("layer surface never received configure event");
     }
 
-    // Main loop: process incoming commands, redraw on each.
+    // Main loop. Tick the render core at ~60Hz so motion + spring physics
+    // + click pulse animate smoothly; redraw every tick when the cursor is
+    // visible. Commands arriving via the channel update the render core
+    // first, then the next tick paints the result.
     redraw(&mut state, &shm, &qh)?;
     queue.roundtrip(&mut state)?;
 
+    let frame_dur = std::time::Duration::from_millis(16);
+    let mut last_tick = Instant::now();
     loop {
-        // Non-blocking command poll, then blocking wayland event drain.
-        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(WlOverlayCmd::Shutdown) => break,
-            Ok(WlOverlayCmd::Position { x, y, .. }) => {
-                state.cursor_x = x.round() as i32;
-                state.cursor_y = y.round() as i32;
-                if state.enabled {
-                    redraw(&mut state, &shm, &qh)?;
+        // Drain all pending commands without blocking.
+        let mut shutdown = false;
+        loop {
+            match rx.try_recv() {
+                Ok(WlOverlayCmd::Shutdown) => { shutdown = true; break; }
+                Ok(WlOverlayCmd::Cmd { cmd, .. }) => {
+                    // apply_command_base consumes every variant the X11
+                    // path handles. `move_to_snap_sentinel` / `click_pulse
+                    // _sentinel_only` are both `false` here — same as X11.
+                    let _ = state.core.apply_command_base(cmd, false, false);
                 }
+                Ok(WlOverlayCmd::Remove { .. }) => {
+                    // Single-cursor overlay: removing the active cursor
+                    // hides it. Multi-cursor wlroots support can layer on
+                    // top of this in a follow-up if needed.
+                    state.core.visible = false;
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => { shutdown = true; break; }
             }
-            Ok(WlOverlayCmd::SetEnabled { enabled, .. }) => {
-                state.enabled = enabled;
-                redraw(&mut state, &shm, &qh)?;
-            }
-            Ok(WlOverlayCmd::Remove { .. }) => {
-                state.enabled = false;
-                redraw(&mut state, &shm, &qh)?;
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        }
+        if shutdown { break; }
+
+        // Tick animation forward and repaint if anything changed.
+        let now = Instant::now();
+        let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
+        last_tick = now;
+        state.core.tick_motion(dt);
+        if state.configured {
+            redraw(&mut state, &shm, &qh)?;
         }
         queue.dispatch_pending(&mut state)?;
+
+        // Sleep for the remainder of the frame budget so the loop doesn't
+        // spin. Channel-driven wakeups would be lower-latency, but layer
+        // overlays only need to keep up with display refresh.
+        let elapsed = last_tick.elapsed();
+        if elapsed < frame_dur {
+            std::thread::sleep(frame_dur - elapsed);
+        }
     }
 
     if let Some(ls) = state.layer_surface.take() {
@@ -251,12 +275,22 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Allocate a wl_shm buffer the size of the layer surface, fill it with
-/// transparent background + a single tinted dot at the cursor position,
-/// attach + damage + commit. This is the v1 visual — a placeholder for
-/// the gradient-arrow renderer in `cursor_overlay::render_state` which
-/// will land in a follow-up slice once the wayland-side rasterizer is
-/// in place.
+/// Render one cursor frame into a fresh wl_shm ARGB8888 buffer and attach
+/// it to the layer surface.
+///
+/// Pipeline:
+/// 1. Allocate a memfd-backed wl_shm pool sized at output_w × output_h.
+/// 2. Paint the cross-platform cursor (bloom + click pulse + gradient
+///    arrow) into a `tiny_skia::Pixmap` via `cursor_overlay::paint_cursor`
+///    — same call the X11 path uses.
+/// 3. Channel-swap RGBA → BGRA into the wl_shm buffer (wl_shm Argb8888
+///    is little-endian BGRA in memory). This is the inverse of the swap
+///    in `ext_screencopy::encode_buffer_to_png`.
+/// 4. Attach + damage + commit on the layer surface.
+///
+/// When the cursor is hidden (`core.visible == false`, idle-faded, or
+/// off-screen sentinel) the pixmap is all zeros — the surface remains
+/// transparent and click-through.
 fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>) -> anyhow::Result<()> {
     let Some(surface) = state.surface.as_ref() else { return Ok(()) };
     let w = state.output_w.max(1);
@@ -264,8 +298,7 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     let stride = w as i32 * 4;
     let size = (stride as usize) * (h as usize);
 
-    // Build a memfd-backed shm pool. Reuses the same anon_shm pattern as
-    // the screencopy path in mod.rs.
+    // Reuses the same anon_shm pattern as the screencopy path in mod.rs.
     let (fd, ptr) = super::anon_shm(size)
         .map_err(|e| anyhow::anyhow!("overlay shm allocation failed: {e}"))?;
 
@@ -273,33 +306,27 @@ fn redraw(state: &mut OverlayState, shm: &WlShm, qh: &QueueHandle<OverlayState>)
     // function.
     let pixels: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) };
 
-    if state.enabled {
-        // Transparent background + an opaque tinted dot at the cursor.
-        pixels.fill(0); // ARGB8888 = (0, 0, 0, 0) — fully transparent.
-        let radius = 12i32;
-        let cx = state.cursor_x.clamp(0, w as i32 - 1);
-        let cy = state.cursor_y.clamp(0, h as i32 - 1);
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy > radius * radius {
-                    continue;
-                }
-                let px = cx + dx;
-                let py = cy + dy;
-                if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
-                    continue;
-                }
-                let idx = ((py as usize) * (stride as usize)) + ((px as usize) * 4);
-                // ARGB8888 little-endian = BGRA in memory: tinted cyan, ~80% alpha.
-                pixels[idx] = 0xFF;     // B
-                pixels[idx + 1] = 0xCC; // G
-                pixels[idx + 2] = 0x33; // R
-                pixels[idx + 3] = 0xCC; // A
-            }
-        }
-    } else {
-        // Fully transparent — nothing visible.
-        pixels.fill(0);
+    // Paint the cursor into a tiny_skia pixmap. paint_cursor early-returns
+    // when the cursor is hidden / off-screen / idle-faded, so the pixmap
+    // is left fully transparent in those cases (which is also what we want
+    // for the click-through layer surface).
+    let mut pm = tiny_skia::Pixmap::new(w, h)
+        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+    // backing_scale=1.0 matches the X11 path; per-output Wayland scale is
+    // a follow-up (would consume `wl_output.scale` and `preferred_buffer
+    // _scale` from wl_surface v6).
+    cursor_overlay::paint_cursor(&mut pm, &state.core, 0.0, 0.0, None, 1.0);
+
+    // RGBA → BGRA channel swap. tiny_skia stores pixels as RGBA8888
+    // (premultiplied); wl_shm Argb8888 is little-endian = BGRA in memory.
+    // Mirrors the inverse swap in ext_screencopy::encode_buffer_to_png.
+    let src = pm.data();
+    for i in (0..size).step_by(4) {
+        // pm.data() is already RGBA premultiplied; just swap R↔B.
+        pixels[i] = src[i + 2];     // B ← R
+        pixels[i + 1] = src[i + 1]; // G
+        pixels[i + 2] = src[i];     // R ← B
+        pixels[i + 3] = src[i + 3]; // A
     }
 
     use std::os::fd::AsFd as _;

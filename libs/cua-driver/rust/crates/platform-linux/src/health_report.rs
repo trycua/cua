@@ -281,7 +281,12 @@ async fn check_wayland_backend() -> CheckEntry {
             format!("All wlroots manager globals advertised ({msg})."),
         );
     }
-    if snap.foreign_toplevel && snap.screencopy {
+    // Partial-pass: list_windows + capture both work, but virtual-pointer
+    // input is missing. Require `wl_shm` here too — `check_screen_capture_capability`
+    // gates on both `screencopy && wl_shm`, so excluding `wl_shm` from the
+    // partial-pass verdict would let the matrices disagree on degenerate
+    // compositors that omit it.
+    if snap.foreign_toplevel && snap.screencopy && snap.wl_shm {
         return CheckEntry::pass(
             NAME_WAYLAND_BACKEND,
             format!(
@@ -335,10 +340,14 @@ fn probe_a11y_bus() -> bool {
             Ok(p) => p,
             Err(_) => return false,
         };
-        match proxy.list_names().await {
-            Ok(names) => names.iter().any(|n| n.as_str() == "org.a11y.Bus"),
-            Err(_) => false,
-        }
+        // `name_has_owner` is the cheap direct existence check — avoids
+        // pulling the entire session-bus name registry just to look up one
+        // entry. Matches the pattern in `wayland::portal_screenshot::probe_portal`.
+        let bus_name = match "org.a11y.Bus".try_into() {
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        proxy.name_has_owner(bus_name).await.unwrap_or(false)
     })
 }
 

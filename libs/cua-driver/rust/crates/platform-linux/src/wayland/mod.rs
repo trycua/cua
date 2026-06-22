@@ -648,12 +648,21 @@ pub(crate) fn cleanup_mmap(ptr: *mut libc::c_void, len: usize, fd: i32) {
     }
 }
 
-/// Borrow a raw fd as an `OwnedFd` for wl_shm.create_pool. The pool keeps its
-/// own reference; we close our copy via [`cleanup_mmap`].
+/// Borrow a raw fd as an `OwnedFd` for wl_shm.create_pool. The pool keeps
+/// its own reference; we close our copy via [`cleanup_mmap`].
+///
+/// SAFETY: caller must guarantee `fd` is a valid open file descriptor.
+/// `libc::dup` may fail (returning -1, errno set), in which case we panic
+/// instead of constructing an `OwnedFd` from -1 (which would have UB on
+/// drop). Callers that need fallible behaviour should use the dup syscall
+/// directly and check the result before wrapping.
 pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
     use std::os::fd::FromRawFd;
-    // Duplicate so the protocol stack and the caller each own a closeable fd.
     let dup = libc::dup(fd);
+    if dup < 0 {
+        let err = std::io::Error::last_os_error();
+        panic!("dup({fd}) failed: {err}");
+    }
     std::os::fd::OwnedFd::from_raw_fd(dup)
 }
 
@@ -828,6 +837,9 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
     }
+    // Keep the synthetic-cursor registry in sync with the warp we just
+    // performed so a subsequent `get_cursor_position` reflects reality.
+    record_synth_cursor(px as i32, py as i32);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -955,6 +967,9 @@ pub fn drag(
     sess.vptr.frame();
     sess.vptr.button(0, btn, ButtonState::Released);
     sess.vptr.frame();
+    // Sync the synthetic-cursor registry with the drag endpoint so a
+    // subsequent `get_cursor_position` reports where we left the pointer.
+    record_synth_cursor(tx as i32, ty as i32);
     sess.queue.roundtrip(&mut sess.state)?;
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;

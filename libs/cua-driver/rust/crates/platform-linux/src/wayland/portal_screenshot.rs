@@ -83,12 +83,22 @@ fn map_ashpd_err<E: std::fmt::Display>(e: E) -> anyhow::Error {
     }
 }
 
-/// Probe whether the portal Screenshot interface is reachable on the
-/// session bus. Used by `health_report` to surface the portal status in
-/// the doctor matrix without taking an actual screenshot. Returns Ok(true)
-/// when the org.freedesktop.portal.Desktop bus name is owned, Ok(false)
-/// when reachable but the Screenshot interface returns NotSupported, and
-/// Err(...) for transport failures.
+/// Probe whether the portal *service* is reachable on the session bus.
+/// Returns Ok(true) when the `org.freedesktop.portal.Desktop` name has an
+/// owner, Ok(false) otherwise, and Err(...) for transport failures
+/// (no session bus, etc.).
+///
+/// Read-only and side-effect free — does NOT actually invoke the
+/// Screenshot interface, so it doesn't cache a consent grant on GNOME /
+/// KDE backends that gate Screenshot on user prompts. The doctor uses
+/// this to surface portal availability without burning an interactive
+/// dialog every time `hermes computer-use doctor` runs.
+///
+/// Note: a true return here means the portal *service* is present. The
+/// Screenshot *interface* on that service may still be missing or
+/// disabled — for that, an actual `Screenshot::request().send().await`
+/// is needed. We accept the false-positive risk in exchange for the
+/// no-consent, no-burn-dialog property.
 pub fn probe_portal() -> anyhow::Result<bool> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

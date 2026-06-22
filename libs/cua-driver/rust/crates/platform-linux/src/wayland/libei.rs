@@ -522,7 +522,6 @@ impl EisState {
     }
 
     fn run_command(&mut self, cmd: &Cmd) -> anyhow::Result<()> {
-        let _ = self.sequence.wrapping_add(1);
         match cmd {
             Cmd::Click { x, y, button, .. } => {
                 let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;

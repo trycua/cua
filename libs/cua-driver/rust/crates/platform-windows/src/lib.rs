@@ -26,6 +26,12 @@ pub mod recording_hooks;
 pub mod pip;
 pub mod terminal;
 
+// Cross-platform: pure math for MOUSEEVENTF_VIRTUALDESK absolute-coord
+// normalization. Lives outside the Windows-only `input` module so its
+// unit tests run on any host (no Win32 runtime needed) — see issue #1979,
+// where the multi-monitor normalization bug was diagnosable by pure math.
+pub mod virtualdesk;
+
 #[cfg(target_os = "windows")]
 pub mod win32;
 

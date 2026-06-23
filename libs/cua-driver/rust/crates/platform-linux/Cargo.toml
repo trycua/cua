@@ -25,8 +25,9 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 clipboard-rs = { version = "0.3.5", features = ["wayland"] }
 keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
-# X11 background input + window enumeration + MIT-SHM capture
-x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm"] }
+# X11 background input + window enumeration + MIT-SHM capture. `allow-unsafe-code`
+# enables the libxcb-backed XCBConnection fallback for strict Xauthority setups.
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm", "allow-unsafe-code"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }

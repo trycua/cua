@@ -20,9 +20,7 @@ class TrainClient:
     the same base URL (default: ``https://run.cua.ai``).
     """
 
-    _DEFAULT_TOKEN_URL = (
-        "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
-    )
+    _DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
     _DEFAULT_BASE_URL = "https://run.cua.ai"
 
     def __init__(
@@ -72,9 +70,7 @@ class TrainClient:
         )
 
     @staticmethod
-    def _exchange(
-        token_url: str, client_id: str, client_secret: str
-    ) -> tuple[str, float]:
+    def _exchange(token_url: str, client_id: str, client_secret: str) -> tuple[str, float]:
         resp = httpx.post(
             token_url,
             data={
@@ -99,9 +95,7 @@ class TrainClient:
         with self._refresh_lock:
             if time.monotonic() < self._token_deadline - 30:
                 return
-            token, ttl = self._exchange(
-                self._token_url, self._client_id, self._client_secret
-            )
+            token, ttl = self._exchange(self._token_url, self._client_id, self._client_secret)
             self._token = token
             self._token_deadline = time.monotonic() + ttl
             auth_header = f"Bearer {token}"

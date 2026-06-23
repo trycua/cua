@@ -56,11 +56,27 @@ pub fn walk_tree_bounded(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> AtspiTreeResult {
-    // Native AT-SPI (most complete).
-    if let Ok(Some((raw_md, nodes))) = native::walk_tree_bounded(pid, max_elements, max_depth) {
-        if !raw_md.is_empty() {
-            let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
-            return AtspiTreeResult { tree_markdown: md, nodes };
+    // Native AT-SPI (most complete). On a COLD launch the Qt6 (and some GTK)
+    // AT-SPI bridge registers lazily — the first walk against a freshly
+    // launched app can come back with just the root window (element_count=1,
+    // no children) because `org.a11y.atspi.Registry` hasn't finished
+    // enumerating the app's tree yet. Retry a few times with a short backoff
+    // while the tree is suspiciously root-only, so the first get_window_state
+    // after launch returns the real tree instead of an empty one. See #1927.
+    const MAX_ATTEMPTS: usize = 4;
+    for attempt in 0..MAX_ATTEMPTS {
+        if let Ok(Some((raw_md, nodes))) = native::walk_tree_bounded(pid, max_elements, max_depth) {
+            // `nodes.len() <= 1` == only the root window resolved: the
+            // cold-registry symptom. Accept any real tree immediately; only
+            // keep waiting on the degenerate case, and accept it anyway on the
+            // final attempt rather than discarding a (minimal) valid result.
+            if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
+                let md = if let Some(q) = query { filter_tree(&raw_md, q) } else { raw_md };
+                return AtspiTreeResult { tree_markdown: md, nodes };
+            }
+        }
+        if attempt < MAX_ATTEMPTS - 1 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
         }
     }
 

@@ -83,6 +83,51 @@ class TestMcpBarePathRewrite:
             assert seen["path"] == path
 
 
+class TestMcpServerSmoke:
+    """Smoke-test the real FastMCP integration so dependency major bumps cannot
+    silently remove the /mcp endpoint while unit tests stay green."""
+
+    def test_create_mcp_server_and_http_app(self):
+        from computer_server.mcp_server import create_mcp_server
+
+        mcp_server = create_mcp_server()
+        mcp_app = mcp_server.http_app(path="/")
+
+        assert mcp_server is not None
+        assert mcp_app is not None
+
+    def test_mcp_endpoint_accepts_initialize_post(self):
+        from starlette.testclient import TestClient
+
+        from computer_server.main import _mcp_http_app, app
+
+        assert _mcp_http_app is not None
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "computer-server-smoke", "version": "0"},
+            },
+        }
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/mcp",
+                json=payload,
+                # Exercise the app's /mcp Accept-header shim: claude.ai-style
+                # JSON-only Accept must still reach FastMCP successfully.
+                headers={"accept": "application/json"},
+            )
+
+        assert response.status_code == 200
+        assert "cua-computer-server" in response.text
+        assert '"id":1' in response.text
+
+
 class TestMcpAcceptHeaderShim:
     """Test the ASGI shim that normalizes the Accept header for /mcp so the
     MCP SDK's strict Accept check passes for any client (SRP: Only tests the

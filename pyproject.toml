@@ -62,7 +62,7 @@ examples = []
 [tool.uv]
 package = false
 constraint-dependencies = [
-    "fastmcp>=3.2.0",
+    "fastmcp>=3.2.0,<3.3.0",
     "pytest>=9.0.3",
     "transformers>=5.0.0rc3",
 ]

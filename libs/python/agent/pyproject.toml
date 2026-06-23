@@ -80,9 +80,10 @@ ui = [
 cli = [
     "yaspin>=3.1.0",
 ]
-# hud-python currently pins vulnerable transitive dependencies that conflict with
-# the workspace security floor, and there is no runtime import path in cua-agent.
-hud = []
+hud = [
+    "hud-python==0.4.52",
+    "fastmcp>=3.2.0,<3.3.0",
+]
 gemini = [
     "google-genai>=1.41.0",
 ]

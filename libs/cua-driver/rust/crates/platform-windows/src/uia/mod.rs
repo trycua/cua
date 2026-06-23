@@ -208,12 +208,33 @@ unsafe fn walk_tree_unsafe(
             nodes: Vec::new(),
         },
     };
-    let root_elem = match uncached.BuildUpdatedCache(&cache_req) {
-        Ok(e) => e,
-        Err(e) => return UiaTreeResult {
-            tree_markdown: format!("BuildUpdatedCache failed: {e}"),
-            nodes: Vec::new(),
-        },
+    // A single transient provider error (commonly E_FAIL / 0x80004005 from a
+    // control rebuilding its automation subtree mid-walk) must not take down
+    // the whole snapshot — the same call usually succeeds a beat later. Retry
+    // the bulk cache build a few times with a short backoff before giving up,
+    // so one misbehaving provider doesn't force the agent down to pixel mode.
+    // See #1881. (A per-node partial-tree fallback — returning elements=N for
+    // the subtrees that did resolve — remains a larger follow-up.)
+    let root_elem = {
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut attempt = 0u32;
+        loop {
+            match uncached.BuildUpdatedCache(&cache_req) {
+                Ok(e) => break e,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= MAX_ATTEMPTS {
+                        return UiaTreeResult {
+                            tree_markdown: format!(
+                                "BuildUpdatedCache failed after {attempt} attempts: {e}"
+                            ),
+                            nodes: Vec::new(),
+                        };
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(40));
+                }
+            }
+        }
     };
 
     let mut nodes: Vec<UiaNode> = Vec::new();

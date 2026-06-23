@@ -695,7 +695,14 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            let screenshot = if do_shot {
+            // Capture screenshot AND any error message so the response can
+            // surface *why* there's no image (the iconic-window guard from
+            // #1973 / PR #1974 is the load-bearing case: minimized windows
+            // legitimately can't be captured, and the caller needs to know
+            // to call `raise_window` / `list_windows` instead of retrying).
+            // The previous `Err(_) => None` silently dropped the error and
+            // upstream agents saw an empty response with no signal.
+            let (screenshot, screenshot_err) = if do_shot {
                 match crate::capture::screenshot_window_bytes(hwnd) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw).map(|(w, _)| w).unwrap_or(0);
@@ -703,14 +710,14 @@ impl Tool for GetWindowStateTool {
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                         use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                         let original_w = if w < orig_w { Some(orig_w) } else { None };
-                        Some((B64.encode(&png), w, h, original_w))
+                        (Some((B64.encode(&png), w, h, original_w)), None)
                     }
-                    Err(_) => None,
+                    Err(e) => (None, Some(format!("{e}"))),
                 }
             } else {
-                None
+                (None, None)
             };
-            Ok((tree_result, screenshot))
+            Ok((tree_result, screenshot, screenshot_err))
         });
         // Timeout: Chrome's UIA provider can block indefinitely on property reads.
         let result: Result<anyhow::Result<_>, _> = match tokio::time::timeout(
@@ -740,7 +747,7 @@ impl Tool for GetWindowStateTool {
         let result = result.and_then(|r| r);
 
         match result {
-            Ok((tree_opt, screenshot_opt)) => {
+            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
@@ -839,6 +846,18 @@ impl Tool for GetWindowStateTool {
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
                     structured["screenshot_mime_type"] = json!("image/png");
+                } else if let Some(err) = screenshot_err {
+                    // Capture failed (most commonly because the target is
+                    // minimized — see #1973). Surface the reason in BOTH the
+                    // human-readable content stream (so the model sees it
+                    // alongside the UIA tree it does get) AND structuredContent
+                    // (so MCP clients with structured-only parsing can detect
+                    // and act on it). Without this the caller saw an empty
+                    // response with no clue why and burned turns retrying.
+                    content.push(cua_driver_core::protocol::Content::text(
+                        format!("screenshot unavailable: {err}")
+                    ));
+                    structured["screenshot_error"] = json!(err);
                 }
 
                 ToolResult { content, is_error: None, structured_content: Some(structured) }

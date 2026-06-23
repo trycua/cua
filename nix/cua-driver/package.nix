@@ -38,22 +38,48 @@ pkgs.rustPlatform.buildRustPackage {
   # platform-macos, platform-windows, cua-driver-uia, and focus-monitor-win
   # which are gated behind cfg(target_os) and won't compile on Linux.
   # Using -p cua-driver ensures Cargo only resolves Linux dependencies.
-  cargoBuildFlags = [ "-p" "cua-driver" ];
-  cargoTestFlags = [ "-p" "cua-driver" ];
+  #
+  # Enable the `portal-libei` feature so the Nix build pulls the
+  # GNOME/KDE portal stack (PipeWire ScreenCast per-window capture +
+  # libei RemoteDesktop input). nixpkgs provides a recent enough
+  # PipeWire (>= 0.3.40 needed by libspa-sys) and libei, so this feature
+  # builds fine here. The cross-platform release CD leaves it off — its
+  # debian:11 container ships PipeWire 0.3.19 (too old for libspa-sys
+  # 0.8) and lacks libei entirely, but the wlroots screencopy +
+  # virtual-pointer paths still cover sway/Hyprland/labwc/wayfire/dwl.
+  cargoBuildFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
+  cargoTestFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
 
   # Mostly pure Rust:
   #   x11rb     -> RustConnection (no libxcb C binding)
   #   ureq      -> rustls (no openssl)
   #   tiny-skia -> pure Rust 2D graphics
   #   ring      -> compiles own C/asm via stdenv's cc
-  # Except the `x11` crate (raw Xlib FFI for MPX multi-cursor drags), whose
-  # build.rs locates libX11/libXi/libXtst via pkg-config.
-  nativeBuildInputs = [ pkgs.pkg-config ];
+  # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) needs
+  # libX11/libXi/libXtst via pkg-config. The Wayland-parity work
+  # (round 2/3 — wayland::portal_screencast / wayland::libei) adds:
+  #   pipewire 0.8 -> needs libpipewire-0.3 + libspa headers via pkg-config
+  #                   + bindgen (clang) for SPA pod generation
+  #   reis 0.7     -> pure Rust libei binding, but the workspace pulls
+  #                   libei-dev transitively through ashpd's tokio feature
+  nativeBuildInputs = with pkgs; [
+    pkg-config
+    # bindgen needs a libclang at build time for the libpipewire / libspa
+    # SPA pod codegen. rust-bindgen also picks up `stdbool.h` etc. from
+    # clang's resource dir, not glibc.
+    rustPlatform.bindgenHook
+  ];
   buildInputs = with pkgs; [
     libx11
     libxi
     libxtst
     libxext
+    # Wayland-parity additions: PipeWire is needed by the portal
+    # ScreenCast capture path (wayland::portal_screencast). pipewire
+    # already pulls libspa transitively in nixpkgs.
+    pipewire
+    # libei via reis — same as the ashpd RemoteDesktop+EIS flow.
+    libei
   ];
 
   # Skip tests that require a running X11 display or AT-SPI bus

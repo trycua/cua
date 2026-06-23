@@ -134,6 +134,15 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)
 
     let mut rect = RECT::default();
     GetWindowRect(hwnd, &mut rect)?;
+
+    // Under Per-Monitor V2 DPI awareness, GetWindowRect already returns
+    // PHYSICAL pixels (coordinate virtualization only applies to
+    // DPI-unaware/system-aware processes), and BitBlt operates in physical
+    // pixels too — use the rect as-is. Scaling by DPI/96 here would shift
+    // and oversize the captured screen region (issue #1879).
+    let physical_left = rect.left;
+    let physical_top = rect.top;
+
     let w = rect.right - rect.left;
     let h = rect.bottom - rect.top;
     if w <= 0 || h <= 0 {
@@ -145,8 +154,8 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)
     let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
     let old_bitmap = SelectObject(mem_dc, bitmap);
 
-    // Copy from screen coords (rect.left, rect.top) into our memory DC at (0, 0).
-    let blt_ok = BitBlt(mem_dc, 0, 0, w, h, screen_dc, rect.left, rect.top, SRCCOPY);
+    // Copy from physical screen coords into our memory DC at (0, 0).
+    let blt_ok = BitBlt(mem_dc, 0, 0, w, h, screen_dc, physical_left, physical_top, SRCCOPY);
 
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -211,11 +220,35 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
 }
 
 unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Vec<u8>, bool)> {
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic};
     use windows::Win32::Foundation::RECT;
 
     let hwnd_raw = hwnd;
     let hwnd = HWND(hwnd as *mut _);
+
+    // Bail loudly on minimized (iconic) windows BEFORE attempting any
+    // capture path. On Windows, `GetWindowRect` on an iconic HWND returns
+    // the off-screen "iconic position" (typically `(-32000, -32000,
+    // -31840, -31972)` i.e. w=160, h=28, both positive) and `PrintWindow`
+    // paints nothing into the bitmap. The result is a heavily-compressed
+    // all-black ~28x160 PNG (~300 bytes) that an upstream agent can't tell
+    // apart from a real "blank screen" capture — wasting model turns
+    // retrying against a window that's literally minimized to the taskbar.
+    //
+    // The WGC sibling path at `wgc.rs:58` already short-circuits this case;
+    // the GDI/PrintWindow fallback below + the screen-region BitBlt fallback
+    // both happily produced the degenerate PNG. Guarding here covers both
+    // and matches the WGC error shape so callers can `list_windows` or
+    // raise the window before retrying.
+    if IsIconic(hwnd).as_bool() {
+        bail!(
+            "cannot capture minimized window 0x{hwnd_raw:x}: it has no \
+             rendered content. Restore the window first via list_windows \
+             / raise_window. The PrintWindow GDI path and the screen-region \
+             BitBlt fallback both return an all-black bitmap for iconic \
+             windows."
+        );
+    }
 
     // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the
     // PrintWindow GDI path returns black (DirectComposition isn't in
@@ -272,10 +305,18 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // client-sized buffer loses the Save/Cancel/OK row at the bottom.
     // Window-sized buffer captures title bar + body + non-client trim
     // correctly.
+    //
+    // Under Per-Monitor V2 DPI awareness, GetWindowRect returns PHYSICAL
+    // pixels — the same unit GetWindowDC and PrintWindow/BitBlt work in.
+    // Use the dimensions as-is; scaling by DPI/96 would allocate an
+    // oversized bitmap with the content in its top-left corner and a
+    // black margin around it (issue #1879). It also kept the
+    // DWMWA_EXTENDED_FRAME_BOUNDS crop below (physical pixels) from
+    // matching the bitmap.
     let mut win_rect = RECT::default();
     GetWindowRect(hwnd, &mut win_rect)?;
-    let w = (win_rect.right - win_rect.left) as i32;
-    let h = (win_rect.bottom - win_rect.top) as i32;
+    let w = win_rect.right - win_rect.left;
+    let h = win_rect.bottom - win_rect.top;
     if w <= 0 || h <= 0 {
         bail!("Window has zero/negative size: {}x{}", w, h);
     }
@@ -454,6 +495,10 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        // Under Per-Monitor V2 DPI awareness, GetSystemMetrics returns
+        // PHYSICAL pixels — the same unit BitBlt captures in. Scaling by
+        // DPI/96 would allocate an oversized bitmap with black margins
+        // (issue #1879).
         let w = GetSystemMetrics(SM_CXSCREEN);
         let h = GetSystemMetrics(SM_CYSCREEN);
         if w <= 0 || h <= 0 { bail!("Could not get screen metrics"); }

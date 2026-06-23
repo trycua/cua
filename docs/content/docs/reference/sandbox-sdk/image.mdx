@@ -1,0 +1,276 @@
+---
+title: Image reference
+description: "API reference for the Image class: the immutable, chainable image specification used to configure sandbox environments."
+---
+
+`Image` is an *immutable, chainable image specification*. Each method returns a new `Image` instance; the original is unchanged. Import from `cua`:
+
+```python
+from cua import Image
+```
+
+## Constructors
+
+### Image.linux
+
+```python
+@classmethod
+def linux(cls, distro: str = 'ubuntu', version: str = '24.04', kind: str = 'vm') -> Image
+```
+
+Linux image. Defaults to `kind='vm'` (QEMU). `kind='container'` uses Docker/XFCE.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `distro` | `str` | `'ubuntu'` | Linux distribution |
+| `version` | `str` | `'24.04'` | Distribution version |
+| `kind` | `str` | `'vm'` | `'vm'` or `'container'` |
+
+### Image.macos
+
+```python
+@classmethod
+def macos(cls, version: str = '26', kind: str = 'vm') -> Image
+```
+
+macOS image. Always a VM (Apple Virtualization / Lume). Supported versions: `'15'` / `'sequoia'`, `'26'` / `'tahoe'`.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version` | `str` | `'26'` | macOS version string or name |
+| `kind` | `str` | `'vm'` | Always `'vm'` |
+
+### Image.windows
+
+```python
+@classmethod
+def windows(cls, version: str = '11', kind: str = 'vm') -> Image
+```
+
+Windows image. Always a VM (QEMU or Hyper-V).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version` | `str` | `'11'` | Windows version |
+| `kind` | `str` | `'vm'` | Always `'vm'` |
+
+### Image.android
+
+```python
+@classmethod
+def android(cls, version: str = '14', kind: str = 'vm') -> Image
+```
+
+Android image. Always a VM (QEMU emulator).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version` | `str` | `'14'` | Android version |
+| `kind` | `str` | `'vm'` | Always `'vm'` |
+
+### Image.from_registry
+
+```python
+@classmethod
+def from_registry(cls, ref: str) -> Image
+```
+
+Image from an OCI registry reference. `kind` is resolved after pull.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | `str` | required | Registry reference, e.g. `'ghcr.io/trycua/macos-tahoe-cua:latest'` or `'ubuntu:22.04'` |
+
+### Image.from_file
+
+```python
+@classmethod
+def from_file(cls, path: str, os_type: str = 'windows', kind: str = 'vm', agent_type: Optional[str] = None) -> Image
+```
+
+Image from a local disk file, ISO, or URL. Supported formats: `qcow2`, `vhdx`, `raw`, `img`, `iso`. HTTP/HTTPS URLs are downloaded and cached automatically. Zip files are extracted. For ISOs, the runtime creates a `qcow2` disk and attaches the ISO as a CD-ROM. Downloaded images are cached in `~/.cua/cua-sandbox/image-cache/`.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | `str` | required | Local file path or `http`/`https` URL |
+| `os_type` | `str` | `'windows'` | `'linux'`, `'windows'`, `'macos'`, or `'android'` |
+| `kind` | `str` | `'vm'` | `'vm'` or `'container'` |
+| `agent_type` | `str or None` | `None` | e.g. `'osworld'` for OSWorld Flask server |
+
+### Image.from_dict
+
+```python
+@classmethod
+def from_dict(cls, data: Dict[str, Any]) -> Image
+```
+
+Reconstruct an `Image` from a serialized spec dict (e.g. the output of `to_dict()`).
+
+---
+
+## Builder methods
+
+Each method returns a new `Image`. Builder calls are composable and can be chained in any order.
+
+### Image.apt_install
+
+```python
+def apt_install(self, *packages: str) -> Image
+```
+
+Install packages via `apt`. Linux only.
+
+### Image.brew_install
+
+```python
+def brew_install(self, *packages: str) -> Image
+```
+
+Install packages via Homebrew. macOS only.
+
+### Image.choco_install
+
+```python
+def choco_install(self, *packages: str) -> Image
+```
+
+Install packages via Chocolatey. Windows only.
+
+### Image.winget_install
+
+```python
+def winget_install(self, *packages: str) -> Image
+```
+
+Install packages via `winget`. Windows only.
+
+### Image.apk_install
+
+```python
+def apk_install(self, *apk_paths: str) -> Image
+```
+
+Install APK files via `adb`. Android only.
+
+### Image.pwa_install
+
+```python
+def pwa_install(
+    self,
+    manifest_url: str,
+    package_name: Optional[str] = None,
+    keystore: Optional[str] = None,
+    keystore_alias: str = 'android',
+    keystore_password: str = 'android',
+    builder: str = 'pwa2apk',
+    push_timeout: Optional[float] = None,
+) -> Image
+```
+
+Build an APK from a PWA manifest URL and install it via `adb`. Android only. The default `builder='pwa2apk'` produces a lightweight WebView APK. With `builder='bubblewrap'` it builds a Trusted Web Activity (TWA), which additionally requires the keystore SHA-256 fingerprint to match the server's `/.well-known/assetlinks.json` so Chrome opens the PWA without browser chrome.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `manifest_url` | `str` | required | Full URL to the PWA's `manifest.json` |
+| `package_name` | `str or None` | `None` | Android package ID; derived from hostname if omitted |
+| `keystore` | `str or None` | `None` | Path to `.keystore`/`.jks` file; auto-generated and cached if omitted |
+| `keystore_alias` | `str` | `'android'` | Key alias inside the keystore |
+| `keystore_password` | `str` | `'android'` | Password for both the store and the key |
+| `builder` | `str` | `'pwa2apk'` | `'pwa2apk'` (WebView APK) or `'bubblewrap'` (TWA) |
+| `push_timeout` | `float or None` | `None` | Timeout for the `adb install` push |
+
+Built APKs are cached by `(manifest_url, package_name)`. Requirements: Node.js &gt;= 18, Java &lt;= 21 on `PATH` (Gradle does not support Java 22+).
+
+### Image.pip_install
+
+```python
+def pip_install(self, *packages: str) -> Image
+```
+
+Install Python packages via `pip`.
+
+### Image.uv_install
+
+```python
+def uv_install(self, *packages: str) -> Image
+```
+
+Install Python packages via `uv add` into the cua-server project. Faster than `pip_install`.
+
+### Image.run
+
+```python
+def run(self, command: str) -> Image
+```
+
+Run an arbitrary shell command during image setup.
+
+### Image.env
+
+```python
+def env(self, **variables: str) -> Image
+```
+
+Set environment variables. Values are stored in the `Image` spec in plaintext. Do not use for secrets.
+
+### Image.copy
+
+```python
+def copy(self, src: str, dst: str) -> Image
+```
+
+Copy a local file into the image at the specified destination path.
+
+### Image.expose
+
+```python
+def expose(self, port: int) -> Image
+```
+
+Mark a port the sandbox will serve on. Used with `sb.tunnel.forward()`.
+
+---
+
+## Serialization
+
+### Image.to_dict
+
+```python
+def to_dict(self) -> Dict[str, Any]
+```
+
+Serialize to a plain dict suitable for JSON or the cloud API.
+
+Example output:
+
+```python
+{
+    'os_type': 'linux',
+    'distro': 'ubuntu',
+    'version': '24.04',
+    'kind': 'container',
+    'layers': [
+        {'type': 'apt_install', 'packages': ['curl']},
+        {'type': 'pip_install', 'packages': ['requests']},
+    ]
+}
+```
+
+### Image.to_cloud_init
+
+```python
+def to_cloud_init(self) -> str
+```
+
+Generate a cloud-init user-data script from the image layers.
+
+---
+
+## Attributes
+
+| Name | Type | Description |
+|------|------|-------------|
+| `os_type` | `str` | `'linux'`, `'macos'`, `'windows'`, or `'android'` |
+| `distro` | `str` | Distribution name (e.g. `'ubuntu'`) |
+| `version` | `str` | Version string (e.g. `'24.04'`) |
+| `kind` | `str or None` | `'container'` or `'vm'` |

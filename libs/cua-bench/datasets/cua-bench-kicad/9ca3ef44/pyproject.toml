@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-9ca3ef44-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Modify the value of R1 to center the DC bias of the electret microphone output and provide the maximum, non-distorted voltage output range. Treat the electret microphone as a current sink with a typical draw of 0.5 mA."
+difficulty = "medium"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

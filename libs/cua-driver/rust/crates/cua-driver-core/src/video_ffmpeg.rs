@@ -280,8 +280,17 @@ fn platform_input_args(cmd: &mut Command) {
     #[cfg(target_os = "linux")]
     {
         let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0.0".into());
+        // x11grab draws the real X pointer by default. When the synthetic agent
+        // cursor is the actor (the usual case for a recorded run), the real
+        // pointer is just noise — set CUA_DRIVER_RS_DRAW_SYSTEM_CURSOR=0 to
+        // suppress it so only the agent cursor appears.
+        let draw_mouse = match std::env::var("CUA_DRIVER_RS_DRAW_SYSTEM_CURSOR").as_deref() {
+            Ok("0") => "0",
+            _ => "1",
+        };
         cmd.arg("-f").arg("x11grab")
             .arg("-framerate").arg(framerate)
+            .arg("-draw_mouse").arg(draw_mouse)
             .arg("-i").arg(display);
     }
 

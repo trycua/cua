@@ -1,0 +1,105 @@
+---
+title: Fill a form from a local file
+description: Drive a browser form from a PDF or CSV file on your local machine.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Use this recipe when the data already lives on your machine, for example in a PDF resume or a CSV file, and the form lives in a browser on the same desktop. **Cua Driver** drives both, so the **data never has to be uploaded anywhere** because the agent reads it locally and types it into the form.
+
+<Steps>
+  <Step>
+    ### Put the source file on the machine
+
+    Save the source file somewhere the desktop user can open it, for example:
+
+    ```text
+    ~/Downloads/resume.pdf
+    ```
+
+    Cua Driver has **no filesystem read tool**. The agent reads local files by opening them in an app it can see, for example Preview, another PDF viewer, or a text editor, then reading the on-screen content with the accessibility tree and screenshots from `get_window_state`.
+
+    For a CSV, open the file in a text editor, spreadsheet app, or browser tab. If the file contains many rows, start with one row and name the row or record the agent should use.
+  </Step>
+
+  <Step>
+    ### Install Cua Driver
+
+    Run the one-line installer:
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
+    ```
+
+    Verify the CLI is available:
+
+    ```bash
+    cua-driver --version
+    # cua-driver 0.5.x
+    ```
+  </Step>
+
+  <Step>
+    ### Grant desktop permissions
+
+    On macOS, grant Accessibility and Screen Recording so Cua Driver can inspect windows, click controls, and type into apps.
+
+    ```bash
+    cua-driver call check_permissions
+    ```
+
+    Approve both prompts, then run the check again:
+
+    ```bash
+    cua-driver call check_permissions
+    # Accessibility: granted.
+    # Screen Recording: granted.
+    ```
+
+    For a driver process that survives reboots and keeps the right macOS TCC attribution, see [Keep Cua Driver running](/how-to-guides/driver/keep-running).
+  </Step>
+
+  <Step>
+    ### Register Cua Driver with your MCP client
+
+    For Claude Code, add Cua Driver as a stdio MCP server:
+
+    ```bash
+    claude mcp add --transport stdio cua-driver -- cua-driver mcp
+    ```
+
+    Other MCP clients use the same `cua-driver mcp` command. See [Connect Cua Driver to an MCP client](/how-to-guides/driver/connect-your-agent) for Cursor, Codex, Gemini CLI, and other clients.
+  </Step>
+
+  <Step>
+    ### Give the agent the task
+
+    In your MCP client, describe the local file, the fields to read, and the form URL:
+
+    ```text
+    Open ~/Downloads/resume.pdf in the PDF viewer. Read the name, email,
+    phone, and work history. Then open
+    https://form.jotform.com/<your-form-id> in the browser, fill each matching
+    field from the PDF, and submit the form.
+    ```
+
+    The agent can use `launch_app` to open the PDF viewer, `page` to drive the browser, `get_window_state` or `get_accessibility_tree` to read visible fields, and `click`, `type_text`, or `set_value` to fill the form. It can set `capture_mode` to `vision` on `get_window_state` when a screenshot is needed.
+  </Step>
+
+  <Step>
+    ### Watch the field mapping
+
+    Keep the browser visible while the agent maps source fields to form fields. If a form label is ambiguous, correct the mapping in plain language, for example "use the resume email for Work Email" or "leave Current Employer blank".
+
+    <Callout type="info">
+      Forms vary, so the agent works best when you name the exact fields to fill, such as name, email, and phone, instead of asking it to fill the whole form.
+    </Callout>
+  </Step>
+</Steps>
+
+## Scale this out
+
+One desktop fills one form at a time. To submit many forms in parallel, for example one per CSV row or one per applicant, move the same workflow onto **Cua Sandbox** cloud desktops. Drop each source file into its own sandbox, start one agent job per sandbox, and fan the jobs out.
+
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run many jobs concurrently. Use [Choose and build a sandbox image](/how-to-guides/sandbox/images) to stage the source files in an image or mount them into each sandbox. Use [Run an agent in a sandbox](/tutorials/run-an-agent-in-a-sandbox) when you want the same MCP-driven workflow to run inside a disposable cloud desktop.

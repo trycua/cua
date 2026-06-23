@@ -3292,3 +3292,113 @@ fn test_concurrent_multi_driver_isolation_windows() {
     child_a.kill().ok();
     child_b.kill().ok();
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn test_tools_list_includes_per_tool_capabilities() {
+    //! Surface 4 contract (part 1): every entry in `tools/list` must
+    //! include a `capabilities` array of dotted-namespace tokens.
+    //! Downstream consumers (Hermes' cua_backend.py, Codex) dispatch
+    //! by capability instead of hardcoding tool names, so this is the
+    //! wire contract. Additive-only — existing keys must still be
+    //! present.
+    let binary = binary_path();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    let resp = read_response(&mut stdout);
+    let result = &resp["result"];
+
+    let tools = result["tools"].as_array().expect("tools array");
+    assert!(!tools.is_empty(), "tools array must be non-empty");
+
+    // Every entry has a `capabilities` array (may be empty for tools
+    // without a mapping in `default_capabilities_for`).
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap_or("<no name>");
+        assert!(tool["capabilities"].is_array(),
+            "tool {name:?} missing capabilities array: {tool:?}");
+    }
+
+    // Specifically: `click` claims input.pointer.click + .left, and
+    // `type_text` claims input.keyboard.type — these are the contracts
+    // Hermes' cua_backend.py is expected to route by.
+    let click = tools.iter().find(|t| t["name"] == "click")
+        .expect("click tool must be registered");
+    let click_caps: Vec<&str> = click["capabilities"].as_array().unwrap()
+        .iter().filter_map(|v| v.as_str()).collect();
+    assert!(click_caps.contains(&"input.pointer.click"),
+        "click missing input.pointer.click: {click_caps:?}");
+    assert!(click_caps.contains(&"input.pointer.click.left"),
+        "click missing input.pointer.click.left: {click_caps:?}");
+
+    let type_text = tools.iter().find(|t| t["name"] == "type_text")
+        .expect("type_text tool must be registered");
+    let tt_caps: Vec<&str> = type_text["capabilities"].as_array().unwrap()
+        .iter().filter_map(|v| v.as_str()).collect();
+    assert!(tt_caps.contains(&"input.keyboard.type"),
+        "type_text missing input.keyboard.type: {tt_caps:?}");
+
+    // Regression guard for additive-only contract: every pre-existing
+    // top-level field on a tool entry must still be present.
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap_or("<no name>");
+        assert!(tool["name"].is_string(), "{name}: name missing");
+        assert!(tool["description"].is_string(), "{name}: description missing");
+        assert!(tool["inputSchema"].is_object(), "{name}: inputSchema missing");
+        assert!(tool["annotations"].is_object(), "{name}: annotations missing");
+    }
+
+    child.kill().ok();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn test_tools_list_includes_capability_and_schema_versions() {
+    //! Surface 4 contract (part 2): top-level `tools/list` response
+    //! must include `capability_version` and `schema_version` so
+    //! downstream consumers (Hermes' cua_backend.py, Codex) can gate
+    //! strict-vs-tolerant capability matching by version. Both pinned
+    //! at "1" on first ship.
+    let binary = binary_path();
+    if !binary.exists() { return; }
+
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn().expect("spawn");
+    let stdin = child.stdin.as_mut().unwrap();
+    let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    read_response(&mut stdout);
+
+    send_request(stdin, &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    let resp = read_response(&mut stdout);
+    let result = &resp["result"];
+
+    // Both version fields default to "1" on first ship — the surface
+    // is brand new, so there's no pre-existing contract to bump.
+    assert_eq!(result["capability_version"], "1",
+        "capability_version must default to \"1\" on first ship");
+    assert_eq!(result["schema_version"], "1",
+        "schema_version must default to \"1\" on first ship");
+
+    // Additive guard: tools array must still be there alongside the
+    // new envelope keys — old consumers that only read `tools` keep
+    // working.
+    assert!(result["tools"].is_array(),
+        "tools array must still be present alongside version envelope");
+    assert!(!result["tools"].as_array().unwrap().is_empty(),
+        "tools array must be non-empty");
+
+    child.kill().ok();
+}

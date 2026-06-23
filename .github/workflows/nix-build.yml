@@ -21,6 +21,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
 
 env:
   AWS_REGION: us-west-2
@@ -28,10 +29,177 @@ env:
   NIX_CACHE_SECRET: nix-cache/trycua-nix-cache/signing-key
 
 jobs:
-  build-and-test:
-    name: Build cua-driver & run integration tests
+  nix-checks:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: NixOS integration test
+            check_attr: cua-driver-integration
+            timeout_minutes: 8
+            visual: false
+            result_link: result-cua-driver-integration
+            artifact_name: ""
+          - name: NixOS set_config persistence test
+            check_attr: cua-driver-set-config
+            timeout_minutes: 8
+            visual: false
+            result_link: result-cua-driver-set-config
+            artifact_name: ""
+          - name: Linux cursor click GIF test
+            check_attr: cua-driver-linux-cursor-click-gif
+            timeout_minutes: 12
+            visual: true
+            result_link: result-linux-cursor-click-gif
+            artifact_name: cua-driver-linux-cursor-click-gif
+          - name: Linux background terminal GIF test
+            check_attr: cua-driver-linux-background-terminal-gif
+            timeout_minutes: 12
+            visual: true
+            result_link: result-linux-background-terminal-gif
+            artifact_name: cua-driver-linux-background-terminal-gif
+          - name: Linux parallel multi-cursor drag test
+            check_attr: cua-driver-linux-parallel-drag-xserver
+            timeout_minutes: 20
+            visual: true
+            result_link: result-linux-parallel-drag-xserver
+            artifact_name: cua-driver-linux-parallel-drag-xserver
+          # NOTE: the older "parallel multi-cursor drag GIF" scenario
+          # (linux-parallel-drag-gif.nix) is intentionally not in this matrix —
+          # it hand-launches Xorg, which can't get a VT/seat in the emulated
+          # nixos-test VM. The services.xserver entry above supersedes it; the
+          # old scenario file is kept for local/real-X runs.
+          # Full entries (CDP / Tk focus-free-write overrides) — kept as-is.
+          - name: Linux background GUI test (chromium)
+            check_attr: cua-driver-linux-background-gui-chromium
+            timeout_minutes: 25
+            visual: true
+            result_link: result-linux-background-gui-chromium
+            artifact_name: cua-driver-linux-background-gui-chromium
+          - name: Linux background GUI test (tk)
+            check_attr: cua-driver-linux-background-gui-tk
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-tk
+            artifact_name: cua-driver-linux-background-gui-tk
+          # Real-app READ-ONLY skeleton matrix (5 per toolkit category).
+          # GTK3
+          - name: Linux background GUI test (gtk3-gedit)
+            check_attr: cua-driver-linux-background-gui-gtk3-gedit
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-gtk3-gedit
+            artifact_name: cua-driver-linux-background-gui-gtk3-gedit
+          - name: Linux background GUI test (gtk3-mousepad)
+            check_attr: cua-driver-linux-background-gui-gtk3-mousepad
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-gtk3-mousepad
+            artifact_name: cua-driver-linux-background-gui-gtk3-mousepad
+          # gtk3-geany temporarily disabled (huge AT-SPI tree grinds the emulated VM; job times out)
+          # - name: Linux background GUI test (gtk3-geany)
+          #   check_attr: cua-driver-linux-background-gui-gtk3-geany
+          #   timeout_minutes: 15
+          #   visual: true
+          #   result_link: result-linux-background-gui-gtk3-geany
+          #   artifact_name: cua-driver-linux-background-gui-gtk3-geany
+          - name: Linux background GUI test (gtk3-scite)
+            check_attr: cua-driver-linux-background-gui-gtk3-scite
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-gtk3-scite
+            artifact_name: cua-driver-linux-background-gui-gtk3-scite
+          # gtk3-abiword temporarily disabled (huge AT-SPI tree grinds the emulated VM; job times out)
+          # - name: Linux background GUI test (gtk3-abiword)
+          #   check_attr: cua-driver-linux-background-gui-gtk3-abiword
+          #   timeout_minutes: 15
+          #   visual: true
+          #   result_link: result-linux-background-gui-gtk3-abiword
+          #   artifact_name: cua-driver-linux-background-gui-gtk3-abiword
+          # GTK4
+          - name: Linux background GUI test (gtk4-characters)
+            check_attr: cua-driver-linux-background-gui-gtk4-characters
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-gtk4-characters
+            artifact_name: cua-driver-linux-background-gui-gtk4-characters
+          # Qt5
+          - name: Linux background GUI test (qt5-manuskript)
+            check_attr: cua-driver-linux-background-gui-qt5-manuskript
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt5-manuskript
+            artifact_name: cua-driver-linux-background-gui-qt5-manuskript
+          - name: Linux background GUI test (qt5-klog)
+            check_attr: cua-driver-linux-background-gui-qt5-klog
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt5-klog
+            artifact_name: cua-driver-linux-background-gui-qt5-klog
+          - name: Linux background GUI test (qt5-openambit)
+            check_attr: cua-driver-linux-background-gui-qt5-openambit
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt5-openambit
+            artifact_name: cua-driver-linux-background-gui-qt5-openambit
+          # Qt6
+          - name: Linux background GUI test (qt6-kate)
+            check_attr: cua-driver-linux-background-gui-qt6-kate
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt6-kate
+            artifact_name: cua-driver-linux-background-gui-qt6-kate
+          - name: Linux background GUI test (qt6-kcalc)
+            check_attr: cua-driver-linux-background-gui-qt6-kcalc
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt6-kcalc
+            artifact_name: cua-driver-linux-background-gui-qt6-kcalc
+          - name: Linux background GUI test (qt6-okular)
+            check_attr: cua-driver-linux-background-gui-qt6-okular
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt6-okular
+            artifact_name: cua-driver-linux-background-gui-qt6-okular
+          - name: Linux background GUI test (qt6-qownnotes)
+            check_attr: cua-driver-linux-background-gui-qt6-qownnotes
+            timeout_minutes: 15
+            visual: true
+            result_link: result-linux-background-gui-qt6-qownnotes
+            artifact_name: cua-driver-linux-background-gui-qt6-qownnotes
+          # Electron (heavy: more memory + 25-min timeout)
+          - name: Linux background GUI test (electron-zettlr)
+            check_attr: cua-driver-linux-background-gui-electron-zettlr
+            timeout_minutes: 25
+            visual: true
+            result_link: result-linux-background-gui-electron-zettlr
+            artifact_name: cua-driver-linux-background-gui-electron-zettlr
+          - name: Linux background GUI test (electron-joplin)
+            check_attr: cua-driver-linux-background-gui-electron-joplin
+            timeout_minutes: 25
+            visual: true
+            result_link: result-linux-background-gui-electron-joplin
+            artifact_name: cua-driver-linux-background-gui-electron-joplin
+          - name: Linux background GUI test (electron-logseq)
+            check_attr: cua-driver-linux-background-gui-electron-logseq
+            timeout_minutes: 25
+            visual: true
+            result_link: result-linux-background-gui-electron-logseq
+            artifact_name: cua-driver-linux-background-gui-electron-logseq
+          # Firefox is temporarily disabled: under the emulated CI VM (no KVM) it
+          # does not surface its window within the launch timeout, so the job
+          # times out before any AT-SPI subtest runs. The browser/AT-SPI read
+          # path is already covered by the chromium job. Re-enable once launch is
+          # made reliable (longer timeout + pre-seeded first-run-free profile).
+          # - name: Linux background GUI test (firefox)
+          #   check_attr: cua-driver-linux-background-gui-firefox
+          #   timeout_minutes: 25
+          #   visual: false
+          #   result_link: result-linux-background-gui-firefox
+          #   artifact_name: ""
 
     steps:
       - name: Checkout
@@ -75,13 +243,38 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            # Container-based NixOS integration tests (testers.nixosTest with
+            # `containers`) run under systemd-nspawn instead of QEMU: no KVM
+            # needed, much faster/cheaper. The nspawn builds require an allocated
+            # UID range and cgroup delegation, advertised here on the builder.
+            extra-experimental-features = auto-allocate-uids cgroups
+            auto-allocate-uids = true
+            extra-system-features = uid-range
             substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }} https://cache.nixos.org
             trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-      - name: Run NixOS integration test
-        timeout-minutes: 8
-        run: nix build .#checks.x86_64-linux.cua-driver-integration --print-build-logs --show-trace
+      - name: Run ${{ matrix.name }}
+        timeout-minutes: ${{ matrix.timeout_minutes }}
+        run: |
+          nix build .#checks.x86_64-linux.${{ matrix.check_attr }} \
+            --print-build-logs --show-trace \
+            -o ${{ matrix.result_link }}
+
+      - name: Collect GIF artifacts
+        if: always() && matrix.visual
+        run: |
+          mkdir -p artifacts
+          find -L "${{ matrix.result_link }}/" \( -name '*.gif' -o -name '*.png' -o -name '*.json' \) -type f -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -la artifacts/ 2>/dev/null || echo "No visual artifacts found"
+
+      - name: Upload GIF artifacts
+        if: always() && matrix.visual
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/*
+          if-no-files-found: warn
 
       - name: Sign and upload to Nix cache
         if: always()
@@ -93,3 +286,164 @@ jobs:
       - name: Cleanup signing key
         if: always()
         run: rm -f "${{ runner.temp }}/signing-key.sec"
+
+  comment-linux-visual-artifacts:
+    name: Comment Linux visual artifacts
+    if: always() && github.event_name == 'pull_request'
+    needs: [nix-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment Linux visual artifacts on PR
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const marker = '<!-- cua-driver-linux-visual-gifs -->';
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactNames = [
+              'cua-driver-linux-cursor-click-gif',
+              'cua-driver-linux-background-terminal-gif',
+              'cua-driver-linux-parallel-drag-xserver',
+              'cua-driver-linux-background-gui-chromium',
+              'cua-driver-linux-background-gui-tk',
+              'cua-driver-linux-background-gui-gtk3-gedit',
+              'cua-driver-linux-background-gui-gtk3-mousepad',
+              'cua-driver-linux-background-gui-gtk3-scite',
+              'cua-driver-linux-background-gui-gtk4-characters',
+              'cua-driver-linux-background-gui-qt5-manuskript',
+              'cua-driver-linux-background-gui-qt5-klog',
+              'cua-driver-linux-background-gui-qt5-openambit',
+              'cua-driver-linux-background-gui-qt6-kate',
+              'cua-driver-linux-background-gui-qt6-kcalc',
+              'cua-driver-linux-background-gui-qt6-okular',
+              'cua-driver-linux-background-gui-qt6-qownnotes',
+              'cua-driver-linux-background-gui-electron-zettlr',
+              'cua-driver-linux-background-gui-electron-joplin',
+              'cua-driver-linux-background-gui-electron-logseq',
+              'cua-driver-linux-som-overlays',
+            ];
+
+            let body = `${marker}\n## Linux visual regression artifacts\n\n`;
+            body += 'Matrix jobs now run independently. Download visual artifacts from this workflow run.\n';
+            body += 'Each background-GUI job uploads a `.gif` of the interaction plus two annotated PNGs ';
+            body += '(`<app>.png` raw, `<app>-atspi.png` with AT-SPI element boxes); ';
+            body += 'the `cua-driver-linux-som-overlays` artifact adds `<app>-som.png` cua Set-of-Marks overlays:\n';
+            for (const artifactName of artifactNames) {
+              body += `- \`${artifactName}\`\n`;
+            }
+            body += `\n[Open workflow run and download artifacts](${runUrl})\n`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(comment =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  # ── Set-of-Marks overlays ───────────────────────────────────────────────────
+  # Downstream aggregate job: consumes the raw `<app>.png` screenshots uploaded
+  # by the background-GUI matrix and emits `<app>-som.png` cua Set-of-Marks
+  # overlays. Deliberately OFF the hot path — `needs: [nix-checks]` + `if:
+  # always()` so it runs after the matrix regardless of pass/fail and never
+  # blocks it. NOTE: `pip install -e libs/python/som` pulls torch + ultralytics +
+  # easyocr (~GBs) and downloads model weights at first parse, so this job is
+  # the slow/expensive one; it is intentionally isolated from the build matrix.
+  som-annotate:
+    name: Annotate screenshots with cua Set-of-Marks
+    if: always()
+    needs: [nix-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download all run artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cua-som
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e libs/python/som
+
+      - name: Generate Set-of-Marks overlays
+        run: |
+          mkdir -p som-overlays
+          python - <<'PY'
+          import base64, glob, os, sys, traceback
+
+          # Collect raw background-GUI screenshots: <app>.png produced by the
+          # skeleton matrix. Exclude the AT-SPI overlays (-atspi) and any prior
+          # SoM outputs (-som). Artifacts land under downloaded-artifacts/<name>/.
+          candidates = []
+          for p in glob.glob("downloaded-artifacts/**/*-background-gui-*.png", recursive=True):
+              stem = os.path.basename(p)
+              if stem.endswith("-atspi.png") or stem.endswith("-som.png"):
+                  continue
+              candidates.append(p)
+          candidates = sorted(set(candidates))
+          print(f"Found {len(candidates)} raw screenshot(s) to annotate:", flush=True)
+          for p in candidates:
+              print(f"  {p}", flush=True)
+
+          if not candidates:
+              print("No raw screenshots found; nothing to annotate.", flush=True)
+              sys.exit(0)
+
+          from som import OmniParser
+          parser = OmniParser()
+
+          ok = 0
+          for p in candidates:
+              try:
+                  with open(p, "rb") as f:
+                      data = f.read()
+                  result = parser.parse(data)
+                  b64 = result.annotated_image_base64
+                  # Strip a possible data URL prefix before decoding.
+                  if "," in b64 and b64.strip().startswith("data:"):
+                      b64 = b64.split(",", 1)[1]
+                  out_name = os.path.splitext(os.path.basename(p))[0] + "-som.png"
+                  out_path = os.path.join("som-overlays", out_name)
+                  with open(out_path, "wb") as f:
+                      f.write(base64.b64decode(b64))
+                  print(f"OK  {p} -> {out_path}", flush=True)
+                  ok += 1
+              except Exception:
+                  print(f"FAIL {p}", flush=True)
+                  traceback.print_exc()
+          print(f"Annotated {ok}/{len(candidates)} screenshot(s).", flush=True)
+          PY
+          ls -la som-overlays/ 2>/dev/null || echo "No SoM overlays produced"
+
+      - name: Upload Set-of-Marks overlays
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-driver-linux-som-overlays
+          path: som-overlays/*-som.png
+          if-no-files-found: warn

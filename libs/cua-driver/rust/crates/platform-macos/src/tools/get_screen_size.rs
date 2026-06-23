@@ -66,7 +66,7 @@ fn main_screen_size() -> Option<(i64, i64, f64)> {
 
 /// Estimate backing scale by comparing the display's pixel mode width to its
 /// logical (CoreGraphics) bounds width.
-fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
+pub(crate) fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
     use core_graphics::display::CGDisplayPixelsWide;
     let pixel_w = unsafe { CGDisplayPixelsWide(display_id) } as i64;
     if pixel_w > 0 && logical_w > 0 {

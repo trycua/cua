@@ -18,6 +18,28 @@ extension Data {
     }
 }
 
+// Streaming SHA256 of a file; disk layers can be multi-GB so we hash in chunks.
+func sha256OfFile(at url: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+
+    var context = CC_SHA256_CTX()
+    CC_SHA256_Init(&context)
+
+    let chunkSize = 4 * 1024 * 1024  // 4 MiB
+    while true {
+        let data = handle.readData(ofLength: chunkSize)
+        if data.isEmpty { break }
+        data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+            _ = CC_SHA256_Update(&context, ptr.baseAddress, CC_LONG(data.count))
+        }
+    }
+
+    var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+    CC_SHA256_Final(&hash, &context)
+    return hash.map { String(format: "%02x", $0) }.joined()
+}
+
 // Push-related errors
 enum PushError: Error {
     case uploadInitiationFailed
@@ -2236,10 +2258,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 request.addValue(mediaType, forHTTPHeaderField: "Accept")
                 request.timeoutInterval = 60
 
-                // Add Accept-Encoding for compressed transfer if content isn't already compressed
-                if !mediaType.contains("gzip") && !mediaType.contains("compressed") {
-                    request.addValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
-                }
+                // Request identity encoding: blobs are content-addressed, so transparent
+                // gzip/deflate decompression by URLSession would corrupt the stored bytes.
+                request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
 
                 let (tempURL, response) = try await session.download(for: request)
                 guard let httpResponse = response as? HTTPURLResponse,
@@ -2262,6 +2283,19 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     _ = try FileManager.default.replaceItemAt(
                         url, withItemAt: tempURL, backupItemName: nil, options: [])
                 }
+
+                // Verify the layer against its digest before caching it; a mismatch means
+                // a corrupt blob, so drop it and let the retry loop re-download (issue #296).
+                if digest.hasPrefix("sha256:") {
+                    let expected = String(digest.dropFirst("sha256:".count)).lowercased()
+                    let actual = try sha256OfFile(at: url)
+                    if actual != expected {
+                        try? FileManager.default.removeItem(at: url)
+                        throw PullError.layerVerificationFailed(
+                            expected: digest, actual: "sha256:\(actual)")
+                    }
+                }
+
                 progress.addProgress(Int64(httpResponse.expectedContentLength))
 
                 // Always save a copy to the cache directory for use by copyFromCache,
@@ -2286,6 +2320,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             } catch {
                 lastError = error
+                if case PullError.layerVerificationFailed(let expected, let actual) = error {
+                    Logger.info(
+                        "Layer checksum mismatch (expected \(expected), got \(actual)); will re-download."
+                    )
+                }
                 if attempt < maxRetries {
                     // Exponential backoff with jitter for retries
                     let baseDelay = Double(attempt) * 2

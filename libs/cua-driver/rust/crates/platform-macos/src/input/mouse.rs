@@ -324,6 +324,63 @@ pub enum DragButton {
     Middle,
 }
 
+/// Middle-click at `(x, y)` with optional modifier keys.
+///
+/// Posts an `OtherMouseDown` / `OtherMouseUp` pair with `CGMouseButton::Center`
+/// to the target pid through the same SkyLight + public-API postBoth path the
+/// left- and right-click primitives use. Window-local stamping mirrors
+/// `right_click_at_xy_with_window_local`.
+pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
+    middle_click_at_xy_inner(pid, x, y, None, modifiers)
+}
+
+/// Like `middle_click_at_xy` but stamps the window-local `(wx, wy)` point.
+pub fn middle_click_at_xy_with_window_local(
+    pid: i32,
+    x: f64, y: f64,
+    wx: f64, wy: f64,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
+}
+
+fn middle_click_at_xy_inner(
+    pid: i32,
+    x: f64, y: f64,
+    window_local: Option<(f64, f64)>,
+    modifiers: &[&str],
+) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let point = CGPoint::new(x, y);
+    let flags = parse_modifier_flags(modifiers);
+
+    let down = CGEvent::new_mouse_event(
+        source.clone(),
+        CGEventType::OtherMouseDown,
+        point,
+        CGMouseButton::Center,
+    ).map_err(|_| anyhow::anyhow!("middle mouse down failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        down.set_flags(flags);
+    }
+    post_mouse_event(pid, &down, window_local, None, None, 1);
+    std::thread::sleep(std::time::Duration::from_millis(16));
+
+    let up = CGEvent::new_mouse_event(
+        source,
+        CGEventType::OtherMouseUp,
+        point,
+        CGMouseButton::Center,
+    ).map_err(|_| anyhow::anyhow!("middle mouse up failed"))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        up.set_flags(flags);
+    }
+    post_mouse_event(pid, &up, window_local, None, None, 1);
+
+    Ok(())
+}
+
 /// Right-click at `(x, y)` with optional modifier keys.
 pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
     right_click_at_xy_inner(pid, x, y, None, modifiers)

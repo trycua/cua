@@ -92,7 +92,7 @@ class CuaAgent(BaseAgent):
                 action = ClickAction(x=x, y=y)
             elif button == "right":
                 action = RightClickAction(x=x, y=y)
-            elif button == "middle":
+            elif button in ("middle", "wheel"):
                 action = MiddleClickAction(x=x, y=y)
             else:
                 raise ValueError(f"Unknown button type: {button}")

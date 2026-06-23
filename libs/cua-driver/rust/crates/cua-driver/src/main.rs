@@ -30,6 +30,7 @@ mod cli;
 mod doctor;
 mod mcp_http;
 mod proxy;
+mod responsibility;
 mod serve;
 mod skills;
 mod telemetry;
@@ -196,6 +197,12 @@ fn main() {
             cli::run_mcp_config(client.as_deref());
             return;
         }
+        cli::Command::Manifest { pretty } => {
+            // Surface 8: machine-readable CLI manifest. Read-only — no
+            // registry build needed, no daemon contact.
+            cli::run_manifest(pretty);
+            return;
+        }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             // Register callbacks (needed if the tool does screenshots/recording).
             cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
@@ -226,6 +233,7 @@ fn main() {
             return;
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+            responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
@@ -561,6 +569,12 @@ fn main() -> anyhow::Result<()> {
             cli::run_mcp_config(client.as_deref());
             return Ok(());
         }
+        cli::Command::Manifest { pretty } => {
+            // Surface 8: machine-readable CLI manifest. Read-only — no
+            // registry build needed.
+            cli::run_manifest(pretty);
+            return Ok(());
+        }
         cli::Command::Call { tool, json_args, screenshot_out_file, socket } => {
             let reg = Arc::new(build_registry_no_cursor());
             reg.init_self_weak();
@@ -571,6 +585,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         cli::Command::Serve { socket, no_permissions_gate, claude_code_compat } => {
+            responsibility::reexec_disclaimed_if_needed();
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
@@ -714,8 +729,21 @@ async fn async_main() -> anyhow::Result<()> {
     let registry = Arc::new(build_registry(cursor_cfg));
     registry.init_self_weak();
     maybe_init_pip();
-    cua_driver_core::server::run(registry).await?;
-    Ok(())
+    let result = cua_driver_core::server::run(registry).await;
+    if let Err(e) = &result {
+        tracing::error!("MCP server error: {e}");
+    }
+
+    // The stdio MCP server loop has ended — the client disconnected (stdin
+    // EOF) or a fatal I/O error occurred. The cursor overlay runs on its own
+    // detached thread with an independent Win32 message loop (and we raised the
+    // multimedia timer resolution via `timeBeginPeriod`), so simply returning
+    // is not guaranteed to tear it down promptly: that thread is never joined
+    // and would otherwise keep its render loop alive as an orphan, accumulating
+    // CPU after the client is gone (issue #1808). Force a clean process exit so
+    // the overlay thread dies with us the moment the transport closes — mirrors
+    // the macOS `std::process::exit(0)` after `server::run`.
+    std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
 // ── Registry builder (non-macOS) ──────────────────────────────────────────
@@ -771,6 +799,10 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
+        // Turn on Chromium/Electron (and GTK/Qt) accessibility for the session
+        // so their AT-SPI trees are visible to get_window_state. Best-effort and
+        // idempotent; only on the serve path, not for short-lived CLI calls.
+        platform_linux::a11y::ensure_chromium_accessibility_enabled();
         { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]

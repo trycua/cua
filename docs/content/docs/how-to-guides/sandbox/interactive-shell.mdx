@@ -1,0 +1,64 @@
+---
+title: Open an interactive shell in a sandbox
+description: Open an interactive PTY session inside the code half of a sandbox from the CLI or Python SDK.
+---
+
+A **Cua Sandbox** is a full isolated computer where an agent can run code and drive the GUI. Use `cua do shell` or the Sandbox SDK terminal API to open an interactive PTY session in the code half of that sandbox, similar to SSH but without network setup. The same sandbox is also driven through the GUI via computer-use with screenshots, clicks, and typing. Because both share one machine, you can run code and automate the UI against the same filesystem and state.
+
+## From the CLI
+
+Switch to the sandbox target first.
+
+```bash
+# Switch to a target first
+cua do switch docker my-container
+# or
+cua do switch host
+
+# Open an interactive shell (bash / PowerShell on host)
+cua do shell
+
+# Run a specific program interactively
+cua do shell python3
+cua do shell vim /etc/hosts
+
+# Override terminal dimensions
+cua do shell --cols 220 --rows 50
+```
+
+The shell is fully interactive: arrow keys, tab completion, and Ctrl+C work. When stdin is piped (non-TTY), the command runs non-interactively.
+
+## From the Python SDK
+
+Create a sandbox, open a PTY session with `sb.terminal.create`, send input as text, read session info, then close the session.
+
+```python
+from cua import Sandbox, Image
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    session = await sb.terminal.create(cols=80, rows=24)
+    pid = session['pid']
+
+    await sb.terminal.send_input(pid, 'echo hello\n')
+
+    info = await sb.terminal.info(pid)
+    print(info)
+
+    closed = await sb.terminal.close(pid)
+    print(f'closed: {closed}')
+```
+
+Pass a `command` to run a specific program instead of the default login shell:
+
+```python
+session = await sb.terminal.create(command='python3', cols=80, rows=24)
+```
+
+## Terminal methods
+
+| Method | Description |
+|--------|-------------|
+| create(command=None, cols=80, rows=24) | Open a PTY session; returns a dict with the session `pid`, `cols`, and `rows` |
+| send_input(pid, data) | Send input text to the session |
+| info(pid) | Return session info, or `None` if the session is gone |
+| close(pid) | Kill the session; returns a bool |

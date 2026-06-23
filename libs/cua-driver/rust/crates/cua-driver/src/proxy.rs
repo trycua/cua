@@ -314,10 +314,15 @@ fn fetch_tools_list_from_daemon(
         })?;
 
     // Reshape the daemon's `{name, description, input_schema, read_only,
-    // ...}` envelope into MCP's `{name, description, inputSchema,
-    // annotations: {...}}` shape. Same translation
-    // `ToolDef::to_list_entry` does for the in-process path so MCP
-    // clients see identical tools/list output either way.
+    // ..., capabilities}` envelope into MCP's `{name, description,
+    // inputSchema, annotations: {...}, capabilities}` shape. Same
+    // translation `ToolDef::to_list_entry` does for the in-process
+    // path so MCP clients see identical tools/list output either way.
+    //
+    // `capabilities` is passed through verbatim when the daemon
+    // provides it; older daemons that don't emit the field fall back
+    // to a name-keyed lookup so the proxy still surfaces capability
+    // metadata without an extra round-trip.
     let mcp_tools: Vec<serde_json::Value> = tools_array
         .iter()
         .map(|t| {
@@ -336,6 +341,20 @@ fn fetch_tools_list_from_daemon(
                 t.get("idempotent").and_then(|v| v.as_bool()).unwrap_or(false);
             let open_world =
                 t.get("open_world").and_then(|v| v.as_bool()).unwrap_or(false);
+            let capabilities = t.get("capabilities")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Fallback: derive from the centralised map by
+                    // name. Keeps the proxy compatible with daemon
+                    // builds that pre-date the capabilities field.
+                    name.as_str()
+                        .map(cua_driver_core::tool::default_capabilities_for)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect()
+                });
             serde_json::json!({
                 "name": name,
                 "description": description,
@@ -345,12 +364,32 @@ fn fetch_tools_list_from_daemon(
                     "destructiveHint": destructive,
                     "idempotentHint": idempotent,
                     "openWorldHint": open_world,
-                }
+                },
+                "capabilities": capabilities,
             })
         })
         .collect();
 
-    Ok(serde_json::json!({ "tools": mcp_tools }))
+    // `capability_version` and `schema_version` are passed through
+    // when the daemon emits them; older daemons fall back to the
+    // proxy's compiled-in `CAPABILITY_VERSION` so MCP clients always
+    // see the envelope keys.
+    let capability_version = result
+        .get("capability_version")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String(
+            cua_driver_core::tool::CAPABILITY_VERSION.to_owned()
+        ));
+    let schema_version = result
+        .get("schema_version")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("1".to_owned()));
+
+    Ok(serde_json::json!({
+        "tools": mcp_tools,
+        "capability_version": capability_version,
+        "schema_version": schema_version,
+    }))
 }
 
 /// JSON-RPC method dispatcher for the proxy. Mirrors

@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-1625e97a-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 kΩ series resistor across the 5V output to indicate when the supply is active. Add a 1 kΩ minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged."
+difficulty = "medium"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

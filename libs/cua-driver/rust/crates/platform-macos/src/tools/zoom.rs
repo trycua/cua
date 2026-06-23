@@ -84,7 +84,13 @@ impl Tool for ZoomTool {
                     ],
                     is_error: None,
                     structured_content: Some(serde_json::json!({
-                        "width": w, "height": h, "format": "jpeg"
+                        // `format` stays for back-compat. `mime_type` is the
+                        // Surface-7 addition that mirrors the MCP image part's
+                        // `mimeType` onto the structured payload, so consumers
+                        // don't have to translate "jpeg" → "image/jpeg" or
+                        // sniff base64 magic bytes.
+                        "width": w, "height": h, "format": "jpeg",
+                        "mime_type": "image/jpeg"
                     })),
                 }
             }

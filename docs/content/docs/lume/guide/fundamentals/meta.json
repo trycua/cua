@@ -1,6 +1,0 @@
-{
-  "title": "Fundamentals",
-  "description": "Core concepts and usage",
-  "icon": "Layers",
-  "pages": ["vm-management", "unattended-setup"]
-}

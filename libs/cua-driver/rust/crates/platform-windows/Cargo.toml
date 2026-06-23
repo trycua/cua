@@ -32,6 +32,12 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
     "Win32_UI_Input_KeyboardAndMouse",
+    # Pointer/touch injection (Track A background-actuation probe):
+    # InitializeTouchInjection / InjectTouchInput / InjectSyntheticPointerInput
+    # live in Win32_UI_Input_Pointer; POINTER_TYPE_INFO / HSYNTHETICPOINTERDEVICE
+    # / CreateSyntheticPointerDevice live in Win32_UI_Controls.
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_System_LibraryLoader",
     "Win32_Graphics_OpenGL",

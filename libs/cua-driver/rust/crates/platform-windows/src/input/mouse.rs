@@ -320,6 +320,10 @@ pub fn send_click_synthesized(
     //
     // Without VIRTUALDESK the coords are relative to the primary monitor only;
     // multi-monitor setups would misroute. Better to always use VIRTUALDESK.
+    //
+    // Math lives in `crate::virtualdesk` so it can be unit-tested cross-platform
+    // (no Win32 runtime required) — see issue #1979 for the negative-offset
+    // multi-monitor case the tests there pin down.
     let (vd_x, vd_y) = unsafe {
         (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -332,8 +336,8 @@ pub fn send_click_synthesized(
             GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
         )
     };
-    let norm_x = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
-    let norm_y = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
+    let (norm_x, norm_y) =
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h);
 
     let move_input = INPUT {
         r#type: INPUT_MOUSE,
@@ -482,10 +486,10 @@ pub fn send_drag_synthesized(
             GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
         )
     };
+    // Same VIRTUALDESK normalization as `send_click_synthesized`; see
+    // `crate::virtualdesk` for the math + the cross-platform unit tests.
     let norm = |sx: i32, sy: i32| -> (i32, i32) {
-        let nx = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
-        let ny = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
-        (nx, ny)
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h)
     };
     let make_input = |dx: i32, dy: i32, flags| INPUT {
         r#type: INPUT_MOUSE,

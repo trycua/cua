@@ -35,7 +35,13 @@ const DEFAULT_LOCAL = path.resolve(ROOT_DIR, '../cloud/cyclops-cs/backend/docs/s
 
 function resolveSource(args: string[]): string {
   const i = args.indexOf('--from');
-  if (i !== -1 && args[i + 1]) return args[i + 1];
+  if (i !== -1) {
+    const value = args[i + 1];
+    if (!value || value.startsWith('--')) {
+      throw new Error('`--from` requires a path or URL value.');
+    }
+    return value;
+  }
   if (process.env.CYCLOPS_CS_SPEC_SOURCE) return process.env.CYCLOPS_CS_SPEC_SOURCE;
   return DEFAULT_LOCAL;
 }
@@ -44,7 +50,15 @@ async function readSource(source: string): Promise<string> {
   if (/^https?:\/\//.test(source)) {
     const headers: Record<string, string> = { Accept: 'application/vnd.github.raw+json' };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-    const res = await fetch(source, { headers });
+    // Abort a stalled connection so a CI sync job can't hang indefinitely.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    let res: Response;
+    try {
+      res = await fetch(source, { headers, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       throw new Error(`Failed to fetch spec from ${source}: ${res.status} ${res.statusText}`);
     }

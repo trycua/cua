@@ -267,7 +267,7 @@ The single authorised path to reach a pool orchestrator. Per-pool orchestrators 
 | Name | In | Type | Required | Description |
 | ---- | -- | ---- | -------- | ----------- |
 | `name` | path | `string` | Yes | Pool name (DNS-1123 label) |
-| `path` | path | `string` | No | Upstream path (proxied verbatim, no validation) |
+| `path` | path | `string` | Yes | Upstream path (proxied verbatim, no validation) |
 
 **Responses:**
 
@@ -291,7 +291,7 @@ Proxies to &#123;service&#125;.&#123;namespace&#125;.svc.cluster.local:80. Per-k
 | ---- | -- | ---- | -------- | ----------- |
 | `namespace` | path | `string` | Yes | K8s namespace (caller must own it, or it must match a per-key token's namespace claim) |
 | `service` | path | `string` | Yes | K8s Service name (DNS-1123 label) |
-| `path` | path | `string` | No | Upstream path (proxied verbatim) |
+| `path` | path | `string` | Yes | Upstream path (proxied verbatim) |
 
 **Responses:**
 

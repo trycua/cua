@@ -206,7 +206,9 @@ function generateOperation(method: string, route: string, op: Operation): string
     lines.push('| Name | In | Type | Required | Description |');
     lines.push('| ---- | -- | ---- | -------- | ----------- |');
     for (const p of otherParams) {
-      const required = p.required ? 'Yes' : 'No';
+      // Swagger 2.0 requires every `in: path` parameter to be required; enforce
+      // it here so the table is correct even when an upstream spec omits the flag.
+      const required = p.required || p.in === 'path' ? 'Yes' : 'No';
       const description = `${(p.description ?? '').trim()}${enumNote(p.enum)}`.trim() || '—';
       lines.push(
         `| \`${p.name}\` | ${p.in} | ${paramTypeText(p)} | ${required} | ${escapeTableCell(description)} |`

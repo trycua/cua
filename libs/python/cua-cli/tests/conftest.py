@@ -130,7 +130,8 @@ def sample_skill(temp_skills_dir):
 
     # Create SKILL.md with proper frontmatter format expected by _parse_frontmatter
     skill_file = skill_dir / "SKILL.md"
-    skill_file.write_text("""---
+    skill_file.write_text(
+        """---
 name: test-skill
 description: A sample skill for testing
 ---
@@ -144,7 +145,8 @@ A sample skill for testing.
 1. Click on the button
 2. Type some text
 3. Press Enter
-""")
+"""
+    )
 
     # Create trajectory directory with trajectory.json and a video file
     trajectory_dir = skill_dir / "trajectory"
@@ -152,7 +154,8 @@ A sample skill for testing.
 
     # Create trajectory.json for proper skill info extraction
     trajectory_json = trajectory_dir / "trajectory.json"
-    trajectory_json.write_text("""{
+    trajectory_json.write_text(
+        """{
         "trajectory": [
             {"step_idx": 1, "caption": {"action": "click"}},
             {"step_idx": 2, "caption": {"action": "type"}}
@@ -160,7 +163,8 @@ A sample skill for testing.
         "metadata": {
             "created_at": "2024-01-15T10:00:00Z"
         }
-    }""")
+    }"""
+    )
 
     # Create a fake MP4 file for replay tests
     video_file = trajectory_dir / "test-skill.mp4"

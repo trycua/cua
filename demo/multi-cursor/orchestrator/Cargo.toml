@@ -6,6 +6,11 @@ edition = "2021"
 [[bin]]
 name = "orchestrator"
 path = "src/main.rs"
+required-features = ["windows-app"]
+
+[features]
+default = []
+windows-app = []
 
 [dependencies]
 # PNG decode + resize for the screenshot-based maze line-diff verification.

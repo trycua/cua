@@ -180,7 +180,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
         // No wlr screencopy AND no ext-image-copy-capture. Probe the
         // portal as the last native tier. The probe is read-only — it
         // checks for a name owner on the bus, does NOT take a screenshot.
-        let portal_ok = tokio::task::spawn_blocking(crate::wayland::portal_screenshot::probe_portal)
+        let portal_ok = tokio::task::spawn_blocking(probe_portal_screenshot)
             .await
             .ok()
             .and_then(|r| r.ok())
@@ -402,6 +402,16 @@ fn probe_wayland_managers() -> anyhow::Result<WaylandManagers> {
     Ok(WaylandManagers::default())
 }
 
+#[cfg(target_os = "linux")]
+fn probe_portal_screenshot() -> anyhow::Result<bool> {
+    crate::wayland::portal_screenshot::probe_portal()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_portal_screenshot() -> anyhow::Result<bool> {
+    Ok(false)
+}
+
 /// Stub of `wayland::WaylandManagers` so off-Linux builds compile. Always
 /// reports nothing advertised — non-Linux code paths never call this.
 #[cfg(not(target_os = "linux"))]
@@ -409,6 +419,8 @@ fn probe_wayland_managers() -> anyhow::Result<WaylandManagers> {
 struct WaylandManagers {
     foreign_toplevel: bool,
     screencopy: bool,
+    ext_image_copy_capture: bool,
+    ext_output_image_capture_source: bool,
     virtual_pointer: bool,
     wl_shm: bool,
 }

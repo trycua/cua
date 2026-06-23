@@ -6,6 +6,11 @@ edition = "2021"
 [[bin]]
 name = "jukebox-app"
 path = "src/main.rs"
+required-features = ["windows-app"]
+
+[features]
+default = []
+windows-app = []
 
 [dependencies]
 # Each instrument window owns its own audio output, so concurrent notes from

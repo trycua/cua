@@ -167,6 +167,7 @@ export abstract class BaseComputerInterface {
     // If the WebSocket is already open, check if we need to authenticate
     if (this.ws.readyState === WebSocket.OPEN) {
       this.logger.info('Websocket is open, ensuring authentication is complete.');
+      this.closed = false;
       return this.authenticate();
     }
 
@@ -179,13 +180,13 @@ export abstract class BaseComputerInterface {
         headers['X-VM-Name'] = this.vmName;
       }
       this.ws = new WebSocket(this.wsUri, { headers });
-      return this.authenticate();
     }
 
     // Connect and authenticate
     return new Promise((resolve, reject) => {
       const onOpen = async () => {
         try {
+          this.closed = false;
           // Always authenticate immediately after connection
           await this.authenticate();
           resolve();

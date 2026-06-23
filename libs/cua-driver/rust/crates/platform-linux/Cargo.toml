@@ -106,6 +106,7 @@ dirs = "5"
 
 [features]
 default = []
+linux-example = []
 # Opt-in stack that wires the portal ScreenCast per-window capture path
 # (`wayland::portal_screencast`) and the libei input path
 # (`wayland::libei`). Pulls in `pipewire`, `libspa` (need
@@ -139,3 +140,7 @@ tracing-subscriber = { workspace = true }
 [[example]]
 name = "libei_input"
 required-features = ["portal-libei"]
+
+[[example]]
+name = "screenshot_cascade"
+required-features = ["linux-example"]

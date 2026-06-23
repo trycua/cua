@@ -602,9 +602,12 @@ daytona = [
     { name = "daytona-sdk" },
 ]
 dev = [
+    { name = "fastapi" },
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "uvicorn" },
 ]
 otel = [
     { name = "opentelemetry-api" },
@@ -656,6 +659,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=3.0.0" },
     { name = "daytona-sdk", marker = "extra == 'daytona'", specifier = ">=0.1.0" },
     { name = "docker", specifier = ">=7.0.0" },
+    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.100.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100.0" },
     { name = "gcloud-aio-storage", marker = "extra == 'cloud'", specifier = ">=9.0.0" },
     { name = "google-cloud-batch", marker = "extra == 'cloud'", specifier = ">=0.17.0" },
@@ -663,6 +667,7 @@ requires-dist = [
     { name = "google-cloud-storage", marker = "extra == 'cloud'", specifier = ">=2.10.0" },
     { name = "grpcio", marker = "extra == 'cloud'", specifier = ">=1.60.0" },
     { name = "html5lib", specifier = ">=1.1" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "icoextract", marker = "extra == 'windows'", specifier = ">=0.2.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "matplotlib", specifier = ">=3.8.0" },
@@ -687,6 +692,7 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'rl'", specifier = ">=0.27.1" },
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "transformers", marker = "extra == 'rl'", specifier = ">=5.0.0rc3,<6.0" },
+    { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.30.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]

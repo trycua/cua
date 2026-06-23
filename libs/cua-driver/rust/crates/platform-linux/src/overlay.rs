@@ -134,8 +134,11 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     // Also forward to the native-Wayland layer-shell overlay when Wayland
     // is opted in. The wayland overlay's `forward` is a no-op when its
     // owner thread isn't started yet (which is the normal X11-only case).
-    if crate::wayland::is_wayland() {
-        let _ = crate::wayland::overlay::forward(&msg);
+    #[cfg(target_os = "linux")]
+    {
+        if crate::wayland::is_wayland() {
+            let _ = crate::wayland::overlay::forward(&msg);
+        }
     }
 }
 

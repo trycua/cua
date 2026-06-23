@@ -41,6 +41,7 @@ export abstract class BaseComputerInterface {
   protected ws: WebSocket;
   protected apiKey?: string;
   protected vmName?: string;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
 
   protected logger = pino({ name: 'computer.interface-base' });
 
@@ -65,15 +66,43 @@ export abstract class BaseComputerInterface {
     this.telemetry = new Telemetry();
     this.sessionId = uuidv4();
 
-    // Initialize WebSocket with headers if needed
+    // Create the WebSocket instance
+    this.ws = this.createWebSocket();
+  }
+
+  private createWebSocket(): WebSocket {
     const headers: { [key: string]: string } = {};
     if (this.apiKey && this.vmName) {
       headers['X-API-Key'] = this.apiKey;
       headers['X-VM-Name'] = this.vmName;
     }
 
-    // Create the WebSocket instance
-    this.ws = new WebSocket(this.wsUri, { headers });
+    const ws = new WebSocket(this.wsUri, { headers });
+    let opened = false;
+    ws.once('open', () => {
+      opened = true;
+    });
+    ws.on('close', () => {
+      if (opened && !this.closed && this.ws === ws) {
+        this.clearReconnectTimer();
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined;
+          if (!this.closed && this.ws === ws) {
+            void this.connect().catch((error) => {
+              this.logger.error(`Error reconnecting websocket: ${JSON.stringify(error)}`);
+            });
+          }
+        }, 1000);
+      }
+    });
+    return ws;
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
   }
 
   /**
@@ -164,6 +193,8 @@ export abstract class BaseComputerInterface {
    * Connect to the WebSocket server.
    */
   public async connect(): Promise<void> {
+    this.closed = false;
+
     // If the WebSocket is already open, check if we need to authenticate
     if (this.ws.readyState === WebSocket.OPEN) {
       this.logger.info('Websocket is open, ensuring authentication is complete.');
@@ -173,49 +204,62 @@ export abstract class BaseComputerInterface {
     // If the WebSocket is closed or closing, reinitialize it
     if (this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
       this.logger.info('Websocket is closed. Reinitializing connection.');
-      const headers: { [key: string]: string } = {};
-      if (this.apiKey && this.vmName) {
-        headers['X-API-Key'] = this.apiKey;
-        headers['X-VM-Name'] = this.vmName;
-      }
-      this.ws = new WebSocket(this.wsUri, { headers });
-      return this.authenticate();
+      this.ws = this.createWebSocket();
     }
 
     // Connect and authenticate
     return new Promise((resolve, reject) => {
+      const ws = this.ws;
+      let settled = false;
+
+      const cleanup = () => {
+        ws.off('open', onOpen);
+        ws.off('error', onError);
+        ws.off('close', onClose);
+      };
+
       const onOpen = async () => {
         try {
           // Always authenticate immediately after connection
           await this.authenticate();
+          settled = true;
+          cleanup();
           resolve();
         } catch (error) {
+          settled = true;
+          cleanup();
           reject(error);
         }
       };
 
+      const onError = (error: Error) => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(error);
+        }
+      };
+
+      const onClose = () => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(new Error('WebSocket closed before connection established'));
+        }
+      };
+
       // If already connecting, wait for it to complete then authenticate
-      if (this.ws.readyState === WebSocket.CONNECTING) {
-        this.ws.addEventListener('open', onOpen, { once: true });
-        this.ws.addEventListener('error', (error) => reject(error), {
-          once: true,
-        });
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.once('open', onOpen);
+        ws.once('error', onError);
+        ws.once('close', onClose);
         return;
       }
 
       // Set up event handlers
-      this.ws.on('open', onOpen);
-
-      this.ws.on('error', (error: Error) => {
-        reject(error);
-      });
-
-      this.ws.on('close', () => {
-        if (!this.closed) {
-          // Attempt to reconnect
-          setTimeout(() => this.connect(), 1000);
-        }
-      });
+      ws.once('open', onOpen);
+      ws.once('error', onError);
+      ws.once('close', onClose);
     });
   }
 
@@ -282,6 +326,7 @@ export abstract class BaseComputerInterface {
    */
   disconnect(): void {
     this.closed = true;
+    this.clearReconnectTimer();
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.close();
     } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {

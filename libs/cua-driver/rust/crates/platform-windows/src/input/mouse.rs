@@ -166,9 +166,92 @@ pub fn post_drag(
     Ok(())
 }
 
+/// Press-drag-release via PostMessage, resolving the **deepest child** at the
+/// drag-start screen point and posting in that child's client coordinates.
+///
+/// `post_drag` (above) posts to the top-level frame, so a child-windowed
+/// control (a WinForms `Panel`, a Win32 child canvas, …) never sees the drag —
+/// the frame gets messages over a region it doesn't own and ignores them. This
+/// variant mirrors `post_click`: it hit-tests down to the deepest descendant
+/// under the start point and targets that HWND for the whole gesture (a drag
+/// stays within one control), with each point converted to the child's own
+/// client space. Endpoints are given in **screen** coordinates.
+pub fn post_drag_screen(
+    root: u64,
+    sx_from: i32,
+    sy_from: i32,
+    sx_to: i32,
+    sy_to: i32,
+    duration_ms: u64,
+    steps: usize,
+    button: &str,
+) -> Result<()> {
+    let root_hwnd = HWND(root as *mut _);
+    let (target, c_from) = deepest_child(root_hwnd, POINT { x: sx_from, y: sy_from });
+    let mut c_to = POINT { x: sx_to, y: sy_to };
+    unsafe { let _ = ScreenToClient(target, &mut c_to); }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
+        anyhow::bail!(msg);
+    }
+    let (down_msg, up_msg, mk_flag) = match button {
+        "right"  => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
+        _        => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+    };
+    let wparam = WPARAM(mk_flag as usize);
+    let steps = steps.max(1);
+    let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
+    unsafe {
+        // Pre-drag MOUSEMOVE (wParam=0, no buttons down yet) then DOWN at from.
+        PostMessageW(target, WM_MOUSEMOVE, WPARAM(0), make_lparam(c_from.x, c_from.y))?;
+        PostMessageW(target, down_msg, wparam, make_lparam(c_from.x, c_from.y))?;
+    }
+    sleep(Duration::from_millis(CLICK_DELAY_MS));
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let ix = c_from.x + ((c_to.x - c_from.x) as f64 * t).round() as i32;
+        let iy = c_from.y + ((c_to.y - c_from.y) as f64 * t).round() as i32;
+        unsafe { PostMessageW(target, WM_MOUSEMOVE, wparam, make_lparam(ix, iy))?; }
+        if step_delay_ms > 0 {
+            sleep(Duration::from_millis(step_delay_ms));
+        }
+    }
+    unsafe {
+        PostMessageW(target, up_msg, WPARAM(0), make_lparam(c_to.x, c_to.y))?;
+    }
+    Ok(())
+}
+
 /// Pack two 16-bit integers into a LPARAM (low word = x, high word = y).
+///
+/// Delegates the bit-math to [`crate::lparam::pack_xy`] so the
+/// receiver-side `GET_X_LPARAM` / `GET_Y_LPARAM` sign-extension contract is
+/// covered by cross-platform unit tests (see #1979's audit: the PostMessage
+/// path packing was a suspect for the multi-monitor wrong-screen symptom,
+/// turned out to be correct, and now has regression coverage).
+///
+/// On the (currently unreachable) out-of-range path we log + clamp rather
+/// than panic — every existing call site passes post-`ScreenToClient`
+/// window-local coords that fit in `i16` by construction, but if a future
+/// caller passes a raw screen coord on a >32k-px virtual desktop, clamping
+/// is at least visible in the log instead of silently wrapping.
 fn make_lparam(x: i32, y: i32) -> LPARAM {
-    LPARAM((((y as u16 as u32) << 16) | (x as u16 as u32)) as isize)
+    match crate::lparam::pack_xy(x, y) {
+        Ok(packed) => LPARAM(packed as isize),
+        Err(err) => {
+            tracing::warn!(
+                target: "click",
+                "make_lparam: {err}; clamping to i16 range. \
+                 If you see this, the caller is passing non-window-local coords."
+            );
+            let clamp = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32);
+            let cx = clamp(x);
+            let cy = clamp(y);
+            let packed = crate::lparam::pack_xy(cx, cy)
+                .expect("clamped values always fit in i16 range");
+            LPARAM(packed as isize)
+        }
+    }
 }
 
 /// Returns `true` when `hwnd` is a top-level frame of a Chromium-based browser
@@ -264,6 +347,10 @@ pub fn send_click_synthesized(
     //
     // Without VIRTUALDESK the coords are relative to the primary monitor only;
     // multi-monitor setups would misroute. Better to always use VIRTUALDESK.
+    //
+    // Math lives in `crate::virtualdesk` so it can be unit-tested cross-platform
+    // (no Win32 runtime required) — see issue #1979 for the negative-offset
+    // multi-monitor case the tests there pin down.
     let (vd_x, vd_y) = unsafe {
         (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -276,8 +363,8 @@ pub fn send_click_synthesized(
             GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
         )
     };
-    let norm_x = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
-    let norm_y = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
+    let (norm_x, norm_y) =
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h);
 
     let move_input = INPUT {
         r#type: INPUT_MOUSE,
@@ -426,10 +513,10 @@ pub fn send_drag_synthesized(
             GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
         )
     };
+    // Same VIRTUALDESK normalization as `send_click_synthesized`; see
+    // `crate::virtualdesk` for the math + the cross-platform unit tests.
     let norm = |sx: i32, sy: i32| -> (i32, i32) {
-        let nx = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
-        let ny = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
-        (nx, ny)
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h)
     };
     let make_input = |dx: i32, dy: i32, flags| INPUT {
         r#type: INPUT_MOUSE,

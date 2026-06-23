@@ -20,7 +20,7 @@ mod scroll;
 // path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
 // etc.) live elsewhere under CuaDriverCore::Capture and are reached
 // through GetWindowStateTool.
-mod get_screen_size;
+pub(crate) mod get_screen_size;
 mod get_cursor_position;
 mod move_cursor;
 mod cursor_tools;
@@ -28,6 +28,7 @@ mod check_permissions;
 mod get_config;
 mod set_config;
 mod get_accessibility_tree;
+mod health_report;
 mod zoom;
 mod type_text_chars;
 mod page;
@@ -336,6 +337,15 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(cursor_tools::SetAgentCursorStyleTool::new(state.clone())));
     registry.register(Box::new(cursor_tools::GetAgentCursorStateTool::new(state.clone())));
     registry.register(Box::new(check_permissions::CheckPermissionsTool));
+    // `health_report` — single-call end-to-end diagnostics. Stable
+    // schema_version="1" contract aimed at downstream consumers
+    // (Hermes Agent's `hermes computer-use doctor`, NousResearch/
+    // hermes-agent#47065) who must NOT have to know cua-driver
+    // internals. Provider is platform-specific; tool plumbing is in
+    // `cua_driver_core::health_report`.
+    registry.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
+        Arc::new(health_report::MacosHealthProvider),
+    )));
     registry.register(Box::new(get_config::GetConfigTool::new(state.clone())));
     registry.register(Box::new(set_config::SetConfigTool::new(state.clone())));
     registry.register(Box::new(get_accessibility_tree::GetAccessibilityTreeTool::new(state.clone())));

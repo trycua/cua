@@ -1,0 +1,38 @@
+---
+title: "Computer-Use 2.0"
+description: "Computer-Use 2.0 is how an agent operates a real computer through code, structured tool calls, and the graphical interface."
+---
+
+# Computer-Use 2.0
+
+Computer-Use 2.0 is the way an AI agent operates a real computer by choosing among three action surfaces: writing and running code, calling tools and APIs, and driving the graphical interface a person would use. The older use of the term, where an agent looks at screenshots and clicks through a GUI, still matters as the UI surface inside a broader model of how agents get work done on computers.
+
+## Three action surfaces
+
+On the **coding surface**, the agent writes and runs code as the action itself. This works especially well when the task is text-native, when the same operation must run more than once, or when a small program can cover a larger body of files and state than a human would want to touch by hand.
+
+On the **tool-use surface**, the agent makes structured calls to tools, functions, APIs, and MCP servers. The action has a typed shape, with named inputs and defined outputs, so the agent can ask an external system to perform a specific operation without inventing a script or trying to reach the same control through the screen.
+
+On the **UI automation surface**, the agent clicks, types, scrolls, and presses keys on the real interface a person would use. This is the only surface that reaches native applications, web applications, enterprise and legacy software, and systems that have no useful API, because the GUI is often the only contract those systems expose to the user.
+
+## Choosing a surface
+
+A capable agent moves between these surfaces during a single task, choosing the one that fits the next piece of work. Code and structured tool calls are usually the right fit when the job is repeatable or text-heavy, especially when the system already exposes a clear interface. UI automation becomes the better choice when the work depends on visual state or when the application is unfamiliar; it is also the fallback when there is no useful API and the path exists only inside the interface.
+
+The skill is the judgment behind that choice. An agent that edits a file with code, checks account state through an API, and then changes a setting in a desktop app is still doing one computer task; it is simply using different action surfaces as the task moves through different kinds of state.
+
+## The UI automation loop
+
+The observe, decide, act loop belongs specifically to the UI automation surface. Observation comes from a screenshot, an accessibility tree, or both, which gives the model either the pixels a person would see or the structured information exposed by the operating system. From there, grounding turns a target such as a button, field, menu item, or selected region into on-screen coordinates that input events can hit.
+
+Planning carries the task across changing interface states. A click may open a dialog, a page may reflow after loading, or an application may show an error that changes the next useful action, so the model has to keep track of the goal while the computer responds. Frontier models such as Claude can handle understanding, grounding, and planning together in one call, while grounding-specialist models such as UI-TARS and Moondream can help when coordinate accuracy is the limiting factor.
+
+The narrow origin of computer-use came in October 2024, when Anthropic introduced an agent that operated a GUI through screenshots and input events. Through 2025, coding agents were increasingly recognized as computer-use agents too, with CoAct-1 making the connection explicit, and the field began to converge on Computer-Use 2.0 as a wider concept. Francesco Bonacci traces that arc in [A Story of Computer-Use](https://github.com/trycua/cua/blob/main/blog/clawdbot-computer-use-history.md).
+
+## Where Cua fits
+
+You bring the agent, which already handles coding and tool-use on its own. Cua gives that agent the UI automation surface and a real computer to act in, so the same task can move from code to tools to the graphical interface when the application requires it.
+
+**Cua Driver** drives the GUI of a real machine you already have, whether that machine runs macOS, Windows, or Linux. It is the right shape when the agent needs to work with local applications, signed-in accounts, existing files, or machine state that already lives on that computer.
+
+**Cua Sandbox** is a fresh isolated cloud computer where the agent can run code and drive the GUI together. It is a full computer with all three action surfaces available inside the same environment rather than a remote desktop, which matters when the task needs both programmatic work and visible interaction without touching your local machine. The agent brings the model and its reasoning; Cua provides the computer where that reasoning can turn into action.

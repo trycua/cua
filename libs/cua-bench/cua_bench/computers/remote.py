@@ -159,10 +159,24 @@ class RemoteDesktopSession:
         if api_url:
             parsed = urlparse(self._api_url)
             self._api_host = parsed.hostname or "localhost"
-            self._api_port = parsed.port or 5000
+            # Use the standard default port for the scheme when no port is explicit.
+            # Daytona proxy URLs (https://8000-xxx.proxy.net) have no port in the
+            # URL; the internal port is already encoded in the hostname.
+            if parsed.port:
+                self._api_port = parsed.port
+            elif parsed.scheme == "https":
+                self._api_port = 443
+            else:
+                self._api_port = 80
+            # Force TLS (WSS/HTTPS) when the URL scheme is HTTPS.  The Computer SDK
+            # uses api_key presence to choose between ws/wss and http/https.  We set a
+            # sentinel value here so the SDK picks WSS/HTTPS without triggering the
+            # auth-handshake (that only fires when vm_name is ALSO set).
+            self._force_tls = parsed.scheme == "https"
         else:
             self._api_host = "localhost"
             self._api_port = 8000  # Default SDK port
+            self._force_tls = False
 
         # Parse VNC URL for port
         vnc_parsed = urlparse(vnc_url) if vnc_url else None
@@ -262,7 +276,7 @@ class RemoteDesktopSession:
         from computer import Computer
 
         if self._client_only_mode:
-            # Client-only mode: connect to pre-existing server
+            # Client-only mode: connect to pre-existing server.
             self._computer = Computer(
                 os_type=self._os_type,
                 use_host_computer_server=True,
@@ -270,6 +284,28 @@ class RemoteDesktopSession:
                 api_port=self._api_port,
                 noVNC_port=self._vnc_port,
             )
+            if getattr(self, "_force_tls", False):
+                # The Computer SDK's use_host_computer_server mode always creates the
+                # interface without api_key, which means it uses ws:// and http://.
+                # For HTTPS proxy URLs (e.g. Daytona), we must use wss:// and https://.
+                # Bypass Computer.run() and create the interface directly with api_key
+                # so the SDK uses TLS.  No vm_name → no auth handshake is sent.
+                from computer.interface.factory import InterfaceFactory
+
+                interface = InterfaceFactory.create_interface_for_os(
+                    os=self._os_type,
+                    ip_address=self._api_host,
+                    api_port=self._api_port,
+                    api_key="__tls__",
+                )
+                self._computer._interface = interface
+                self._computer._original_interface = interface
+                # Skip wait_for_ready(): the SDK's readiness check tries a WebSocket
+                # upgrade which HTTPS reverse proxies (e.g. Daytona) don't support,
+                # causing a 60-second timeout.  Server readiness was already confirmed
+                # by DaytonaHarness._wait_for_env_ready() polling /status.
+                self._initialized = True
+                return
         else:
             # Full lifecycle mode: SDK manages container/VM
             image = self._image

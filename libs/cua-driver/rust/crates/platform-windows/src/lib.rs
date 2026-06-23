@@ -7,15 +7,38 @@
 //! - Win32 EnumWindows / CreateToolhelp32Snapshot for enumeration
 //! - PrintWindow / GDI BitBlt for screenshots
 //!
-//! Reference: /tmp/trope-cua/src/CuaDriver.Win/
+//! ## Provenance
+//!
+//! The Windows accessibility-tree walk, app/window enumeration, UIA
+//! InvokePattern click, and ValuePattern set-value all derive from prior art in
+//! Interface-Agent (github.com/francedot/Interface-Agent, packages/windows, 2024).
+//! trope-cua (MIT, github.com/voctory/trope-cua) was a useful cross-reference for
+//! some of the details during this Rust implementation — thanks to Victor Vannara
+//! for that work.
 
 use cua_driver_core::tool::ToolRegistry;
 
 pub mod tools;
 pub mod overlay;
 pub mod diagnostics;
+pub mod health_report;
 pub mod recording_hooks;
 pub mod pip;
+pub mod terminal;
+
+// Cross-platform: pure math for MOUSEEVENTF_VIRTUALDESK absolute-coord
+// normalization. Lives outside the Windows-only `input` module so its
+// unit tests run on any host (no Win32 runtime needed) — see issue #1979,
+// where the multi-monitor normalization bug was diagnosable by pure math.
+pub mod virtualdesk;
+
+// Cross-platform: pure math for packing `(x, y)` into the `LPARAM` payload
+// every `WM_MOUSE*` / `WM_*BUTTON*` message carries. Lives outside the
+// Windows-only `input` module for the same reason as `virtualdesk` — the
+// receiver-side `GET_X_LPARAM` sign-extension contract is a pure-math
+// property we want to pin with cross-platform unit tests (the #1979 audit
+// pass that lives in this commit).
+pub mod lparam;
 
 #[cfg(target_os = "windows")]
 pub mod win32;

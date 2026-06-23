@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-a6414tw4-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Use KiCad schematic designer to create an empty netlist file."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

@@ -92,15 +92,17 @@ pub fn dispatch_schema() -> Value {
         "enum": ["background", "foreground", "auto"],
         "default": "background",
         "description":
-            "Dispatch mode. 'background' (default) refuses to swap \
-             foreground; returns a structured background_unavailable error \
-             if PostMessage would be silently dropped for this event kind \
-             on this target. 'foreground' explicitly accepts a brief \
-             SetForegroundWindow swap (SendInput path) — required to drive \
-             Chromium-content or GTK-button widget targets reliably. \
-             'auto' uses cua-driver's internal heuristics (silent fallback \
-             to SendInput on known-problematic targets); opt-in for \
-             callers that prefer the historical behavior."
+            "Dispatch mode. 'background' (default) never swaps foreground: it \
+             routes through UIA Invoke / PostMessage, and for targets that \
+             silently drop posted clicks (Chromium/Electron content, GTK \
+             buttons) it transparently falls back to coordinate-based pointer \
+             injection — so a caller can just target the app and click without \
+             knowing its internals, and the window is never raised. (A \
+             background_unavailable error only surfaces for inputs injection \
+             can't express, e.g. a right/middle click on such a target.) \
+             'foreground' explicitly accepts a brief SetForegroundWindow swap \
+             (SendInput path). 'auto' uses cua-driver's historical heuristics \
+             (silent SendInput fallback on known-problematic targets)."
     })
 }
 
@@ -117,6 +119,17 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // text input via WM_CHAR still work because they go through
         // Chromium's IME path, which DOES consume Win32 messages.
         return matches!(kind, MouseClick | MouseMove | MouseScroll | KeyCombo);
+    }
+    if is_wpf_target_window(hwnd) {
+        // WPF ignores PostMessage mouse (its input manager drops mouse messages
+        // unless the live system cursor is over the window — verified: posted
+        // WM_MOUSE* raise no WPF events). It must be driven by coordinate-routed
+        // system-queue input. We use a PERSISTENT synthetic touch digitizer
+        // (see inject::TOUCH_DEV): WPF's stylus stack binds to the standing
+        // device and consumes the contact as touch/stylus — promoting to mouse
+        // internally, with NO OS cursor movement. WM_CHAR keystrokes still work,
+        // so flag only the pointer-class events.
+        return matches!(kind, MouseClick | MouseMove | MouseScroll);
     }
     if is_gtk_target_window(hwnd) {
         // Conservative flag for GTK: button widgets ignore PostMessage
@@ -163,6 +176,15 @@ pub fn is_vcl_target_window(hwnd: u64) -> bool {
     }
     let class = String::from_utf16_lossy(&buf[..n as usize]);
     class.starts_with("SAL")
+}
+
+/// Detect WPF top-level windows. WPF hosts its visual tree in an HWND whose
+/// class is `HwndWrapper[<module>;;<guid>]`. WPF TextBoxes consume only real
+/// keyboard input routed through WPF's input manager, so a posted `WM_CHAR`
+/// (the `post_type_text` path) is silently dropped — type_text must instead
+/// deliver genuine SendInput keystrokes (see `inject_text_cloaked`).
+pub fn is_wpf_target_window(hwnd: u64) -> bool {
+    read_class_name(hwnd).starts_with("HwndWrapper")
 }
 
 /// Detect GTK/GDK top-level windows.

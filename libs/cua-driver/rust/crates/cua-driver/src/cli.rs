@@ -107,6 +107,19 @@ pub enum Command {
     /// stub returns a helpful "use install-local.sh --autostart"
     /// message. See `crates/cua-driver/src/autostart.rs`.
     Autostart { subcommand: String },
+    /// `cua-driver manifest` — emit a stable JSON description of the CLI
+    /// surface (subcommands, args, MCP invocation, version).
+    ///
+    /// Designed for downstream consumers (Hermes, Claude Code, future
+    /// SDKs) so they can drop hardcoded launch argv such as
+    /// `_CUA_DRIVER_ARGS = ["mcp"]` and read the canonical invocation
+    /// from the binary itself. `schema_version` keys the manifest shape
+    /// so consumers can branch on additive changes.
+    ///
+    /// Mirrors the existing `dump-docs` shape (read-only inspection
+    /// subcommand) and is purely additive: never removes a field,
+    /// never renames an existing one.
+    Manifest { pretty: bool },
     /// `cua-driver skills {install|update|uninstall|status|path}` —
     /// agent skill-pack management. The verb is the ONLY way a user
     /// installs or updates the cua-driver skill pack into their agent
@@ -124,7 +137,7 @@ pub enum Command {
 /// Flags whose next token is a value (not a subcommand).
 /// We skip both the flag and its value when scanning for the subcommand.
 const VALUE_FLAGS: &[&str] = &[
-    "--cursor-icon", "--cursor-id", "--cursor-palette",
+    "--cursor-icon", "--cursor-id", "--cursor-palette", "--cursor-shape",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
     "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
     // Experimental PiP preview — value flag for the optional geometry
@@ -148,7 +161,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -207,10 +220,19 @@ pub fn parse_command() -> Command {
         println!("  for a visibly gliding demo. These flags tune the overlay on `serve`/`mcp`:");
         println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
         println!("  --cursor-id <id>        Name the default cursor instance (default: 'default').");
-        println!("  --cursor-icon <path>    Use a custom PNG cursor icon.");
+        println!("  --cursor-icon <path>    Use a custom PNG / JPEG / SVG / ICO cursor asset.");
+        println!("  --cursor-shape <name>   Built-in silhouette: 'arrow' (default — procedural");
+        println!("                          gradient diamond) or 'teardrop' (embedded cursor-up SVG).");
         println!("  --cursor-palette <name> Pick a built-in colour palette for the cursor.");
         println!("  (These are no-ops for one-shot CLI calls like `cua-driver call` — the overlay");
         println!("   needs the long-lived AppKit runloop that only `serve` / `mcp` keep alive.)");
+        println!();
+        println!("manifest options:");
+        println!("  cua-driver manifest             Emit a stable JSON description of this CLI's surface");
+        println!("                                  (subcommands, args, MCP invocation, version). Read-only.");
+        println!("                                  Consumers (Hermes, Claude Code, …) read it to drop");
+        println!("                                  hardcoded launch argv like _CUA_DRIVER_ARGS = [\"mcp\"].");
+        println!("    --pretty / -p                 Pretty-print the JSON.");
         println!();
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
@@ -302,6 +324,13 @@ pub fn parse_command() -> Command {
             let pretty = args.iter().any(|a| a == "--pretty" || a == "-p");
             let doc_type = flag_value(&args, "--type").unwrap_or_else(|| "all".to_owned());
             Command::DumpDocs { pretty, doc_type }
+        }
+        Some("manifest") => {
+            // Default to compact output to match other JSON-emitting commands
+            // (`check-update --json`, `doctor --json`); `--pretty` is opt-in for
+            // shell-debug use.
+            let pretty = args.iter().any(|a| a == "--pretty" || a == "-p");
+            Command::Manifest { pretty }
         }
         Some("update") => {
             let apply = args.iter().any(|a| a == "--apply");
@@ -762,6 +791,148 @@ pub fn run_mcp_via_daemon_proxy(
     rt.block_on(crate::proxy::run_proxy(socket_path))
 }
 
+/// Emit a stable, machine-readable JSON description of the cua-driver CLI
+/// surface — subcommands, their args, the canonical MCP invocation, version.
+///
+/// The shape is purely additive — `schema_version` is bumped on breaking
+/// changes; new fields appear without a bump. Designed so downstream
+/// consumers (Hermes, Claude Code, future SDKs) can drop their hardcoded
+/// `_CUA_DRIVER_ARGS = ["mcp"]` and read the canonical invocation from the
+/// binary itself.
+///
+/// Mirrors the read-only inspection shape of `dump-docs` and `mcp-config`.
+pub fn run_manifest(pretty: bool) {
+    let manifest = build_manifest();
+    let out = if pretty {
+        serde_json::to_string_pretty(&manifest).unwrap_or_else(|_| manifest.to_string())
+    } else {
+        manifest.to_string()
+    };
+    println!("{out}");
+}
+
+/// Build the JSON manifest document. Pure function — surfaced separately
+/// from `run_manifest` so tests can introspect the shape without going
+/// through stdout.
+pub fn build_manifest() -> serde_json::Value {
+    // Resolve the binary path the way `run_mcp_config` already does so the
+    // emitted `mcp_invocation.command` is the actually-runnable path, not
+    // a bare "cua-driver" the caller has to resolve.
+    let binary = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "cua-driver".to_owned());
+
+    serde_json::json!({
+        // `schema_version` is bumped only on a breaking change to the
+        // manifest shape itself. Additive field changes don't bump it.
+        // Consumers branch on this when reading the document.
+        "schema_version": "1",
+        "binary_version": env!("CARGO_PKG_VERSION"),
+        "binary_path": binary,
+        "mcp_invocation": {
+            "command": binary,
+            "args": ["mcp"]
+        },
+        // Subcommand catalog — keep in sync with `parse_command` above.
+        // `args` is a hint shape for consumers; the canonical source is
+        // `--help` text. Each entry follows the same JSON shape so the
+        // consumer can render uniformly.
+        "subcommands": [
+            { "name": "mcp",
+              "description": "Run the MCP JSON-RPC server over stdio (the default invocation).",
+              "args": [
+                  { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." }
+              ] },
+            { "name": "serve",
+              "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
+              "args": [
+                  { "name": "--socket", "type": "string", "description": "Override the listen socket path." },
+                  { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." }
+              ] },
+            { "name": "stop",
+              "description": "Stop a running daemon by sending it a shutdown request.",
+              "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+            { "name": "status",
+              "description": "Report daemon status (running / not / unhealthy).",
+              "args": [ { "name": "--socket", "type": "string", "description": "Override the daemon socket path." } ] },
+            { "name": "list-tools",
+              "description": "Print the canonical tool name + one-line summary for every registered MCP tool.",
+              "args": [] },
+            { "name": "describe",
+              "description": "Print a single tool's full description + JSON input schema.",
+              "args": [ { "name": "tool", "type": "positional-string", "description": "Tool name." } ] },
+            { "name": "call",
+              "description": "Invoke a single tool one-shot — proxies to a running daemon when one is up, otherwise runs in-process.",
+              "args": [
+                  { "name": "tool", "type": "positional-string", "description": "Tool name." },
+                  { "name": "json-args", "type": "positional-json", "description": "Tool input JSON (or read from stdin)." },
+                  { "name": "--screenshot-out-file", "type": "string", "description": "Write image content to this path instead of emitting base64." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path used by the in-process forwarding fallback." }
+              ] },
+            { "name": "mcp-config",
+              "description": "Print the MCP server config snippet or a client-specific install command.",
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi. Omit for the generic snippet." } ] },
+            { "name": "manifest",
+              "description": "Emit this machine-readable description of the CLI surface.",
+              "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
+            { "name": "recording",
+              "description": "Recording sub-API: start | stop | status | render.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "One of: start, stop, status, render. Default: status." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
+              ] },
+            { "name": "dump-docs",
+              "description": "Dump every registered tool's docs as one document (markdown by default, JSON with --type json).",
+              "args": [
+                  { "name": "--pretty", "type": "flag", "description": "Pretty-print." },
+                  { "name": "--type", "type": "string", "description": "Output type." }
+              ] },
+            { "name": "update",
+              "description": "Check GitHub for a newer release; with --apply, download and install via the canonical installer.",
+              "args": [
+                  { "name": "--apply", "type": "flag", "description": "Apply the update." },
+                  { "name": "--json", "type": "flag", "description": "Emit the structured check payload." }
+              ] },
+            { "name": "check-update",
+              "description": "Read-only release-check verb (mirror of the check_for_update MCP tool).",
+              "args": [
+                  { "name": "--json", "type": "flag", "description": "Emit the structured check payload." },
+                  { "name": "--no-cache", "type": "flag", "description": "Force a fresh GitHub round-trip." }
+              ] },
+            { "name": "doctor",
+              "description": "Self-diagnose probes for runtime prerequisites (permissions, accessibility, capture, etc.).",
+              "args": [ { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." } ] },
+            { "name": "diagnose",
+              "description": "Emit a developer-focused diagnostic dump suitable for bug reports.",
+              "args": [] },
+            { "name": "permissions",
+              "description": "Inspect / raise TCC permission grants (macOS).",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "status | grant" },
+                  { "name": "--json", "type": "flag", "description": "Machine-readable payload." }
+              ] },
+            { "name": "config",
+              "description": "Read / write the persistent driver config.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "show | get | set | reset" },
+                  { "name": "key", "type": "positional-string", "description": "Config key (for get/set)." },
+                  { "name": "value", "type": "positional-string", "description": "Config value (for set)." },
+                  { "name": "--socket", "type": "string", "description": "Override the daemon socket path." }
+              ] },
+            { "name": "autostart",
+              "description": "Platform-native auto-start so `cua-driver serve` comes up on every logon.",
+              "args": [ { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | kick" } ] },
+            { "name": "skills",
+              "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
+              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] }
+        ]
+    })
+}
+
 /// Print the MCP server config snippet or a client-specific install command.
 ///
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
@@ -785,15 +956,22 @@ pub fn run_mcp_config(client: Option<&str>) {
         }
         Some("claude") | Some("claude-code") => {
             // Claude Code wants the MCP server registered as
-            // `cua-computer-use` and the binary invoked with
-            // `--claude-code-computer-use-compat` so the regular
-            // `screenshot` tool is replaced by a window-scoped variant
-            // (pid + window_id required, JPEG @ 85%, text note pointing
-            // at pixel tools).
+            // `cua-computer-use` — the bare key "computer-use" is
+            // reserved, so external stdio registrations use a distinct
+            // key. We emit `--scope user` so the entry lands in
+            // `~/.claude.json` and is visible from every Claude Code
+            // session regardless of cwd. Without it, `claude mcp add`
+            // defaults to the per-project config (`<cwd>/.claude.json`),
+            // which is the source of the "registered cua-driver but
+            // Claude Code doesn't see it" surprise users hit.
             //
-            // Observed Claude Code behaviour: the exact config key
-            // "computer-use" is reserved, so external stdio
-            // registrations use a distinct key — hence `cua-computer-use`.
+            // The `--claude-code-computer-use-compat` flag is NOT
+            // emitted: the only tool it ever gated (the compat
+            // screenshot) was removed in #1692, so the flag is a no-op
+            // today on every code path. Carrying it confused Claude
+            // Code's tool indexer in observed sessions; dropping it
+            // makes the registration shape match what `--client codex`,
+            // `--client cursor`, etc. already produce.
             //
             // Why `add-json` instead of `add -- BIN --flag`? PowerShell's
             // native-command arg parser mangles long flags after a bare
@@ -815,12 +993,12 @@ pub fn run_mcp_config(client: Option<&str>) {
             let normalised = binary.replace('\\', "/");
             let cfg = serde_json::json!({
                 "command": normalised,
-                "args": ["mcp", "--claude-code-computer-use-compat"],
+                "args": ["mcp"],
             });
             let json = cfg.to_string();
             #[cfg(windows)]
             let json = json.replace('"', "\\\"");
-            println!("claude mcp add-json cua-computer-use '{}'", json);
+            println!("claude mcp add-json --scope user cua-computer-use '{}'", json);
         }
         Some("codex") => {
             println!("codex mcp add cua-driver -- {binary} mcp");
@@ -1533,8 +1711,8 @@ pub fn run_permissions_cmd(
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
 /// process*, so the ONLY process that can read `com.trycua.driver`'s real
-/// grants is the bundle daemon (launched via LaunchServices, reparented to
-/// launchd). When the daemon is up we query it and report its
+/// grants is the daemon running as its own responsible process. When the
+/// daemon is up we query it and report its
 /// `driver-daemon`-attributed answer. When it is NOT up we deliberately
 /// report `unknown` rather than fall back to an in-process check — that
 /// fallback would report the *calling terminal's* grants and could print
@@ -1559,12 +1737,11 @@ fn run_permissions_status(json: bool) {
             .filter(|r| r.ok)
             .and_then(|r| r.result)
             .and_then(|res| res.get("structuredContent").cloned())
-            // Trust the booleans ONLY when the answering process is the launchd
-            // bundle daemon (`driver-daemon`). A daemon spawned from a terminal
-            // (`cua-driver serve` by hand) answers with `caller` attribution —
-            // those are the terminal's grants, not the driver's, so we discard
-            // them and fall through to `unknown` rather than report a false
-            // `granted`. A missing `source` (non-macOS, no TCC) is trusted as-is.
+            // Trust the booleans ONLY when the answering daemon is its own
+            // responsible process (`driver-daemon`). Otherwise those grants
+            // belong to the launching app, so we discard them and fall through
+            // to `unknown`. A missing `source` (non-macOS, no TCC) is trusted
+            // as-is.
             .filter(|s| {
                 s.get("source")
                     .and_then(|src| src.get("attribution"))
@@ -2641,6 +2818,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
             }
         }
         Command::McpConfig { .. } => "cua_driver_mcp_config".to_owned(),
+        Command::Manifest { .. } => "cua_driver_manifest".to_owned(),
         Command::Recording { .. } => event::RECORDING.to_owned(),
         Command::Config { .. } => event::CONFIG.to_owned(),
         Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
@@ -2742,6 +2920,80 @@ mod tests {
         let sanitized = sanitize_tool_name(&long_name);
         assert_eq!(sanitized.len(), 64);
         assert!(sanitized.chars().all(|c| c == 'a'));
+    }
+
+    // ── Surface 8: manifest shape ───────────────────────────────────────────
+
+    /// The manifest must carry the four documented top-level keys so a
+    /// consumer can branch on `schema_version` and read the canonical
+    /// MCP invocation without sniffing argv defaults.
+    #[test]
+    fn manifest_has_documented_top_level_shape() {
+        let m = build_manifest();
+        let obj = m.as_object().expect("manifest is an object");
+
+        // schema_version — stable string; consumers branch on this.
+        assert_eq!(obj.get("schema_version").and_then(|v| v.as_str()), Some("1"));
+
+        // binary_version — must equal CARGO_PKG_VERSION (current build).
+        let bv = obj.get("binary_version").and_then(|v| v.as_str())
+            .expect("binary_version present and a string");
+        assert_eq!(bv, env!("CARGO_PKG_VERSION"));
+
+        // mcp_invocation — { command: <bin path>, args: ["mcp"] }
+        let inv = obj.get("mcp_invocation").and_then(|v| v.as_object())
+            .expect("mcp_invocation is an object");
+        assert!(inv.get("command").and_then(|v| v.as_str()).is_some(),
+            "mcp_invocation.command must be a string");
+        let args = inv.get("args").and_then(|v| v.as_array())
+            .expect("mcp_invocation.args is an array");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].as_str(), Some("mcp"));
+
+        // subcommands — non-empty array with the canonical entries.
+        let subs = obj.get("subcommands").and_then(|v| v.as_array())
+            .expect("subcommands is an array");
+        let names: Vec<&str> = subs.iter()
+            .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for need in ["mcp", "list-tools", "describe", "call", "serve",
+                     "stop", "status", "mcp-config", "manifest"] {
+            assert!(names.contains(&need), "missing subcommand '{need}'");
+        }
+    }
+
+    /// Every subcommand entry has the same JSON shape — name + description
+    /// + args[] — so consumers can render the catalog uniformly without
+    /// per-subcommand branching.
+    #[test]
+    fn manifest_subcommands_have_uniform_shape() {
+        let m = build_manifest();
+        let subs = m.get("subcommands").and_then(|v| v.as_array()).expect("subcommands");
+        for entry in subs {
+            let obj = entry.as_object().expect("each subcommand is an object");
+            assert!(obj.get("name").and_then(|v| v.as_str()).is_some(),
+                "subcommand missing name: {entry}");
+            assert!(obj.get("description").and_then(|v| v.as_str()).is_some(),
+                "subcommand missing description: {entry}");
+            assert!(obj.get("args").and_then(|v| v.as_array()).is_some(),
+                "subcommand missing args[]: {entry}");
+        }
+    }
+
+    /// Hermes / Codex / Claude Code can read `mcp_invocation` and drop
+    /// their hardcoded `["mcp"]` defaults. The invocation must point at
+    /// an executable path, and the `args` array MUST be `["mcp"]` — no
+    /// `--something` flag drift, no rename, no removal.
+    #[test]
+    fn manifest_mcp_invocation_is_stable() {
+        let m = build_manifest();
+        let inv = m.get("mcp_invocation").expect("mcp_invocation");
+        let args: Vec<&str> = inv.get("args").and_then(|v| v.as_array())
+            .expect("args[] array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(args, vec!["mcp"]);
     }
 }
 

@@ -1,0 +1,84 @@
+---
+title: Forward a port from a sandbox
+description: Expose a sandbox port on localhost so local tools can connect to it.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`sb.tunnel.forward()` exposes a port (or Android abstract socket) running inside the sandbox on the local host.
+
+## Forward a single port
+
+Start the service inside the sandbox, then forward its port.
+
+```python
+from cua import Sandbox, Image
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    await sb.shell.run('python3 -m http.server 8080 &')
+
+    async with sb.tunnel.forward(8080) as t:
+        print(t.url)   # http://localhost:49823
+        print(t.host, t.port)  # localhost, 49823
+```
+
+The tunnel **closes automatically** when the async with block exits.
+
+## Forward multiple ports at once
+
+Pass multiple ports to get a `dict[port, TunnelInfo]`.
+
+```python
+async with sb.tunnel.forward(8080, 9222) as tunnels:
+    app_url      = tunnels[8080].url
+    devtools_url = tunnels[9222].url
+```
+
+## Close a tunnel manually
+
+If you need the tunnel outside an `async with` block, close it yourself.
+
+```python
+t = await sb.tunnel.forward(8080)
+print(t.url)
+# ... do work ...
+await t.close()
+```
+
+## Android abstract sockets
+
+Pass a string instead of a port number.
+
+```python
+async with sb.tunnel.forward('chrome_devtools_remote') as t:
+    print(t.url)  # http://localhost:<random>
+```
+
+<Callout type="info">
+  Abstract socket names are Linux-only (Android). On Linux and macOS sandboxes use integer port numbers.
+</Callout>
+
+## TunnelInfo fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| host | str | Always 'localhost' |
+| port | int | The host-side port assigned |
+| sandbox_port | int or str | The original port/socket inside the sandbox |
+| url | str | Shorthand `http://{host}:{port}` |
+
+## Example: Chrome DevTools Protocol
+
+Start Chrome with remote debugging enabled, then read the DevTools target list through the forwarded port.
+
+```python
+from cua import Sandbox, Image
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    await sb.shell.run('google-chrome --remote-debugging-port=9222 --headless &')
+
+    async with sb.tunnel.forward(9222) as t:
+        import httpx
+        targets = httpx.get(f'{t.url}/json').json()
+        print(targets)
+```

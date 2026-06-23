@@ -218,3 +218,5 @@ scripts/check-repo-md-links.py
 docs/scripts/check-links.py
 docs/scripts/check-all-links.py
 docs/scripts/check-mdx-links.py
+# Local Windows RE scratch (downloaded PDBs, disassembly scripts)
+.re-windows/

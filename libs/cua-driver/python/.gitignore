@@ -1,0 +1,16 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# Downloaded binaries and archives
+downloads/
+src/cua_driver/bin/
+
+# Virtual environments
+venv/
+.venv/
+env/

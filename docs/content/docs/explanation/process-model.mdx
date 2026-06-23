@@ -1,0 +1,50 @@
+---
+title: "Process model"
+description: "How Cua Driver maps one tool surface onto CLI, MCP, and daemon-backed processes."
+---
+
+Cua Driver has several process shapes, but they are adapters around one driver surface: list windows, read accessibility, capture the screen, click, type, record, configure, and report state. The process model places that surface in the operating-system context that can perform it.
+
+Most users meet Cua Driver through an MCP stdio server spawned by an AI coding assistant such as Claude Code or Cursor. The same driver can also run as a long-lived daemon through `cua-driver serve`, or answer a one-shot CLI call. All three expose the same operations; the calling tool usually chooses the shape.
+
+## Three invocation shapes
+
+The MCP stdio shape is *client-owned*. The parent process starts `cua-driver`, keeps stdin and stdout connected, and sends MCP tool calls over that transport.
+
+The daemon shape is *machine-owned*. A single `cua-driver serve` process listens on a local IPC endpoint, such as a Unix socket or named pipe, and keeps driver state in memory while it lives.
+
+The one-shot CLI shape is *call-owned*. A command starts, performs one operation, prints a result, and exits.
+
+These are invocation shapes, not separate implementations.
+
+## Why a daemon proxy exists
+
+The **daemon-proxy pattern** separates the process that speaks to the caller from the process that has the right desktop authority. The proxy handles the client protocol. The daemon performs the GUI work. That matters when the caller can start a shell process but cannot correctly operate the user's desktop.
+
+On macOS, the root issue is **TCC**, Transparency Consent and Control. Accessibility and Screen Recording grants are attached to a specific app identity, represented by a bundle ID. Grants to `CuaDriver.app` do not automatically cover every subprocess named `cua-driver`.
+
+If an IDE terminal starts `cua-driver` directly, macOS attributes that subprocess to the terminal app's bundle, not to `CuaDriver.app`. The binary is right, but the privacy identity is wrong.
+
+The daemon path fixes the attribution. The daemon is launched through LaunchServices with `open -n -g -a CuaDriver`, so macOS treats it as part of `CuaDriver.app`. The MCP stdio process remains where the assistant spawned it, but becomes a thin proxy: it forwards tool calls to the daemon over a Unix socket and returns the daemon's responses. There are two processes, but one tool surface.
+
+## Windows has the same shape for a different reason
+
+On Windows, the daemon solves a session problem rather than a bundle-identity problem. When `cua-driver` is reached through SSH, the SSH-side process typically lands in Session 0, the non-interactive service session. Session 0 is not the logged-in user's GUI desktop, so it cannot see or operate those windows.
+
+The daemon belongs in the interactive user session instead. It may be kept there by platform autostart machinery such as a Scheduled Task. An SSH-side client can then proxy requests to it. The shape is the same as on macOS: a caller-side process speaks the protocol, while a daemon-side process owns desktop access. The root cause is different.
+
+## Session identity and shared state
+
+A daemon drives one physical machine. Multiple MCP clients can connect at the same time, but they still share the same screen, keyboard, pointer, accessibility tree, and recording machinery. Session identity does not make concurrent control independent. Two agents clicking at once still contend for the same desktop.
+
+Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
+
+Cleanup follows the proxy connection, not a final message. The proxy keeps a long-lived control connection open to the daemon. When the proxy exits, even from an ungraceful kill, the kernel closes that connection. The daemon sees EOF and removes state owned by that session. This prevents stale recordings, cursors, and temporary config overrides.
+
+## Lifetimes and memory
+
+In-process MCP mode is simple: one process speaks MCP and performs the driver work directly. It lives for the stdio session. When the MCP client closes the transport, the process exits, and in-memory state exits with it. Element-index caches, active recording state, temporary config, and cursor state are process-local.
+
+Daemon-proxy mode gives the driver a longer lifetime than the MCP client. The proxy may come and go as an assistant restarts its MCP transport, but the daemon can keep running. Element-index caches can remain warm, and daemon-held configuration can continue to apply after a tool client reconnects.
+
+In-process mode is direct and short-lived. Daemon-proxy mode adds a local IPC hop, but it puts GUI work in the operating-system context that can perform it, and gives shared state a machine-level lifetime rather than a stdio subprocess lifetime.

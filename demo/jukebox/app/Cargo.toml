@@ -1,0 +1,20 @@
+[package]
+name = "jukebox-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "jukebox-app"
+path = "src/main.rs"
+
+[dependencies]
+# Each instrument window owns its own audio output, so concurrent notes from
+# separate processes mix at the OS mixer — genuine multi-process polyphony.
+rodio = { version = "0.17", default-features = false }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+] }

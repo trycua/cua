@@ -17,29 +17,221 @@
 //! What stays here is the X11 window plumbing: connection setup,
 //! override-redirect visual, ShapeInput passthrough, and the XPutImage paint.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use cursor_overlay::{CursorConfig, OverlayCommand, RenderStateCore};
+use cursor_overlay::{
+    CursorConfig, CursorKey, KeyedOverlayCommand, OverlayCommand, OverlayMsg, Palette,
+    RenderStateCore,
+};
 #[cfg(target_os = "linux")]
 use cursor_overlay::ZOrderEnforcer;
 
 // ── Global channel ────────────────────────────────────────────────────────
 
-static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayCommand>> = OnceLock::new();
-static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayCommand>>> = Mutex::new(None);
-static RENDER: Mutex<Option<RenderState>> = Mutex::new(None);
+static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
+static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
+static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
+static ARRIVAL_TX: Mutex<Option<HashMap<CursorKey, tokio::sync::oneshot::Sender<()>>>> =
+    Mutex::new(None);
+
+fn arrival_register(key: CursorKey, tx: tokio::sync::oneshot::Sender<()>) {
+    let mut guard = ARRIVAL_TX.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(old_tx) = map.insert(key, tx) {
+        let _ = old_tx.send(());
+    }
+}
+
+fn arrival_fire(key: &CursorKey) {
+    if let Ok(mut guard) = ARRIVAL_TX.lock() {
+        if let Some(map) = guard.as_mut() {
+            if let Some(tx) = map.remove(key) {
+                let _ = tx.send(());
+            }
+        }
+    }
+}
+
+struct RenderMap {
+    cursors: HashMap<CursorKey, RenderState>,
+    scr_w: u32,
+    scr_h: u32,
+    template: CursorConfig,
+    ended: HashSet<CursorKey>,
+    last_active: Option<CursorKey>,
+}
+
+fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
+    let mut rs = RenderState::new(template.clone());
+    rs.core.palette = Palette::for_instance(key);
+    rs
+}
+
+fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+    match msg {
+        OverlayMsg::Remove(key) => {
+            if key != "default" {
+                map.cursors.remove(&key);
+                if let Ok(mut guard) = ARRIVAL_TX.lock() {
+                    if let Some(arrivals) = guard.as_mut() {
+                        arrivals.remove(&key);
+                    }
+                }
+                if map.last_active.as_deref() == Some(key.as_str()) {
+                    map.last_active = None;
+                }
+                map.ended.insert(key);
+            }
+            None
+        }
+        OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
+            if map.ended.contains(&key) {
+                return None;
+            }
+            let template = map.template.clone();
+            let k = key.clone();
+            let rs = map
+                .cursors
+                .entry(key)
+                .or_insert_with(|| render_state_for_key(&template, &k));
+            rs.apply_command(cmd);
+            Some(k)
+        }
+    }
+}
 
 pub fn init(cfg: CursorConfig) {
     let (tx, rx) = std::sync::mpsc::sync_channel(4096);
     let _ = CMD_TX.set(tx);
     *CMD_RX_CELL.lock().unwrap() = Some(rx);
-    *RENDER.lock().unwrap() = Some(RenderState::new(cfg));
+    *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
+    let mut cursors = HashMap::new();
+    cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
+    *RENDER.lock().unwrap() = Some(RenderMap {
+        cursors,
+        scr_w: 1920,
+        scr_h: 1080,
+        template: cfg,
+        ended: HashSet::new(),
+        last_active: None,
+    });
 }
 
 pub fn send_command(cmd: OverlayCommand) {
+    send_command_for("default".to_owned(), cmd);
+}
+
+pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
+    if key.is_empty() {
+        return;
+    }
+    let msg = OverlayMsg::Cmd(KeyedOverlayCommand { key: key.clone(), cmd: cmd.clone() });
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.try_send(cmd);
+        let _ = tx.try_send(msg.clone());
+    }
+    // Also forward to the native-Wayland layer-shell overlay when Wayland
+    // is opted in. The wayland overlay's `forward` is a no-op when its
+    // owner thread isn't started yet (which is the normal X11-only case).
+    if crate::wayland::is_wayland() {
+        let _ = crate::wayland::overlay::forward(&msg);
+    }
+}
+
+pub fn is_enabled() -> bool {
+    is_enabled_for("default")
+}
+
+pub fn is_enabled_for(key: &str) -> bool {
+    RENDER.lock().ok()
+        .and_then(|g| {
+            g.as_ref().and_then(|m| {
+                m.cursors
+                    .get(key)
+                    .or_else(|| m.cursors.get("default"))
+                    .map(|rs| rs.core.visible)
+            })
+        })
+        .unwrap_or(false)
+}
+
+pub fn current_position() -> (f64, f64) {
+    current_position_for("default")
+}
+
+pub fn current_position_for(key: &str) -> (f64, f64) {
+    RENDER.lock().ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.cursors.get(key)).map(|rs| rs.core.pos))
+        .unwrap_or((-200.0, -200.0))
+}
+
+fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+    const SEED_OFFSET: f64 = 140.0;
+    let mut guard = RENDER.lock().unwrap();
+    let Some(map) = guard.as_mut() else { return false };
+    if map.ended.contains(key) {
+        return false;
+    }
+    let template = map.template.clone();
+    let k = key.clone();
+    let rs = map
+        .cursors
+        .entry(key.clone())
+        .or_insert_with(|| render_state_for_key(&template, &k));
+    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
+        return false;
+    }
+    let max_x = map.scr_w.max(2) as f64 - 2.0;
+    let max_y = map.scr_h.max(2) as f64 - 2.0;
+    let mut sx = (target_x - SEED_OFFSET).clamp(2.0, max_x);
+    let mut sy = (target_y - SEED_OFFSET).clamp(2.0, max_y);
+    if (sx - target_x).abs() < 8.0 && (sy - target_y).abs() < 8.0 {
+        sx = (target_x + SEED_OFFSET).clamp(2.0, max_x);
+        sy = (target_y + SEED_OFFSET).clamp(2.0, max_y);
+    }
+    rs.core.pos = (sx, sy);
+    true
+}
+
+pub async fn animate_cursor_to(x: f64, y: f64) {
+    animate_cursor_to_for("default".to_owned(), x, y).await;
+}
+
+pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
+    if key.is_empty() {
+        return;
+    }
+    seed_start_if_sentinel(&key, x, y);
+    let should_animate = {
+        let guard = RENDER.lock().unwrap();
+        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
+            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
+            _ => false,
+        }
+    };
+    if !should_animate {
+        return;
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    arrival_register(key.clone(), tx);
+
+    send_command_for(key, OverlayCommand::MoveTo {
+        x,
+        y,
+        end_heading_radians: std::f64::consts::FRAC_PI_4,
+    });
+
+    let _ = rx.await;
+}
+
+pub fn remove_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Remove(key));
     }
 }
 
@@ -53,7 +245,7 @@ pub fn run_on_thread() {
     let cfg = {
         let guard = RENDER.lock().unwrap();
         match &*guard {
-            Some(rs) => rs.core.cfg.clone(),
+            Some(map) => map.template.clone(),
             None => return,
         }
     };
@@ -61,6 +253,17 @@ pub fn run_on_thread() {
     if !cfg.enabled {
         return;
     }
+
+    // Wayland layer-shell overlay is started LAZILY on the first
+    // send_command_for() that targets a Wayland session (see the
+    // wayland::overlay::forward() path). Starting it eagerly here added
+    // ~100-300ms to cua-driver mcp startup — enough to push the CI
+    // `cursor-click-gif` test (20s budget for the full launch_app →
+    // click → type sequence) over its limit, intermittently. The
+    // forward() path's own ensure_started() OnceLock guarantees the
+    // thread spins up on demand without losing any commands (the
+    // first send_command_for that triggers it spawns the thread,
+    // future commands reuse it).
 
     std::thread::Builder::new()
         .name("cua-overlay-x11".into())
@@ -78,22 +281,17 @@ pub fn run_on_thread() {
 
 struct RenderState {
     core: RenderStateCore,
-    /// X11 screen dimensions in pixels (populated after XOpenDisplay).
-    scr_w: u32,
-    scr_h: u32,
 }
 
 impl RenderState {
     fn new(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
-            scr_w: 1920,
-            scr_h: 1080,
         }
     }
 
-    fn tick(&mut self, dt: f64) {
-        self.core.tick_motion(dt);
+    fn tick(&mut self, dt: f64) -> bool {
+        self.core.tick_motion(dt)
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
@@ -110,14 +308,14 @@ impl RenderState {
 // ── X11 thread ────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCommand>) {
+fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
     use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
-    use x11rb::protocol::xproto::ConnectionExt as _;
-    use x11rb::protocol::shape::*;
-    use x11rb::protocol::shape::ConnectionExt as _;
-    use x11rb::wrapper::ConnectionExt as _;
-    use x11rb::COPY_FROM_PARENT;
+    use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
+    use x11rb::protocol::xproto::{
+        AtomEnum, ColormapAlloc, CreateWindowAux, EventMask, PropMode, WindowClass,
+    };
+    use x11rb::protocol::xproto::ConnectionExt as XprotoConnectionExt;
+    use x11rb::wrapper::ConnectionExt as WrapperConnectionExt;
 
     // Connect to X11.
     let (conn, screen_num) = match x11rb::connect(None) {
@@ -136,9 +334,9 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     // Update render state with screen size.
     {
         let mut guard = RENDER.lock().unwrap();
-        if let Some(rs) = guard.as_mut() {
-            rs.scr_w = scr_w;
-            rs.scr_h = scr_h;
+        if let Some(map) = guard.as_mut() {
+            map.scr_w = scr_w;
+            map.scr_h = scr_h;
         }
     }
 
@@ -188,17 +386,17 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
     ).ok();
 
     // Make the window fully click-through using the Shape extension (empty input region).
-    // This is the X11 equivalent of WS_EX_TRANSPARENT on Windows.
-    let empty_region_pixmap = conn.generate_id().unwrap();
-    conn.create_pixmap(1, empty_region_pixmap, root, 1, 1).ok();
-    conn.shape_mask(
-        x11rb::protocol::shape::SO::SET,
-        x11rb::protocol::shape::SK::INPUT,
+    // This is the X11 equivalent of WS_EX_TRANSPARENT on Windows. Note that
+    // ShapeMask with a None pixmap would *reset* the input shape to the full
+    // window — an empty rectangle list is how an empty region is expressed.
+    conn.shape_rectangles(
+        SO::SET,
+        SK::INPUT,
+        x11rb::protocol::xproto::ClipOrdering::UNSORTED,
         win,
         0, 0,
-        x11rb::NONE,
+        &[],
     ).ok();
-    conn.free_pixmap(empty_region_pixmap).ok();
 
     conn.map_window(win).ok();
     conn.flush().ok();
@@ -215,27 +413,47 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
         last_tick = now;
 
         // Drain commands and tick.
-        {
+        let (arrived, pinned_wid) = {
             let mut guard = RENDER.lock().unwrap();
-            if let Some(rs) = guard.as_mut() {
-                while let Ok(cmd) = rx.try_recv() {
-                    rs.apply_command(cmd);
+            if let Some(map) = guard.as_mut() {
+                while let Ok(msg) = rx.try_recv() {
+                    if let Some(key) = apply_msg(map, msg) {
+                        map.last_active = Some(key);
+                    }
                 }
-                rs.tick(dt);
+                let mut arrived = Vec::new();
+                for (key, rs) in map.cursors.iter_mut() {
+                    if rs.tick(dt) {
+                        arrived.push(key.clone());
+                    }
+                }
+                let pinned_wid = map
+                    .last_active
+                    .as_ref()
+                    .and_then(|key| map.cursors.get(key))
+                    .and_then(|rs| rs.core.pinned_wid);
+                (arrived, pinned_wid)
+            } else {
+                (Vec::new(), None)
             }
-        }
+        };
 
         // Render and paint.
         let pixmap = {
             let guard = RENDER.lock().unwrap();
-            guard.as_ref().map(|rs| {
-                cursor_overlay::render_frame(
-                    &rs.core,
-                    rs.scr_w.max(1),
-                    rs.scr_h.max(1),
-                    0.0, 0.0, // Linux uses screen-local coords (no origin offset)
-                    None,     // focus-rect is macOS-only
-                )
+            guard.as_ref().map(|map| {
+                let mut pm = tiny_skia::Pixmap::new(map.scr_w.max(1), map.scr_h.max(1))
+                    .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                for rs in map.cursors.values() {
+                    // TODO: thread X11/Wayland scale-factor here so cursors
+                    // render at native resolution on HiDPI Linux displays
+                    // (`XRRGetCrtcInfo` reports per-output DPI; the GNOME
+                    // scale-factor setting is exposed via the screen-scaling
+                    // protocol). For now we default to 1.0 — preserves
+                    // pre-retina-fix behaviour on Linux.
+                    cursor_overlay::paint_cursor(&mut pm, &rs.core, 0.0, 0.0, None, 1.0);
+                }
+                pm
             })
         };
 
@@ -243,15 +461,15 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayCo
             paint_x11(&conn, win, scr_w, scr_h, depth, visual_id, &pm);
         }
 
+        for key in &arrived {
+            arrival_fire(key);
+        }
+
         // Z-order maintenance every 80ms — delegate to the cross-platform
         // ZOrderEnforcer so the contract for "z+1 of the application under
         // test" is documented once in `cursor_overlay::z_order`.
         if last_ztick.elapsed() >= Duration::from_millis(80) {
             last_ztick = Instant::now();
-            let pinned_wid = {
-                let guard = RENDER.lock().unwrap();
-                guard.as_ref().and_then(|rs| rs.core.pinned_wid)
-            };
             z_enforcer.reassert(pinned_wid);
         }
 
@@ -281,8 +499,7 @@ struct X11ZOrderEnforcer<'a, C: x11rb::connection::Connection> {
 #[cfg(target_os = "linux")]
 impl<'a, C: x11rb::connection::Connection> ZOrderEnforcer for X11ZOrderEnforcer<'a, C> {
     fn reassert(&self, target: Option<u64>) {
-        use x11rb::protocol::xproto::*;
-        use x11rb::protocol::xproto::ConnectionExt as _;
+        use x11rb::protocol::xproto::{ConfigureWindowAux, ConnectionExt as XprotoConnectionExt, StackMode};
 
         // Per the ZOrderEnforcer trait contract, a stale `target` (window
         // gone) should fall back to the `None` behavior — top of the
@@ -345,8 +562,7 @@ fn paint_x11(
     _visual_id: u32,
     pm: &tiny_skia::Pixmap,
 ) {
-    use x11rb::protocol::xproto::*;
-    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::protocol::xproto::{ConnectionExt as XprotoConnectionExt, CreateGCAux, ImageFormat};
     if pm.width() == 0 || pm.height() == 0 { return; }
 
     // Create a GC for the window if we don't have one.
@@ -385,4 +601,4 @@ fn paint_x11(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<OverlayCommand>) {}
+fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<OverlayMsg>) {}

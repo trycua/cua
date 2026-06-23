@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["legacy-app", "orchestrator"]
+
+[profile.release]
+opt-level = 2

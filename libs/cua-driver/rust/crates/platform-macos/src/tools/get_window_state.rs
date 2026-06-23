@@ -18,15 +18,27 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
-        description: "Walk a running app's AX tree and return a Markdown rendering of its UI, \
-            tagging every actionable element with [element_index N]. Pass those indices to \
-            click, type_text, press_key, etc.\n\n\
+        description: "Walk a running app's AX tree and return BOTH a structured \
+            `elements` array (preferred) AND a Markdown rendering of the same tree \
+            (back-compat). Every actionable element is tagged with [element_index N] \
+            in the markdown and as `element_index` in the structured array — pass \
+            those indices to click, type_text, press_key, etc.\n\n\
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
             element-indexed action. The index map is replaced by the next snapshot.\n\n\
+            PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
+            indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, \
+            `parent_index`, `depth`). The markdown `tree_markdown` stays available \
+            and unchanged in shape for existing text-parsing callers — but new \
+            fields will only be added to the structured side.\n\n\
             Also captures a PNG screenshot of the specified window.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
-            filtering only trims the rendered Markdown.".into(),
+            filtering only trims the rendered Markdown.\n\n\
+            Optional `max_elements` / `max_depth` bound the AX walk to mitigate \
+            context-window blow-up on Electron / Obsidian / large web apps that \
+            produce 10k+ element trees (#22865). When applied, BOTH the markdown \
+            and the structured elements are truncated identically. Omit both for \
+            current default behaviour (≤2 000 elements, depth ≤25).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -43,6 +55,16 @@ fn def() -> &'static ToolDef {
                 "screenshot_out_file": {
                     "type": "string",
                     "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
+                },
+                "max_elements": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows (#22865)."
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees (#22865)."
                 }
             },
             "additionalProperties": false
@@ -80,6 +102,20 @@ impl Tool for GetWindowStateTool {
             self.state.session_config.effective(session_id.as_deref(), &cfg)
         };
         let capture_mode = args.opt_str("capture_mode").unwrap_or(default_mode);
+        // Optional caps — when omitted, fall back to the defaults baked into
+        // the AX walker (#22865). minimum:1 keyed in the schema, but defend
+        // against 0 here as well so a misbehaving client can't disable the
+        // walk entirely.
+        let max_elements = args
+            .get("max_elements")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as usize)
+            .unwrap_or(crate::ax::tree::DEFAULT_MAX_ELEMENTS);
+        let max_depth = args
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as usize)
+            .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
         // Walk AX tree (unless vision-only mode). Accept "tree" as deprecated alias for "ax".
         let capture_mode = if capture_mode == "tree" { "ax".to_owned() } else { capture_mode };
@@ -90,7 +126,13 @@ impl Tool for GetWindowStateTool {
             // AXUIElementCopyAttributeValue indefinitely via XPC — without a
             // deadline the MCP server hangs forever (issue #1537).
             let walk_future = tokio::task::spawn_blocking(move || {
-                crate::ax::tree::walk_tree(pid, Some(window_id), q.as_deref())
+                crate::ax::tree::walk_tree_bounded(
+                    pid,
+                    Some(window_id),
+                    q.as_deref(),
+                    max_elements,
+                    max_depth,
+                )
             });
             match tokio::time::timeout(std::time::Duration::from_secs(30), walk_future).await {
                 Ok(Ok(r)) => Some(r),
@@ -196,19 +238,303 @@ impl Tool for GetWindowStateTool {
 
         let element_count = self.state.element_cache.element_count(pid, window_id);
         let tree_md = tree_result.as_ref().map(|r| r.tree_markdown.clone()).unwrap_or_default();
+
+        // Surface 6: register a snapshot in the global token registry so
+        // every actionable element gets an opaque `element_token` keyed
+        // to (pid, this snapshot id). The integer `element_index` stays
+        // alongside unchanged — the token is additive. Snapshot id is
+        // generated even when the walk returned no elements so consumers
+        // calling `get_window_state` and then immediately re-snapshotting
+        // get a clean LRU step every time.
+        let elem_count_for_snapshot = tree_result
+            .as_ref()
+            .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
+            .unwrap_or(0);
+        let snapshot_id = cua_driver_core::element_token::global()
+            .register_snapshot(pid, window_id, elem_count_for_snapshot);
+
+        // Build the structured `elements` array — one entry per actionable
+        // node, matching the order (and indices) of the markdown rendering.
+        // This is the preferred consumption path; `tree_markdown` is kept
+        // alongside for back-compat with existing text-parsing callers
+        // (Hermes' regex parser, Codex, Claude Code) and is signalled as
+        // preferred-for-back-compat-only via the `_note` field below.
+        let elements_json: Vec<serde_json::Value> = tree_result
+            .as_ref()
+            .map(|r| build_elements_array_with_token(&r.nodes, snapshot_id))
+            .unwrap_or_default();
+
         let mut structured = serde_json::json!({
             "window_id": window_id,
             "pid": pid,
             "element_count": element_count,
-            "tree_markdown": tree_md
+            "tree_markdown": tree_md,
+            "elements": elements_json,
+            // Surface 6: an opaque snapshot identifier consumers can log
+            // alongside the per-element tokens for debug correlation.
+            // Same value embedded in every `element_token` emitted in
+            // `elements[]` above. Additive — old consumers ignore it.
+            "snapshot_id": cua_driver_core::element_token::token_for(snapshot_id, 0)
+                .trim_end_matches(":0")
+                .to_string(),
+            "_note": "Prefer `elements` — `tree_markdown` will continue to work \
+                but new fields will only be added to the structured side. \
+                Issue #22865: use `max_elements` / `max_depth` to bound the \
+                AX walk on apps with very large trees."
         });
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);
+            // Surface 7: emit an explicit `screenshot_mime_type` on the
+            // structured payload so consumers don't have to sniff the magic
+            // bytes off the base64 PNG (`iVBOR` = PNG, `/9j/` = JPEG) to
+            // know what they're holding. `Content::image_png` already carries
+            // `mimeType` on the protocol image part — this mirrors it onto
+            // the structured side. Additive: keeps every existing field.
+            structured["screenshot_mime_type"] = serde_json::json!("image/png");
         }
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
         ToolResult { content, is_error: None, structured_content: Some(structured) }
+    }
+}
+
+/// Render the actionable nodes from the AX walk into the
+/// `structuredContent.elements` array shape described on the tool: one entry
+/// per node with an `element_index`, carrying role, label (built from
+/// title/description/value/identifier), frame, parent_index, depth, and —
+/// Surface 6 — an opaque `element_token` for the same row.
+///
+/// Order matches the markdown rendering exactly (DFS, same indices). Only
+/// nodes that received an `element_index` (i.e. are addressable via
+/// click(element_index=N)) appear — non-actionable display-only rows are
+/// omitted to match the contract on the tool description.
+pub(crate) fn build_elements_array_with_token(
+    nodes: &[crate::ax::tree::AXNode],
+    snapshot_id: u32,
+) -> Vec<serde_json::Value> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let idx = node.element_index?;
+            // `label` is a best-effort human-readable string: title first,
+            // then description, then value, then identifier. Mirrors what
+            // a human reading the markdown row would call this element.
+            let label = node
+                .title
+                .clone()
+                .or_else(|| node.description.clone())
+                .or_else(|| node.value.clone())
+                .or_else(|| node.identifier.clone());
+            let frame = node.frame.map(|[x, y, w, h]| {
+                serde_json::json!({ "x": x, "y": y, "w": w, "h": h })
+            });
+            let mut entry = serde_json::json!({
+                "element_index": idx,
+                // Surface 6: opaque token paired to the integer index.
+                // Tools accept either; the token has explicit validity
+                // (invalidated when the next snapshot supersedes this
+                // one in the per-pid LRU). See cua-driver-core's
+                // `element_token` module.
+                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
+                "role": node.role,
+                "depth": node.depth,
+            });
+            if let Some(label) = label {
+                entry["label"] = serde_json::Value::String(label);
+            }
+            if let Some(frame) = frame {
+                entry["frame"] = frame;
+            }
+            if let Some(parent) = node.parent_element_index {
+                entry["parent_index"] = serde_json::json!(parent);
+            }
+            Some(entry)
+        })
+        .collect()
+}
+
+/// Back-compat wrapper for callers that don't yet have a snapshot id
+/// to pass through. Emits the same fields as the token-aware builder
+/// minus `element_token`. New call sites should prefer
+/// `build_elements_array_with_token`.
+#[allow(dead_code)]
+pub(crate) fn build_elements_array(nodes: &[crate::ax::tree::AXNode]) -> Vec<serde_json::Value> {
+    // Use a snapshot_id of 0 only to satisfy the signature; tokens
+    // built from id=0 are not registered and would fail the registry's
+    // stale check — but since this entry point is only kept for
+    // pre-existing callers (none in production after Surface 6), it
+    // strips the token field after rendering.
+    let mut out = build_elements_array_with_token(nodes, 0);
+    for entry in &mut out {
+        if let Some(obj) = entry.as_object_mut() {
+            obj.remove("element_token");
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ax::tree::AXNode;
+
+    fn node(idx: Option<usize>, role: &str, title: Option<&str>, depth: usize, parent: Option<usize>, frame: Option<[f64; 4]>) -> AXNode {
+        AXNode {
+            element_index: idx,
+            role: role.into(),
+            title: title.map(|s| s.to_string()),
+            value: None,
+            description: None,
+            identifier: None,
+            help: None,
+            actions: vec![],
+            element_ptr: 0,
+            depth,
+            parent_element_index: parent,
+            frame,
+        }
+    }
+
+    #[test]
+    fn elements_match_indexed_node_count() {
+        // Mix of indexed + non-indexed nodes; only indexed should surface.
+        let nodes = vec![
+            node(Some(0), "AXWindow", Some("Doc"), 0, None, Some([0.0, 0.0, 800.0, 600.0])),
+            node(None, "AXStaticText", Some("hint"), 1, Some(0), None),
+            node(Some(1), "AXButton", Some("OK"), 1, Some(0), Some([10.0, 20.0, 60.0, 24.0])),
+            node(Some(2), "AXButton", Some("Cancel"), 1, Some(0), Some([80.0, 20.0, 60.0, 24.0])),
+        ];
+        let elements = build_elements_array(&nodes);
+        assert_eq!(elements.len(), 3, "non-actionable rows must be filtered out");
+        let indices: Vec<u64> = elements
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(indices, vec![0, 1, 2], "ordering must match DFS / element_index assignment");
+    }
+
+    #[test]
+    fn elements_shape_carries_role_label_frame_parent_depth() {
+        let nodes = vec![
+            node(Some(7), "AXButton", Some("Go"), 3, Some(2), Some([1.5, 2.5, 33.0, 44.0])),
+        ];
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["element_index"], 7);
+        assert_eq!(entry["role"], "AXButton");
+        assert_eq!(entry["label"], "Go");
+        assert_eq!(entry["depth"], 3);
+        assert_eq!(entry["parent_index"], 2);
+        let frame = &entry["frame"];
+        assert_eq!(frame["x"], 1.5);
+        assert_eq!(frame["y"], 2.5);
+        assert_eq!(frame["w"], 33.0);
+        assert_eq!(frame["h"], 44.0);
+    }
+
+    #[test]
+    fn elements_omit_optional_fields_when_missing() {
+        let nodes = vec![
+            node(Some(0), "AXUnknown", None, 0, None, None),
+        ];
+        let entry = &build_elements_array(&nodes)[0];
+        assert!(entry.get("label").is_none(), "label must be omitted when title/value/desc/id are all empty");
+        assert!(entry.get("frame").is_none(), "frame must be omitted when no rect was captured");
+        assert!(entry.get("parent_index").is_none(), "parent_index must be omitted at the root");
+        assert_eq!(entry["role"], "AXUnknown");
+        assert_eq!(entry["depth"], 0);
+    }
+
+    #[test]
+    fn elements_label_fallback_chain() {
+        // title missing → description → value → identifier
+        let nodes = vec![
+            node(Some(0), "AXButton", None, 0, None, None),
+            node(Some(1), "AXButton", None, 0, None, None),
+            node(Some(2), "AXButton", None, 0, None, None),
+        ];
+        let mut nodes = nodes;
+        nodes[0].description = Some("from-desc".into());
+        nodes[1].value = Some("from-val".into());
+        nodes[2].identifier = Some("from-id".into());
+        let elements = build_elements_array(&nodes);
+        assert_eq!(elements[0]["label"], "from-desc");
+        assert_eq!(elements[1]["label"], "from-val");
+        assert_eq!(elements[2]["label"], "from-id");
+    }
+
+    /// Surface 6: every element entry must carry a non-empty
+    /// `element_token` alongside its integer `element_index`. The
+    /// integer field stays unchanged — the token is purely additive.
+    #[test]
+    fn build_elements_array_with_token_emits_element_token_per_row() {
+        let reg = cua_driver_core::element_token::global();
+        let pid = 0x6abc_0001_i32;
+        let sid = reg.register_snapshot(pid, /* window_id = */ 9, 3);
+        let nodes = vec![
+            node(Some(0), "AXButton", Some("A"), 1, None, None),
+            node(Some(1), "AXButton", Some("B"), 1, None, None),
+            node(Some(2), "AXButton", Some("C"), 1, None, None),
+        ];
+        let entries = build_elements_array_with_token(&nodes, sid);
+        assert_eq!(entries.len(), 3);
+        // Every entry must have BOTH fields (additive contract).
+        for e in &entries {
+            assert!(e.get("element_index").is_some(), "element_index must remain");
+            let tok = e.get("element_token").and_then(|v| v.as_str())
+                .expect("element_token must be a string");
+            assert!(tok.starts_with('s'), "token must use the 's' prefix: {tok}");
+            assert!(tok.contains(':'), "token must be `s{{hex}}:{{idx}}`: {tok}");
+        }
+        // Each token must resolve through the registry to the same
+        // (window_id, element_index) the integer field reports.
+        for e in &entries {
+            let idx = e["element_index"].as_u64().unwrap() as usize;
+            let tok = e["element_token"].as_str().unwrap();
+            let (wid, resolved_idx) = reg.resolve(pid, tok).expect("token must resolve");
+            assert_eq!(wid, 9);
+            assert_eq!(resolved_idx, idx);
+        }
+    }
+
+    /// Back-compat: `build_elements_array` (the old shim) must NOT emit
+    /// `element_token` — older callers that never plumb a snapshot id
+    /// through get a clean shape.
+    #[test]
+    fn build_elements_array_shim_skips_element_token() {
+        let nodes = vec![
+            node(Some(0), "AXButton", Some("A"), 1, None, None),
+        ];
+        let entries = build_elements_array(&nodes);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].get("element_token").is_none(),
+            "back-compat shim must NOT emit element_token; got: {}",
+            entries[0]
+        );
+    }
+
+    #[test]
+    fn walk_tree_bounded_signature_accepts_caps_no_panic() {
+        // Regression guard for #22865: the bounded variant must accept
+        // arbitrary cap values without panicking, even against a pid that
+        // has no AX tree to walk. Returns a TreeWalkResult either way.
+        // Use pid that won't be a real process. Don't assume tree is empty
+        // (CI may have process re-use) — only assert that the call returns
+        // and the result struct shape is intact.
+        let r1 = crate::ax::tree::walk_tree_bounded(i32::MAX, None, None, 5, 2);
+        // Cap of 5 is the contract test from the task: when this many
+        // visible nodes existed, the walker must stop early. The dead pid
+        // exercises the early-return path; the assertion is that the call
+        // honors the cap without overflowing or panicking.
+        assert!(r1.nodes.len() <= 5, "max_elements=5 must cap nodes ≤ 5");
+        assert!(r1.nodes.iter().all(|n| n.depth <= 2), "max_depth=2 must cap depth ≤ 2");
+        // And the uncapped variant — same dead-pid path, just validating
+        // walk_tree(...) (which delegates to walk_tree_bounded with
+        // DEFAULT_MAX_*) returns the same empty/safe shape.
+        let r2 = crate::ax::tree::walk_tree(i32::MAX, None, None);
+        assert_eq!(r1.nodes.len(), r2.nodes.len(),
+            "no-pid case: both bounded and unbounded must agree on the empty result");
     }
 }

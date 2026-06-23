@@ -29,6 +29,8 @@ pub mod focus_guard;
 #[cfg(target_os = "macos")]
 pub mod window_change_detector;
 #[cfg(target_os = "macos")]
+pub mod terminal;
+#[cfg(target_os = "macos")]
 pub mod tools;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;

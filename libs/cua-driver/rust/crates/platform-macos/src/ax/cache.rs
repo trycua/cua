@@ -156,6 +156,9 @@ mod tests {
             help: None,
             actions: Vec::new(),
             element_ptr: ptr,
+            depth: 0,
+            parent_element_index: None,
+            frame: None,
         }
     }
 

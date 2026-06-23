@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-b7e51b92-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Design a dual-rail schematic using an LM358 configured as an inverting amplifier with a 10x gain and a grounded buffer. Connect the non-inverting input of the first stage to ground via a 1kΩ resistor (R1), apply the input signal through a 1kΩ resistor (R3) to the inverting input, and place a 10kΩ feedback resistor (R2) between the output and inverting input. For the second stage, create a unity-gain buffer by shorting the output to the inverting input while grounding the non-inverting input, and ensure the entire IC is powered at ±15V."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

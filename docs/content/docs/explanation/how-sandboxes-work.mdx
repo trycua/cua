@@ -1,0 +1,64 @@
+---
+title: "How sandboxes work"
+description: "How a Cua Sandbox gives an agent one isolated computer it can both run code in and drive through the GUI."
+---
+
+A Cua Sandbox is a **full, isolated computer**, not a remote desktop session. In that one machine, an agent can run code through Python, shell commands, or a PTY, and it can also drive the graphical interface through screenshots, the accessibility tree, clicks, and typing.
+
+Those are two complementary halves of the same computer. The code half and the GUI half share one filesystem, one set of processes, and one OS state. The value is that they live in the same place. An agent can click through an app and then run a Python function against the files or process state that app produced. It can also set up state in code and then automate the UI over that state.
+
+## Sandboxes and real machines
+
+Cua Driver operates a real machine you already have. It can observe and control that machine, so its actions happen in the same desktop environment you use.
+
+A sandbox is different. It is a disposable machine created for a task. It starts from a known state, accumulates state only while it lives, and can be deleted without consequence. Actions inside a sandbox affect only that sandbox. They do not move the host mouse, change host files, or touch other sandboxes.
+
+This isolation is what makes a sandbox useful for repeatable agent work. The agent gets a whole computer, but the effects are contained within that computer.
+
+## The code half and the GUI half
+
+The *code half* is how an agent runs programs inside the sandbox. It includes shell commands through `shell.run`, an interactive PTY or terminal through `computer.pty` and `cua do shell`, and sandboxed Python that runs a function inside the sandbox's own virtualenv through `venv_install`, `venv_exec`, and the `@sandboxed` decorator.
+
+The *GUI half* is how an agent uses the sandbox like a desktop computer. It can observe the screen through screenshots and the accessibility tree, then act through clicks, typing, scrolling, keypresses, and other input events.
+
+Because both halves are interfaces to the same machine, they can be mixed within one task. A shell command can create a file that is opened in the GUI. A GUI workflow can download data that is then inspected with Python. A PTY session can start a server, and the GUI half can open a browser against it. The important point is that all of these actions share the same filesystem and OS state.
+
+## Containers and full VMs
+
+A Linux container sandbox starts quickly because it shares the host kernel. It layers a Linux userspace, a desktop such as XFCE, and a remote display stack such as KasmWeb. This makes startup fast, but it is not identical to a physical Linux box. Kernel behavior, device access, and isolation come from the container host.
+
+A full VM emulates hardware and boots its own kernel. macOS sandboxes use Apple Virtualization. Windows sandboxes use QEMU or Hyper-V. Android sandboxes use QEMU. Full VMs are slower to start than containers, but they provide higher OS fidelity because the guest OS owns its kernel and hardware model.
+
+The trade-off is startup latency versus OS fidelity. Containers are suited to fast Linux environments. Full VMs are suited to work that depends on the behavior of a complete guest operating system.
+
+## Images as starting-state contracts
+
+An `Image` is the **immutable** description of the sandbox's starting environment. It is not the running sandbox. An `Image` defines the OS type, distro or OS version, packages, environment variables, copied files, and setup commands that should exist when a sandbox starts.
+
+The image builder composes layers such as `apt_install`, `pip_install`, `run`, `copy`, and `env`. Those layers are applied once at launch to produce the sandbox's initial state. Installing another package later changes that sandbox, not the Image.
+
+This separation makes environments reproducible. The `Image` describes what a fresh sandbox should look like. The sandbox is the live machine created from that description.
+
+## Lifecycle patterns
+
+Sandbox lifetime is separate from agent connection lifetime. An ephemeral sandbox exists for one block of work and is destroyed at the end. This fits CI jobs, tests, and one-shot tasks where the state has no value afterward.
+
+A persistent or named sandbox is created once, identified by name, and can survive process exits. A later process can reconnect to the same sandbox and continue from the state it already has.
+
+Connect mode attaches to an already-running sandbox. It does not create a sandbox and it does not delete one. Disconnecting drops the control connection. Deleting destroys the machine and its state. Those are different operations, and the distinction matters when the sandbox contains work that should survive the current process.
+
+## Snapshots and forks
+
+A *snapshot* captures the disk state of a running sandbox and returns a new `Image`. That `Image` can start any number of fresh sandboxes from the captured point.
+
+Snapshots are useful when setup is expensive. Packages can be installed once, models can be downloaded once, and data can be prepared once. After the snapshot is created, new sandboxes can start from that prepared state instead of repeating the setup work.
+
+Each *fork* starts from the same snapshot but gets its own writable disk. Changes in one fork do not affect the snapshot or sibling forks. On copy-on-write storage, forks can be near-instant because unchanged blocks are shared until a sandbox writes to them.
+
+## Cloud and local execution
+
+The same lifecycle concepts apply in local mode and cloud mode. The sandbox still starts from an `Image`, exposes a code half and a GUI half, can be ephemeral or persistent, and can be snapshotted or deleted.
+
+Local mode runs on the developer's hardware. Linux containers use Docker Desktop, macOS VMs use Lume, and VM backends can use QEMU. Local execution depends on the machine's available CPU, memory, disk, and virtualization support. Local mode is selected with `local=True`.
+
+Cloud mode runs managed VMs on Cua infrastructure with the same API surface. Provisioning, placement, and capacity are handled by the service. Cloud mode uses a Cua API key through `CUA_API_KEY`.

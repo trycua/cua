@@ -31,4 +31,21 @@ fn main() {
         println!("cargo:rustc-link-search={sdk_root}/usr/lib/system");
         println!("cargo:rustc-link-search={sdk_root}/usr/lib");
     }
+
+    // The ScreenCaptureKit bindings pull in Swift runtime libraries such as
+    // libswift_Concurrency.dylib. The cua-driver binary emits these rpaths in
+    // its own build.rs, but platform-macos' unit-test binary is linked from
+    // this package, so it needs the same runtime search paths here.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+    if let Ok(out) = std::process::Command::new("xcode-select").arg("-p").output() {
+        if out.status.success() {
+            let xcode_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            for sub in [
+                "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx",
+                "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx",
+            ] {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{xcode_path}/{sub}");
+            }
+        }
+    }
 }

@@ -1409,6 +1409,17 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    // Scratch keycode: keycode 8 is the lowest X11 keycode and is not bound to
+    // any physical key on standard layouts. We temporarily remap it to a Unicode
+    // keysym for characters that have no physical keycode (e.g. CJK U+4E00+).
+    // The original binding is saved and restored after each such character.
+    const SCRATCH_KC: u8 = 8;
+    let per = mapping.keysyms_per_keycode as usize;
+    let original_scratch: Vec<u32> = if per > 0 {
+        mapping.keysyms[..per].to_vec()
+    } else {
+        vec![]
+    };
 
     for ch in text.chars() {
         // Resolve the keycode and whether Shift must be held — without it,
@@ -1417,11 +1428,29 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, ch as u32) else {
             continue;
         };
+
+        // keycode==0 is the sentinel from char_to_keycode_shift meaning
+        // "no physical key, use Unicode keysym via scratch remap."
+        let effective_kc = if keycode == 0 {
+            let unicode_keysym = 0x0100_0000u32 | (ch as u32);
+            // Build the new mapping for the scratch keycode: keysym in slot 0,
+            // fill remaining slots with NoSymbol (0).
+            let mut new_syms = vec![0u32; per.max(2)];
+            new_syms[0] = unicode_keysym;
+            conn.change_keyboard_mapping(1, SCRATCH_KC, per.max(2) as u8, &new_syms)?;
+            conn.flush()?;
+            // Small delay for the X server to process the mapping change.
+            sleep(Duration::from_millis(10));
+            SCRATCH_KC
+        } else {
+            keycode
+        };
+
         let state = if needs_shift { KeyButMask::SHIFT } else { KeyButMask::from(0u16) };
 
         let press = KeyPressEvent {
             response_type: KEY_PRESS_EVENT,
-            detail: keycode,
+            detail: effective_kc,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
             root, event: window, child: x11rb::NONE,
@@ -1431,7 +1460,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         };
         let release = KeyReleaseEvent {
             response_type: KEY_RELEASE_EVENT,
-            detail: keycode,
+            detail: effective_kc,
             sequence: 0,
             time: x11rb::CURRENT_TIME,
             root, event: window, child: x11rb::NONE,
@@ -1444,6 +1473,13 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         sleep(Duration::from_millis(KEY_DELAY_MS));
         conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
         conn.flush()?;
+
+        // Restore the scratch keycode mapping after a Unicode remap.
+        if keycode == 0 && !original_scratch.is_empty() {
+            conn.change_keyboard_mapping(1, SCRATCH_KC, original_scratch.len() as u8, &original_scratch)?;
+            conn.flush()?;
+        }
+
         if inter_char_ms > 0 {
             sleep(Duration::from_millis(inter_char_ms));
         }
@@ -1541,6 +1577,12 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
 /// keysym sits in the shifted column of the keyboard map). Prefers the
 /// unshifted column when a keysym appears in both. Keysym for ASCII / Latin-1
 /// is just the codepoint.
+///
+/// For codepoints above U+00FF that have no direct entry in the keyboard map
+/// (which is the common case for CJK characters), returns `Some((0, false))`.
+/// Keycode 0 is a sentinel meaning "no physical key found; the caller must use
+/// the Unicode keysym `0x01000000 | codepoint` via a temporary scratch-keycode
+/// remap". See `send_type_text_with_delay` for how this is handled.
 fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Option<(u8, bool)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
@@ -1553,6 +1595,13 @@ fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Opti
         if per > 1 && syms.get(1) == Some(&keysym) {
             return Some(((8 + i) as u8, true));
         }
+    }
+    // For codepoints > U+00FF with no keyboard-map entry (covers all CJK
+    // characters, U+4E00+), return the sentinel keycode 0. The caller uses
+    // the X11 Unicode keysym encoding (0x01000000 | codepoint) via a
+    // temporary scratch-keycode remap so the character still arrives.
+    if keysym > 0xFF {
+        return Some((0, false));
     }
     None
 }

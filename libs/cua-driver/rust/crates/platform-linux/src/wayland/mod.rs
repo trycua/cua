@@ -96,6 +96,30 @@ pub fn is_wayland() -> bool {
         && std::env::var_os("DISPLAY").is_none()
 }
 
+/// Reason string when X11 input injection cannot possibly work, so callers
+/// **fail loudly** instead of falling through to an X11 path that no-ops yet
+/// reports success. Triggers only on a *pure* Wayland session — `WAYLAND_DISPLAY`
+/// set, no X11 `DISPLAY` — with the native-Wayland backend NOT opted in (so
+/// [`is_wayland`] is false and the X11 path would be chosen). XWayland sessions
+/// (where `DISPLAY` is set) and X11 sessions return `None` and proceed normally.
+/// See #1921.
+pub fn wayland_input_unavailable_reason() -> Option<String> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none()
+        && !wayland_enabled()
+    {
+        Some(format!(
+            "input cannot be delivered: pure Wayland session (no X11 DISPLAY) and \
+             the native-Wayland input backend is not enabled. Set {}=1 to enable \
+             the Wayland backend (wlroots compositors: sway, labwc, hyprland), or \
+             run the target under XWayland so an X11 DISPLAY is available.",
+            ENABLE_WAYLAND_ENV
+        ))
+    } else {
+        None
+    }
+}
+
 fn wl_sockets(dir: &str) -> std::collections::HashSet<String> {
     std::fs::read_dir(dir)
         .into_iter()

@@ -3611,6 +3611,106 @@ impl Tool for SetValueTool {
     }
 }
 
+
+// ── set_value_verified ───────────────────────────────────────────────────────
+
+pub struct SetValueVerifiedTool { state: Arc<ToolState> }
+
+static SET_VALUE_VERIFIED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn searchable_texts_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for n in nodes {
+        for v in [&n.name, &n.value, &n.automation_id, &n.help_text, &n.class_name] {
+            if let Some(s) = v { if !s.is_empty() { out.push(s.clone()); } }
+        }
+        if !n.control_type.is_empty() { out.push(n.control_type.clone()); }
+    }
+    out
+}
+
+#[async_trait]
+impl Tool for SetValueVerifiedTool {
+    fn def(&self) -> &ToolDef {
+        SET_VALUE_VERIFIED_DEF.get_or_init(|| ToolDef {
+            name: "set_value_verified".into(),
+            description: "Set a UIA value with pre/post accessibility snapshots and expected value/label verification. Reports os_dispatch_success separately from state_changed, verified, expected_change_satisfied, and success.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid","value"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"Target HWND. Required when element_index is used; optional with element_token."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state/find_element."},
+                    "element_token":{"type":"string","description":"Opaque element token from get_window_state/find_element. Preferred over element_index."},
+                    "value":{"type":"string","description":"New value to set through UIA ValuePattern/RangeValuePattern."},
+                    "expected_value":{"type":"string","description":"Verification succeeds only if the post-state contains this value/text substring."},
+                    "expected_label_present":{"type":"string","description":"Verification succeeds only if any post-state searchable element text contains this string."},
+                    "max_elements":{"type":"integer","minimum":1,"description":"Bound pre/post UIA walks. Default 320."},
+                    "max_depth":{"type":"integer","minimum":1,"description":"Bound pre/post UIA depth. Default platform limit."}
+                },"additionalProperties":false
+            }),
+            read_only: false, destructive: true, idempotent: true, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
+        let expected_value = args.opt_str("expected_value").unwrap_or_else(|| value.clone());
+        let expected_label_present = args.opt_str("expected_label_present");
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "set_value_verified",
+        ) { Ok(r) => r, Err(e) => return e };
+        let hwnd = match resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id: Some(wid), .. } => wid as u64,
+            cua_driver_core::element_token::ResolvedElement::Element { window_id: None, .. } => return ToolResult::error("set_value_verified requires window_id when element_index is used without element_token"),
+            cua_driver_core::element_token::ResolvedElement::None => return ToolResult::error("set_value_verified requires element_token or element_index"),
+        };
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(320);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+
+        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
+        let pre_texts = match pre_walk {
+            Ok(tr) => searchable_texts_from_nodes(&tr.nodes),
+            Err(e) => return ToolResult::error(format!("set_value_verified pre-state task failed: {e}")),
+        };
+        let set_result = SetValueTool { state: self.state.clone() }.invoke(args.clone()).await;
+        let os_dispatch_success = !set_result.is_error.unwrap_or(false);
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
+        let post_texts = match post_walk {
+            Ok(tr) => searchable_texts_from_nodes(&tr.nodes),
+            Err(e) => return ToolResult::error(format!("set_value_verified post-state task failed after dispatch_success={os_dispatch_success}: {e}")),
+        };
+        let state_changed = pre_texts != post_texts;
+        let value_ok = labels_contain(&post_texts, &expected_value);
+        let label_ok = expected_label_present.as_deref().map(|needle| labels_contain(&post_texts, needle)).unwrap_or(true);
+        let expected_change_satisfied = value_ok && label_ok;
+        let verified = expected_change_satisfied;
+        let success = os_dispatch_success && verified;
+        let structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "os_dispatch_success": os_dispatch_success,
+            "state_changed": state_changed,
+            "verified": verified,
+            "expected_change_satisfied": expected_change_satisfied,
+            "success": success,
+            "expected_value": expected_value,
+            "expected_label_present": expected_label_present,
+            "pre_text_count": pre_texts.len(),
+            "post_text_count": post_texts.len(),
+            "set_value_is_error": set_result.is_error.unwrap_or(false),
+        });
+        let msg = format!("set_value_verified success={success} os_dispatch_success={os_dispatch_success} state_changed={state_changed} expected_change_satisfied={expected_change_satisfied}");
+        if success { ToolResult::text(msg).with_structured(structured) } else { ToolResult::error(msg).with_structured(structured) }
+    }
+}
+
 // ── scroll ────────────────────────────────────────────────────────────────────
 
 pub struct ScrollTool;
@@ -6065,6 +6165,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool { state: state.clone() }));
+    r.register(Box::new(SetValueVerifiedTool { state: state.clone() }));
     r.register(Box::new(ScrollTool));
     // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
     // — `get_window_state` with `capture_mode:"vision"` is the single
@@ -6451,6 +6552,26 @@ mod find_element_schema_tests {
 }
 
 
+
+
+
+#[cfg(test)]
+mod set_value_verified_schema_tests {
+    #[test]
+    fn registry_advertises_set_value_verified_transaction() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("set_value_verified").expect("set_value_verified registered");
+        assert_eq!(tool.name, "set_value_verified");
+        assert!(!tool.read_only);
+        assert!(tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "element_index", "element_token", "value", "expected_value", "expected_label_present"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["value"]["type"], "string");
+        assert_eq!(props["expected_value"]["type"], "string");
+    }
+}
 
 #[cfg(test)]
 mod click_verified_schema_tests {

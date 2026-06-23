@@ -48,6 +48,7 @@ from ..responses import (
     make_wait_item,
 )
 from ..types import AgentCapability, AgentResponse, Messages, Tools
+from .coordinate_parser import parse_uitars_coordinates
 
 # Constants from reference code
 IMAGE_FACTOR = 28
@@ -303,7 +304,7 @@ def convert_to_computer_actions(
         elif action_type in ["click", "left_single"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = parse_uitars_coordinates(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -312,7 +313,7 @@ def convert_to_computer_actions(
         elif action_type in ["double_click", "left_double"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = parse_uitars_coordinates(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -321,7 +322,7 @@ def convert_to_computer_actions(
         elif action_type in ["right_click", "right_single"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = parse_uitars_coordinates(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -345,7 +346,7 @@ def convert_to_computer_actions(
             direction = action_inputs.get("direction", "down")
 
             if start_box:
-                coords = eval(start_box)
+                coords = parse_uitars_coordinates(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
             else:
@@ -359,8 +360,8 @@ def convert_to_computer_actions(
             end_box = action_inputs.get("end_box")
 
             if start_box and end_box:
-                start_coords = eval(start_box)
-                end_coords = eval(end_box)
+                start_coords = parse_uitars_coordinates(start_box)
+                end_coords = parse_uitars_coordinates(end_box)
 
                 start_x = int((start_coords[0] + start_coords[2]) / 2 * image_width)
                 start_y = int((start_coords[1] + start_coords[3]) / 2 * image_height)

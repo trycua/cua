@@ -81,10 +81,10 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
   }, [message]);
 
   const messageText = useMemo(() => {
-    if (!message) return '';
-    if (typeof message.content === 'string') return message.content;
-    if (Array.isArray(message.content)) {
-      return (message.content as unknown[]).map((part) => {
+    if (!processedMessage) return '';
+    if (typeof processedMessage.content === 'string') return processedMessage.content;
+    if (Array.isArray(processedMessage.content)) {
+      return (processedMessage.content as unknown[]).map((part) => {
         if (typeof part === 'string') return part;
         if (part && typeof part === 'object' && 'text' in part && typeof (part as { text?: unknown }).text === 'string') {
           return (part as { text: string }).text;
@@ -93,7 +93,7 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
       }).join('');
     }
     return '';
-  }, [message]);
+  }, [processedMessage]);
 
   return (
     <div className="copilotkit-assistant-message-wrapper">

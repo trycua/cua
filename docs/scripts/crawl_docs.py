@@ -22,15 +22,18 @@ DELAY_BETWEEN_REQUESTS = 0.5  # seconds
 
 
 class HTMLToMarkdown(HTMLParser):
-    """Small dependency-free HTML-to-Markdown converter for crawled docs pages."""
+    """Small dependency-free HTML-to-Markdown converter for crawled docs pages.
+
+    Extraction is scoped to the page's main content container (``<article>``,
+    falling back to ``<main>``) and site chrome (``nav``/``aside``/``footer``) is
+    dropped, so the crawled corpus is the documentation body rather than the
+    navigation tree that repeats identically on every page.
+    """
 
     block_tags = {
-        "article",
-        "aside",
         "blockquote",
         "br",
         "div",
-        "footer",
         "h1",
         "h2",
         "h3",
@@ -40,7 +43,6 @@ class HTMLToMarkdown(HTMLParser):
         "header",
         "li",
         "main",
-        "nav",
         "ol",
         "p",
         "pre",
@@ -49,18 +51,31 @@ class HTMLToMarkdown(HTMLParser):
         "tr",
         "ul",
     }
+    # Content of these tags is dropped entirely: non-text assets and the site
+    # chrome (sidebar/nav tree, "on this page" aside, footer) that is identical
+    # on every page and would otherwise dominate the embedded corpus.
+    skip_tags = {"script", "style", "svg", "nav", "aside", "footer"}
 
-    def __init__(self) -> None:
+    def __init__(self, scope_tag: str | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.skip_depth = 0
         self.in_pre = False
+        # When set, only emit text while inside this container; None = emit all.
+        self.scope_tag = scope_tag
+        self.scope_depth = 0
+
+    @property
+    def _capturing(self) -> bool:
+        return self.scope_tag is None or self.scope_depth > 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "svg"}:
+        if tag in self.skip_tags:
             self.skip_depth += 1
             return
-        if self.skip_depth:
+        if tag == self.scope_tag:
+            self.scope_depth += 1
+        if self.skip_depth or not self._capturing:
             return
         if tag in self.block_tags:
             self.parts.append("\n")
@@ -73,21 +88,24 @@ class HTMLToMarkdown(HTMLParser):
             self.parts.append("`")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "svg"} and self.skip_depth:
+        if tag in self.skip_tags and self.skip_depth:
             self.skip_depth -= 1
             return
         if self.skip_depth:
             return
-        if tag == "pre":
-            self.in_pre = False
-            self.parts.append("\n```\n")
-        elif tag == "code" and not self.in_pre:
-            self.parts.append("`")
-        if tag in self.block_tags:
-            self.parts.append("\n")
+        if self._capturing:
+            if tag == "pre":
+                self.in_pre = False
+                self.parts.append("\n```\n")
+            elif tag == "code" and not self.in_pre:
+                self.parts.append("`")
+            if tag in self.block_tags:
+                self.parts.append("\n")
+        if tag == self.scope_tag and self.scope_depth:
+            self.scope_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if self.skip_depth:
+        if self.skip_depth or not self._capturing:
             return
         text = data if self.in_pre else re.sub(r"\s+", " ", data)
         if text.strip():
@@ -101,7 +119,15 @@ class HTMLToMarkdown(HTMLParser):
 
 
 def html_to_markdown(page_html: str) -> str:
-    parser = HTMLToMarkdown()
+    # Prefer the main content container so the navigation/sidebar chrome that
+    # repeats on every page does not pollute the crawled corpus; fall back to
+    # the whole document when neither container is present.
+    scope_tag = None
+    for tag in ("article", "main"):
+        if re.search(rf"<{tag}[\s>]", page_html, re.IGNORECASE):
+            scope_tag = tag
+            break
+    parser = HTMLToMarkdown(scope_tag)
     parser.feed(page_html)
     return parser.markdown()
 

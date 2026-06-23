@@ -21,6 +21,11 @@ Install dependencies using uv:
 ```bash
 # From the repository root
 uv sync --group docs-scripts
+
+# crawl_docs.py drives a headless Chromium via Playwright; install the browser
+# binary once (the pip package alone does not include it). The Modal image
+# installs this automatically.
+uv run playwright install chromium
 ```
 
 ## Usage

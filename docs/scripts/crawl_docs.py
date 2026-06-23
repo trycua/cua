@@ -1,15 +1,17 @@
 """
-Comprehensive crawler for cua.ai/docs using crawl4ai
-Recursively crawls all documentation pages and saves content to JSON files
+Comprehensive crawler for cua.ai/docs using Playwright.
+Recursively crawls all documentation pages and saves content to JSON files.
 """
 
 import asyncio
+import html
+from html.parser import HTMLParser
 import json
 import re
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+from playwright.async_api import Browser, async_playwright
 
 # Configuration
 BASE_URL = "https://cua.ai"
@@ -17,6 +19,103 @@ DOCS_URL = f"{BASE_URL}/docs"
 OUTPUT_DIR = Path(__file__).parent.parent / "crawled_data"
 MAX_CONCURRENT = 5  # Limit concurrent requests to be polite
 DELAY_BETWEEN_REQUESTS = 0.5  # seconds
+
+
+class HTMLToMarkdown(HTMLParser):
+    """Small dependency-free HTML-to-Markdown converter for crawled docs pages."""
+
+    block_tags = {
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "div",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tr",
+        "ul",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+        self.in_pre = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "svg"}:
+            self.skip_depth += 1
+            return
+        if self.skip_depth:
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+        if tag == "li":
+            self.parts.append("- ")
+        elif tag == "pre":
+            self.in_pre = True
+            self.parts.append("\n```\n")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "svg"} and self.skip_depth:
+            self.skip_depth -= 1
+            return
+        if self.skip_depth:
+            return
+        if tag == "pre":
+            self.in_pre = False
+            self.parts.append("\n```\n")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+        if tag in self.block_tags:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.skip_depth:
+            return
+        text = data if self.in_pre else re.sub(r"\s+", " ", data)
+        if text.strip():
+            self.parts.append(text)
+
+    def markdown(self) -> str:
+        text = html.unescape("".join(self.parts))
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def html_to_markdown(page_html: str) -> str:
+    parser = HTMLToMarkdown()
+    parser.feed(page_html)
+    return parser.markdown()
+
+
+def extract_metadata(page_html: str, title: str) -> dict[str, str]:
+    description = ""
+    match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']*)["\']',
+        page_html,
+        re.IGNORECASE,
+    )
+    if match:
+        description = html.unescape(match.group(1))
+    return {"title": title, "description": description}
 
 
 class CuaDocsCrawler:
@@ -114,53 +213,54 @@ class CuaDocsCrawler:
             "depth": len(parts),
         }
 
-    async def crawl_page(self, crawler: AsyncWebCrawler, url: str) -> dict | None:
+    async def crawl_page(self, browser: Browser, url: str) -> dict | None:
         """Crawl a single page"""
         async with self.semaphore:
+            page = None
             try:
                 print(f"Crawling: {url}")
 
-                config = CrawlerRunConfig(
-                    word_count_threshold=10,
-                    exclude_external_links=True,
-                )
-
-                result = await crawler.arun(url=url, config=config)
-
-                if result.success:
-                    # Extract new links from the page
-                    new_links = self.extract_links(result.html, url)
-                    for link in new_links:
-                        if link not in self.visited_urls and link not in self.to_visit:
-                            self.to_visit.add(link)
-
-                    path_info = self.extract_path_info(url)
-
-                    page_data = {
-                        "url": url,
-                        "title": result.metadata.get("title", "") if result.metadata else "",
-                        "description": (
-                            result.metadata.get("description", "") if result.metadata else ""
-                        ),
-                        "markdown": result.markdown,
-                        "path_info": path_info,
-                        "links_found": list(new_links),
-                    }
-
-                    # Save individual page
-                    self.save_page(url, page_data)
-
-                    await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
-                    return page_data
-                else:
-                    print(f"Failed to crawl {url}: {result.error_message}")
+                page = await browser.new_page()
+                response = await page.goto(url, wait_until="networkidle", timeout=30_000)
+                if response is None or not response.ok:
+                    status = response.status if response else "no response"
+                    print(f"Failed to crawl {url}: HTTP {status}")
                     self.failed_urls.add(url)
                     return None
+
+                page_html = await page.content()
+                metadata = extract_metadata(page_html, await page.title())
+
+                # Extract new links from the page
+                new_links = self.extract_links(page_html, url)
+                for link in new_links:
+                    if link not in self.visited_urls and link not in self.to_visit:
+                        self.to_visit.add(link)
+
+                path_info = self.extract_path_info(url)
+
+                page_data = {
+                    "url": url,
+                    "title": metadata["title"],
+                    "description": metadata["description"],
+                    "markdown": html_to_markdown(page_html),
+                    "path_info": path_info,
+                    "links_found": list(new_links),
+                }
+
+                # Save individual page
+                self.save_page(url, page_data)
+
+                await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+                return page_data
 
             except Exception as e:
                 print(f"Error crawling {url}: {e}")
                 self.failed_urls.add(url)
                 return None
+            finally:
+                if page is not None:
+                    await page.close()
 
     def save_page(self, url: str, data: dict):
         """Save page data to a JSON file"""
@@ -194,34 +294,36 @@ class CuaDocsCrawler:
             if self.is_valid_url(normalized) or url.endswith("llms.txt"):
                 self.to_visit.add(normalized)
 
-        browser_config = BrowserConfig(
-            headless=True,
-            verbose=False,
-        )
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                while self.to_visit:
+                    # Get batch of URLs to crawl
+                    batch = []
+                    while self.to_visit and len(batch) < MAX_CONCURRENT:
+                        url = self.to_visit.pop()
+                        if url not in self.visited_urls:
+                            batch.append(url)
+                            self.visited_urls.add(url)
 
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            while self.to_visit:
-                # Get batch of URLs to crawl
-                batch = []
-                while self.to_visit and len(batch) < MAX_CONCURRENT:
-                    url = self.to_visit.pop()
-                    if url not in self.visited_urls:
-                        batch.append(url)
-                        self.visited_urls.add(url)
+                    if not batch:
+                        break
 
-                if not batch:
-                    break
+                    # Crawl batch concurrently
+                    tasks = [self.crawl_page(browser, url) for url in batch]
+                    results = await asyncio.gather(*tasks)
 
-                # Crawl batch concurrently
-                tasks = [self.crawl_page(crawler, url) for url in batch]
-                results = await asyncio.gather(*tasks)
+                    # Collect successful results
+                    for result in results:
+                        if result:
+                            self.all_data.append(result)
 
-                # Collect successful results
-                for result in results:
-                    if result:
-                        self.all_data.append(result)
-
-                print(f"Progress: {len(self.visited_urls)} crawled, {len(self.to_visit)} remaining")
+                    print(
+                        f"Progress: {len(self.visited_urls)} crawled, "
+                        f"{len(self.to_visit)} remaining"
+                    )
+            finally:
+                await browser.close()
 
         # Save summary
         summary = {

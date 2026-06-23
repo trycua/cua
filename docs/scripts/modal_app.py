@@ -10,6 +10,8 @@ Usage:
 """
 
 import asyncio
+import html
+from html.parser import HTMLParser
 import json
 import re
 import sqlite3
@@ -40,7 +42,6 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
-        "crawl4ai>=0.4.0",
         "playwright>=1.40.0",
         "lancedb>=0.4.0",
         "sentence-transformers>=2.2.0",
@@ -70,6 +71,103 @@ CODE_DB_PATH = f"{CODE_VOLUME_PATH}/code_db"
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+class HTMLToMarkdown(HTMLParser):
+    """Small dependency-free HTML-to-Markdown converter for crawled docs pages."""
+
+    block_tags = {
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "div",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tr",
+        "ul",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+        self.in_pre = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "svg"}:
+            self.skip_depth += 1
+            return
+        if self.skip_depth:
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+        if tag == "li":
+            self.parts.append("- ")
+        elif tag == "pre":
+            self.in_pre = True
+            self.parts.append("\n```\n")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "svg"} and self.skip_depth:
+            self.skip_depth -= 1
+            return
+        if self.skip_depth:
+            return
+        if tag == "pre":
+            self.in_pre = False
+            self.parts.append("\n```\n")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+        if tag in self.block_tags:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.skip_depth:
+            return
+        text = data if self.in_pre else re.sub(r"\s+", " ", data)
+        if text.strip():
+            self.parts.append(text)
+
+    def markdown(self) -> str:
+        text = html.unescape("".join(self.parts))
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def html_to_markdown(page_html: str) -> str:
+    parser = HTMLToMarkdown()
+    parser.feed(page_html)
+    return parser.markdown()
+
+
+def extract_metadata(page_html: str, title: str) -> dict[str, str]:
+    description = ""
+    match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']*)["\']',
+        page_html,
+        re.IGNORECASE,
+    )
+    if match:
+        description = html.unescape(match.group(1))
+    return {"title": title, "description": description}
 
 
 def clean_markdown(markdown: str) -> str:
@@ -131,7 +229,7 @@ async def crawl_docs():
     import shutil
     from urllib.parse import urljoin, urlparse
 
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+    from playwright.async_api import async_playwright
 
     print("Starting documentation crawl...")
 
@@ -240,40 +338,46 @@ async def crawl_docs():
         if is_valid_url(normalized):
             to_visit.add(normalized)
 
-    browser_config = BrowserConfig(
-        headless=True,
-        verbose=False,
-    )
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            while to_visit:
+                # Get batch of URLs to crawl
+                batch = []
+                MAX_CONCURRENT = 5
+                while to_visit and len(batch) < MAX_CONCURRENT:
+                    url = to_visit.pop()
+                    if url not in visited_urls:
+                        batch.append(url)
+                        visited_urls.add(url)
 
-    async with AsyncWebCrawler(config=browser_config) as crawler:
-        while to_visit:
-            # Get batch of URLs to crawl
-            batch = []
-            MAX_CONCURRENT = 5
-            while to_visit and len(batch) < MAX_CONCURRENT:
-                url = to_visit.pop()
-                if url not in visited_urls:
-                    batch.append(url)
-                    visited_urls.add(url)
+                if not batch:
+                    break
 
-            if not batch:
-                break
+                # Crawl each URL in batch
+                for url in batch:
+                    page = None
+                    try:
+                        print(f"Crawling: {url}")
 
-            # Crawl each URL in batch
-            for url in batch:
-                try:
-                    print(f"Crawling: {url}")
+                        page = await browser.new_page()
+                        response = await page.goto(
+                            url,
+                            wait_until="networkidle",
+                            timeout=30_000,
+                        )
 
-                    config = CrawlerRunConfig(
-                        word_count_threshold=10,
-                        exclude_external_links=True,
-                    )
+                        if response is None or not response.ok:
+                            status = response.status if response else "no response"
+                            print(f"Failed to crawl {url}: HTTP {status}")
+                            failed_urls.add(url)
+                            continue
 
-                    result = await crawler.arun(url=url, config=config)
+                        page_html = await page.content()
+                        metadata = extract_metadata(page_html, await page.title())
 
-                    if result.success:
                         # Extract new links from the page
-                        new_links = extract_links(result.html, url)
+                        new_links = extract_links(page_html, url)
                         for link in new_links:
                             if link not in visited_urls and link not in to_visit:
                                 to_visit.add(link)
@@ -282,11 +386,9 @@ async def crawl_docs():
 
                         page_data = {
                             "url": url,
-                            "title": result.metadata.get("title", "") if result.metadata else "",
-                            "description": (
-                                result.metadata.get("description", "") if result.metadata else ""
-                            ),
-                            "markdown": result.markdown,
+                            "title": metadata["title"],
+                            "description": metadata["description"],
+                            "markdown": html_to_markdown(page_html),
                             "path_info": path_info,
                             "links_found": list(new_links),
                         }
@@ -296,15 +398,17 @@ async def crawl_docs():
                         all_data.append(page_data)
 
                         await asyncio.sleep(0.5)
-                    else:
-                        print(f"Failed to crawl {url}: {result.error_message}")
+
+                    except Exception as e:
+                        print(f"Error crawling {url}: {e}")
                         failed_urls.add(url)
+                    finally:
+                        if page is not None:
+                            await page.close()
 
-                except Exception as e:
-                    print(f"Error crawling {url}: {e}")
-                    failed_urls.add(url)
-
-            print(f"Progress: {len(visited_urls)} crawled, {len(to_visit)} remaining")
+                print(f"Progress: {len(visited_urls)} crawled, {len(to_visit)} remaining")
+        finally:
+            await browser.close()
 
     # Save summary
     summary = {
@@ -390,7 +494,7 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
                     key = f"docs_db/docs.lance/{fpath.relative_to(lance_dir)}"
                     s3.upload_file(str(fpath), bucket, key)
                     uploaded += 1
-            print(f"  Uploaded docs LanceDB directory")
+            print("  Uploaded docs LanceDB directory")
 
     # --- code databases ---
     code_db_dir = Path(CODE_DB_PATH)
@@ -411,7 +515,7 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
                     key = f"code_db/code_index.lancedb/{fpath.relative_to(code_lance)}"
                     s3.upload_file(str(fpath), bucket, key)
                     uploaded += 1
-            print(f"  Uploaded code LanceDB directory")
+            print("  Uploaded code LanceDB directory")
 
     print(f"S3 sync complete: {uploaded} files uploaded to s3://{bucket}/")
     return {"bucket": bucket, "files_uploaded": uploaded}
@@ -652,8 +756,7 @@ async def generate_sqlite_db():
     cursor = conn.cursor()
 
     # Create tables
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE pages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT UNIQUE NOT NULL,
@@ -661,11 +764,9 @@ async def generate_sqlite_db():
             category TEXT,
             content TEXT
         )
-    """
-    )
+    """)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE pages_fts USING fts5(
             content,
             url UNINDEXED,
@@ -674,39 +775,32 @@ async def generate_sqlite_db():
             content='pages',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
     # Create FTS triggers BEFORE inserting data
     # This is critical: since pages_fts uses external content (content='pages'),
     # the FTS index is only populated via these triggers. If triggers are created
     # after data insertion, the FTS table will be empty.
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
             INSERT INTO pages_fts(rowid, content, url, title, category)
             VALUES (new.id, new.content, new.url, new.title, new.category);
         END;
-    """
-    )
+    """)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER pages_ad AFTER DELETE ON pages BEGIN
             DELETE FROM pages_fts WHERE rowid = old.id;
         END;
-    """
-    )
+    """)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER pages_au AFTER UPDATE ON pages BEGIN
             DELETE FROM pages_fts WHERE rowid = old.id;
             INSERT INTO pages_fts(rowid, content, url, title, category)
             VALUES (new.id, new.content, new.url, new.title, new.category);
         END;
-    """
-    )
+    """)
 
     conn.commit()
 
@@ -834,8 +928,7 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
     conn = sqlite3.connect(SQLITE_PATH)
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE code_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             component TEXT NOT NULL,
@@ -845,13 +938,11 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
             language TEXT NOT NULL,
             UNIQUE(component, version, file_path)
         )
-    """
-    )
+    """)
     cursor.execute("CREATE INDEX idx_component ON code_files(component)")
     cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE code_files_fts USING fts5(
             content,
             component UNINDEXED,
@@ -860,17 +951,14 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
             content='code_files',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
             INSERT INTO code_files_fts(rowid, content, component, version, file_path)
             VALUES (new.id, new.content, new.component, new.version, new.file_path);
         END;
-    """
-    )
+    """)
     conn.commit()
 
     # Initialize LanceDB
@@ -1180,8 +1268,7 @@ def aggregate_code_databases() -> dict:
     cursor = conn.cursor()
 
     # Create main table
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE code_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             component TEXT NOT NULL,
@@ -1191,14 +1278,12 @@ def aggregate_code_databases() -> dict:
             language TEXT NOT NULL,
             UNIQUE(component, version, file_path)
         )
-    """
-    )
+    """)
     cursor.execute("CREATE INDEX idx_component ON code_files(component)")
     cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
 
     # Create FTS5 virtual table
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE code_files_fts USING fts5(
             content,
             component UNINDEXED,
@@ -1207,18 +1292,15 @@ def aggregate_code_databases() -> dict:
             content='code_files',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
     # Create FTS triggers BEFORE inserting data
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
             INSERT INTO code_files_fts(rowid, content, component, version, file_path)
             VALUES (new.id, new.content, new.component, new.version, new.file_path);
         END;
-    """
-    )
+    """)
     conn.commit()
 
     # Copy data from each component database
@@ -1231,12 +1313,10 @@ def aggregate_code_databases() -> dict:
         cursor.execute(f"ATTACH DATABASE 'file:{db_path}?mode=ro' AS comp")
 
         # Copy data (triggers will populate FTS automatically)
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO code_files (component, version, file_path, content, language)
             SELECT component, version, file_path, content, language FROM comp.code_files
-        """
-        )
+        """)
         rows_copied = cursor.rowcount
         total_rows += rows_copied
         print(f"    Copied {rows_copied} rows from {component_name}")
@@ -1376,8 +1456,7 @@ async def generate_code_index():
     conn = sqlite3.connect(SQLITE_PATH)
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE code_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             component TEXT NOT NULL,
@@ -1387,13 +1466,11 @@ async def generate_code_index():
             language TEXT NOT NULL,
             UNIQUE(component, version, file_path)
         )
-    """
-    )
+    """)
     cursor.execute("CREATE INDEX idx_component ON code_files(component)")
     cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE code_files_fts USING fts5(
             content,
             component UNINDEXED,
@@ -1402,18 +1479,15 @@ async def generate_code_index():
             content='code_files',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
     # FTS triggers
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
             INSERT INTO code_files_fts(rowid, content, component, version, file_path)
             VALUES (new.id, new.content, new.component, new.version, new.file_path);
         END;
-    """
-    )
+    """)
     conn.commit()
 
     # Initialize LanceDB in temp directory

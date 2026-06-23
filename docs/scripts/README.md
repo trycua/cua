@@ -6,7 +6,7 @@ This directory contains scripts for crawling, indexing, and serving CUA document
 
 ### Local Scripts
 
-- **crawl_docs.py**: Crawls cua.ai/docs using crawl4ai
+- **crawl_docs.py**: Crawls cua.ai/docs using Playwright
 - **generate_db.py**: Creates LanceDB vector database for semantic search
 - **generate_sqlite.py**: Creates SQLite FTS5 database for full-text search
 

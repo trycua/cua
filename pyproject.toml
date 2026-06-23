@@ -25,11 +25,9 @@ dev = [
     "black>=23.0.0",
     "ipykernel>=6.29.5",
     "jedi>=0.19.2",
-    "jupyter>=1.0.0",
     "mypy>=1.10.0",
     "ruff>=0.9.2",
     "types-requests>=2.31.0",
-    "hud-python[agent]==0.4.52",
     "pre-commit>=4.3.0",
     "isort>=7.0.0",
 ]
@@ -38,7 +36,6 @@ docs = [
     "mkdocs>=1.5.0",
 ]
 docs-scripts = [
-    "crawl4ai>=0.4.0",
     "playwright>=1.40.0",
     "lancedb>=0.4.0",
     "sentence-transformers>=2.2.0",
@@ -66,6 +63,8 @@ examples = []
 package = false
 constraint-dependencies = [
     "fastmcp>=3.2.0",
+    "pytest>=9.0.3",
+    "transformers>=5.0.0rc3",
 ]
 
 [tool.uv.workspace]

@@ -52,7 +52,7 @@ uitars-hf = [
 glm45v-hf = [
     "accelerate",
     "torch",
-    "transformers-v4.55.0-GLM-4.5V-preview"
+    "transformers>=5.0.0rc3"
 ]
 opencua-hf = [
     "accelerate",
@@ -80,9 +80,9 @@ ui = [
 cli = [
     "yaspin>=3.1.0",
 ]
-hud = [
-    "hud-python==0.4.52",
-]
+# hud-python currently pins vulnerable transitive dependencies that conflict with
+# the workspace security floor, and there is no runtime import path in cua-agent.
+hud = []
 gemini = [
     "google-genai>=1.41.0",
 ]

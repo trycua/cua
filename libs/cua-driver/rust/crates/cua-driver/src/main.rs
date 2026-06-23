@@ -799,6 +799,11 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
         cua_driver_core::video::set_video_backend_factory(
             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
         );
+        // SSH-driven Wayland+Xwayland sessions inherit DISPLAY but not
+        // XAUTHORITY; adopt the running X server's auth cookie so X11 tools
+        // don't all fail "Authorization required" (#1926). No-op when
+        // XAUTHORITY is already set or there's no DISPLAY.
+        platform_linux::xauth::ensure_xauthority_discovered();
         // Turn on Chromium/Electron (and GTK/Qt) accessibility for the session
         // so their AT-SPI trees are visible to get_window_state. Best-effort and
         // idempotent; only on the serve path, not for short-lived CLI calls.

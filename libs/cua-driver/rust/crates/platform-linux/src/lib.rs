@@ -48,6 +48,9 @@ pub mod wayland;
 // Keeping it un-gated lets the unit tests run on any host.
 pub mod terminal;
 
+#[cfg(target_os = "linux")]
+pub mod xauth;
+
 pub fn register_tools() -> ToolRegistry {
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();

@@ -26,6 +26,16 @@ pub mod portal_screencast;
 #[cfg(feature = "portal-libei")]
 pub mod libei;
 
+/// Whether this binary was compiled with the `portal-libei` feature — the
+/// xdg-desktop-portal RemoteDesktop + libei input path. It is the ONLY input
+/// backend that works on non-wlroots compositors (KWin/Plasma, Mutter/GNOME),
+/// which do not implement `zwlr_virtual_pointer_v1`. The published
+/// curl-pipe-bash tarball is built WITHOUT it (#1967 — debian:11 CD container
+/// lacks a new-enough PipeWire/libei), so on those compositors input injection
+/// has no backend and silently no-ops. Consulted by the doctor and the input
+/// dispatch so that failure is reported instead of hidden. See #1982.
+pub const PORTAL_LIBEI_ENABLED: bool = cfg!(feature = "portal-libei");
+
 use std::collections::HashMap;
 
 use wayland_client::{
@@ -786,10 +796,22 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
         .seat
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
-    let mgr = state
-        .vptr_manager
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1"))?;
+    let mgr = state.vptr_manager.clone().ok_or_else(|| {
+        if PORTAL_LIBEI_ENABLED {
+            anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1")
+        } else {
+            // KWin/Plasma and Mutter/GNOME don't implement zwlr_virtual_pointer,
+            // and this build has no libei/portal fallback — so input has no
+            // backend at all rather than silently no-op'ing. See #1982.
+            anyhow::anyhow!(
+                "no input backend for this compositor: it exposes no \
+                 zwlr_virtual_pointer_manager_v1 and this build was compiled \
+                 without libei/portal support (#1982). Use the portal-enabled \
+                 Linux build for input on KDE Plasma / GNOME, or a wlroots \
+                 compositor (sway, labwc, hyprland)."
+            )
+        }
+    })?;
 
     if let Some(id) = activate_window_id {
         let handle = state

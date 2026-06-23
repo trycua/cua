@@ -32,6 +32,14 @@ pub mod terminal;
 // where the multi-monitor normalization bug was diagnosable by pure math.
 pub mod virtualdesk;
 
+// Cross-platform: pure math for packing `(x, y)` into the `LPARAM` payload
+// every `WM_MOUSE*` / `WM_*BUTTON*` message carries. Lives outside the
+// Windows-only `input` module for the same reason as `virtualdesk` — the
+// receiver-side `GET_X_LPARAM` sign-extension contract is a pure-math
+// property we want to pin with cross-platform unit tests (the #1979 audit
+// pass that lives in this commit).
+pub mod lparam;
+
 #[cfg(target_os = "windows")]
 pub mod win32;
 

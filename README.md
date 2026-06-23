@@ -61,7 +61,7 @@
 
 ## Cua Drivers - Background computer-use on macOS and Windows, with Linux pre-release
 
-Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
+Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS and Windows from Claude Code, Cursor, Codex, Qwen Code, Droid CLI, OpenClaw, and custom clients. Linux support is available as a pre-release backend while platform testing is still in progress.
 
 **macOS / Linux**
 

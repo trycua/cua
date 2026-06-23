@@ -1,6 +1,6 @@
 ---
 title: Connect your agent
-description: Register Cua Driver as an MCP server with Claude Code, Codex, Cursor, Antigravity, OpenClaw, OpenCode, Hermes, and Pi.
+description: Register Cua Driver as an MCP server with Claude Code, Codex, Cursor, Antigravity, OpenClaw, OpenCode, Hermes, Qwen Code, Droid CLI, and Pi.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -204,6 +204,50 @@ cua-driver --help        # full tool catalog
 Each call is one-shot and returns JSON or text on stdout, which is the shape Pi is built around.
 
 Verify: run `cua-driver --help` from the same Pi shell context.
+
+## Qwen Code
+
+[Qwen Code](https://github.com/QwenLM/qwen-code) (QwenLM's coding agent) uses cua-driver for its Computer Use backend. Generate the config snippet:
+
+```bash
+cua-driver mcp-config --client qwen
+```
+
+Paste the printed JSON into `~/.qwen/mcp.json`, or `.qwen/mcp.json` for project scope:
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": {
+      "command": "cua-driver",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+Verify: restart Qwen Code and confirm `cua-driver` appears in the MCP server list.
+
+## Droid CLI
+
+[Droid CLI](https://factory.ai) (Factory AI's coding agent) registers MCP servers with `droid mcp add`:
+
+```bash
+droid mcp add cua-driver cua-driver mcp --type stdio
+```
+
+Or generate the equivalent config snippet:
+
+```bash
+cua-driver mcp-config --client droid
+```
+
+Verify:
+
+```bash
+droid mcp list
+```
 
 ## Any other client
 

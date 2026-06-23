@@ -18,6 +18,8 @@ fn main() {
         (vec!["--client", "openclaw"], vec!["openclaw mcp set cua-driver"]),
         (vec!["--client", "opencode"], vec!["opencode.ai/config.json", "\"type\": \"local\""]),
         (vec!["--client", "hermes"], vec!["mcp_servers:", "cua-driver:"]),
+        (vec!["--client", "qwen"],   vec!["\"type\": \"stdio\"", "\"mcpServers\""]),
+        (vec!["--client", "droid"],  vec!["droid mcp add cua-driver"]),
         (vec!["--client", "pi"],     vec!["does not support MCP natively"]),
     ];
 
@@ -42,7 +44,7 @@ fn main() {
         "unknown-client stderr wrong: {stderr:?}");
     println!("unknown-client err OK");
 
-    println!("\n✅ PASS: mcp-config 8 client paths + unknown-client error verified");
+    println!("\n✅ PASS: mcp-config 10 client paths + unknown-client error verified");
 }
 
 #[cfg(not(target_os = "windows"))]

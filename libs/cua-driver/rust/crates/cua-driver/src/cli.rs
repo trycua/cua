@@ -875,7 +875,7 @@ pub fn build_manifest() -> serde_json::Value {
               ] },
             { "name": "mcp-config",
               "description": "Print the MCP server config snippet or a client-specific install command.",
-              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, pi. Omit for the generic snippet." } ] },
+              "args": [ { "name": "--client", "type": "string", "description": "One of: claude, codex, cursor, hermes, antigravity, openclaw, opencode, qwen, droid, pi. Omit for the generic snippet." } ] },
             { "name": "manifest",
               "description": "Emit this machine-readable description of the CLI surface.",
               "args": [ { "name": "--pretty", "type": "flag", "description": "Pretty-print the JSON." } ] },
@@ -936,7 +936,7 @@ pub fn build_manifest() -> serde_json::Value {
 /// Print the MCP server config snippet or a client-specific install command.
 ///
 /// `--client <name>` selects one of: claude, codex, cursor, hermes,
-/// antigravity, openclaw, opencode, pi. Omit for the generic JSON snippet.
+/// antigravity, openclaw, opencode, pi, qwen, droid. Omit for the generic JSON snippet.
 pub fn run_mcp_config(client: Option<&str>) {
     let binary = std::env::current_exe()
         .ok()
@@ -1102,8 +1102,35 @@ pub fn run_mcp_config(client: Option<&str>) {
                  exactly the shape Pi is designed around."
             );
         }
+        Some("qwen") | Some("qwen-code") => {
+            // Qwen Code (QwenLM/qwen-code) uses cua-driver for its Computer Use
+            // backend. It reads MCP server configuration from ~/.qwen/mcp.json
+            // (user-scope) or .qwen/mcp.json in the project root.
+            //
+            // No `qwen mcp add` subcommand — paste the printed JSON into the
+            // config file and restart Qwen Code.
+            println!(r#"{{
+  "mcpServers": {{
+    "cua-driver": {{
+      "command": "{binary}",
+      "args": ["mcp"],
+      "type": "stdio"
+    }}
+  }}
+}}"#);
+        }
+        Some("droid") | Some("droid-cli") => {
+            // Droid CLI (Factory AI — https://factory.ai) supports a
+            // `droid mcp add` subcommand for stdio servers:
+            //
+            //   droid mcp add <name> <command> [args...] --type stdio
+            //
+            // The name here is "cua-driver" to stay consistent with other
+            // client registrations.
+            println!("droid mcp add cua-driver {binary} mcp --type stdio");
+        }
         Some(other) => {
-            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi.");
+            eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, qwen, droid, pi.");
             process::exit(2);
         }
     }

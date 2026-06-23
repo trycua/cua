@@ -1142,6 +1142,102 @@ impl Tool for FindElementTool {
     }
 }
 
+
+// ── click_verified ───────────────────────────────────────────────────────────
+
+pub struct ClickVerifiedTool { state: Arc<ToolState> }
+
+static CLICK_VERIFIED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn labels_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
+    nodes.iter().filter_map(|n| {
+        n.name.clone().or_else(|| n.value.clone()).or_else(|| n.automation_id.clone()).or_else(|| n.help_text.clone())
+    }).collect()
+}
+
+fn labels_contain(labels: &[String], needle: &str) -> bool {
+    labels.iter().any(|label| label.contains(needle))
+}
+
+#[async_trait]
+impl Tool for ClickVerifiedTool {
+    fn def(&self) -> &ToolDef {
+        CLICK_VERIFIED_DEF.get_or_init(|| ToolDef {
+            name: "click_verified".into(),
+            description: "Perform a click transaction with pre/post accessibility snapshots and simple expected-label verification. Reports os_dispatch_success separately from state_changed, verified, expected_change_satisfied, and success. Use this when a click must be verified rather than trusted from dispatch success alone.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid","window_id"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"Target HWND."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state/find_element."},
+                    "element_token":{"type":"string","description":"Opaque element token from get_window_state/find_element. Preferred over element_index."},
+                    "x":{"type":"number","description":"Window-relative x coordinate, same as click."},
+                    "y":{"type":"number","description":"Window-relative y coordinate, same as click."},
+                    "button":{"type":"string","enum":["left","right","middle"],"default":"left"},
+                    "click_count":{"type":"integer","minimum":1,"maximum":3,"default":1},
+                    "dispatch": crate::input::dispatch::dispatch_schema(),
+                    "expected_label_present":{"type":"string","description":"Verification succeeds only if any post-state element label/name/value contains this string."},
+                    "expected_label_absent":{"type":"string","description":"Verification succeeds only if no post-state element label/name/value contains this string."},
+                    "max_elements":{"type":"integer","minimum":1,"description":"Bound pre/post UIA walks. Default 320."},
+                    "max_depth":{"type":"integer","minimum":1,"description":"Bound pre/post UIA depth. Default platform limit."}
+                },"additionalProperties":false
+            }),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let hwnd = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
+        let expected_present = args.opt_str("expected_label_present");
+        let expected_absent = args.opt_str("expected_label_absent");
+        if expected_present.is_none() && expected_absent.is_none() {
+            return ToolResult::error("click_verified requires expected_label_present or expected_label_absent so the transaction can verify an outcome");
+        }
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(320);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+
+        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
+        let pre_labels = match pre_walk {
+            Ok(tr) => labels_from_nodes(&tr.nodes),
+            Err(e) => return ToolResult::error(format!("click_verified pre-state task failed: {e}")),
+        };
+
+        let click_result = ClickTool { state: self.state.clone() }.invoke(args.clone()).await;
+        let os_dispatch_success = !click_result.is_error.unwrap_or(false);
+
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
+        let post_labels = match post_walk {
+            Ok(tr) => labels_from_nodes(&tr.nodes),
+            Err(e) => return ToolResult::error(format!("click_verified post-state task failed after dispatch_success={os_dispatch_success}: {e}")),
+        };
+        let state_changed = pre_labels != post_labels;
+        let present_ok = expected_present.as_deref().map(|needle| labels_contain(&post_labels, needle)).unwrap_or(true);
+        let absent_ok = expected_absent.as_deref().map(|needle| !labels_contain(&post_labels, needle)).unwrap_or(true);
+        let expected_change_satisfied = present_ok && absent_ok;
+        let verified = expected_change_satisfied;
+        let success = os_dispatch_success && verified;
+        let structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "os_dispatch_success": os_dispatch_success,
+            "state_changed": state_changed,
+            "verified": verified,
+            "expected_change_satisfied": expected_change_satisfied,
+            "success": success,
+            "expected_label_present": expected_present,
+            "expected_label_absent": expected_absent,
+            "pre_label_count": pre_labels.len(),
+            "post_label_count": post_labels.len(),
+            "click_is_error": click_result.is_error.unwrap_or(false),
+        });
+        let msg = format!("click_verified success={success} os_dispatch_success={os_dispatch_success} state_changed={state_changed} expected_change_satisfied={expected_change_satisfied}");
+        if success { ToolResult::text(msg).with_structured(structured) } else { ToolResult::error(msg).with_structured(structured) }
+    }
+}
+
 // ── get_element_geometry ─────────────────────────────────────────────────────
 
 pub struct GetElementGeometryTool { state: Arc<ToolState> }
@@ -5956,6 +6052,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
     r.register(Box::new(GetElementGeometryTool { state: state.clone() }));
     r.register(Box::new(FindElementTool { state: state.clone() }));
+    r.register(Box::new(ClickVerifiedTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
     r.register(Box::new(BringToFrontTool));
@@ -6350,6 +6447,26 @@ mod find_element_schema_tests {
         }
         assert_eq!(props["query"]["type"], "string");
         assert_eq!(props["limit"]["type"], "integer");
+    }
+}
+
+
+
+#[cfg(test)]
+mod click_verified_schema_tests {
+    #[test]
+    fn registry_advertises_click_verified_transaction() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("click_verified").expect("click_verified registered");
+        assert_eq!(tool.name, "click_verified");
+        assert!(!tool.read_only);
+        assert!(tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "element_index", "element_token", "x", "y", "expected_label_present", "expected_label_absent", "dispatch"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["expected_label_present"]["type"], "string");
+        assert_eq!(props["expected_label_absent"]["type"], "string");
     }
 }
 

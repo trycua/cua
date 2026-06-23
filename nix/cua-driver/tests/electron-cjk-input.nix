@@ -29,6 +29,23 @@ let
   # Also includes Japanese hiragana to cover broader CJK range.
   cjkText = "你好世界";
 
+  # Shared environment: D-Bus session bus + AT-SPI accessibility settings.
+  # A fixed bus path so every shell in the test can find the same session bus.
+  a11yEnv = lib.concatStringsSep " " [
+    "DISPLAY=:99"
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cua-session-bus"
+    "XDG_RUNTIME_DIR=/run/user/0"
+    "XDG_DATA_DIRS=/run/current-system/sw/share"
+    "LD_LIBRARY_PATH=${pkgs.at-spi2-atk}/lib"
+    "GSETTINGS_BACKEND=keyfile"
+    "XDG_CONFIG_HOME=/tmp/cua-cfg"
+    "GSETTINGS_SCHEMA_DIR=${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
+    "GTK_MODULES=gail:atk-bridge"
+    "GNOME_ACCESSIBILITY=1"
+    "QT_ACCESSIBILITY=1"
+    "NO_AT_BRIDGE=0"
+  ];
+
   # A minimal Electron app with an autofocused input field.
   # The window title is fixed so we can find it via xdotool.
   electronMainJs = pkgs.writeText "main.js" ''
@@ -364,11 +381,7 @@ let
             if readback_value and CJK_TEXT in readback_value:
                 print("CJK_INPUT_OK: CJK text found in input field", flush=True)
             elif readback_value and len(readback_value) > 0:
-                # Partial success: some characters arrived (driver may normalize
-                # or split multi-char sequences differently on some builds)
                 print(f"CJK_INPUT_PARTIAL: got {readback_value!r}, expected {CJK_TEXT!r}", flush=True)
-                # For now accept partial - the key test is that *something* arrived
-                print("CJK_INPUT_NONZERO: non-empty text received in Electron input", flush=True)
             else:
                 print(f"CJK_INPUT_FAIL: input empty, expected {CJK_TEXT!r}", flush=True)
 
@@ -401,6 +414,7 @@ pkgs.testers.nixosTest {
     {
       imports = [ cuaDriverModule ];
       services.cua-driver.enable = true;
+      services.dbus.enable = true;
       environment.systemPackages = with pkgs; [
         xorg.xorgserver
         xterm
@@ -410,6 +424,11 @@ pkgs.testers.nixosTest {
         python3
         jq
         procps
+        dbus
+        at-spi2-core
+        at-spi2-atk
+        glib
+        gsettings-desktop-schemas
         # Electron (Chromium-based) for the CJK input test app
         electron
       ];
@@ -435,6 +454,36 @@ pkgs.testers.nixosTest {
         )
         machine.execute("DISPLAY=:99 picom --backend xrender >/tmp/picom.log 2>&1 &")
 
+    with subtest("Start D-Bus session bus and AT-SPI accessibility bus"):
+        # cua-driver's AT-SPI path requires a session D-Bus and the AT-SPI
+        # registry service. Without this, the driver falls back to XSendEvent
+        # which cannot deliver CJK characters (no keysym in standard maps).
+        machine.succeed("mkdir -p /run/user/0 && chmod 700 /run/user/0")
+        machine.succeed("mkdir -p /tmp/cua-cfg")
+        machine.execute(
+            "dbus-daemon --session --address=unix:path=/tmp/cua-session-bus "
+            "--fork >/tmp/dbus.log 2>&1"
+        )
+        machine.wait_until_succeeds("test -S /tmp/cua-session-bus", timeout=10)
+        machine.execute(
+            "${a11yEnv} ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher "
+            "--launch-immediately >/tmp/atspi-launcher.log 2>&1 &"
+        )
+        machine.wait_until_succeeds(
+            "${a11yEnv} dbus-send --session --print-reply "
+            "--dest=org.freedesktop.DBus / org.freedesktop.DBus.NameHasOwner "
+            "string:org.a11y.Bus | grep -q 'boolean true'",
+            timeout=15,
+        )
+        machine.execute(
+            "${a11yEnv} dbus-send --session --print-reply --dest=org.a11y.Bus "
+            "/org/a11y/bus org.freedesktop.DBus.Properties.Set "
+            "string:org.a11y.Status string:IsEnabled variant:boolean:true "
+            "2>&1 | tee /tmp/a11y-enable.log"
+        )
+        machine.log("a11y IsEnabled set: " + machine.execute("cat /tmp/a11y-enable.log")[1])
+        machine.log("atspi-launcher.log: " + machine.execute("cat /tmp/atspi-launcher.log")[1])
+
     with subtest("Write Electron app files"):
         # Copy the pre-built Electron app files into /tmp/electron-app/
         machine.succeed("mkdir -p /tmp/electron-app")
@@ -445,7 +494,7 @@ pkgs.testers.nixosTest {
     with subtest("Launch Electron CJK test app"):
         machine.execute(
             "sh -lc '"
-            "DISPLAY=:99 electron /tmp/electron-app "
+            "${a11yEnv} electron /tmp/electron-app "
             "--no-sandbox --disable-gpu --disable-dev-shm-usage "
             "--remote-debugging-port=${toString cdpPort} --remote-allow-origins=* "
             "--disable-backgrounding-occluded-windows "
@@ -486,19 +535,16 @@ pkgs.testers.nixosTest {
     with subtest("Type CJK characters via cua-driver and verify via CDP"):
         machine.copy_from_host("${mcpCjkTest}", "/tmp/mcp-cjk-test.py")
         result = machine.succeed(
-            "timeout 120 env DISPLAY=:99 python3 /tmp/mcp-cjk-test.py 2>&1"
+            "timeout 120 env ${a11yEnv} python3 /tmp/mcp-cjk-test.py 2>&1"
         )
         machine.log(result)
 
-        # The test script prints CJK_INPUT_OK when the full string matched, or
-        # CJK_INPUT_NONZERO when at least some characters arrived (driver may
-        # decompose multi-char CJK sequences on some builds). Either outcome
-        # proves the Unicode pass-through is working.
-        assert (
-            "CJK_INPUT_OK" in result or "CJK_INPUT_NONZERO" in result
-        ), (
-            "cua-driver did not deliver CJK text to the Electron input field.\n"
-            "Expected CJK_INPUT_OK or CJK_INPUT_NONZERO in output.\n"
+        # Only accept exact match: CJK_INPUT_OK means the full string landed.
+        # CJK_INPUT_NONZERO (partial match) is no longer accepted — partial
+        # delivery would mask real encoding failures.
+        assert "CJK_INPUT_OK" in result, (
+            "cua-driver did not deliver the full CJK text to the Electron input field.\n"
+            "Expected CJK_INPUT_OK in output (exact match of '${cjkText}').\n"
             "Full output:\n" + result
         )
         assert "Electron/CJK test complete" in result, (

@@ -53,27 +53,28 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
       };
     }
 
+    // When content is an array of ContentParts (e.g. [{type:'text', text:'...'}]),
+    // DefaultAssistantMessage expects a plain string for Markdown rendering.
+    // Flatten to a single string so react-markdown can render it correctly.
     if (Array.isArray(message.content)) {
       const contentArray = message.content as unknown[];
-      return {
-        ...message,
-        content: contentArray.map((part: unknown) => {
-          if (typeof part === 'string') {
-            return fixTextConcatenation(part);
-          }
+      const text = contentArray
+        .map((part: unknown) => {
+          if (typeof part === 'string') return part;
           if (
             part &&
             typeof part === 'object' &&
             'text' in part &&
             typeof (part as { text?: unknown }).text === 'string'
           ) {
-            return {
-              ...part,
-              text: fixTextConcatenation((part as { text: string }).text),
-            };
+            return (part as { text: string }).text;
           }
-          return part;
-        }),
+          return '';
+        })
+        .join('');
+      return {
+        ...message,
+        content: fixTextConcatenation(text),
       };
     }
 

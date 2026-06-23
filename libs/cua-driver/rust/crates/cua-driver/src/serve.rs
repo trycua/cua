@@ -354,29 +354,60 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
         .and_then(|s| s.trim().parse().ok())
 }
 
+const DAEMON_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const DAEMON_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn is_daemon_timeout_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+fn read_daemon_response_line<R: std::io::BufRead>(
+    mut reader: R,
+    timeout: std::time::Duration,
+) -> anyhow::Result<String> {
+    let mut resp_line = String::new();
+    match reader.read_line(&mut resp_line) {
+        Ok(0) => anyhow::bail!("daemon closed connection without response"),
+        Ok(_) => {
+            while matches!(resp_line.as_bytes().last(), Some(b'\n' | b'\r')) {
+                resp_line.pop();
+            }
+            Ok(resp_line)
+        }
+        Err(err) if is_daemon_timeout_error(&err) => {
+            anyhow::bail!(
+                "daemon timed out waiting for response after {}s",
+                timeout.as_secs()
+            )
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// Send a request to the daemon and return the response.
-/// Uses a 3-second connect timeout (by polling) and a 10-second read timeout.
+/// Uses a 5-second write timeout and a 60-second read timeout.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufReader, Write};
     use std::os::unix::net::UnixStream;
-    use std::time::Duration;
 
     let stream = UnixStream::connect(socket_path)
         .map_err(|e| anyhow::anyhow!("connect to {socket_path}: {e}"))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(DAEMON_WRITE_TIMEOUT))?;
+    // AX-heavy tools such as `get_window_state` have their own tool-level
+    // deadlines. The daemon transport must not time out first and surface
+    // macOS EAGAIN/os error 35 as an MCP transport failure.
+    stream.set_read_timeout(Some(DAEMON_READ_TIMEOUT))?;
 
     let mut w = stream.try_clone()?;
     let line = serde_json::to_string(req)? + "\n";
     w.write_all(line.as_bytes())?;
     w.flush()?;
 
-    let reader = BufReader::new(stream);
-    let mut resp_line = String::new();
-    reader.lines().next()
-        .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??
-        .clone_into(&mut resp_line);
+    let resp_line = read_daemon_response_line(BufReader::new(stream), DAEMON_READ_TIMEOUT)?;
     let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
     Ok(resp)
 }
@@ -385,7 +416,7 @@ pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<Da
 pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
     #[cfg(target_os = "windows")]
     {
-        use std::io::{BufRead, BufReader, Write};
+        use std::io::{BufReader, Write};
         use std::time::Duration;
 
         // Retry opening the pipe — server may still be starting.
@@ -410,11 +441,7 @@ pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<Da
         writer.flush()?;
 
         // Server writes one JSON line then flushes; pipe stays open until we drop it.
-        let reader = BufReader::new(pipe);
-        let resp_line = reader
-            .lines()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??;
+        let resp_line = read_daemon_response_line(BufReader::new(pipe), DAEMON_READ_TIMEOUT)?;
         let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
         Ok(resp)
     }
@@ -1406,6 +1433,68 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod daemon_response_read_tests {
+    use super::read_daemon_response_line;
+    use std::io::{self, BufRead, Cursor, Read};
+
+    struct FailingReader {
+        kind: io::ErrorKind,
+    }
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(self.kind, "synthetic failure"))
+        }
+    }
+
+    impl BufRead for FailingReader {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            Err(io::Error::new(self.kind, "synthetic failure"))
+        }
+
+        fn consume(&mut self, _amt: usize) {}
+    }
+
+    #[test]
+    fn read_daemon_response_line_trims_newline() {
+        let line = read_daemon_response_line(
+            Cursor::new(b"{\"ok\":true}\r\n"),
+            std::time::Duration::from_secs(60),
+        )
+        .expect("response line");
+        assert_eq!(line, "{\"ok\":true}");
+    }
+
+    #[test]
+    fn read_daemon_response_line_maps_wouldblock_to_clear_timeout() {
+        let err = read_daemon_response_line(
+            FailingReader {
+                kind: io::ErrorKind::WouldBlock,
+            },
+            std::time::Duration::from_secs(60),
+        )
+        .expect_err("timeout should become a friendly daemon timeout error");
+        assert!(err
+            .to_string()
+            .contains("daemon timed out waiting for response after 60s"));
+    }
+
+    #[test]
+    fn read_daemon_response_line_maps_timedout_to_clear_timeout() {
+        let err = read_daemon_response_line(
+            FailingReader {
+                kind: io::ErrorKind::TimedOut,
+            },
+            std::time::Duration::from_secs(60),
+        )
+        .expect_err("timeout should become a friendly daemon timeout error");
+        assert!(err
+            .to_string()
+            .contains("daemon timed out waiting for response after 60s"));
+    }
+}
 
 #[cfg(all(test, unix))]
 mod gate_tests {

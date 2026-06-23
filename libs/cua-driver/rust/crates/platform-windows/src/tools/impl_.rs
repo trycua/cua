@@ -1159,6 +1159,28 @@ fn labels_contain(labels: &[String], needle: &str) -> bool {
     labels.iter().any(|label| label.contains(needle))
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextDeltaSummary {
+    added: Vec<String>,
+    removed: Vec<String>,
+    added_count: usize,
+    removed_count: usize,
+}
+
+fn text_delta_summary(pre: &[String], post: &[String], sample_limit: usize) -> TextDeltaSummary {
+    use std::collections::BTreeSet;
+    let pre_set: BTreeSet<&str> = pre.iter().map(String::as_str).filter(|s| !s.is_empty()).collect();
+    let post_set: BTreeSet<&str> = post.iter().map(String::as_str).filter(|s| !s.is_empty()).collect();
+    let mut added_all: Vec<String> = post_set.difference(&pre_set).map(|s| (*s).to_string()).collect();
+    let mut removed_all: Vec<String> = pre_set.difference(&post_set).map(|s| (*s).to_string()).collect();
+    let added_count = added_all.len();
+    let removed_count = removed_all.len();
+    added_all.truncate(sample_limit);
+    removed_all.truncate(sample_limit);
+    TextDeltaSummary { added: added_all, removed: removed_all, added_count, removed_count }
+}
+
 #[async_trait]
 impl Tool for ClickVerifiedTool {
     fn def(&self) -> &ToolDef {
@@ -1214,6 +1236,7 @@ impl Tool for ClickVerifiedTool {
             Err(e) => return ToolResult::error(format!("click_verified post-state task failed after dispatch_success={os_dispatch_success}: {e}")),
         };
         let state_changed = pre_labels != post_labels;
+        let diff = text_delta_summary(&pre_labels, &post_labels, 12);
         let present_ok = expected_present.as_deref().map(|needle| labels_contain(&post_labels, needle)).unwrap_or(true);
         let absent_ok = expected_absent.as_deref().map(|needle| !labels_contain(&post_labels, needle)).unwrap_or(true);
         let expected_change_satisfied = present_ok && absent_ok;
@@ -1231,6 +1254,10 @@ impl Tool for ClickVerifiedTool {
             "expected_label_absent": expected_absent,
             "pre_label_count": pre_labels.len(),
             "post_label_count": post_labels.len(),
+            "added_labels": diff.added,
+            "removed_labels": diff.removed,
+            "added_label_count": diff.added_count,
+            "removed_label_count": diff.removed_count,
             "click_is_error": click_result.is_error.unwrap_or(false),
         });
         let msg = format!("click_verified success={success} os_dispatch_success={os_dispatch_success} state_changed={state_changed} expected_change_satisfied={expected_change_satisfied}");
@@ -3687,6 +3714,7 @@ impl Tool for SetValueVerifiedTool {
             Err(e) => return ToolResult::error(format!("set_value_verified post-state task failed after dispatch_success={os_dispatch_success}: {e}")),
         };
         let state_changed = pre_texts != post_texts;
+        let diff = text_delta_summary(&pre_texts, &post_texts, 12);
         let value_ok = labels_contain(&post_texts, &expected_value);
         let label_ok = expected_label_present.as_deref().map(|needle| labels_contain(&post_texts, needle)).unwrap_or(true);
         let expected_change_satisfied = value_ok && label_ok;
@@ -3704,6 +3732,10 @@ impl Tool for SetValueVerifiedTool {
             "expected_label_present": expected_label_present,
             "pre_text_count": pre_texts.len(),
             "post_text_count": post_texts.len(),
+            "added_texts": diff.added,
+            "removed_texts": diff.removed,
+            "added_text_count": diff.added_count,
+            "removed_text_count": diff.removed_count,
             "set_value_is_error": set_result.is_error.unwrap_or(false),
         });
         let msg = format!("set_value_verified success={success} os_dispatch_success={os_dispatch_success} state_changed={state_changed} expected_change_satisfied={expected_change_satisfied}");
@@ -6554,6 +6586,22 @@ mod find_element_schema_tests {
 
 
 
+
+
+
+#[cfg(test)]
+mod verified_action_diff_tests {
+    #[test]
+    fn summarizes_added_and_removed_labels_with_cap() {
+        let pre = vec!["A".to_string(), "B".to_string(), "B".to_string(), "Old".to_string()];
+        let post = vec!["A".to_string(), "B".to_string(), "New".to_string(), "Extra".to_string()];
+        let diff = super::text_delta_summary(&pre, &post, 1);
+        assert_eq!(diff.added, vec!["Extra".to_string()]);
+        assert_eq!(diff.removed, vec!["Old".to_string()]);
+        assert_eq!(diff.added_count, 2);
+        assert_eq!(diff.removed_count, 1);
+    }
+}
 
 #[cfg(test)]
 mod set_value_verified_schema_tests {

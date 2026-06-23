@@ -552,6 +552,12 @@ const customStyles = `
     min-height: 0 !important;
   }
 
+  /* Match send button height to page action button height (h-9 = 36px) */
+  .copilotKitInputControlButton {
+    width: 36px;
+    height: 36px;
+  }
+
   /* Match chat input radius to CDS button radius (10px) */
   .copilotKitInput {
     border-radius: 10px;

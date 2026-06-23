@@ -5,9 +5,9 @@ Following SRP: This file tests server initialization and basic operations.
 All external dependencies are mocked.
 """
 
-from unittest.mock import AsyncMock, Mock, patch
 import importlib.util
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 

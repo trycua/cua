@@ -575,6 +575,65 @@ pub struct GetWindowStateTool {
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+
+fn structured_element_record(
+    n: &crate::uia::UiaNode,
+    pid: u32,
+    hwnd: u64,
+    snapshot_id: u32,
+    target_window_bounds: Option<(i32, i32, i32, i32)>,
+) -> Option<serde_json::Value> {
+    let idx = n.element_index?;
+    let label = n.name.clone()
+        .or_else(|| n.value.clone())
+        .or_else(|| n.automation_id.clone())
+        .or_else(|| n.help_text.clone());
+    let element_token = cua_driver_core::element_token::token_for(snapshot_id, idx);
+    let backend = if n.msaa_role.is_some() { "msaa" } else { "uia" };
+    let mut entry = json!({
+        "element_index": idx,
+        "element_token": element_token,
+        "stable_id": format!("{backend}:{pid}:{hwnd}:{idx}:{}:{}", n.automation_id.as_deref().unwrap_or(""), n.name.as_deref().unwrap_or("")),
+        "role": n.control_type.clone(),
+        "name": n.name.clone(),
+        "value": n.value.clone(),
+        "text": n.value.clone(),
+        "label": label,
+        "enabled": n.enabled,
+        "focused": n.focused,
+        "selected": n.selected,
+        "visible": n.visible,
+        "automation_id": n.automation_id.clone(),
+        "class_name": n.class_name.clone(),
+        "actions": n.actions.clone(),
+        "backend": backend,
+        "depth": n.depth,
+    });
+    if let Some(parent) = n.parent_element_index { entry["parent_index"] = json!(parent); }
+    if let Some((l, t, r, b)) = n.rect {
+        let width = (r - l).max(0);
+        let height = (b - t).max(0);
+        entry["frame"] = json!({"x": l, "y": t, "w": width, "h": height});
+        entry["bounds_screen"] = json!({"x": l, "y": t, "width": width, "height": height});
+        entry["center_screen"] = json!({"x": n.center_x, "y": n.center_y});
+        if let Some((wx, wy, _ww, _wh)) = target_window_bounds {
+            entry["bounds_window"] = json!({"x": l - wx, "y": t - wy, "width": width, "height": height});
+            entry["center_window"] = json!({"x": n.center_x - wx, "y": n.center_y - wy});
+        } else {
+            entry["bounds_window"] = serde_json::Value::Null;
+            entry["center_window"] = serde_json::Value::Null;
+        }
+    } else {
+        entry["frame"] = serde_json::Value::Null;
+        entry["bounds_screen"] = serde_json::Value::Null;
+        entry["bounds_window"] = serde_json::Value::Null;
+        entry["center_screen"] = serde_json::Value::Null;
+        entry["center_window"] = serde_json::Value::Null;
+        entry["geometry_error"] = json!("UIA/MSAA did not report a usable bounding rectangle");
+    }
+    Some(entry)
+}
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
@@ -788,92 +847,7 @@ impl Tool for GetWindowStateTool {
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
-                        .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label`: name → value → automation_id → help_text.
-                            let label = n.name.clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.automation_id.clone())
-                                .or_else(|| n.help_text.clone());
-                            let element_token = cua_driver_core::element_token::token_for(snapshot_id, idx);
-                            let backend = if n.msaa_role.is_some() { "msaa" } else { "uia" };
-                            let name = n.name.clone();
-                            let value = n.value.clone();
-                            let automation_id = n.automation_id.clone();
-                            let class_name = n.class_name.clone();
-                            let actions = n.actions.clone();
-                            let mut entry = json!({
-                                "element_index": idx,
-                                // Surface 6: opaque token paired to the
-                                // integer index. See cua-driver-core's
-                                // `element_token` module for the format
-                                // and validity contract.
-                                "element_token": element_token,
-                                "stable_id": format!("{backend}:{pid}:{hwnd}:{idx}:{}:{}", n.automation_id.as_deref().unwrap_or(""), n.name.as_deref().unwrap_or("")),
-                                "role": n.control_type.clone(),
-                                "name": name,
-                                "value": value,
-                                "text": n.value.clone(),
-                                "label": label,
-                                "enabled": n.enabled,
-                                "focused": n.focused,
-                                "selected": n.selected,
-                                "visible": n.visible,
-                                "automation_id": automation_id,
-                                "class_name": class_name,
-                                "actions": actions,
-                                "backend": backend,
-                                "depth": n.depth,
-                            });
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((l, t, r, b)) = n.rect {
-                                let width = (r - l).max(0);
-                                let height = (b - t).max(0);
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": width,
-                                    "h": height,
-                                });
-                                entry["bounds_screen"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "width": width,
-                                    "height": height,
-                                });
-                                entry["center_screen"] = json!({
-                                    "x": n.center_x,
-                                    "y": n.center_y,
-                                });
-                                if let Some((wx, wy, _ww, _wh)) = target_window_bounds {
-                                    let bx = l - wx;
-                                    let by = t - wy;
-                                    entry["bounds_window"] = json!({
-                                        "x": bx,
-                                        "y": by,
-                                        "width": width,
-                                        "height": height,
-                                    });
-                                    entry["center_window"] = json!({
-                                        "x": n.center_x - wx,
-                                        "y": n.center_y - wy,
-                                    });
-                                } else {
-                                    entry["bounds_window"] = serde_json::Value::Null;
-                                    entry["center_window"] = serde_json::Value::Null;
-                                }
-                            } else {
-                                entry["frame"] = serde_json::Value::Null;
-                                entry["bounds_screen"] = serde_json::Value::Null;
-                                entry["bounds_window"] = serde_json::Value::Null;
-                                entry["center_screen"] = serde_json::Value::Null;
-                                entry["center_window"] = serde_json::Value::Null;
-                                entry["geometry_error"] = json!("UIA/MSAA did not report a usable bounding rectangle");
-                            }
-                            Some(entry)
-                        })
+                        .filter_map(|n| structured_element_record(n, pid, hwnd, snapshot_id, target_window_bounds))
                         .collect();
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
@@ -1061,6 +1035,79 @@ fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
         }
     }
     let _ = CHROMIUM_ANTI_THROTTLING_FLAGS; // referenced for docs alignment
+}
+
+
+// ── get_element_geometry ─────────────────────────────────────────────────────
+
+pub struct GetElementGeometryTool { state: Arc<ToolState> }
+
+static GEG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for GetElementGeometryTool {
+    fn def(&self) -> &ToolDef {
+        GEG_DEF.get_or_init(|| ToolDef {
+            name: "get_element_geometry".into(),
+            description: "Return cached screen/window geometry for one element from the latest get_window_state snapshot. Accepts element_token (preferred) or element_index + window_id. Call get_window_state first for the same pid/window_id to populate the cache.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Optional when element_token is supplied because the token carries it."},
+                    "element_index":{"type":"integer","description":"Element index from the latest get_window_state snapshot for the same (pid, window_id)."},
+                    "element_token":{"type":"string","description":"Opaque element token from structuredContent.elements[].element_token. Preferred over element_index; detects stale snapshots."}
+                },"additionalProperties":false
+            }),
+            read_only: true, destructive: false, idempotent: true, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "get_element_geometry",
+        ) { Ok(r) => r, Err(e) => return e };
+        let (window_id, element_index) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, element_index, .. } => {
+                let Some(window_id) = window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")) else {
+                    return ToolResult::error("get_element_geometry requires window_id when element_index is used without element_token");
+                };
+                (window_id, element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => return ToolResult::error("get_element_geometry requires element_token or element_index"),
+        };
+        let Some((center_x, center_y)) = self.state.element_cache.get_element_center(pid, window_id, element_index) else {
+            return ToolResult::error(format!("No cached element {element_index} for pid {pid}, window_id {window_id}. Call get_window_state for this window first."));
+        };
+        let Some((l, t, r, b)) = self.state.element_cache.get_element_rect(pid, window_id, element_index) else {
+            let structured = json!({"pid": pid, "window_id": window_id, "element_index": element_index,
+                "bounds_screen": serde_json::Value::Null, "bounds_window": serde_json::Value::Null,
+                "center_screen": {"x": center_x, "y": center_y}, "center_window": serde_json::Value::Null,
+                "geometry_error": "UIA/MSAA did not report a usable bounding rectangle"});
+            return ToolResult::text("element geometry unavailable: UIA/MSAA did not report a usable bounding rectangle").with_structured(structured);
+        };
+        let width = (r - l).max(0);
+        let height = (b - t).max(0);
+        let target_window_bounds = tokio::task::spawn_blocking(move || {
+            crate::win32::list_windows(Some(pid)).into_iter().find(|w| w.hwnd == window_id).map(|w| (w.x, w.y, w.width, w.height))
+        }).await.unwrap_or(None);
+        let (bounds_window, center_window) = if let Some((wx, wy, _ww, _wh)) = target_window_bounds {
+            (json!({"x": l - wx, "y": t - wy, "width": width, "height": height}), json!({"x": center_x - wx, "y": center_y - wy}))
+        } else { (serde_json::Value::Null, serde_json::Value::Null) };
+        let structured = json!({"pid": pid, "window_id": window_id, "element_index": element_index,
+            "coordinate_space": "screen_pixels",
+            "bounds_screen": {"x": l, "y": t, "width": width, "height": height},
+            "bounds_window": bounds_window,
+            "center_screen": {"x": center_x, "y": center_y},
+            "center_window": center_window,
+            "frame": {"x": l, "y": t, "w": width, "h": height}});
+        ToolResult::text(format!("element {element_index} geometry: screen=({l},{t}) {width}x{height}, center=({center_x},{center_y})")).with_structured(structured)
+    }
 }
 
 // ── launch_app ───────────────────────────────────────────────────────────────
@@ -5803,6 +5850,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
+    r.register(Box::new(GetElementGeometryTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
     r.register(Box::new(BringToFrontTool));
@@ -6100,12 +6148,90 @@ mod chromium_flag_injection_tests {
     }
 }
 
+
+
+#[cfg(test)]
+mod structured_element_record_tests {
+    use super::structured_element_record;
+    use crate::uia::UiaNode;
+
+    fn sample_node() -> UiaNode {
+        UiaNode { element_index: Some(7), control_type: "Button".into(), name: Some("Three".into()), value: None,
+            automation_id: Some("num3Button".into()), class_name: Some("Button".into()), help_text: Some("Digit button".into()),
+            enabled: true, visible: true, selected: Some(false), focused: Some(true), actions: vec!["invoke".into()],
+            element_ptr: 0, center_x: 3029, center_y: 1077, rect: Some((2972, 1039, 3086, 1116)), msaa_role: None,
+            depth: 5, parent_element_index: Some(3) }
+    }
+
+    #[test]
+    fn emits_legacy_and_enriched_geometry_fields() {
+        let entry = structured_element_record(&sample_node(), 1234, 0xabc, 42, Some((2728, 402, 484, 801))).expect("indexed node emits structured record");
+        assert_eq!(entry["element_index"], 7);
+        assert_eq!(entry["element_token"], "s002a:7");
+        assert_eq!(entry["stable_id"], "uia:1234:2748:7:num3Button:Three");
+        assert_eq!(entry["role"], "Button");
+        assert_eq!(entry["label"], "Three");
+        assert_eq!(entry["name"], "Three");
+        assert!(entry["value"].is_null());
+        assert!(entry["text"].is_null());
+        assert_eq!(entry["enabled"], true);
+        assert_eq!(entry["visible"], true);
+        assert_eq!(entry["selected"], false);
+        assert_eq!(entry["focused"], true);
+        assert_eq!(entry["automation_id"], "num3Button");
+        assert_eq!(entry["class_name"], "Button");
+        assert_eq!(entry["actions"], serde_json::json!(["invoke"]));
+        assert_eq!(entry["backend"], "uia");
+        assert_eq!(entry["depth"], 5);
+        assert_eq!(entry["parent_index"], 3);
+        assert_eq!(entry["frame"], serde_json::json!({"x": 2972, "y": 1039, "w": 114, "h": 77}));
+        assert_eq!(entry["bounds_screen"], serde_json::json!({"x": 2972, "y": 1039, "width": 114, "height": 77}));
+        assert_eq!(entry["center_screen"], serde_json::json!({"x": 3029, "y": 1077}));
+        assert_eq!(entry["bounds_window"], serde_json::json!({"x": 244, "y": 637, "width": 114, "height": 77}));
+        assert_eq!(entry["center_window"], serde_json::json!({"x": 301, "y": 675}));
+    }
+
+    #[test]
+    fn reports_geometry_error_when_rect_missing() {
+        let mut node = sample_node(); node.rect = None;
+        let entry = structured_element_record(&node, 1234, 0xabc, 42, Some((2728, 402, 484, 801))).expect("indexed node emits structured record");
+        assert!(entry["frame"].is_null());
+        assert!(entry["bounds_screen"].is_null());
+        assert!(entry["bounds_window"].is_null());
+        assert!(entry["center_screen"].is_null());
+        assert!(entry["center_window"].is_null());
+        assert_eq!(entry["geometry_error"], "UIA/MSAA did not report a usable bounding rectangle");
+    }
+
+    #[test]
+    fn skips_unindexed_nodes() {
+        let mut node = sample_node(); node.element_index = None;
+        assert!(structured_element_record(&node, 1234, 0xabc, 42, Some((2728, 402, 484, 801))).is_none());
+    }
+}
+
+#[cfg(test)]
+mod get_element_geometry_schema_tests {
+    #[test]
+    fn registry_advertises_get_element_geometry() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("get_element_geometry").expect("get_element_geometry registered");
+        assert_eq!(tool.name, "get_element_geometry");
+        assert!(tool.read_only);
+        assert!(!tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "element_index", "element_token"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["element_token"]["type"], "string");
+        assert_eq!(props["element_index"]["type"], "integer");
+    }
+}
+
 #[cfg(test)]
 mod click_button_schema_tests {
     use super::ClickTool;
     use cua_driver_core::tool::Tool;
-    use std::sync::Arc;
-
     /// Surface 5: schema must keep advertising the three canonical button
     /// values. Windows was already shipping `button` (pre-Surface-5) so this
     /// test is the freeze test — guards against an inadvertent rename/removal.

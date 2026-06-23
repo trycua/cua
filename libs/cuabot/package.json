@@ -24,7 +24,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "@lydell/node-pty": "1.2.0-beta.3",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "better-sqlite3": "^11.0.0",
     "get-windows": "^9.2.3",
     "ink": "^5.1.0",
@@ -35,8 +35,8 @@
     "react": "^18.3.1",
     "sharp": "^0.34.5",
     "tsx": "^4.19.0",
-    "uuid": "^13.0.0",
-    "ws": "^8.19.0",
+    "uuid": "^13.0.1",
+    "ws": "^8.21.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -45,5 +45,22 @@
     "@types/react": "^18.3.0",
     "@types/ws": "^8.18.1",
     "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server": "1.19.13",
+      "@modelcontextprotocol/sdk": "1.26.0",
+      "ajv": "8.18.0",
+      "brace-expansion": "2.0.3",
+      "fast-uri": "3.1.2",
+      "hono": "4.12.25",
+      "ip-address": "10.1.1",
+      "minimatch": "9.0.7",
+      "path-to-regexp": "8.4.0",
+      "qs": "6.15.2",
+      "tar": "7.5.16",
+      "uuid": "13.0.1",
+      "ws": "8.21.0"
+    }
   }
 }

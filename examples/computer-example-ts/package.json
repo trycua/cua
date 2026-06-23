@@ -15,13 +15,13 @@
   "license": "MIT",
   "packageManager": "pnpm@10.12.3",
   "dependencies": {
-    "@trycua/computer": "^0.1.3",
-    "dotenv": "^16.5.0",
-    "openai": "^5.7.0"
+    "@trycua/computer": "^0.1.6",
+    "dotenv": "^16.6.1",
+    "openai": "^5.23.2"
   },
   "devDependencies": {
-    "@types/node": "^22.15.33",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "@types/node": "^22.20.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3"
   }
 }

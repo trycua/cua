@@ -2,6 +2,7 @@
 
 import os
 import platform
+import shlex
 import subprocess
 import webbrowser
 from typing import Any, List, Optional, Tuple
@@ -28,6 +29,23 @@ def _get_by_handle(handle: Any) -> Optional[Any]:
     except Exception:
         pass
     return None
+
+
+def _build_launch_argv(app: str, args: Optional[List[str]] = None) -> List[str]:
+    if args is not None:
+        return [app, *args]
+    argv = shlex.split(app, posix=(os.name != "nt"))
+    if os.name == "nt":
+        argv = [_strip_wrapping_quotes(arg) for arg in argv]
+    if not argv:
+        raise ValueError("app must not be empty")
+    return argv
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
 
 
 # ── Active window ─────────────────────────────────────────────────────────────
@@ -177,12 +195,8 @@ def open(target: str) -> bool:  # noqa: A001
 def launch(app: str, args: Optional[List[str]] = None) -> int:
     """Launch an application and return its PID.
 
-    If *args* is given, the app is launched with those arguments.
-    Otherwise the command string is passed to the system shell, allowing
-    strings like ``"libreoffice --writer"``.
+    If *args* is given, the app is launched with those literal arguments.
+    Otherwise a simple command string is split into argv form.
     """
-    if args:
-        proc = subprocess.Popen([app, *args])
-    else:
-        proc = subprocess.Popen(app, shell=True)
+    proc = subprocess.Popen(_build_launch_argv(app, args))
     return proc.pid

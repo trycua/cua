@@ -60,6 +60,26 @@
       ],
       "enabled": true
     },
+    "cyclops-cs": {
+      "name": "Cyclops CS Backend",
+      "language": "go",
+      "sourcePath": "scripts/docs-generators/specs",
+      "docsOutputPath": "docs/content/docs/reference/cyclops-cs",
+      "generatorScript": "scripts/docs-generators/cyclops-cs.ts",
+      "watchPaths": ["scripts/docs-generators/specs/cyclops-cs.swagger.json"],
+      "buildCommand": null,
+      "buildDirectory": ".",
+      "extractionMethod": "openapi-spec",
+      "outputs": [
+        {
+          "type": "api",
+          "outputFile": "http-api.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "Source lives in trycua/cloud (cyclops-cs/backend/docs/swagger.json). The Swagger 2.0 spec is vendored to specs/cyclops-cs.swagger.json and refreshed by .github/workflows/sync-cyclops-cs-spec.yml; the generator reads only the vendored copy so it runs hermetically here."
+    },
     "cua-cli": {
       "name": "Cua CLI",
       "language": "typescript",

@@ -130,10 +130,9 @@ dev = [
 
 # RL training
 rl = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
+    "torch>=2.12.1",
+    "torchvision>=0.27.1",
     "transformers>=5.0.0rc3,<6.0",
-    "verl"
 ]
 
 [project.urls]

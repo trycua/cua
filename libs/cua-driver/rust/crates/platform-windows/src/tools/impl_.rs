@@ -1038,6 +1038,110 @@ fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
 }
 
 
+
+// ── find_element ─────────────────────────────────────────────────────────────
+
+pub struct FindElementTool { state: Arc<ToolState> }
+
+static FIND_ELEMENT_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn str_matches(haystack: Option<&str>, needle: &str, exact: bool) -> bool {
+    let Some(haystack) = haystack else { return false; };
+    if exact { haystack == needle } else { haystack.to_lowercase().contains(&needle.to_lowercase()) }
+}
+
+#[async_trait]
+impl Tool for FindElementTool {
+    fn def(&self) -> &ToolDef {
+        FIND_ELEMENT_DEF.get_or_init(|| ToolDef {
+            name: "find_element".into(),
+            description: "Find matching elements in a window by label/name/automation_id/role/query and return the same enriched element records as get_window_state. This refreshes the window snapshot and updates element_token/cache entries.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid","window_id"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND to inspect."},
+                    "label":{"type":"string","description":"Match element label (name → value → automation_id → help_text). Case-insensitive contains by default."},
+                    "name":{"type":"string","description":"Match UIA/MSAA name. Case-insensitive contains by default."},
+                    "automation_id":{"type":"string","description":"Match UIA automation_id. Case-insensitive contains by default."},
+                    "role":{"type":"string","description":"Match role/control type, e.g. Button, Edit, TabItem. Case-insensitive contains by default."},
+                    "query":{"type":"string","description":"Broad search across label, name, value, automation_id, class_name, role, and actions."},
+                    "exact":{"type":"boolean","description":"When true, string filters must match exactly instead of contains."},
+                    "limit":{"type":"integer","minimum":1,"maximum":200,"description":"Maximum matches to return. Default 20."},
+                    "max_elements":{"type":"integer","minimum":1,"description":"Bound the UIA walk. Defaults to get_window_state's cap."},
+                    "max_depth":{"type":"integer","minimum":1,"description":"Bound UIA depth. Defaults to get_window_state's cap."}
+                },"additionalProperties":false
+            }),
+            read_only: true, destructive: false, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let hwnd = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
+        let label_filter = args.opt_str("label");
+        let name_filter = args.opt_str("name");
+        let automation_id_filter = args.opt_str("automation_id");
+        let role_filter = args.opt_str("role");
+        let query_filter = args.opt_str("query");
+        if label_filter.is_none() && name_filter.is_none() && automation_id_filter.is_none() && role_filter.is_none() && query_filter.is_none() {
+            return ToolResult::error("find_element requires at least one of label, name, automation_id, role, or query");
+        }
+        let exact = args.bool_or("exact", false);
+        let limit = args.u64_or("limit", 20).clamp(1, 200) as usize;
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+
+        let windows_for_pid = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid))).await.unwrap_or_default();
+        let target_window_bounds = windows_for_pid.iter().find(|w| w.hwnd == hwnd).map(|w| (w.x, w.y, w.width, w.height));
+        if target_window_bounds.is_none() {
+            return ToolResult::error(format!("No window with window_id {hwnd} exists for pid {pid}. Call list_windows({{\"pid\": {pid}}}) for candidates."));
+        }
+
+        let state = self.state.clone();
+        let walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
+        let tr = match walk { Ok(v) => v, Err(e) => return ToolResult::error(format!("find_element UIA walk failed: {e}")) };
+        let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
+        let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
+        if is_msaa { state.element_cache.update_msaa(pid, hwnd, &tr.nodes); } else { state.element_cache.update(pid, hwnd, &tr.nodes); }
+        let snapshot_id = cua_driver_core::element_token::global().register_snapshot(pid as i32, hwnd as u32, count);
+
+        let mut matches = Vec::new();
+        for n in &tr.nodes {
+            if n.element_index.is_none() { continue; }
+            let label = n.name.as_deref().or(n.value.as_deref()).or(n.automation_id.as_deref()).or(n.help_text.as_deref());
+            if let Some(v) = label_filter.as_deref() { if !str_matches(label, v, exact) { continue; } }
+            if let Some(v) = name_filter.as_deref() { if !str_matches(n.name.as_deref(), v, exact) { continue; } }
+            if let Some(v) = automation_id_filter.as_deref() { if !str_matches(n.automation_id.as_deref(), v, exact) { continue; } }
+            if let Some(v) = role_filter.as_deref() { if !str_matches(Some(&n.control_type), v, exact) { continue; } }
+            if let Some(v) = query_filter.as_deref() {
+                let action_match = n.actions.iter().any(|a| str_matches(Some(a), v, exact));
+                let any_match = str_matches(label, v, exact)
+                    || str_matches(n.name.as_deref(), v, exact)
+                    || str_matches(n.value.as_deref(), v, exact)
+                    || str_matches(n.automation_id.as_deref(), v, exact)
+                    || str_matches(n.class_name.as_deref(), v, exact)
+                    || str_matches(Some(&n.control_type), v, exact)
+                    || action_match;
+                if !any_match { continue; }
+            }
+            if let Some(entry) = structured_element_record(n, pid, hwnd, snapshot_id, target_window_bounds) {
+                matches.push(entry);
+                if matches.len() >= limit { break; }
+            }
+        }
+        let structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "snapshot_id": snapshot_id,
+            "element_count": count,
+            "match_count": matches.len(),
+            "matches": matches,
+        });
+        ToolResult::text(format!("find_element matched {} of {count} indexed elements", structured["match_count"].as_u64().unwrap_or(0))).with_structured(structured)
+    }
+}
+
 // ── get_element_geometry ─────────────────────────────────────────────────────
 
 pub struct GetElementGeometryTool { state: Arc<ToolState> }
@@ -5851,6 +5955,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
     r.register(Box::new(GetElementGeometryTool { state: state.clone() }));
+    r.register(Box::new(FindElementTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
     r.register(Box::new(BringToFrontTool));
@@ -6225,6 +6330,26 @@ mod get_element_geometry_schema_tests {
         }
         assert_eq!(props["element_token"]["type"], "string");
         assert_eq!(props["element_index"]["type"], "integer");
+    }
+}
+
+
+
+#[cfg(test)]
+mod find_element_schema_tests {
+    #[test]
+    fn registry_advertises_find_element() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("find_element").expect("find_element registered");
+        assert_eq!(tool.name, "find_element");
+        assert!(tool.read_only);
+        assert!(!tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "label", "name", "automation_id", "role", "query", "limit"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["query"]["type"], "string");
+        assert_eq!(props["limit"]["type"], "integer");
     }
 }
 

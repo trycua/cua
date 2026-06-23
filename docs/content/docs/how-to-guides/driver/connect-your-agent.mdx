@@ -213,15 +213,14 @@ Verify: run `cua-driver --help` from the same Pi shell context.
 cua-driver mcp-config --client qwen
 ```
 
-Paste the printed JSON into `~/.qwen/mcp.json`, or `.qwen/mcp.json` for project scope:
+Paste the printed JSON into `~/.qwen/settings.json`, or `.qwen/settings.json` for project scope:
 
 ```json
 {
   "mcpServers": {
     "cua-driver": {
       "command": "cua-driver",
-      "args": ["mcp"],
-      "type": "stdio"
+      "args": ["mcp"]
     }
   }
 }

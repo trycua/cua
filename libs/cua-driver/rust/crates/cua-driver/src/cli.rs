@@ -1104,8 +1104,11 @@ pub fn run_mcp_config(client: Option<&str>) {
         }
         Some("qwen") | Some("qwen-code") => {
             // Qwen Code (QwenLM/qwen-code) uses cua-driver for its Computer Use
-            // backend. It reads MCP server configuration from ~/.qwen/mcp.json
-            // (user-scope) or .qwen/mcp.json in the project root.
+            // backend. It reads MCP server configuration from ~/.qwen/settings.json
+            // (user-scope) or .qwen/settings.json in the project root.
+            //
+            // Qwen Code's MCP server schema only accepts command, args, cwd, env,
+            // and timeout — no "type" discriminator. Do NOT add "type": "stdio".
             //
             // No `qwen mcp add` subcommand — paste the printed JSON into the
             // config file and restart Qwen Code.
@@ -1113,8 +1116,7 @@ pub fn run_mcp_config(client: Option<&str>) {
   "mcpServers": {{
     "cua-driver": {{
       "command": "{binary}",
-      "args": ["mcp"],
-      "type": "stdio"
+      "args": ["mcp"]
     }}
   }}
 }}"#);
@@ -2084,7 +2086,7 @@ fn cli_docs_json() -> serde_json::Value {
             {
                 "name": "mcp-config",
                 "abstract": "Print MCP server config or a client-specific install command.",
-                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, and pi.",
+                "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, qwen, droid, and pi.",
                 "arguments": no_args,
                 "options": [{"name":"client","short_name":null,"help":"Client name to print configuration for.","type":"String","default_value":null,"is_optional":true}],
                 "flags": no_flags,

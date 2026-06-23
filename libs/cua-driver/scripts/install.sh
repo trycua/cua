@@ -480,7 +480,7 @@ Next steps:
             cua-driver mcp-config --client opencode     # JSON for opencode.json
             cua-driver mcp-config --client hermes       # YAML for ~/.hermes/config.yaml
             cua-driver mcp-config --client antigravity  # JSON for ~/.gemini/config/mcp_config.json (shared with Antigravity IDE)
-            cua-driver mcp-config --client qwen         # JSON for ~/.qwen/mcp.json
+            cua-driver mcp-config --client qwen         # JSON for ~/.qwen/settings.json
 
         For other clients accepting the generic mcpServers shape:
             cua-driver mcp-config

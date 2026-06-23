@@ -648,7 +648,11 @@ impl Tool for GetWindowStateTool {
         // Validate window belongs to pid — Swift's hard error.
         let windows_for_pid = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
             .await.unwrap_or_default();
-        if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
+        let target_window_bounds = windows_for_pid
+            .iter()
+            .find(|w| w.hwnd == hwnd)
+            .map(|w| (w.x, w.y, w.width, w.height));
+        if target_window_bounds.is_none() {
             // Check if the window exists under a different pid.
             let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
                 .await.unwrap_or_default();
@@ -749,7 +753,7 @@ impl Tool for GetWindowStateTool {
         match result {
             Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
-                let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                let mut structured = json!({ "window_id": hwnd, "pid": pid, "capture_scope": "window", "capture_mode": capture_mode });
 
                 if let Some(tr) = tree_opt {
                     let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
@@ -791,29 +795,82 @@ impl Tool for GetWindowStateTool {
                                 .or_else(|| n.value.clone())
                                 .or_else(|| n.automation_id.clone())
                                 .or_else(|| n.help_text.clone());
+                            let element_token = cua_driver_core::element_token::token_for(snapshot_id, idx);
+                            let backend = if n.msaa_role.is_some() { "msaa" } else { "uia" };
+                            let name = n.name.clone();
+                            let value = n.value.clone();
+                            let automation_id = n.automation_id.clone();
+                            let class_name = n.class_name.clone();
+                            let actions = n.actions.clone();
                             let mut entry = json!({
                                 "element_index": idx,
                                 // Surface 6: opaque token paired to the
                                 // integer index. See cua-driver-core's
                                 // `element_token` module for the format
                                 // and validity contract.
-                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
-                                "role": n.control_type,
+                                "element_token": element_token,
+                                "stable_id": format!("{backend}:{pid}:{hwnd}:{idx}:{}:{}", n.automation_id.as_deref().unwrap_or(""), n.name.as_deref().unwrap_or("")),
+                                "role": n.control_type.clone(),
+                                "name": name,
+                                "value": value,
+                                "text": n.value.clone(),
+                                "label": label,
+                                "enabled": n.enabled,
+                                "focused": n.focused,
+                                "selected": n.selected,
+                                "visible": n.visible,
+                                "automation_id": automation_id,
+                                "class_name": class_name,
+                                "actions": actions,
+                                "backend": backend,
                                 "depth": n.depth,
                             });
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
                             }
                             if let Some((l, t, r, b)) = n.rect {
+                                let width = (r - l).max(0);
+                                let height = (b - t).max(0);
                                 entry["frame"] = json!({
                                     "x": l,
                                     "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
+                                    "w": width,
+                                    "h": height,
                                 });
+                                entry["bounds_screen"] = json!({
+                                    "x": l,
+                                    "y": t,
+                                    "width": width,
+                                    "height": height,
+                                });
+                                entry["center_screen"] = json!({
+                                    "x": n.center_x,
+                                    "y": n.center_y,
+                                });
+                                if let Some((wx, wy, _ww, _wh)) = target_window_bounds {
+                                    let bx = l - wx;
+                                    let by = t - wy;
+                                    entry["bounds_window"] = json!({
+                                        "x": bx,
+                                        "y": by,
+                                        "width": width,
+                                        "height": height,
+                                    });
+                                    entry["center_window"] = json!({
+                                        "x": n.center_x - wx,
+                                        "y": n.center_y - wy,
+                                    });
+                                } else {
+                                    entry["bounds_window"] = serde_json::Value::Null;
+                                    entry["center_window"] = serde_json::Value::Null;
+                                }
+                            } else {
+                                entry["frame"] = serde_json::Value::Null;
+                                entry["bounds_screen"] = serde_json::Value::Null;
+                                entry["bounds_window"] = serde_json::Value::Null;
+                                entry["center_screen"] = serde_json::Value::Null;
+                                entry["center_window"] = serde_json::Value::Null;
+                                entry["geometry_error"] = json!("UIA/MSAA did not report a usable bounding rectangle");
                             }
                             Some(entry)
                         })
@@ -842,6 +899,13 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    structured["screenshot"] = json!({
+                        "width": w,
+                        "height": h,
+                        "scale_factor": 1.0,
+                        "coordinate_space": "window_pixels",
+                        "capture_scope": "window",
+                    });
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.

@@ -14,7 +14,7 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPRO
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
     UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
-    UIA_ControlTypePropertyId, UIA_HelpTextPropertyId,
+    UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_HelpTextPropertyId,
     UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
     UIA_ProcessIdPropertyId, UIA_ValueValuePropertyId,
     UIA_InvokePatternId, UIA_SelectionItemPatternId,
@@ -54,7 +54,12 @@ pub struct UiaNode {
     pub name: Option<String>,
     pub value: Option<String>,
     pub automation_id: Option<String>,
+    pub class_name: Option<String>,
     pub help_text: Option<String>,
+    pub enabled: bool,
+    pub visible: bool,
+    pub selected: Option<bool>,
+    pub focused: Option<bool>,
     pub actions: Vec<String>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
     /// MSAA path) as usize. Retained — `ElementCache` Drop releases it via
@@ -135,6 +140,7 @@ unsafe fn walk_tree_unsafe(
         UIA_NamePropertyId,
         UIA_ValueValuePropertyId,
         UIA_AutomationIdPropertyId,
+        UIA_ClassNamePropertyId,
         UIA_HelpTextPropertyId,
         UIA_IsEnabledPropertyId,
         UIA_IsOffscreenPropertyId,
@@ -470,6 +476,7 @@ unsafe fn walk_cached_bounded(
     let name = read_cached_bstr_name(element);
     let value = read_cached_bstr_value(element);
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
+    let class_name = read_cached_bstr(element, UIA_ClassNamePropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
     let is_enabled = read_cached_bool(element, UIA_IsEnabledPropertyId).unwrap_or(true);
     let is_offscreen = read_cached_bool(element, UIA_IsOffscreenPropertyId).unwrap_or(false);
@@ -496,7 +503,12 @@ unsafe fn walk_cached_bounded(
                 name: name.clone(),
                 value: value.clone(),
                 automation_id: automation_id.clone(),
+                class_name: class_name.clone(),
                 help_text: help_text.clone(),
+                enabled: is_enabled,
+                visible: !is_offscreen,
+                selected: None,
+                focused: None,
                 actions: actions.clone(),
                 element_ptr: ptr,
                 center_x,
@@ -513,7 +525,12 @@ unsafe fn walk_cached_bounded(
                 name: name.clone(),
                 value: value.clone(),
                 automation_id: automation_id.clone(),
+                class_name: class_name.clone(),
                 help_text: help_text.clone(),
+                enabled: is_enabled,
+                visible: !is_offscreen,
+                selected: None,
+                focused: None,
                 actions: vec![],
                 element_ptr: ptr,
                 center_x: 0,

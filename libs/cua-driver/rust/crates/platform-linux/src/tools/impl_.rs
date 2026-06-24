@@ -1047,12 +1047,16 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || {
-            // Native Wayland: focus+raise the target toplevel (foreign-toplevel
-            // `activate`), then drive `count` virtual-pointer button events at
-            // the requested coordinates. Wayland hides cross-window geometry,
-            // so callers should pass output-relative coords; (0,0) preserves
-            // the legacy "click the activated window's centre" behaviour.
             if crate::wayland::is_wayland() {
+                if crate::wayland::is_inject_mode() {
+                    return crate::wayland::inject_click(xid, x, y, count as u32, button);
+                }
+                // Native Wayland: focus+raise the target toplevel
+                // (foreign-toplevel `activate`), then drive `count`
+                // virtual-pointer button events at the requested coordinates.
+                // Wayland hides cross-window geometry, so callers should pass
+                // output-relative coords; (0,0) preserves the legacy
+                // "click the activated window's centre" behaviour.
                 return crate::wayland::click(xid, xi, yi, count as u32, button);
             }
             crate::input::send_click(xid, xi, yi, count, button)

@@ -5,6 +5,8 @@ Following SRP: This file tests server initialization and basic operations.
 All external dependencies are mocked.
 """
 
+import importlib.util
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -81,6 +83,64 @@ class TestMcpBarePathRewrite:
         for path in ("/mcp/", "/mcpx", "/status", "/"):
             await shim({"type": "http", "path": path}, None, None)
             assert seen["path"] == path
+
+
+class TestMcpServerSmoke:
+    """Smoke-test the real FastMCP integration so dependency major bumps cannot
+    silently remove the /mcp endpoint while unit tests stay green."""
+
+    @staticmethod
+    def _load_mcp_server_module():
+        # Import the module file directly. Importing through
+        # `computer_server.mcp_server` first executes computer_server/__init__.py,
+        # which imports platform input backends and fails on headless Linux CI
+        # with no DISPLAY. The MCP module itself has no runtime dependency on
+        # those input backends until a tool is actually invoked.
+        module_path = Path(__file__).parents[1] / "computer_server" / "mcp_server.py"
+        spec = importlib.util.spec_from_file_location("_computer_server_mcp_smoke", module_path)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_create_mcp_server_and_http_app(self):
+        mcp_module = self._load_mcp_server_module()
+
+        mcp_server = mcp_module.create_mcp_server()
+        mcp_app = mcp_server.http_app(path="/")
+
+        assert mcp_server is not None
+        assert mcp_app is not None
+
+    def test_mcp_http_app_accepts_initialize_post(self):
+        from starlette.testclient import TestClient
+
+        mcp_module = self._load_mcp_server_module()
+        mcp_server = mcp_module.create_mcp_server()
+        mcp_app = mcp_server.http_app(path="/")
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "computer-server-smoke", "version": "0"},
+            },
+        }
+
+        with TestClient(mcp_app) as client:
+            response = client.post(
+                "/",
+                json=payload,
+                headers={"accept": "application/json, text/event-stream"},
+            )
+
+        assert response.status_code == 200
+        assert "cua-computer-server" in response.text
+        assert '"id":1' in response.text
 
 
 class TestMcpAcceptHeaderShim:

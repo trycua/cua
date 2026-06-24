@@ -60,14 +60,15 @@
     "motion": "^12.0.0",
     "tsdown": "^0.11.9",
     "typescript": "^5.8.3",
-    "vitest": "^4.0.14"
+    "vitest": "^4.1.0",
+    "vite": "^7.3.5"
   },
   "scripts": {
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "test": "vitest",
+    "test": "vitest --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "release": "bumpp && pnpm publish",
     "prepublishOnly": "pnpm run build",

@@ -15,6 +15,7 @@ dependencies = [
     "thefuzz>=0.22.0",
     "boto3>=1.42.88",
     "botocore[crt]>=1.42.88",
+    "protobuf>=6.33.6",
 ]
 
 [project.optional-dependencies]

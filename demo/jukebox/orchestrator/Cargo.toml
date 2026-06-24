@@ -6,6 +6,11 @@ edition = "2021"
 [[bin]]
 name = "jukebox-orchestrator"
 path = "src/main.rs"
+required-features = ["windows-app"]
+
+[features]
+default = []
+windows-app = []
 
 [dependencies]
 # Minimal, well-tested SMF parser so real multitrack .mid files Just Work.

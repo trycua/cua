@@ -1247,6 +1247,34 @@ pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
     inject_send(&[format!("k {app} {key}")])
 }
 
+/// Focus-free click into the window's surface via the nested EIS compositor.
+/// Coordinates are window-local, matching the rest of the inject protocol.
+pub fn inject_click(
+    window_id: u64,
+    x: f64,
+    y: f64,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let app = app_id_for_window(window_id)
+        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    let btn = evdev_button(button as u32);
+    let n = count.max(1);
+    let mut lines = Vec::with_capacity((n as usize) * 4);
+    for i in 0..n {
+        if i > 0 {
+            // The line protocol is batch-oriented, so use a tiny move-only
+            // separator between clicks to give the compositor a frame boundary
+            // without introducing a protocol-level sleep primitive.
+            lines.push(format!("m {app} 0 {x:.1} {y:.1}"));
+        }
+        lines.push(format!("m {app} 0 {x:.1} {y:.1}"));
+        lines.push(format!("b {app} 0 {btn} 1"));
+        lines.push(format!("b {app} 0 {btn} 0"));
+    }
+    inject_send(&lines)
+}
+
 /// A single pointer drag for `inject_parallel_drags`: window-local waypoints,
 /// driven by cursor `idx` so several run concurrently on one window.
 pub struct InjectDrag {

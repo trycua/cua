@@ -138,12 +138,24 @@ pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
-    let (conn, screen_num) = RustConnection::connect(None)?;
+    let (conn, screen_num) = RustConnection::connect(None)
+        .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
     let root = conn.setup().roots[screen_num].root;
     // Get root geometry.
     let geom = conn.get_geometry(root)?.reply()?;
     let w = geom.width as u32;
     let h = geom.height as u32;
+    // WSLg / headless XWayland quirk: the X server connects but the root
+    // window reports a 0-px geometry until a real output is attached.
+    // `get_image` with w/h == 0 yields an empty buffer that later decodes
+    // to null/zero dimensions downstream. Fail with an actionable, typed
+    // error instead of emitting a 0-px image. See issue #2005.
+    if w == 0 || h == 0 {
+        anyhow::bail!(
+            "X11 root window reports a 0x0 geometry — no usable display to capture.{}",
+            crate::no_display_hint()
+        );
+    }
     let img = conn.get_image(ImageFormat::Z_PIXMAP, root, 0, 0, w as u16, h as u16, !0u32)?.reply()?;
     let bytes = img.data;
     let bpp = match img.depth { 32 | 24 => 4usize, _ => anyhow::bail!("Unsupported depth") };

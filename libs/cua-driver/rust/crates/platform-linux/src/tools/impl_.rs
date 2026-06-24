@@ -2794,18 +2794,32 @@ impl Tool for GetScreenSizeTool {
         let result = tokio::task::spawn_blocking(|| {
             use x11rb::connection::Connection;
             use x11rb::rust_connection::RustConnection;
-            let (conn, screen_num) = RustConnection::connect(None)?;
+            let (conn, screen_num) = RustConnection::connect(None)
+                .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
             let setup = conn.setup();
             let screen = &setup.roots[screen_num];
+            let w = screen.width_in_pixels as u32;
+            let h = screen.height_in_pixels as u32;
+            // WSLg / headless XWayland quirk: the X server connects but the
+            // root screen advertises a 0-px geometry until a real output is
+            // attached. Returning {width:0,height:0} here would propagate a
+            // success with zero dimensions to the client, which then either
+            // divides by zero when scaling or feeds the value into `int(...)`
+            // after the missing key collapses to None. Fail loudly with an
+            // actionable, typed error instead (never emit a 0/null where the
+            // client expects a usable int). See issue #2005.
+            if w == 0 || h == 0 {
+                anyhow::bail!(
+                    "X11 connected but reports a 0x0 root screen — no usable \
+                     display geometry.{}",
+                    crate::no_display_hint()
+                );
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption).  Wayland/HiDPI X11 callers should query
             // `xrandr --query` for true scale.
-            Ok::<(u32, u32, f64), anyhow::Error>((
-                screen.width_in_pixels as u32,
-                screen.height_in_pixels as u32,
-                1.0,
-            ))
+            Ok::<(u32, u32, f64), anyhow::Error>((w, h, 1.0))
         }).await;
         match result {
             // Matches Swift text format 1:1.

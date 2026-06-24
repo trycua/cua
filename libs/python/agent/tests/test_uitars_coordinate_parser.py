@@ -33,6 +33,8 @@ def test_parse_uitars_coordinates_accepts_numeric_points_and_boxes(raw, expected
         "[100]",
         "[100, 200, 300, 400, 500]",
         "[True, 200]",
+        "[1e309, 200]",
+        "[float('nan'), 200]",
     ],
 )
 def test_parse_uitars_coordinates_rejects_malformed_or_executable_payloads(raw):

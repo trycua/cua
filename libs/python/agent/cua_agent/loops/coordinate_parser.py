@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from numbers import Real
 from typing import Tuple
 
@@ -29,7 +30,10 @@ def parse_uitars_coordinates(raw: str) -> Tuple[float, float, float, float]:
     for item in value:
         if isinstance(item, bool) or not isinstance(item, Real):
             raise ValueError("coordinate values must be numeric")
-        coords.append(float(item))
+        coord = float(item)
+        if not math.isfinite(coord):
+            raise ValueError("coordinate values must be finite")
+        coords.append(coord)
 
     if len(coords) == 2:
         coords = [coords[0], coords[1], coords[0], coords[1]]

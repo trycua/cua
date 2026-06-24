@@ -50,12 +50,41 @@ on:
         required: false
         type: string
         default: "main"
+      force_release:
+        description: "EMERGENCY: bypass the cua-driver-rs Linux harness gate (audited). Use only when the gate is blocked by infra, not failing tests."
+        required: false
+        type: boolean
+        default: false
 
+# `id-token`/`pull-requests` are needed by the reusable nix-build harness gate
+# (AWS OIDC for the Nix cache); `contents: write` is for the bump commit + tag.
 permissions:
   contents: write
+  id-token: write
+  pull-requests: write
 
 jobs:
+  # ── Linux release gate (Phase 0) ─────────────────────────────────────────────
+  # For cua-driver-rs ONLY: actually RUN the Linux harness suite against the
+  # exact commit being released, BEFORE any bump/tag/publish. We re-run the suite
+  # (rather than query prior PR CI) so the gate tests the precise bits being
+  # shipped and can't be fooled by stale evidence or the auto-on-merge path.
+  # Calls the same nix-build.yml the PR gate uses, so the two never diverge.
+  # Skipped for every non-cua-driver-rs service and when force_release is set.
+  # Windows/macOS gates land later on self-hosted runners. See
+  # RELEASE_TEST_GATE_PLAN.md.
+  harness-preamble:
+    name: "Release gate: Linux harness suite"
+    if: ${{ inputs.service == 'cua-driver-rs' && !inputs.force_release }}
+    uses: ./.github/workflows/nix-build.yml
+    secrets: inherit
+
   bump-version:
+    needs: [harness-preamble]
+    # Proceed when the gate passed, was skipped (non-cua-driver-rs service), or
+    # was explicitly bypassed. A FAILED gate (cua-driver-rs with real test
+    # failures) blocks the bump → no tag, no publish.
+    if: ${{ always() && (needs.harness-preamble.result == 'success' || needs.harness-preamble.result == 'skipped' || inputs.force_release) }}
     runs-on: ubuntu-latest
     steps:
       - name: Set package directory and type

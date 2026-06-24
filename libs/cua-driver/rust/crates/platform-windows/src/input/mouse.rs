@@ -223,8 +223,35 @@ pub fn post_drag_screen(
 }
 
 /// Pack two 16-bit integers into a LPARAM (low word = x, high word = y).
+///
+/// Delegates the bit-math to [`crate::lparam::pack_xy`] so the
+/// receiver-side `GET_X_LPARAM` / `GET_Y_LPARAM` sign-extension contract is
+/// covered by cross-platform unit tests (see #1979's audit: the PostMessage
+/// path packing was a suspect for the multi-monitor wrong-screen symptom,
+/// turned out to be correct, and now has regression coverage).
+///
+/// On the (currently unreachable) out-of-range path we log + clamp rather
+/// than panic — every existing call site passes post-`ScreenToClient`
+/// window-local coords that fit in `i16` by construction, but if a future
+/// caller passes a raw screen coord on a >32k-px virtual desktop, clamping
+/// is at least visible in the log instead of silently wrapping.
 fn make_lparam(x: i32, y: i32) -> LPARAM {
-    LPARAM((((y as u16 as u32) << 16) | (x as u16 as u32)) as isize)
+    match crate::lparam::pack_xy(x, y) {
+        Ok(packed) => LPARAM(packed as isize),
+        Err(err) => {
+            tracing::warn!(
+                target: "click",
+                "make_lparam: {err}; clamping to i16 range. \
+                 If you see this, the caller is passing non-window-local coords."
+            );
+            let clamp = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32);
+            let cx = clamp(x);
+            let cy = clamp(y);
+            let packed = crate::lparam::pack_xy(cx, cy)
+                .expect("clamped values always fit in i16 range");
+            LPARAM(packed as isize)
+        }
+    }
 }
 
 /// Returns `true` when `hwnd` is a top-level frame of a Chromium-based browser
@@ -320,6 +347,10 @@ pub fn send_click_synthesized(
     //
     // Without VIRTUALDESK the coords are relative to the primary monitor only;
     // multi-monitor setups would misroute. Better to always use VIRTUALDESK.
+    //
+    // Math lives in `crate::virtualdesk` so it can be unit-tested cross-platform
+    // (no Win32 runtime required) — see issue #1979 for the negative-offset
+    // multi-monitor case the tests there pin down.
     let (vd_x, vd_y) = unsafe {
         (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -332,8 +363,8 @@ pub fn send_click_synthesized(
             GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
         )
     };
-    let norm_x = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
-    let norm_y = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
+    let (norm_x, norm_y) =
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h);
 
     let move_input = INPUT {
         r#type: INPUT_MOUSE,
@@ -482,10 +513,10 @@ pub fn send_drag_synthesized(
             GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
         )
     };
+    // Same VIRTUALDESK normalization as `send_click_synthesized`; see
+    // `crate::virtualdesk` for the math + the cross-platform unit tests.
     let norm = |sx: i32, sy: i32| -> (i32, i32) {
-        let nx = ((sx - vd_x) as i64 * 65535 / vd_w as i64).clamp(0, 65535) as i32;
-        let ny = ((sy - vd_y) as i64 * 65535 / vd_h as i64).clamp(0, 65535) as i32;
-        (nx, ny)
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h)
     };
     let make_input = |dx: i32, dy: i32, flags| INPUT {
         r#type: INPUT_MOUSE,

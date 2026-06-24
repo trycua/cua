@@ -3681,6 +3681,15 @@ pub struct SetValueVerifiedTool { state: Arc<ToolState> }
 
 static SET_VALUE_VERIFIED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+fn value_texts_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|n| n.value.as_ref())
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect()
+}
+
 fn searchable_texts_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
     let mut out = Vec::new();
     for n in nodes {
@@ -3745,13 +3754,13 @@ impl Tool for SetValueVerifiedTool {
         let os_dispatch_success = !set_result.is_error.unwrap_or(false);
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
-        let post_texts = match await_uia_walk_with_timeout(post_walk, "set_value_verified post-state", hwnd, UIA_WALK_TIMEOUT).await {
-            Ok(tr) => searchable_texts_from_nodes(&tr.nodes),
+        let (post_texts, post_values) = match await_uia_walk_with_timeout(post_walk, "set_value_verified post-state", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(tr) => (searchable_texts_from_nodes(&tr.nodes), value_texts_from_nodes(&tr.nodes)),
             Err(e) => return e,
         };
         let state_changed = pre_texts != post_texts;
         let diff = text_delta_summary(&pre_texts, &post_texts, 12);
-        let value_ok = labels_contain(&post_texts, &expected_value);
+        let value_ok = labels_contain(&post_values, &expected_value);
         let label_ok = expected_label_present.as_deref().map(|needle| labels_contain(&post_texts, needle)).unwrap_or(true);
         let expected_change_satisfied = value_ok && label_ok;
         let verified = expected_change_satisfied;
@@ -6683,6 +6692,26 @@ mod verified_action_diff_tests {
         assert_eq!(diff.removed, vec!["Old".to_string()]);
         assert_eq!(diff.added_count, 2);
         assert_eq!(diff.removed_count, 1);
+    }
+}
+
+#[cfg(test)]
+mod set_value_verified_text_tests {
+    use super::{searchable_texts_from_nodes, value_texts_from_nodes};
+    use crate::uia::UiaNode;
+
+    fn node_with_metadata_only() -> UiaNode {
+        UiaNode { element_index: Some(1), control_type: "Button".into(), name: Some("Submit".into()), value: None,
+            automation_id: Some("submitButton".into()), class_name: Some("Button".into()), help_text: Some("Help".into()),
+            enabled: true, visible: true, selected: None, focused: None, actions: vec![], element_ptr: 0,
+            center_x: 0, center_y: 0, rect: None, msaa_role: None, depth: 1, parent_element_index: None }
+    }
+
+    #[test]
+    fn value_texts_exclude_role_class_and_automation_metadata() {
+        let nodes = vec![node_with_metadata_only()];
+        assert!(searchable_texts_from_nodes(&nodes).iter().any(|s| s == "Button"));
+        assert!(value_texts_from_nodes(&nodes).is_empty());
     }
 }
 

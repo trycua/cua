@@ -1,0 +1,23 @@
+---
+title: "Build a Linux image"
+description: "Build a custom Linux sandbox image with the packages, files, environment, and setup commands your task needs."
+---
+
+Build a custom Linux image when the default base does not already contain the software your task needs.
+
+## Start from a Linux base
+
+Pick the Linux base that matches the isolation level you need (container or full VM) and the distro version.
+
+## Add packages, files, and setup
+
+Layer the dependencies onto the base — system packages, Python packages, copied files, environment variables, and any setup commands that must run before the task.
+
+## Build and use the image
+
+Pass the finished image to a sandbox to verify it boots into the state you expect, then reuse it for every run.
+
+## See also
+
+- [Choose and build a sandbox image](/how-to-guides/sandbox/images)
+- [Sandbox images](/explanation/sandbox/images)

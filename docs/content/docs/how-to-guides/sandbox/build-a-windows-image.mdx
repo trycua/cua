@@ -1,0 +1,23 @@
+---
+title: "Build a Windows image"
+description: "Build a custom Windows sandbox image with the applications, environment, and setup your task needs."
+---
+
+Build a custom Windows image when your task depends on Windows applications or configuration that the default image does not include.
+
+## Start from a Windows base
+
+Start from the Windows base image. Windows sandboxes run as full VMs, so allow for the longer boot time of a complete guest OS.
+
+## Install applications and copy files
+
+Install applications with a Windows package manager, copy in any files the task needs, and set environment variables.
+
+## Build and use the image
+
+Boot a sandbox from the image to confirm the applications and configuration are present, then reuse it for every run.
+
+## See also
+
+- [Choose and build a sandbox image](/how-to-guides/sandbox/images)
+- [Sandbox images](/explanation/sandbox/images)

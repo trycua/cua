@@ -1,1 +1,1 @@
-{ "title": "Tutorials", "icon": "GraduationCap", "pages": ["index", "drive-your-first-app", "your-first-cloud-sandbox", "run-an-agent-in-a-sandbox"] }
+{ "title": "Tutorials", "icon": "GraduationCap", "pages": ["index", "drive-your-first-app", "your-first-cloud-sandbox", "run-an-agent-in-a-sandbox", "sandbox-for-hermes-and-cua-driver", "sandbox-to-surf-the-web", "sub-agent-with-mcp-sampling", "benchmark-with-cua-bench", "rl-a-model-for-computer-use"] }

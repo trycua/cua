@@ -1,0 +1,18 @@
+---
+title: "Sandbox images"
+description: "What a sandbox image is, why images are immutable, and how an image relates to the running sandbox created from it."
+---
+
+An **image** is the immutable description of a sandbox's starting state. It is not the running sandbox; it is the contract for what a fresh sandbox should look like the moment it boots.
+
+## What an image contains
+
+An image fixes the OS type and version, the installed packages, environment variables, copied files, exposed ports, and setup commands that should exist before any task runs.
+
+## Why images are immutable
+
+Because the image never changes, every sandbox started from it begins from the same known state. Installing a package or writing a file inside a running sandbox changes that sandbox, not the image.
+
+## Images and running sandboxes
+
+A sandbox is the live machine created from an image. Many sandboxes can start from one image, and a snapshot of a running sandbox produces a new image that captures its disk state.

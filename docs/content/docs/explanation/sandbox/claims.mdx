@@ -1,0 +1,18 @@
+---
+title: "Claims"
+description: "How a claim reserves a sandbox from a pool for the lifetime of a task, and how claim count expresses concurrency."
+---
+
+A **claim** reserves one sandbox from a [pool](/explanation/sandbox/pools) for the duration of a task. Holding a claim means you have exclusive use of a sandbox; releasing it returns the slot to the pool.
+
+## Claim lifecycle
+
+A claim moves from *pending* (waiting for a sandbox) to *bound* (matched to a ready sandbox) and finally to *released* (the sandbox is reclaimed or torn down).
+
+## Concurrency is just claims
+
+Running N sandboxes at once means holding N claims against a pool. There is no separate concurrency setting — concurrency is the number of claims you hold.
+
+## Claims and demand
+
+A pending claim is unmet demand. Pools and [autoscaling](/explanation/sandbox/autoscaling) react to the live count of pending and bound claims to decide how much capacity to keep.

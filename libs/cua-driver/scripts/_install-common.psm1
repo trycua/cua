@@ -18,55 +18,25 @@
 
 Set-StrictMode -Version Latest
 
-function Resolve-CuaDriverTempDir {
-    $candidates = @()
-    if ($env:TEMP) { $candidates += $env:TEMP }
-    if ($env:TMP) { $candidates += $env:TMP }
-
-    $dotNetTemp = $null
-    try { $dotNetTemp = [System.IO.Path]::GetTempPath() } catch {}
-    if ($dotNetTemp) { $candidates += $dotNetTemp }
-
-    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA "Temp") }
-    if ($env:SystemRoot) { $candidates += (Join-Path $env:SystemRoot "Temp") }
-
-    $seen = @{}
-    foreach ($candidate in $candidates) {
-        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
-
+# Resolve a temp directory that actually exists. $env:TEMP / $env:TMP can point
+# at a missing or unresolvable short 8.3 profile path (e.g. C:\Users\SHORTN~1.DOM),
+# which makes Set-Content / Remove-Item fail. Pick the first candidate that
+# exists, expand 8.3 short components to the long form, and fall back to
+# %SystemRoot%\Temp (always present). See issue #1911.
+function Get-CuaDriverTempDir {
+    foreach ($cand in @($env:TEMP, $env:TMP, (Join-Path $env:LOCALAPPDATA 'Temp'), (Join-Path $env:SystemRoot 'Temp'))) {
+        if ([string]::IsNullOrWhiteSpace($cand)) { continue }
         try {
-            $dir = [System.IO.Path]::GetFullPath([string]$candidate)
-        } catch {
-            continue
-        }
-
-        $key = $dir.TrimEnd('\').ToLowerInvariant()
-        if ($seen.ContainsKey($key)) { continue }
-        $seen[$key] = $true
-
-        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
-
-        $probe = Join-Path $dir ("cua-driver-temp-probe-" + [Guid]::NewGuid().ToString('N') + ".tmp")
-        $stream = $null
-        try {
-            $stream = [System.IO.File]::Open(
-                $probe,
-                [System.IO.FileMode]::CreateNew,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::None)
-            $stream.Dispose()
-            $stream = $null
-            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-            return $dir
-        } catch {
-            if ($stream) {
-                $stream.Dispose()
+            if (Test-Path -LiteralPath $cand) {
+                return (Get-Item -LiteralPath $cand -ErrorAction Stop).FullName
             }
-            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-        }
+        } catch { }
     }
-
-    throw "could not find a writable temporary directory. Checked TEMP, TMP, .NET temp, LOCALAPPDATA\Temp, and SystemRoot\Temp."
+    $fallback = Join-Path $env:SystemRoot 'Temp'
+    if (-not (Test-Path -LiteralPath $fallback)) {
+        New-Item -ItemType Directory -Path $fallback -Force | Out-Null
+    }
+    return $fallback
 }
 
 # Best-effort kill of any running cua-driver / cua-driver-uia processes
@@ -222,7 +192,7 @@ function Import-CuaDriverInstallModule {
         throw "Import-CuaDriverInstallModule: no local file and no -Url to fetch from."
     }
     $body = Invoke-RestMethod -Uri $Url -UseBasicParsing
-    $tmp = Join-Path (Resolve-CuaDriverTempDir) ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
+    $tmp = Join-Path (Get-CuaDriverTempDir) ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
     Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
     try {
         Import-Module -Name $tmp -Force -ErrorAction Stop

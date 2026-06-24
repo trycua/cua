@@ -29,8 +29,18 @@ pub mod windows_enum;
 pub use cache::ElementCache;
 pub use windows_enum::enumerate_top_level_windows;
 
-const MAX_DEPTH: usize = 25;
-const MAX_TOTAL_ELEMENTS: usize = 5000;
+/// Default cap; callers can override via [`walk_tree_bounded`].
+pub const DEFAULT_MAX_DEPTH: usize = 25;
+/// Default cap; callers can override via [`walk_tree_bounded`].
+pub const DEFAULT_MAX_TOTAL_ELEMENTS: usize = 5000;
+
+// Historical aliases — referenced by the thin `walk_cached` shim that
+// keeps the pre-#22865 call signature compiling. `walk_tree_bounded`
+// reads from the caller-supplied caps instead.
+#[allow(dead_code)]
+const MAX_DEPTH: usize = DEFAULT_MAX_DEPTH;
+#[allow(dead_code)]
+const MAX_TOTAL_ELEMENTS: usize = DEFAULT_MAX_TOTAL_ELEMENTS;
 
 /// A single node in the accessibility tree.
 ///
@@ -62,6 +72,13 @@ pub struct UiaNode {
     /// this to route `action:"expand"` to a right-edge SendInput click
     /// instead of an unsupported UIA pattern lookup.
     pub msaa_role: Option<i32>,
+    /// Depth in the rendered markdown tree (matches the `lines` indent
+    /// level). Defaults to 0 when the node came from a builder that
+    /// doesn't track depth.
+    pub depth: usize,
+    /// `element_index` of the nearest actionable ancestor, if any.
+    /// Mirrors the markdown's parent-of-this-row.
+    pub parent_element_index: Option<usize>,
 }
 
 pub struct UiaTreeResult {
@@ -71,10 +88,28 @@ pub struct UiaTreeResult {
 
 /// Walk the UIA tree for the window with the given HWND.
 pub fn walk_tree(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
-    unsafe { walk_tree_unsafe(hwnd, query) }
+    walk_tree_bounded(hwnd, query, DEFAULT_MAX_TOTAL_ELEMENTS, DEFAULT_MAX_DEPTH)
 }
 
-unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
+/// Walk the UIA tree with caller-supplied caps. `max_elements`/`max_depth`
+/// truncate the walk and the rendered markdown identically. Issue #22865:
+/// caps protect against Electron / large web apps that produce 10k+
+/// element trees and blow context windows.
+pub fn walk_tree_bounded(
+    hwnd: u64,
+    query: Option<&str>,
+    max_elements: usize,
+    max_depth: usize,
+) -> UiaTreeResult {
+    unsafe { walk_tree_unsafe(hwnd, query, max_elements, max_depth) }
+}
+
+unsafe fn walk_tree_unsafe(
+    hwnd: u64,
+    query: Option<&str>,
+    max_elements: usize,
+    max_depth: usize,
+) -> UiaTreeResult {
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
     let automation: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
@@ -173,12 +208,33 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
             nodes: Vec::new(),
         },
     };
-    let root_elem = match uncached.BuildUpdatedCache(&cache_req) {
-        Ok(e) => e,
-        Err(e) => return UiaTreeResult {
-            tree_markdown: format!("BuildUpdatedCache failed: {e}"),
-            nodes: Vec::new(),
-        },
+    // A single transient provider error (commonly E_FAIL / 0x80004005 from a
+    // control rebuilding its automation subtree mid-walk) must not take down
+    // the whole snapshot — the same call usually succeeds a beat later. Retry
+    // the bulk cache build a few times with a short backoff before giving up,
+    // so one misbehaving provider doesn't force the agent down to pixel mode.
+    // See #1881. (A per-node partial-tree fallback — returning elements=N for
+    // the subtrees that did resolve — remains a larger follow-up.)
+    let root_elem = {
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut attempt = 0u32;
+        loop {
+            match uncached.BuildUpdatedCache(&cache_req) {
+                Ok(e) => break e,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= MAX_ATTEMPTS {
+                        return UiaTreeResult {
+                            tree_markdown: format!(
+                                "BuildUpdatedCache failed after {attempt} attempts: {e}"
+                            ),
+                            nodes: Vec::new(),
+                        };
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(40));
+                }
+            }
+        }
     };
 
     let mut nodes: Vec<UiaNode> = Vec::new();
@@ -186,7 +242,17 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     let mut counter = 0usize;
     let mut total = 0usize;
 
-    walk_cached(&root_elem, 0, &mut nodes, &mut lines, &mut counter, &mut total);
+    walk_cached_bounded(
+        &root_elem,
+        0,
+        None,
+        &mut nodes,
+        &mut lines,
+        &mut counter,
+        &mut total,
+        max_elements,
+        max_depth,
+    );
 
     // Fallback for CoreWindow-class apps (Calculator, Settings, older UWPs).
     // `ElementFromHandle(hwnd)` on a `Windows.UI.Core.CoreWindow` HWND returns
@@ -251,6 +317,8 @@ unsafe fn walk_tree_unsafe(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
                     &mut fallback_lines,
                     &mut fallback_counter,
                     &mut fallback_total,
+                    max_elements,
+                    max_depth,
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
@@ -316,6 +384,7 @@ unsafe fn pid_from_hwnd(hwnd: windows::Win32::Foundation::HWND) -> Option<u32> {
 /// (filtered by `ProcessId == target_pid`) and walk descendants from there,
 /// reusing the caller's `cache_req` so the same properties + patterns get
 /// pre-fetched as the primary path.
+#[allow(clippy::too_many_arguments)]
 unsafe fn walk_root_by_pid(
     automation: &IUIAutomation,
     cache_req: &IUIAutomationCacheRequest,
@@ -324,6 +393,8 @@ unsafe fn walk_root_by_pid(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     total: &mut usize,
+    max_elements: usize,
+    max_depth: usize,
 ) {
     let root = match automation.GetRootElement() {
         Ok(r) => r,
@@ -363,10 +434,21 @@ unsafe fn walk_root_by_pid(
                 continue;
             }
         };
-        walk_cached(&cached, 0, nodes, lines, counter, total);
+        walk_cached_bounded(
+            &cached,
+            0,
+            None,
+            nodes,
+            lines,
+            counter,
+            total,
+            max_elements,
+            max_depth,
+        );
     }
 }
 
+#[allow(dead_code)]
 unsafe fn walk_cached(
     element: &IUIAutomationElement,
     depth: usize,
@@ -375,7 +457,32 @@ unsafe fn walk_cached(
     counter: &mut usize,
     total: &mut usize,
 ) {
-    if depth > MAX_DEPTH || *total >= MAX_TOTAL_ELEMENTS {
+    walk_cached_bounded(
+        element,
+        depth,
+        None,
+        nodes,
+        lines,
+        counter,
+        total,
+        MAX_TOTAL_ELEMENTS,
+        MAX_DEPTH,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn walk_cached_bounded(
+    element: &IUIAutomationElement,
+    depth: usize,
+    parent_index: Option<usize>,
+    nodes: &mut Vec<UiaNode>,
+    lines: &mut Vec<(usize, String)>,
+    counter: &mut usize,
+    total: &mut usize,
+    max_elements: usize,
+    max_depth: usize,
+) {
+    if depth > max_depth || *total >= max_elements {
         return;
     }
     *total += 1;
@@ -393,6 +500,7 @@ unsafe fn walk_cached(
     let has_content = name.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
         || value.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
 
+    let mut emitted_parent: Option<usize> = parent_index;
     if is_actionable || has_content {
         let retained: IUIAutomationElement = element.clone();
         let ptr = retained.as_raw() as usize;
@@ -402,6 +510,7 @@ unsafe fn walk_cached(
             let idx = *counter;
             *counter += 1;
             let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
+            emitted_parent = Some(idx);
             UiaNode {
                 element_index: Some(idx),
                 control_type: control_type.clone(),
@@ -415,6 +524,8 @@ unsafe fn walk_cached(
                 center_y,
                 rect,
                 msaa_role: None,
+                depth,
+                parent_element_index: parent_index,
             }
         } else {
             UiaNode {
@@ -430,6 +541,8 @@ unsafe fn walk_cached(
                 center_y: 0,
                 rect: None,
                 msaa_role: None,
+                depth,
+                parent_element_index: parent_index,
             }
         };
 
@@ -442,7 +555,17 @@ unsafe fn walk_cached(
         let len = children.Length().unwrap_or(0);
         for i in 0..len {
             if let Ok(child) = children.GetElement(i) {
-                walk_cached(&child, depth + 1, nodes, lines, counter, total);
+                walk_cached_bounded(
+                    &child,
+                    depth + 1,
+                    emitted_parent,
+                    nodes,
+                    lines,
+                    counter,
+                    total,
+                    max_elements,
+                    max_depth,
+                );
             }
         }
     }

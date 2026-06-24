@@ -34,6 +34,29 @@ async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
     tokio::time::timeout(CALL_TIMEOUT, fut).await.ok()
 }
 
+/// Drive an AT-SPI op `work` on the runtime, bounded by [`OP_TIMEOUT`].
+///
+/// Individual interface calls are each bounded by [`call`], and `app_for_pid` /
+/// `collect_visited` carry their own deadlines — but not every internal await is
+/// wrapped (e.g. the EditableText writes in `write_into_editable`, the proxy
+/// builds in `app_for_pid`), and an app that holds a modal grab can leave one of
+/// those unwrapped round-trips pending indefinitely. `walk_tree` already guards
+/// itself this way; this helper applies the same backstop to every other public
+/// entry point so a modal/wedged app can never hang the caller (the daemon, an
+/// MCP client) past OP_TIMEOUT (#1936). On timeout it yields `on_timeout` — the
+/// graceful "couldn't complete" value, so e.g. `type_text` falls back to XTEST.
+fn bounded<T>(
+    work: impl std::future::Future<Output = Result<T>>,
+    on_timeout: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    runtime().block_on(async move {
+        match tokio::time::timeout(OP_TIMEOUT, work).await {
+            Ok(r) => r,
+            Err(_) => on_timeout(),
+        }
+    })
+}
+
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
 /// native walk actually found in CI.
@@ -138,21 +161,52 @@ async fn app_for_pid<'a>(
     pid: u32,
 ) -> Result<Option<AccessibleProxy<'a>>> {
     let zconn = conn.connection();
-    let root = conn
-        .root_accessible_on_registry()
-        .await
-        .map_err(|e| anyhow!("registry root unavailable: {e}"))?;
+    // Every AT-SPI round-trip below can block on an app whose main loop isn't
+    // servicing D-Bus — most commonly one holding a modal grab (an "Add/Edit/
+    // Preferences" dialog). Without a bound, `GetConnectionUnixProcessID` stalls
+    // on the zbus default (~25s) per such app, which made get_window_state and
+    // type_text hang on real apps (#1936). Bound each step with CALL_TIMEOUT and
+    // skip/return instead of stalling — for type_text this returns fast so the
+    // tool falls back to XTEST, which still types into the focused dialog field.
+    let root = match call(conn.root_accessible_on_registry()).await {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Err(anyhow!("registry root unavailable: {e}")),
+        None => {
+            dlog!("registry root lookup timed out");
+            return Ok(None);
+        }
+    };
     let dbus = atspi::zbus::fdo::DBusProxy::new(zconn)
         .await
         .map_err(|e| anyhow!("DBus proxy unavailable: {e}"))?;
 
-    let apps = root.get_children().await.unwrap_or_default();
+    let apps = match call(root.get_children()).await {
+        Some(r) => r.unwrap_or_default(),
+        None => {
+            dlog!("registry get_children timed out");
+            return Ok(None);
+        }
+    };
     dlog!("registry root has {} application(s); seeking pid {pid}", apps.len());
     for child in apps {
-        let cpid = pid_of(&dbus, &child).await;
+        // A modal-grabbed app can't answer the pid query; skip it after
+        // CALL_TIMEOUT rather than blocking the whole walk on it.
+        let cpid = match call(pid_of(&dbus, &child)).await {
+            Some(p) => p,
+            None => {
+                dlog!("  pid_of timed out for bus={:?}, skipping", child.name_as_str());
+                continue;
+            }
+        };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
         if cpid == Some(pid) {
-            return Ok(Some(accessible_for(zconn, &child).await?));
+            return match call(accessible_for(zconn, &child)).await {
+                Some(r) => r.map(Some),
+                None => {
+                    dlog!("  accessible_for timed out for pid {pid}");
+                    Ok(None)
+                }
+            };
         }
     }
     dlog!("no application accessible matched pid {pid}");
@@ -161,9 +215,25 @@ async fn app_for_pid<'a>(
 
 /// Depth-first, pre-order walk of an application's windows. Mirrors the old
 /// pyatspi `walk`/`collect` traversal so element indices stay stable.
+#[allow(dead_code)]
 async fn collect_visited<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
+) -> Result<Option<Vec<Visited<'a>>>> {
+    collect_visited_bounded(conn, pid, None, None).await
+}
+
+/// `collect_visited` with caller-supplied caps.
+/// - `max_elements = None` keeps the historical 5 000-node budget.
+/// - `max_depth = None` keeps depth uncapped (the historical behaviour);
+///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
+/// Issue #22865: caps protect against Electron / large web apps that produce
+/// 10k+ element trees and blow context windows.
+async fn collect_visited_bounded<'a>(
+    conn: &'a AccessibilityConnection,
+    pid: u32,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
 ) -> Result<Option<Vec<Visited<'a>>>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
@@ -181,26 +251,80 @@ async fn collect_visited<'a>(
     };
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
-    // Guard against pathological/looping trees.
-    let mut budget = 5000usize;
+    // Guard against pathological/looping trees. Defaults to 5 000 (the
+    // historical hard-coded budget); callers can override via max_elements.
+    let mut budget = max_elements.unwrap_or(5000usize);
+    // Time budget alongside the node budget: when an app is unresponsive to
+    // AT-SPI (most commonly because it holds a modal grab and isn't servicing
+    // D-Bus), every per-node `call()` burns the full CALL_TIMEOUT before being
+    // skipped, so the walk would otherwise grind for minutes. Callers that lack
+    // their own OP_TIMEOUT (get_all_element_bounds, insert_text) relied on this
+    // never happening — bound it here so the walk returns partial within
+    // OP_TIMEOUT for every caller, instead of hanging get_window_state/type_text
+    // on modal dialogs (#1936).
+    let deadline = std::time::Instant::now() + OP_TIMEOUT;
+    // Fast bail for an app that has stopped answering AT-SPI entirely (modal
+    // grab): if several consecutive nodes each burn the full CALL_TIMEOUT, the
+    // app is unresponsive and the remaining ~OP_TIMEOUT of walking would all
+    // time out too. Give up after a few so type_text falls back to XTEST in a
+    // few seconds rather than ~25s.
+    let mut consecutive_timeouts = 0u32;
 
     while let Some((oref, depth, in_web_doc)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
             break;
         }
+        if std::time::Instant::now() >= deadline {
+            dlog!("collect_visited time budget exhausted; returning partial walk");
+            break;
+        }
         budget -= 1;
 
-        let acc = match accessible_for(zconn, &oref).await {
-            Ok(a) => a,
-            Err(_) => continue,
+        // accessible_for builds a proxy whose first use round-trips to the
+        // target app. On a modal-grabbed (AT-SPI-unresponsive) app this is the
+        // await that actually hangs, so it MUST carry the per-call timeout —
+        // otherwise the loop never returns to the deadline check at the top and
+        // the walk stalls past OP_TIMEOUT for callers without an outer guard
+        // (get_all_element_bounds, insert_text). That was the residual #1936 hang.
+        let acc = match call(accessible_for(zconn, &oref)).await {
+            Some(Ok(a)) => a,
+            Some(Err(_)) => continue,
+            None => {
+                consecutive_timeouts += 1;
+                if consecutive_timeouts >= 3 {
+                    dlog!(
+                        "{} consecutive AT-SPI timeouts (accessible_for); app unresponsive, bailing walk",
+                        consecutive_timeouts
+                    );
+                    break;
+                }
+                continue;
+            }
         };
 
         // Interfaces gate every other query; if even this times out the node is
         // unreachable, so skip it rather than stall.
         let ifaces = match call(acc.get_interfaces()).await {
-            Some(Ok(i)) => i,
-            _ => continue,
+            Some(Ok(i)) => {
+                consecutive_timeouts = 0;
+                i
+            }
+            // A completed-but-errored call is node-specific; keep walking.
+            Some(Err(_)) => continue,
+            // A timeout means the app didn't answer in CALL_TIMEOUT. A run of
+            // these means the whole app is wedged — bail so callers fall back.
+            None => {
+                consecutive_timeouts += 1;
+                if consecutive_timeouts >= 3 {
+                    dlog!(
+                        "{} consecutive AT-SPI timeouts; app unresponsive, bailing walk",
+                        consecutive_timeouts
+                    );
+                    break;
+                }
+                continue;
+            }
         };
         let has_action = ifaces.contains(Interface::Action);
         let has_editable = ifaces.contains(Interface::EditableText);
@@ -275,9 +399,14 @@ async fn collect_visited<'a>(
         let child_in_web_doc = in_web_doc || is_document_role(&role);
 
         // Enqueue children (fetched above) before moving `acc` into `visited`.
-        if let Some(Ok(children)) = children_r {
-            for c in children.into_iter().rev() {
-                stack.push((c, depth + 1, child_in_web_doc));
+        // Honor max_depth (#22865): skip enqueueing descendants whose depth
+        // would exceed the cap.
+        let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
+        if descend {
+            if let Some(Ok(children)) = children_r {
+                for c in children.into_iter().rev() {
+                    stack.push((c, depth + 1, child_in_web_doc));
+                }
             }
         }
 
@@ -303,13 +432,30 @@ async fn collect_visited<'a>(
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
 /// Format matches the historical pyatspi output exactly so downstream parsing
 /// (`extract_text_from_markdown`, `query_dom`) is unaffected.
+///
+/// `parent_at_depth` tracks the most recently emitted actionable index at
+/// each depth, so descendants can look up their parent_element_index without
+/// a second pass.
 fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
     let mut md = String::new();
     let mut nodes = Vec::new();
     let mut idx = 0usize;
+    // Sparse stack: parent_at_depth[d] = Some(idx) for the actionable node
+    // most recently emitted at depth d. When a new node appears at depth d,
+    // its parent_element_index is the closest ancestor at depth < d that has
+    // an entry. We invalidate deeper entries on each emit so stale siblings
+    // don't leak across subtrees.
+    let mut parent_at_depth: Vec<Option<usize>> = Vec::new();
 
     for v in visited {
         let indent = "  ".repeat(v.depth);
+        // Resolve parent: walk parent_at_depth from v.depth-1 down to 0.
+        let parent_element_index = if v.depth == 0 {
+            None
+        } else {
+            (0..v.depth).rev().find_map(|d| parent_at_depth.get(d).copied().flatten())
+        };
+
         if !v.actions.is_empty() {
             let act_str = v.actions.join(",");
             let val_part = match &v.value {
@@ -329,7 +475,18 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,
+                depth: v.depth,
+                parent_element_index,
             });
+            // Record this actionable index at its depth, and invalidate any
+            // deeper entries from a previous subtree.
+            while parent_at_depth.len() <= v.depth {
+                parent_at_depth.push(None);
+            }
+            parent_at_depth[v.depth] = Some(idx);
+            for deeper in (v.depth + 1)..parent_at_depth.len() {
+                parent_at_depth[deeper] = None;
+            }
             idx += 1;
         } else if !v.name.is_empty() {
             md.push_str(&format!(
@@ -352,12 +509,23 @@ fn format_value(v: f64) -> String {
 // ── Public (sync) entry points ───────────────────────────────────────────────
 
 pub fn walk_tree(pid: u32) -> Result<Option<(String, Vec<AtspiNode>)>> {
+    walk_tree_bounded(pid, None, None)
+}
+
+/// Walk the AT-SPI tree with caller-supplied node + depth caps.
+/// `max_elements = None` keeps the historical 5 000-node default; `max_depth
+/// = None` keeps the historical unbounded depth. Issue #22865.
+pub fn walk_tree_bounded(
+    pid: u32,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+) -> Result<Option<(String, Vec<AtspiNode>)>> {
     runtime().block_on(async {
         let work = async {
             let conn = AccessibilityConnection::new()
                 .await
                 .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
-            match collect_visited(&conn, pid).await? {
+            match collect_visited_bounded(&conn, pid, max_elements, max_depth).await? {
                 Some(visited) => Ok(Some(render(&visited))),
                 None => Ok(None),
             }
@@ -447,7 +615,7 @@ async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool
 }
 
 pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -537,7 +705,34 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         }
 
         Ok(false)
+    }, || {
+        dlog!("insert_text timed out for pid {pid}; falling back to synthetic typing");
+        Ok(false)
     })
+}
+
+/// Classify what holds keyboard focus in `pid`'s tree, so `type_text` can target
+/// the thing the user just clicked rather than the first editable anywhere:
+///   `Some(true)`  — a focused **editable** widget (a text entry/box). AT-SPI
+///                   EditableText insertion targets it correctly.
+///   `Some(false)` — a focused **non-editable** widget that still accepts typed
+///                   input (a spreadsheet cell/grid, a terminal, a canvas). An
+///                   AT-SPI editable search would grab the wrong field here (e.g.
+///                   gnumeric's name box), so the caller should synth-type into
+///                   the focused widget instead.
+///   `None`        — nothing is focused (or the app is unreachable): fall back to
+///                   the focus-free "first editable" path for background typing.
+pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        Ok(visited.iter().find(|v| v.focused).map(|v| v.has_editable))
+    }, || Ok(None))
 }
 
 /// Find the window XID for a PID by listing its X11 windows.
@@ -570,7 +765,7 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -594,11 +789,11 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
             .await
             .map_err(|e| anyhow!("doAction failed: {e}"))?;
         Ok(target.actions.first().cloned().unwrap_or_default())
-    })
+    }, || Err(anyhow!("perform_action timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -616,11 +811,35 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
             .await
             .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
 
-        if target.has_editable {
-            if let Ok(et) = proxies.editable_text().await {
-                if et.set_text_contents(value).await.unwrap_or(false) {
-                    return Ok(());
-                }
+        // EditableText write. We don't gate on the cached `has_editable` flag:
+        // GTK4 (and similar toolkits) only advertise the EditableText interface
+        // on a widget once it holds keyboard focus, so the interface list
+        // captured during the unfocused tree walk can be missing it even though
+        // the element is a real editable text box. GrabFocus first (internal
+        // widget focus, no window activation — same trick as `type_text`'s
+        // EditableText path), then resolve the EditableText proxy live over
+        // D-Bus and try to write. If the proxy genuinely isn't there the
+        // `editable_text()` resolve fails and we fall through to Value below.
+        if target.has_component {
+            if let Ok(comp) = proxies.component().await {
+                let _ = call(comp.grab_focus()).await;
+            }
+        }
+        if let Ok(et) = proxies.editable_text().await {
+            // Replace whole contents (parity with the Windows/macOS set_value,
+            // which overwrite rather than insert at the caret).
+            if et.set_text_contents(value).await.unwrap_or(false) {
+                return Ok(());
+            }
+            // Some toolkits reject SetTextContents but accept an insert at the
+            // caret offset; clear-then-insert as a fallback.
+            let off = match proxies.text().await {
+                Ok(tp) => tp.caret_offset().await.unwrap_or(0),
+                Err(_) => 0,
+            };
+            let len = value.chars().count() as i32;
+            if et.insert_text(off, value, len).await.unwrap_or(false) {
+                return Ok(());
             }
         }
         if target.has_value {
@@ -637,11 +856,11 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
             return Ok(());
         }
         Err(anyhow!("element {idx} exposes neither EditableText nor Value"))
-    })
+    }, || Err(anyhow!("set_value timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
-    runtime().block_on(async {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
@@ -668,7 +887,86 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             .await
             .map_err(|e| anyhow!("getExtents failed: {e}"))?;
         Ok((x, y, w.max(0) as u32, h.max(0) as u32))
-    })
+    }, || Err(anyhow!("get_element_bounds timed out for pid {pid} (app unresponsive to AT-SPI)")))
+}
+
+/// Real on-screen origin (root-relative top-left) of an X11 window, or `None`
+/// if it can't be resolved. Mirrors `list_windows`' geometry path.
+fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let window = xid as u32;
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+    let trans = conn
+        .translate_coordinates(window, geom.root, 0, 0)
+        .ok()?
+        .reply()
+        .ok()?;
+    Some((trans.dst_x as i32, trans.dst_y as i32))
+}
+
+/// Compute the additive screen-coordinate correction for GTK4's AT-SPI bridge.
+///
+/// Reads the frame (toplevel) node's reported `GetExtents(Screen)` origin and
+/// compares it with the window's real X11 screen origin. GTK3/Qt report the
+/// true origin, so the two match and the offset is `(0,0)` — no correction.
+/// GTK4 reports the frame at (≈0,0) regardless of where the window actually
+/// is, so the offset becomes the window's real origin and every element is
+/// shifted into true screen space.
+///
+/// Returns `(0,0)` whenever anything is uncertain (no frame, no Component, no
+/// X11 origin), so the existing behaviour is preserved for non-GTK4 toolkits
+/// and the change can never make correct coordinates worse.
+async fn gtk4_screen_offset(visited: &[Visited<'_>], pid: u32, xid: u64) -> (i32, i32) {
+    // Native Wayland forbids a client from querying another window's screen
+    // origin (privacy by design), so the X11-based offset recovery below
+    // can't run. Return (0, 0) — GTK4 element bounds will be window-local
+    // rather than screen-relative on Wayland, which mirrors how every other
+    // tool reports coords on this backend.
+    if crate::wayland::is_wayland() {
+        let _ = (visited, pid, xid);
+        return (0, 0);
+    }
+    // The frame is the toplevel window accessible. Prefer an explicit "frame"
+    // role; fall back to the first node that exposes a Component interface.
+    let frame = visited
+        .iter()
+        .find(|v| v.role.eq_ignore_ascii_case("frame") && v.has_component)
+        .or_else(|| visited.iter().find(|v| v.has_component));
+    let Some(frame) = frame else { return (0, 0) };
+
+    let frame_origin = async {
+        let proxies = call(frame.acc.proxies()).await?.ok()?;
+        let comp = call(proxies.component()).await?.ok()?;
+        let (fx, fy, _, _) = call(comp.get_extents(CoordType::Screen)).await?.ok()?;
+        Some((fx, fy))
+    }
+    .await;
+    let Some((frame_sx, frame_sy)) = frame_origin else { return (0, 0) };
+
+    // The window's real screen origin. Resolve the xid we were given; if it's
+    // unusable (0), fall back to this pid's first window (matches the rest of
+    // the backend's xid-recovery pattern).
+    let win_origin = x11_window_origin(xid).or_else(|| {
+        let alt = crate::x11::list_windows(Some(pid));
+        alt.first().and_then(|w| x11_window_origin(w.xid))
+    });
+    let Some((win_sx, win_sy)) = win_origin else { return (0, 0) };
+
+    // Only correct the GTK4 signature: the frame claims to sit at the screen
+    // origin while the window is really somewhere else. A small tolerance keeps
+    // GTK3/Qt (whose frame origin already matches X11 within a pixel or two of
+    // decoration inset) at a zero offset, so they are never shifted.
+    let frame_at_origin = frame_sx.abs() <= 2 && frame_sy.abs() <= 2;
+    let window_displaced = win_sx.abs() > 2 || win_sy.abs() > 2;
+    if frame_at_origin && window_displaced {
+        (win_sx - frame_sx, win_sy - frame_sy)
+    } else {
+        (0, 0)
+    }
 }
 
 /// Screen-coordinate bounds for every action node in the tree, keyed by the
@@ -680,15 +978,35 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
 /// or whose extents query fails/times out, are silently skipped — the result is
 /// best-effort and never errors on a per-node hiccup.
 ///
+/// GTK4 caveat: GTK4's AT-SPI bridge reports `GetExtents(Screen)` as if it were
+/// `GetExtents(Window)` — every element comes back relative to the toplevel
+/// window's own origin, so the frame lands at (0,0) and every descendant is
+/// off by the window's real on-screen position (issue #1564: all elements
+/// `x:0,y:0`). GTK3 and Qt report true screen coordinates. We detect and
+/// correct this generically: read the frame's reported screen origin and the
+/// window's real X11 screen origin (`xid`); when they disagree (the GTK4
+/// signature) we shift every element by the difference. For GTK3/Qt the two
+/// origins already agree, so the offset is zero and nothing changes.
+///
 /// Returns `(element_index, x, y, width, height)` tuples.
-pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
-    runtime().block_on(async {
+pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32, u32, u32)>> {
+    bounded(async {
         let conn = AccessibilityConnection::new()
             .await
             .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+
+        // GTK4 screen-coordinate correction. The frame node (toplevel window)
+        // is the natural reference: GTK3/Qt report its true screen origin,
+        // GTK4 reports (0,0). Comparing that against the window's real X11
+        // origin tells us how far every element is shifted.
+        let (offset_x, offset_y) = gtk4_screen_offset(&visited, pid, xid).await;
+        if offset_x != 0 || offset_y != 0 {
+            dlog!("GTK4 screen-coord correction: shifting elements by ({offset_x},{offset_y})");
+        }
+
         let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
         // Each element costs ~3 D-Bus round-trips (proxies + component +
         // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
@@ -723,13 +1041,18 @@ pub fn get_all_element_bounds(pid: u32) -> Result<Vec<(usize, i32, i32, u32, u32
                 // report GetExtents as the i32::MIN sentinel and/or a degenerate
                 // 0x0 / 1x1 size. Emitting those poisons downstream consumers
                 // (overlay renderers, click targeting), so keep only elements
-                // with plausible on-screen geometry.
+                // with plausible on-screen geometry. (Validate the raw extents,
+                // before applying the GTK4 offset, so the sentinel check still
+                // catches unrealized widgets.)
                 if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
                     continue;
                 }
-                out.push((idx, x, y, w as u32, h as u32));
+                out.push((idx, x + offset_x, y + offset_y, w as u32, h as u32));
             }
         }
         Ok(out)
+    }, || {
+        dlog!("get_all_element_bounds timed out for pid {pid}; returning no bounds");
+        Ok(Vec::new())
     })
 }

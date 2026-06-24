@@ -1,7 +1,0 @@
-{
-  "title": "Agents in Sandbox",
-  "description": "Run coding agents inside Cua sandboxes",
-  "icon": "Bot",
-  "defaultOpen": true,
-  "pages": ["claude-code"]
-}

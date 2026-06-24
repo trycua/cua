@@ -584,13 +584,19 @@ impl Tool for GetWindowStateTool {
             // Windows-specific adaptations (UIA instead of AX; no SkyLight
             // Space validation; no per-call `javascript` field — that's a
             // macOS AppleScript hook).
-            description: "Walk a running app's UIA tree and return a Markdown rendering of its \
-                UI, tagging every actionable element with [element_index N]. Pass those \
-                indices to `click`, `type_text`, `scroll`, etc. — those tools resolve the \
-                index to the cached element on the server.\n\n\
+            description: "Walk a running app's UIA tree and return BOTH a structured \
+                `elements` array (preferred) AND a Markdown rendering of the same tree \
+                (back-compat). Every actionable element is tagged with [element_index N] \
+                in the markdown and as `element_index` in the structured array — pass \
+                those indices to `click`, `type_text`, `scroll`, etc.\n\n\
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
                 any element-indexed action against that window. The index map is replaced by \
                 the next snapshot of the same (pid, window_id).\n\n\
+                PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
+                indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, \
+                `parent_index`, `depth`). The markdown `tree_markdown` stays available \
+                and unchanged in shape for existing text-parsing callers — but new \
+                fields will only be added to the structured side.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
                 window bounds reported come from the same `window_id`. This is the source of \
                 truth for which window the caller intends to reason about — the driver never \
@@ -607,13 +613,20 @@ impl Tool for GetWindowStateTool {
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
+                Optional `max_elements` / `max_depth` bound the UIA walk to mitigate \
+                context-window blow-up on Electron / large web apps that produce 10k+ \
+                element trees (#22865). When applied, BOTH the markdown and the structured \
+                elements are truncated identically. Omit both for current default behaviour \
+                (≤5 000 elements, depth ≤25).\n\n\
                 Windows requires no special permissions.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode":{"type":"string","enum":["som","vision","ax"],
                     "description":"som=tree+screenshot (default), vision=screenshot only, ax=tree only."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."}
+                "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees (#22865)."},
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees (#22865)."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -656,6 +669,19 @@ impl Tool for GetWindowStateTool {
         use cua_driver_core::tool_args::ArgsExt;
         let capture_mode = args.str_or("capture_mode", &default_mode);
         let query = args.opt_str("query");
+        // Optional caps — when omitted, fall back to the walker's built-in
+        // defaults (#22865). minimum:1 enforced in the schema, but defend
+        // against 0 here too.
+        let max_elements = args
+            .get("max_elements")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as usize)
+            .unwrap_or(crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS);
+        let max_depth = args
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as usize)
+            .unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
 
         // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
         let do_tree = capture_mode != "vision";
@@ -665,11 +691,18 @@ impl Tool for GetWindowStateTool {
         let q = query.clone();
         let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
-                Some(crate::uia::walk_tree(hwnd, q.as_deref()))
+                Some(crate::uia::walk_tree_bounded(hwnd, q.as_deref(), max_elements, max_depth))
             } else {
                 None
             };
-            let screenshot = if do_shot {
+            // Capture screenshot AND any error message so the response can
+            // surface *why* there's no image (the iconic-window guard from
+            // #1973 / PR #1974 is the load-bearing case: minimized windows
+            // legitimately can't be captured, and the caller needs to know
+            // to call `raise_window` / `list_windows` instead of retrying).
+            // The previous `Err(_) => None` silently dropped the error and
+            // upstream agents saw an empty response with no signal.
+            let (screenshot, screenshot_err) = if do_shot {
                 match crate::capture::screenshot_window_bytes(hwnd) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw).map(|(w, _)| w).unwrap_or(0);
@@ -677,14 +710,14 @@ impl Tool for GetWindowStateTool {
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                         use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                         let original_w = if w < orig_w { Some(orig_w) } else { None };
-                        Some((B64.encode(&png), w, h, original_w))
+                        (Some((B64.encode(&png), w, h, original_w)), None)
                     }
-                    Err(_) => None,
+                    Err(e) => (None, Some(format!("{e}"))),
                 }
             } else {
-                None
+                (None, None)
             };
-            Ok((tree_result, screenshot))
+            Ok((tree_result, screenshot, screenshot_err))
         });
         // Timeout: Chrome's UIA provider can block indefinitely on property reads.
         let result: Result<anyhow::Result<_>, _> = match tokio::time::timeout(
@@ -714,7 +747,7 @@ impl Tool for GetWindowStateTool {
         let result = result.and_then(|r| r);
 
         match result {
-            Ok((tree_opt, screenshot_opt)) => {
+            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
@@ -734,6 +767,70 @@ impl Tool for GetWindowStateTool {
                     }
                     structured["element_count"] = json!(count);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
+
+                    // Surface 6: register a snapshot in the global token
+                    // registry. Windows uses u64 HWND but the registry
+                    // stores u32 — truncate (HWND fits in 32-bit on
+                    // every supported edition; the upper 32 bits are
+                    // zero in user-space).
+                    let snapshot_id = cua_driver_core::element_token::global()
+                        .register_snapshot(pid as i32, hwnd as u32, count);
+
+                    // Structured `elements` array — preferred consumption
+                    // path. Shape matches the cross-platform spec:
+                    // `{element_index, element_token, role, label, depth,
+                    // parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // included when UIA reported a usable BoundingRectangle.
+                    let elements: Vec<serde_json::Value> = tr
+                        .nodes
+                        .iter()
+                        .filter_map(|n| {
+                            let idx = n.element_index?;
+                            // `label`: name → value → automation_id → help_text.
+                            let label = n.name.clone()
+                                .or_else(|| n.value.clone())
+                                .or_else(|| n.automation_id.clone())
+                                .or_else(|| n.help_text.clone());
+                            let mut entry = json!({
+                                "element_index": idx,
+                                // Surface 6: opaque token paired to the
+                                // integer index. See cua-driver-core's
+                                // `element_token` module for the format
+                                // and validity contract.
+                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
+                                "role": n.control_type,
+                                "depth": n.depth,
+                            });
+                            if let Some(label) = label {
+                                entry["label"] = json!(label);
+                            }
+                            if let Some(parent) = n.parent_element_index {
+                                entry["parent_index"] = json!(parent);
+                            }
+                            if let Some((l, t, r, b)) = n.rect {
+                                entry["frame"] = json!({
+                                    "x": l,
+                                    "y": t,
+                                    "w": (r - l).max(0),
+                                    "h": (b - t).max(0),
+                                });
+                            }
+                            Some(entry)
+                        })
+                        .collect();
+                    structured["elements"] = json!(elements);
+                    // Surface 6: snapshot id mirror for debug correlation.
+                    structured["snapshot_id"] = json!(
+                        cua_driver_core::element_token::token_for(snapshot_id, 0)
+                            .trim_end_matches(":0")
+                            .to_string()
+                    );
+                    structured["_note"] = json!(
+                        "Prefer `elements` — `tree_markdown` will continue to work \
+                         but new fields will only be added to the structured side. \
+                         Issue #22865: use `max_elements` / `max_depth` to bound the \
+                         UIA walk on apps with very large trees."
+                    );
                 }
 
                 if let Some((b64, w, h, orig_w)) = screenshot_opt {
@@ -745,6 +842,22 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    // Surface 7: mirror the MCP image part's `mimeType` onto
+                    // the structured payload so consumers don't have to sniff
+                    // magic bytes off the base64 to know the format.
+                    structured["screenshot_mime_type"] = json!("image/png");
+                } else if let Some(err) = screenshot_err {
+                    // Capture failed (most commonly because the target is
+                    // minimized — see #1973). Surface the reason in BOTH the
+                    // human-readable content stream (so the model sees it
+                    // alongside the UIA tree it does get) AND structuredContent
+                    // (so MCP clients with structured-only parsing can detect
+                    // and act on it). Without this the caller saw an empty
+                    // response with no clue why and burned turns retrying.
+                    content.push(cua_driver_core::protocol::Content::text(
+                        format!("screenshot unavailable: {err}")
+                    ));
+                    structured["screenshot_error"] = json!(err);
                 }
 
                 ToolResult { content, is_error: None, structured_content: Some(structured) }
@@ -1820,8 +1933,9 @@ impl Tool for ClickTool {
             input_schema: json!({
                 "type":"object","required":["pid"],"properties":{
                     "pid":{"type":"integer","description":"Target process ID."},
-                    "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Required when element_index is used."},
+                    "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                     "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id)."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
                     "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Windows-only convenience; Swift exposes right-click as a separate `right_click` tool."},
@@ -1840,11 +1954,41 @@ impl Tool for ClickTool {
         use crate::uia::cache::SnapshotKind;
         let cursor_key = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
-        let hwnd_opt = args.opt_u64("window_id");
-        let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
+        // Surface 6: element_token / element_index precedence resolution.
+        // Windows uses u64 HWND but the token registry stores u32; truncate
+        // through the same path get_window_state used when registering.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
-        let button = args.str_or("button", "left");
+        // Surface 5: explicit rejection of unknown buttons so a typo doesn't fall
+        // through to the SendInput `_ => MOUSEEVENTF_LEFTDOWN/UP` default and
+        // silently emit a left-click. Empty / missing keeps back-compat.
+        let button_raw = args.str_or("button", "left").to_lowercase();
+        if !matches!(button_raw.as_str(), "" | "left" | "right" | "middle") {
+            return ToolResult::error(format!(
+                "click: unknown button \"{button_raw}\" — expected one of left, right, middle."
+            ));
+        }
+        let button = if button_raw.is_empty() { "left".to_string() } else { button_raw };
         let count = args.u64_or("count", 1) as usize;
         let dispatch = DispatchMode::from_args(&args);
         // For every non-foreground click, mark the target window
@@ -2386,8 +2530,9 @@ impl Tool for TypeTextTool {
                 "type":"object","required":["pid","text"],"properties":{
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
-                    "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used."},
+                    "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."},
                     "dispatch": crate::input::dispatch::dispatch_schema()
                 },"additionalProperties":false
@@ -2410,8 +2555,27 @@ impl Tool for TypeTextTool {
         // case is allocation-free.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        let hwnd_opt = args.opt_u64("window_id");
-        let elem_idx = args.opt_u64("element_index");
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "type_text",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index as u64),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
         let dispatch = DispatchMode::from_args(&args);
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
@@ -2486,6 +2650,29 @@ impl Tool for TypeTextTool {
             }
         }
 
+        // 0. Terminal short-circuit: Windows Terminal, mintty, ConsoleWindowClass,
+        //    GVim / NeoVim — all consume keys through console / VT pipelines that
+        //    PostMessage(WM_CHAR) doesn't reach. The `set_value` UIA path also
+        //    silently no-ops on most of these. Go straight to SendInput Unicode
+        //    via `inject_text_cloaked` (capability-first; brief focus, foreground
+        //    restored). See `crate::terminal::TERMINAL_CLASS_PREFIXES`.
+        if crate::terminal::is_terminal_hwnd(hwnd) {
+            drop(_noact);
+            let text_t = text.clone();
+            let r = tokio::task::spawn_blocking(move || crate::input::inject_text_cloaked(hwnd, &text_t)).await;
+            return match r {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (terminal emulator, cloaked focus)."
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "key_events",
+                    "characters": text_len,
+                })),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
         // CUA-543 routing: PostMessage WM_CHAR doesn't reach modern
         // XAML / WinUI3 hosts. When the target is one of those AND the
         // caller has supplied an element_index, route through UIA
@@ -2523,7 +2710,11 @@ impl Tool for TypeTextTool {
             if set_ok {
                 return ToolResult::text(format!(
                     "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern (element_index=[{idx}])."
-                ));
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "ax",
+                    "characters": text_len,
+                }));
             }
             // ValuePattern unavailable → fall through to the WM_CHAR path.
         }
@@ -2540,7 +2731,11 @@ impl Tool for TypeTextTool {
             return match r {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (WPF, cloaked focus)."
-                )),
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "key_events",
+                    "characters": text_len,
+                })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
@@ -2553,7 +2748,11 @@ impl Tool for TypeTextTool {
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage ({_delay_ms}ms delay)."
-            )),
+            ))
+            .with_structured(serde_json::json!({
+                "path": "key_events",
+                "characters": text_len,
+            })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2589,6 +2788,7 @@ impl Tool for PressKeyTool {
                     "key":{"type":"string","description":"Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit)."},
                     "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier names held while the key is pressed (ctrl/shift/alt/win)."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "dispatch": crate::input::dispatch::dispatch_schema()
                 },"additionalProperties":false
@@ -2604,11 +2804,30 @@ impl Tool for PressKeyTool {
         let pid = raw_pid as u32;
         let key = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
         let mods: Vec<String> = args.str_array("modifiers");
-        let hwnd_opt = args.opt_u64("window_id");
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "press_key",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index as u64),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
         let dispatch = DispatchMode::from_args(&args);
         // Swift requires window_id when element_index is supplied — ports the
         // same validation.
-        let elem_idx = args.opt_u64("element_index");
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
@@ -2956,10 +3175,11 @@ impl Tool for SetValueTool {
                 `type_text` — UIA ValuePattern writes are ignored by some web inputs (same \
                 caveat as Swift's `AXValue`-vs-WebKit).".into(),
             input_schema: json!({
-                "type":"object","required":["pid","window_id","element_index","value"],"properties":{
+                "type":"object","required":["pid","value"],"properties":{
                     "pid":{"type":"integer","description":"Target process ID."},
-                    "window_id":{"type":"integer","description":"HWND of the window. The element_index cache is scoped per (pid, window_id)."},
-                    "element_index":{"type":"integer","description":"Element index from the last get_window_state."},
+                    "window_id":{"type":"integer","description":"HWND of the window. Required when element_index is used; optional when element_token is supplied (the token carries it)."},
+                    "element_index":{"type":"integer","description":"Element index from the last get_window_state. Required unless element_token is supplied."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."}
                 },"additionalProperties":false
             }),
@@ -2969,24 +3189,40 @@ impl Tool for SetValueTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // Swift's "Missing required integer fields pid, window_id, and element_index."
-        let mut missing_ints: Vec<&str> = Vec::new();
+        use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
         let raw_pid = args.get("pid").and_then(|v| v.as_i64());
-        if raw_pid.is_none()                    { missing_ints.push("pid"); }
-        if args.get("window_id").and_then(|v| v.as_u64()).is_none()  { missing_ints.push("window_id"); }
-        if args.get("element_index").and_then(|v| v.as_u64()).is_none() { missing_ints.push("element_index"); }
-        if !missing_ints.is_empty() {
-            // Swift wording when all three are missing; for partial misses
-            // we still emit the same shape (good enough for parity).
+        if raw_pid.is_none() {
             return ToolResult::error("Missing required integer fields pid, window_id, and element_index.");
         }
-        let pid  = raw_pid.unwrap() as u32;
-        let hwnd = args.get("window_id").and_then(|v| v.as_u64()).unwrap();
-        let idx  = args.get("element_index").and_then(|v| v.as_u64()).unwrap() as usize;
+        let pid = raw_pid.unwrap() as u32;
         let value = match args.get("value").and_then(|v| v.as_str()) {
             Some(v) => v.to_owned(),
             None    => return ToolResult::error("Missing required string field value."),
+        };
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "set_value",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (hwnd, idx) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: Some(wid), element_index, ..
+            } => (wid as u64, element_index),
+            cua_driver_core::element_token::ResolvedElement::Element {
+                window_id: None, ..
+            } => return ToolResult::error(
+                "set_value requires window_id when element_index is used \
+                 (omit only when supplying element_token, which carries it)."
+            ),
+            cua_driver_core::element_token::ResolvedElement::None =>
+                return ToolResult::error("Missing required integer fields pid, window_id, and element_index."),
         };
 
         // No-raise guard: a WPF/XAML automation peer calls UIElement.Focus() →
@@ -3095,6 +3331,7 @@ impl Tool for ScrollTool {
                         "description":"Number of scroll ticks. Default 3."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "dispatch": crate::input::dispatch::dispatch_schema()
                 },"additionalProperties":false
             }),
@@ -3124,8 +3361,27 @@ impl Tool for ScrollTool {
         let direction_display = direction.clone();
         let by_display = by.clone();
         let amount = args.u64_or("amount", 3).clamp(1, 50) as u32;
-        let hwnd_opt = args.opt_u64("window_id");
-        let elem_idx = args.opt_u64("element_index");
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "scroll",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index as u64),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
@@ -3255,6 +3511,54 @@ impl Tool for ScrollTool {
 // `GetWindowStateTool` — that's where the actual screenshot machinery
 // lives now.
 
+/// Chromium/Electron windows silently drop `PostMessage` mouse events — their
+/// input thread only honors SendInput-origin events (#1623). `ClickTool`
+/// auto-routes Chromium targets through SendInput, but `DoubleClickTool` /
+/// `RightClickTool` did not, so element/pixel gestures on Electron apps
+/// (Obsidian, VS Code, Slack, …) reached `post_click_screen` and no-op'd
+/// silently. This mirrors that short-circuit for those tools (#1984): when
+/// `hwnd` is a Chromium window, deliver `count` clicks of `button` at screen
+/// `(sx, sy)` via SendInput with async foreground restore and return
+/// `Some(result)`. Returns `None` for non-Chromium targets so the caller
+/// proceeds to its normal PostMessage path.
+async fn chromium_click_short_circuit(
+    hwnd: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    pid: u32,
+    gesture: &str,
+) -> Option<ToolResult> {
+    let is_chromium = tokio::task::spawn_blocking(move || {
+        crate::input::is_chromium_target_window(hwnd)
+    })
+    .await
+    .unwrap_or(false);
+    if !is_chromium {
+        return None;
+    }
+    // Capture the pre-click foreground so the poller can restore it even if
+    // Chromium re-activates itself from a renderer-side handler (same pattern
+    // and rationale as the ClickTool Chromium branch).
+    let prev_fg_addr = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+    };
+    let button_owned = button.to_string();
+    let send_result = tokio::task::spawn_blocking(move || {
+        crate::input::send_click_synthesized(hwnd, sx, sy, count, &button_owned)
+    })
+    .await;
+    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+    Some(match send_result {
+        Ok(Ok(())) => ToolResult::text(format!(
+            "✅ Sent {gesture} via SendInput to pid {pid} at screen ({sx},{sy}) (Chromium target)."
+        )),
+        Ok(Err(e)) => ToolResult::error(e.to_string()),
+        Err(e) => ToolResult::error(format!("Task error: {e}")),
+    })
+}
+
 // ── double_click ──────────────────────────────────────────────────────────────
 
 pub struct DoubleClickTool {
@@ -3287,8 +3591,9 @@ impl Tool for DoubleClickTool {
                 parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "pid":{"type":"integer","description":"Target process ID."},
-                "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used."},
+                "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                 "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id)."},
+                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the gesture. Accepted for parity; currently no-op on Windows."},
@@ -3307,8 +3612,27 @@ impl Tool for DoubleClickTool {
         };
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
-        let hwnd_opt = args.opt_u64("window_id");
-        let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "double_click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let dispatch = DispatchMode::from_args(&args);
@@ -3352,11 +3676,24 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
-            // dispatch:"background" — reject if PostMessage would be silently dropped.
+            // dispatch:"background" (default): Chromium/Electron & GTK targets
+            // silently drop posted clicks (#1984) — inject via the coordinate
+            // actuator (system input queue, NO foreground swap), exactly like
+            // ClickTool, instead of refusing. Only error if injection can't
+            // express this click (e.g. right/middle on such a target).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, cx, cy, 2, "left")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             // dispatch:"foreground" — route through SendInput at the cached coords.
             if dispatch == DispatchMode::Foreground {
@@ -3374,6 +3711,10 @@ impl Tool for DoubleClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, cx, cy, 2, "left", pid, "double-click").await {
+                return r;
             }
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
@@ -3406,11 +3747,21 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
-            // dispatch:"background" — reject if PostMessage would be silently dropped.
+            // dispatch:"background" (default): inject via the coordinate actuator
+            // (no foreground swap) for targets that drop posted clicks (#1984).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, sx_i, sy_i, 2, "left")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             // dispatch:"foreground" — SendInput at screen coords with FG swap.
             if dispatch == DispatchMode::Foreground {
@@ -3430,6 +3781,10 @@ impl Tool for DoubleClickTool {
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, sx_i, sy_i, 2, "left", pid, "double-click").await {
+                return r;
+            }
             let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 2, "left")).await;
             match result {
                 Ok(Ok(())) => {
@@ -3479,8 +3834,9 @@ impl Tool for RightClickTool {
                 propagate modifier-key state).".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "pid":{"type":"integer","description":"Target process ID."},
-                "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used."},
+                "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                 "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id)."},
+                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the right-click. Accepted for parity; currently no-op on Windows."},
@@ -3499,8 +3855,27 @@ impl Tool for RightClickTool {
         };
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
-        let hwnd_opt = args.opt_u64("window_id");
-        let elem_idx = args.opt_u64("element_index").map(|v| v as usize);
+        // Surface 6: element_token / element_index precedence resolution.
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "right_click",
+        ) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let elem_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =>
+                Some(*element_index),
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt: Option<u64> = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } =>
+                window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
         let dispatch = DispatchMode::from_args(&args);
@@ -3544,10 +3919,22 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            // dispatch:"background" (default): try coordinate injection (no
+            // foreground swap) for drop-prone targets (#1984); a right-click
+            // injection that the actuator can't express falls back to the error.
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, cx, cy, 1, "right")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             if dispatch == DispatchMode::Foreground {
                 let prev_fg_addr = unsafe {
@@ -3564,6 +3951,10 @@ impl Tool for RightClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, cx, cy, 1, "right", pid, "right-click").await {
+                return r;
             }
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
@@ -3597,10 +3988,21 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            // dispatch:"background" (default): try coordinate injection (no
+            // foreground swap) for drop-prone targets (#1984).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, sx_i, sy_i, 1, "right")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             if dispatch == DispatchMode::Foreground {
                 let prev_fg_addr = unsafe {
@@ -3619,6 +4021,10 @@ impl Tool for RightClickTool {
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, sx_i, sy_i, 1, "right", pid, "right-click").await {
+                return r;
+            }
             let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 1, "right")).await;
             match result {
                 Ok(Ok(())) => {
@@ -4854,7 +5260,12 @@ impl Tool for ZoomTool {
                         Content::text(summary),
                     ],
                     is_error: None,
-                    structured_content: Some(json!({ "width": w, "height": h, "format": "jpeg" })),
+                    // Surface 7: `mime_type` mirrors the MCP image part's `mimeType`
+                    // onto the structured payload (additive — `format` stays).
+                    structured_content: Some(json!({
+                        "width": w, "height": h, "format": "jpeg",
+                        "mime_type": "image/jpeg"
+                    })),
                 }
             }
             Ok(Err(e)) => ToolResult::error(format!("Zoom failed: {e}")),
@@ -5477,6 +5888,13 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(GetAgentCursorStateTool { state: state.clone() }));
     r.register(Box::new(SetAgentCursorStyleTool { state: state.clone() }));
     r.register(Box::new(CheckPermissionsTool));
+    // `health_report` — single-call cross-platform driver diagnostics.
+    // Stable schema_version="1" contract for downstream consumers
+    // (Hermes Agent, NousResearch/hermes-agent#47065). Windows skips
+    // tcc_* and bundle_identity with "not applicable on Windows".
+    r.register(Box::new(cua_driver_core::health_report::HealthReportTool::new(
+        std::sync::Arc::new(crate::health_report::WindowsHealthProvider),
+    )));
     r.register(Box::new(GetConfigTool { state: state.clone() }));
     r.register(Box::new(SetConfigTool { state: state.clone() }));
     r.register(Box::new(GetAccessibilityTreeTool));
@@ -5725,5 +6143,34 @@ mod chromium_flag_injection_tests {
         assert!(args.iter().any(|a| a == "--disable-features=CalculateNativeWinOcclusion"));
         assert!(args.iter().any(|a| a == "--disable-backgrounding-occluded-windows"));
         assert!(args.iter().any(|a| a == "--disable-renderer-backgrounding"));
+    }
+}
+
+#[cfg(test)]
+mod click_button_schema_tests {
+    use super::ClickTool;
+    use cua_driver_core::tool::Tool;
+    use std::sync::Arc;
+
+    /// Surface 5: schema must keep advertising the three canonical button
+    /// values. Windows was already shipping `button` (pre-Surface-5) so this
+    /// test is the freeze test — guards against an inadvertent rename/removal.
+    #[test]
+    fn schema_advertises_button_enum() {
+        let tool = ClickTool { state: super::ToolState::new() };
+        let d = tool.def();
+        let props = d.input_schema.get("properties").expect("properties");
+        let button = props.get("button").expect("button field present");
+        assert_eq!(button.get("type").and_then(|v| v.as_str()), Some("string"));
+        let enum_vals: Vec<&str> = button
+            .get("enum")
+            .and_then(|v| v.as_array())
+            .expect("button.enum present")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for need in ["left", "right", "middle"] {
+            assert!(enum_vals.contains(&need), "missing {need} in button.enum");
+        }
     }
 }

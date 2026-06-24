@@ -16,8 +16,9 @@ platform: no focus steal, no cursor warp.
   ApplicationFrameHost, layered UIA+PostMessage click chain,
   Session 0 isolation, Windows web-apps section). Read this when
   driving on Windows.
-- `LINUX.md` — Linux status + carve-out (X11/Wayland, AT-SPI,
-  BETA-level). Read this when driving on Linux.
+- `LINUX.md` — Linux carve-out (X11 background input via AT-SPI +
+  XSendEvent, recording, Wayland opt-in/preview). Read this when
+  driving on Linux.
 
 ## What the skill covers
 
@@ -29,14 +30,16 @@ platform: no focus steal, no cursor warp.
   - **macOS**: yabai focus-without-raise + stamped `SLEventPostToPid`.
   - **Windows**: layered UIA `Invoke` + `PostMessage` fallback, both
     z-order-independent and focus-steal-free.
-  - **Linux** (BETA): AT-SPI `accDoDefaultAction` when available;
-    XTest as a focus-stealing last resort.
+  - **Linux**: AT-SPI `do_action` for element clicks +
+    `XSendEvent(ButtonPress)` to the window for pixel clicks — both
+    background, no raise, no real-pointer move.
 - Web-app quirks — macOS specifics in `WEB_APPS.md` (Chromium / WebKit
   / Electron / Tauri, minimized-Chrome keyboard-commit caveat,
   `set_value` workaround). Windows web-apps coverage lives in
   `WINDOWS.md`'s "Web apps on Windows" section.
 - Trajectory recording (`RECORDING.md`) — optional per-session
-  recording + replay for demos and regressions. macOS-only today.
+  recording + replay for demos and regressions. macOS and Linux
+  (X11) today; Wayland video capture not yet supported.
 - Canvas/viewport apps (Blender, Unity, GHOST, Qt, wxWidgets) —
   fallback paths when the AX/UIA/AT-SPI tree is empty.
 
@@ -86,8 +89,9 @@ forbidden-list / launch / click details.
 
 ### Linux
 
-**Status: BETA.** Limited feature parity — see `LINUX.md` for what
-works today. Install:
+The full tool surface is supported on X11 (background input via AT-SPI
++ XSendEvent, screenshots, recording); native Wayland input/capture is
+opt-in and still preview. See `LINUX.md`. Install:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
@@ -104,20 +108,20 @@ The skill is a drop-in directory. Same shape on every platform.
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -R libs/cua-driver/rust/Skills/cua-driver-rs ~/.claude/skills/
+cp -R libs/cua-driver/rust/Skills/cua-driver ~/.claude/skills/
 ```
 
 Or symlink if you want edits-in-place:
 
 ```bash
-ln -s "$PWD/libs/cua-driver/rust/Skills/cua-driver-rs" ~/.claude/skills/cua-driver-rs
+ln -s "$PWD/libs/cua-driver/rust/Skills/cua-driver" ~/.claude/skills/cua-driver
 ```
 
 **Project scope** (committed alongside a specific repo):
 
 ```bash
 mkdir -p .claude/skills
-cp -R /path/to/cua/libs/cua-driver/rust/Skills/cua-driver-rs .claude/skills/
+cp -R /path/to/cua/libs/cua-driver/rust/Skills/cua-driver .claude/skills/
 ```
 
 Or run the verb that does this automatically + fetches the matching
@@ -163,14 +167,14 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
 - `WINDOWS.md` — Windows-specific carve-out (UIA, UWP, layered
   click chain, Session 0, Windows web-apps). Loaded when driving
   on Windows.
-- `LINUX.md` — Linux-specific carve-out, BETA. Loaded when driving
-  on Linux.
+- `LINUX.md` — Linux-specific carve-out (X11 background input,
+  recording, Wayland opt-in/preview). Loaded when driving on Linux.
 - `WEB_APPS.md` — browser patterns on macOS (Chromium + WebKit,
   Electron, Tauri, minimized-Chrome keyboard-commit caveat).
   Loaded on demand from `SKILL.md`. **Note**: Windows web-apps
   coverage lives in `WINDOWS.md`'s "Web apps on Windows" section.
-- `RECORDING.md` — trajectory recording / replay (macOS-only
-  today; Windows / Linux not yet supported).
+- `RECORDING.md` — trajectory recording / replay (macOS and Linux
+  X11 today; Wayland video capture not yet supported).
 - `TESTS.md` — manual test scripts for end-to-end skill verification.
 
 ## Troubleshooting
@@ -202,7 +206,7 @@ cua-driver skills update
 # Or, from a clone of trycua/cua:
 cd /path/to/cua && git pull
 # if you copied: re-copy
-cp -R libs/cua-driver/rust/Skills/cua-driver-rs ~/.claude/skills/
+cp -R libs/cua-driver/rust/Skills/cua-driver ~/.claude/skills/
 # if you symlinked: nothing needed
 ```
 

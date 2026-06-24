@@ -77,55 +77,25 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-function Resolve-CuaDriverTempDir {
-    $candidates = @()
-    if ($env:TEMP) { $candidates += $env:TEMP }
-    if ($env:TMP) { $candidates += $env:TMP }
-
-    $dotNetTemp = $null
-    try { $dotNetTemp = [System.IO.Path]::GetTempPath() } catch {}
-    if ($dotNetTemp) { $candidates += $dotNetTemp }
-
-    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA "Temp") }
-    if ($env:SystemRoot) { $candidates += (Join-Path $env:SystemRoot "Temp") }
-
-    $seen = @{}
-    foreach ($candidate in $candidates) {
-        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
-
+# Resolve a temp directory that actually exists. $env:TEMP / $env:TMP can point
+# at a missing or unresolvable short 8.3 profile path (e.g. C:\Users\SHORTN~1.DOM),
+# which makes Set-Content / Remove-Item fail. Pick the first candidate that
+# exists, expand 8.3 short components to the long form, and fall back to
+# %SystemRoot%\Temp (always present). See issue #1911.
+function Get-CuaDriverTempDir {
+    foreach ($cand in @($env:TEMP, $env:TMP, (Join-Path $env:LOCALAPPDATA 'Temp'), (Join-Path $env:SystemRoot 'Temp'))) {
+        if ([string]::IsNullOrWhiteSpace($cand)) { continue }
         try {
-            $dir = [System.IO.Path]::GetFullPath([string]$candidate)
-        } catch {
-            continue
-        }
-
-        $key = $dir.TrimEnd('\').ToLowerInvariant()
-        if ($seen.ContainsKey($key)) { continue }
-        $seen[$key] = $true
-
-        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
-
-        $probe = Join-Path $dir ("cua-driver-temp-probe-" + [Guid]::NewGuid().ToString('N') + ".tmp")
-        $stream = $null
-        try {
-            $stream = [System.IO.File]::Open(
-                $probe,
-                [System.IO.FileMode]::CreateNew,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::None)
-            $stream.Dispose()
-            $stream = $null
-            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-            return $dir
-        } catch {
-            if ($stream) {
-                $stream.Dispose()
+            if (Test-Path -LiteralPath $cand) {
+                return (Get-Item -LiteralPath $cand -ErrorAction Stop).FullName
             }
-            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
-        }
+        } catch { }
     }
-
-    throw "could not find a writable temporary directory. Checked TEMP, TMP, .NET temp, LOCALAPPDATA\Temp, and SystemRoot\Temp."
+    $fallback = Join-Path $env:SystemRoot 'Temp'
+    if (-not (Test-Path -LiteralPath $fallback)) {
+        New-Item -ItemType Directory -Path $fallback -Force | Out-Null
+    }
+    return $fallback
 }
 
 # $Force is read from the environment so the script body stays iex-safe.
@@ -180,7 +150,7 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
 
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
-        $tmp = Join-Path (Resolve-CuaDriverTempDir) ("cua-driver-uninstall-" + [Guid]::NewGuid().ToString('N') + ".ps1")
+        $tmp = Join-Path (Get-CuaDriverTempDir) ("cua-driver-uninstall-" + [Guid]::NewGuid().ToString('N') + ".ps1")
         $body = $MyInvocation.MyCommand.Definition
         Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
         $scriptPath = $tmp
@@ -236,10 +206,14 @@ $SkillJunctions = @(
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
     (Join-Path $env:APPDATA      "opencode\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver"),
+    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver"),
     (Join-Path $env:USERPROFILE ".claude\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".agents\skills\cua-driver-rs"),
     (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver-rs"),
-    (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs")
+    (Join-Path $env:APPDATA      "opencode\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver-rs"),
+    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver-rs")
 )
 
 # ---------- Log helpers ----------------------------------------------------

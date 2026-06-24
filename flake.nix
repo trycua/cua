@@ -2,7 +2,7 @@
   description = "CUA - Computer Use Agent";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -21,7 +21,17 @@
       (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            # Several Electron-based apps in the background-GUI test matrix
+            # (logseq, joplin, zettlr) pin Electron releases that nixos-26.05
+            # flags as EOL/insecure. These are read-only smoke tests running in
+            # throwaway CI containers, so permit insecure Electron specifically
+            # (version-agnostic, so a nixpkgs bump to a newer EOL Electron keeps
+            # working without editing an exact version string here).
+            config.allowInsecurePredicate =
+              pkg: nixpkgs.lib.hasPrefix "electron" (nixpkgs.lib.getName pkg);
+          };
 
           rustSrc = ./libs/cua-driver/rust;
 
@@ -41,8 +51,20 @@
               cua-driver-build = cuaDriverPackage;
             }
             // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-              # NixOS VM integration test (x86_64-linux only)
+              # NixOS container integration test (x86_64-linux only)
               cua-driver-integration = import ./nix/cua-driver/tests/integration.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
+              # set_config persistence test — regression for #1923 (fixed in
+              # #1928): the {key, value} write shape must persist and read back
+              # via get_config (it was silently dropped on Linux before).
+              cua-driver-set-config = import ./nix/cua-driver/tests/set-config.nix {
                 inherit pkgs;
                 inherit (pkgs) lib;
                 cuaDriverModule = {
@@ -124,8 +146,10 @@
                   # focus-free WRITE / typed-text assertions are added later via
                   # trajectories). chromium keeps the full CDP focus-free-write
                   # override; tk is the negative-control full entry (Tk `send`).
-                  # "firefox" remains disabled: under the emulated CI VM (no KVM)
-                  # it does not surface its window within the launch timeout.
+                  # "firefox" remains disabled: historically it did not surface its
+                  # window within the launch timeout in CI. Container tests run at
+                  # native speed, so this may now pass — left disabled pending
+                  # verification.
                 ) [
                   "chromium"
                   "tk"
@@ -133,9 +157,10 @@
                   "gtk3-gedit"
                   "gtk3-mousepad"
                   # gtk3-geany / gtk3-abiword temporarily disabled: their huge
-                  # AT-SPI trees make the bounds walk + recorder grind in the
-                  # emulated CI VM and the jobs time out. Re-enable once the
-                  # walk is fast enough for 700+-node trees.
+                  # AT-SPI trees made the bounds walk + recorder grind in the
+                  # previous emulated VM and the jobs timed out. Container tests run
+                  # at native speed, so this may now pass — re-enable once verified
+                  # fast enough for 700+-node trees.
                   # "gtk3-geany"
                   "gtk3-scite"
                   # "gtk3-abiword"
@@ -156,6 +181,74 @@
                   "electron-logseq"
                 ]
               )
+            )
+            # Native-Wayland TDD matrix — reproduce the cua-driver scenarios on
+            # real, NATIVE Wayland sessions (XFCE on labwc/wayfire/sway, plus KDE
+            # and GNOME). Apps run as Wayland clients and the tests never set
+            # DISPLAY, so the X11-only driver cannot see them: this is a RED suite
+            # specifying native Wayland support. One check per (desktop × scenario)
+            # and per (desktop × background-GUI app). See
+            # nix/cua-driver/tests/wayland/README.md.
+            // pkgs.lib.optionalAttrs (system == "x86_64-linux") (
+              let
+                # NOTE: xfce-wayfire dropped — the wayfire package fails to
+                # build in the current nixpkgs pin (wf-config can't link
+                # -ldoctest), an upstream packaging bug unrelated to cua-driver.
+                # labwc + sway still cover XFCE-on-wlroots.
+                waylandDesktops = [
+                  "xfce-labwc"
+                  "xfce-sway"
+                  "kde"
+                  "gnome"
+                ];
+                waylandScenarios = {
+                  integration = ./nix/cua-driver/tests/wayland/integration.nix;
+                  screenshot = ./nix/cua-driver/tests/wayland/screenshot.nix;
+                  cursor-click-gif = ./nix/cua-driver/tests/wayland/cursor-click-gif.nix;
+                  background-terminal-gif = ./nix/cua-driver/tests/wayland/background-terminal-gif.nix;
+                  parallel-drag = ./nix/cua-driver/tests/wayland/parallel-drag.nix;
+                };
+                waylandBgApps = [
+                  "foot"
+                  "gtk3-gedit"
+                  "qt6-kcalc"
+                ];
+                waylandModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+                scenarioChecks = pkgs.lib.listToAttrs (
+                  pkgs.lib.concatMap (
+                    desktop:
+                    map (
+                      scenario:
+                      pkgs.lib.nameValuePair "cua-driver-wayland-${desktop}-${scenario}" (
+                        import waylandScenarios.${scenario} {
+                          inherit pkgs desktop;
+                          inherit (pkgs) lib;
+                          cuaDriverModule = waylandModule;
+                        }
+                      )
+                    ) (builtins.attrNames waylandScenarios)
+                  ) waylandDesktops
+                );
+                bgGuiChecks = pkgs.lib.listToAttrs (
+                  pkgs.lib.concatMap (
+                    desktop:
+                    map (
+                      app:
+                      pkgs.lib.nameValuePair "cua-driver-wayland-${desktop}-background-gui-${app}" (
+                        import ./nix/cua-driver/tests/wayland/background-gui.nix {
+                          inherit pkgs desktop app;
+                          inherit (pkgs) lib;
+                          cuaDriverModule = waylandModule;
+                        }
+                      )
+                    ) waylandBgApps
+                  ) waylandDesktops
+                );
+              in
+              scenarioChecks // bgGuiChecks
             );
         }
       )

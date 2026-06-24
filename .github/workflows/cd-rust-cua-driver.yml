@@ -30,11 +30,60 @@ permissions:
   contents: write
 
 jobs:
-  # ── Linux x86_64 ─────────────────────────────────────────────────────────────
+  # ── Linux (x86_64 + arm64) ───────────────────────────────────────────────────
+  # One matrixed job per Linux target. x86_64 builds on the standard
+  # ubuntu-latest host; arm64 builds NATIVELY on GitHub's hosted ARM runner
+  # (ubuntu-24.04-arm) rather than cross-compiling, because the native X11 /
+  # Wayland C deps (libx11-dev, libwayland-dev, …) would otherwise need their
+  # arm64 multiarch variants + a cross linker wired up by hand. A native ARM
+  # runner keeps the build identical to the x86_64 path. install.sh picks the
+  # matching tarball at install time based on the host's `uname -m`.
   build-linux:
-    name: linux-x86_64
-    runs-on: ubuntu-latest
+    name: linux-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    # Build INSIDE a Debian 11 (bullseye) container instead of directly on
+    # the host. ubuntu-latest is now Ubuntu 24.04, whose glibc is 2.39 — a
+    # binary linked there imports GLIBC_2.39 symbols (e.g. posix_spawn's
+    # pidfd_spawnp/pidfd_getpid) and refuses to even run `--version` on older
+    # distros:
+    #   cua-driver: /lib/.../libc.so.6: version 'GLIBC_2.39' not found
+    # That broke Debian 12 (glibc 2.36), Ubuntu 22.04 (2.35), and RHEL/Rocky
+    # 9 (2.34). Debian 11's glibc is 2.31, so linking against it lowers the
+    # floor to GLIBC_2.31 — covering Debian 11+, Ubuntu 20.04+, and RHEL/
+    # Rocky 8+. A container (rather than the retired ubuntu-20.04 runner
+    # label) keeps the floor deterministic regardless of GitHub's host image
+    # churn. The debian:11 image is multi-arch, so the arm64 runner pulls the
+    # aarch64 variant automatically and the glibc floor holds on both arches.
+    # The C deps below all exist in bullseye, including libwayland-dev for the
+    # native Wayland backend (#1910).
+    container:
+      image: debian:11
     steps:
+      # actions/checkout needs git inside the container; the bullseye image
+      # is bare. Install git + the build toolchain before anything else.
+      - name: Install base tooling (container is bare)
+        run: |
+          apt-get update
+          # The PipeWire / libei deps the native-Wayland portal path uses
+          # are intentionally NOT installed here: bullseye ships PipeWire
+          # 0.3.19 (too old for libspa-sys 0.8, which needs >= 0.3.40) and
+          # has no libei-dev at all. They sit behind the `portal-libei`
+          # Cargo feature (disabled by default) and are wired in via the
+          # Nix build. The wlroots screencopy + virtual-pointer paths and
+          # the X11 fallback work without them.
+          apt-get install -y --no-install-recommends \
+            git ca-certificates curl build-essential pkg-config \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
       - uses: actions/checkout@v4
       - name: Determine version
         id: version
@@ -48,33 +97,28 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             libs/cua-driver/rust/target
-          key: rust-cua-driver-rs-linux-x86_64-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
+          key: rust-cua-driver-rs-linux-${{ matrix.arch }}-${{ hashFiles('libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml') }}
           restore-keys: |
-            rust-cua-driver-rs-linux-x86_64-
-      # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) locates
-      # libX11/libXi/libXtst via pkg-config in its build.rs.
-      - name: Install X11 build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev
+            rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build -p cua-driver --release --target x86_64-unknown-linux-gnu
+        run: cargo build -p cua-driver --release --target ${{ matrix.target }}
       - name: Package
         working-directory: libs/cua-driver/rust
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          LABEL="linux-x86_64"
+          LABEL="linux-${{ matrix.arch }}"
+          TARGET="${{ matrix.target }}"
           STAGE="cua-driver-rs-${VERSION}-${LABEL}"
           mkdir -p "release/${STAGE}"
-          cp "target/x86_64-unknown-linux-gnu/release/cua-driver" "release/${STAGE}/"
+          cp "target/${TARGET}/release/cua-driver" "release/${STAGE}/"
           cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
           (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           # Bare binary tarball — single file (cua-driver) at the archive root,
@@ -83,8 +127,8 @@ jobs:
           ls -lh "release/${STAGE}.tar.gz" "release/${STAGE}-binary.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
-          name: cua-driver-rs-linux-x86_64
-          path: libs/cua-driver/rust/release/cua-driver-rs-*-linux-x86_64*.tar.gz
+          name: cua-driver-rs-linux-${{ matrix.arch }}
+          path: libs/cua-driver/rust/release/cua-driver-rs-*-linux-${{ matrix.arch }}*.tar.gz
           if-no-files-found: error
 
   # ── Windows (x86_64 + arm64) ─────────────────────────────────────────────────
@@ -582,6 +626,8 @@ jobs:
             **Linux pre-release**
             - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` — directory tarball
             - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-x86_64-binary.tar.gz` — bare binary
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` — directory tarball (Linux on ARM / aarch64)
+            - `cua-driver-rs-${{ steps.version.outputs.version }}-linux-arm64-binary.tar.gz` — bare binary (Linux on ARM / aarch64)
 
             **Windows**
             - `cua-driver-rs-${{ steps.version.outputs.version }}-windows-x86_64.zip` — directory zip

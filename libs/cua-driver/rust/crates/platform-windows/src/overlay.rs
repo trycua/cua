@@ -197,8 +197,40 @@ pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
     }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
+        wake_overlay();
     }
 }
+
+/// Kick the overlay render timer back to the ACTIVE cadence immediately so a
+/// command enqueued while the loop is parked in the slow IDLE heartbeat is
+/// picked up within ~8ms instead of waiting out the full idle period (issue
+/// #1808). `SetTimer` may be called cross-thread for a window owned by another
+/// thread, so this is safe to invoke from the MCP tool threads. No-op until the
+/// overlay window exists and a no-op when already ACTIVE.
+#[cfg(target_os = "windows")]
+fn wake_overlay() {
+    use std::sync::atomic::Ordering::Relaxed;
+    if TIMER_PERIOD_MS.load(Relaxed) == TIMER_MS_ACTIVE {
+        return; // already ticking at frame cadence
+    }
+    let hwnd_isize = OVERLAY_HWND.load(Relaxed);
+    if hwnd_isize == 0 {
+        return; // overlay window not created yet
+    }
+    // Flip the cadence flag first so a racing WM_TIMER doesn't re-park us, then
+    // arm the ACTIVE-period timer. The WM_TIMER handler re-confirms the cadence
+    // from render state, so an over-eager wake just costs one cheap idle tick.
+    TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, Relaxed);
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::SetTimer;
+        let hwnd = HWND(hwnd_isize as *mut _);
+        SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wake_overlay() {}
 
 /// Convenience for callsites not yet threaded with a session key: drives the
 /// seeded `"default"` cursor (the anonymous / one-shot identity).
@@ -216,6 +248,7 @@ pub fn remove_cursor(key: CursorKey) {
     }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Remove(key));
+        wake_overlay();
     }
 }
 
@@ -423,6 +456,35 @@ impl RenderState {
         // returns `false` for it and we silently drop it here.
         let _ = self.core.apply_command_base(cmd, false, false);
     }
+
+    /// True while the render loop must keep ticking at frame cadence because
+    /// the next tick can still change pixels: an in-flight glide path, a
+    /// spring-settle, a click pulse, or an idle-fade that has not yet fully
+    /// faded the cursor out. A brand-new sentinel cursor (off-screen at
+    /// `(-200, -200)`) and a cursor that has already faded to `idle_alpha ≈ 0`
+    /// are both quiescent, so `mcp`/`serve` with no agent activity can let the
+    /// timer go cheap instead of compositing a full virtual-screen pixmap at
+    /// ~125 Hz. Mirrors `platform_macos::cursor::overlay`'s `needs_frame_tick`.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn needs_frame_tick(&self) -> bool {
+        self.core.path.is_some()
+            || self.core.spring.is_some()
+            || self.core.click_t.is_some()
+            || (self.core.motion.idle_hide_ms > 0.0
+                && self.core.visible
+                && self.core.pos.0 >= -100.0
+                && self.core.idle_alpha >= 0.004)
+    }
+}
+
+/// True if ANY owned cursor still needs frame ticks (animation / fade in
+/// progress). When this is false the render loop is fully quiescent: the last
+/// emitted frame already left the layered window in its resting / cleared
+/// state, so the timer can drop to a slow idle cadence and skip the expensive
+/// composite + `UpdateLayeredWindow` until the next command wakes it.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
+    map.cursors.values().any(RenderState::needs_frame_tick)
 }
 
 // ── Win32 message-loop thread ─────────────────────────────────────────────
@@ -510,10 +572,14 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
 
-    // Set up timer at 8ms (~125 Hz) matching the C# reference.
+    // Arm the render timer in the ACTIVE cadence (~125 Hz) so the very first
+    // frames (seed glide / startup) are smooth. The WM_TIMER handler drops it
+    // to the slow IDLE cadence as soon as every cursor goes quiescent and
+    // re-arms ACTIVE the instant a command arrives (issue #1808).
     unsafe {
-        SetTimer(hwnd, 1, 8, None);
+        SetTimer(hwnd, TIMER_ID, TIMER_MS_ACTIVE, None);
     }
+    TIMER_PERIOD_MS.store(TIMER_MS_ACTIVE, std::sync::atomic::Ordering::Relaxed);
 
     // Store hwnd and rx globally for the wnd_proc callback.
     OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
@@ -544,6 +610,29 @@ static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicI
 static CMD_RX_WIN: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static LAST_ZTICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static Z_ORDER: OnceLock<WinZOrderEnforcer> = OnceLock::new();
+
+// ── Idle render gate (issue #1808) ────────────────────────────────────────
+//
+// The overlay window timer is re-armed between two cadences:
+//   * ACTIVE  (`TIMER_MS_ACTIVE`, ~125 Hz) while any cursor is animating /
+//     fading — this is what produces a smooth glide + click pulse.
+//   * IDLE    (`TIMER_MS_IDLE`, a slow heartbeat) when every cursor is
+//     quiescent — the handler then only drains the command channel cheaply
+//     and re-arms ACTIVE the instant a command arrives. No full-screen pixmap
+//     allocation, no RGBA→BGRA copy, no UpdateLayeredWindow while idle.
+//
+// Before this gate the timer ran at ~125 Hz unconditionally and every tick
+// allocated a virtual-screen pixmap, swizzled it pixel-by-pixel, and blitted
+// it with UpdateLayeredWindow — burning 60–85% of a core with the cursor
+// static (issue #1808). `TIMER_PERIOD_MS` is the cadence the timer is currently
+// armed at; the WM_TIMER handler flips it based on `render_map_needs_frame_tick`.
+const TIMER_ID: usize = 1;
+const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz, matches the C# reference render rate
+const TIMER_MS_IDLE: u32 = 250; // slow heartbeat: drain channel, stay responsive
+/// Current armed timer cadence in ms. Compared against the desired cadence each
+/// WM_TIMER so we only call `SetTimer` (re-arm) on an actual active↔idle flip.
+static TIMER_PERIOD_MS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(TIMER_MS_ACTIVE);
 
 // ── Window procedure ──────────────────────────────────────────────────────
 
@@ -593,19 +682,30 @@ unsafe extern "system" fn wnd_proc(
                 }
             }
 
-            // ── Drain commands, tick all cursors, composite one pixmap ───────
+            // ── Drain commands, tick all cursors, maybe composite one pixmap ─
             // Measure real dt from last tick — Windows timer resolution defaults
             // to 15ms so the hardcoded 8ms ran the animation at half speed.
-            let (pixmap, arrived, pinned_wid) = {
+            //
+            // Idle gate (issue #1808): the full-screen composite + RGBA→BGRA
+            // swizzle + UpdateLayeredWindow only runs when a command arrived
+            // this tick, when a previous tick left an animation in flight
+            // (`was_active`), or when a cursor is still animating/fading after
+            // this tick (`needs_tick`). When all three are false every cursor is
+            // quiescent and the layered window already holds its resting frame,
+            // so we skip the expensive work entirely and let the timer drop to
+            // the slow IDLE cadence below.
+            let was_active =
+                TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
+            let (pixmap, arrived, pinned_wid, needs_tick) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
                     // Drain the channel via get-or-create; track the last-touched
                     // key so the z-order pin follows the most-recent cursor.
-                    let mut drained = 0u32;
+                    let mut had_msg = false;
                     if let Ok(rx_guard) = CMD_RX_WIN.try_lock() {
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
-                                drained += 1;
+                                had_msg = true;
                                 if let Some(k) = apply_msg(map, m) {
                                     map.last_active = Some(k);
                                 }
@@ -628,61 +728,96 @@ unsafe extern "system" fn wnd_proc(
                         }
                     }
 
-                    // Decide where to pin the single overlay window in z.
-                    //
-                    // The overlay is ONE full-virtual-screen layered window, so it
-                    // can occupy only one z-slot. It must sit ABOVE every window a
-                    // live cursor is actuating, but NOT above whatever sits above
-                    // those (the user's foreground). The right slot is therefore
-                    // "just above the HIGHEST-z actuating window": the overlay is
-                    // full-screen, so being above the topmost driven window puts it
-                    // above all of them (they're all at-or-below it), while still
-                    // below anything stacked above them. Pinning above one fixed
-                    // window (the old last-active behaviour) instead let any other
-                    // driven window stacked above it occlude its cursors — the
-                    // blink-out. NB: this is a RELATIVE z move (insert above a
-                    // specific window), which works from this non-foreground
-                    // thread; an absolute HWND_TOP can be refused by the
-                    // foreground lock and sink the overlay behind everything.
-                    let mut driven: Vec<u64> = Vec::new();
-                    for rs in map.cursors.values() {
-                        if !rs.core.visible || rs.core.idle_alpha < 0.004 { continue; }
-                        if let Some(w) = rs.core.pinned_wid {
-                            if !driven.contains(&w) { driven.push(w); }
+                    // After ticking: does any cursor still need frame ticks?
+                    let needs_tick = render_map_needs_frame_tick(map);
+
+                    // Render only when something can have changed pixels this
+                    // frame: a fresh command, a still-running animation, or the
+                    // final settle frame as the previous animation winds down
+                    // (`was_active && !needs_tick`). A fully-quiescent idle tick
+                    // returns `None` here and does no compositing at all.
+                    let should_render = had_msg || needs_tick || was_active;
+
+                    if !should_render {
+                        (None, arrived, None, needs_tick)
+                    } else {
+                        // Decide where to pin the single overlay window in z.
+                        //
+                        // The overlay is ONE full-virtual-screen layered window,
+                        // so it can occupy only one z-slot. It must sit ABOVE
+                        // every window a live cursor is actuating, but NOT above
+                        // whatever sits above those (the user's foreground). The
+                        // right slot is therefore "just above the HIGHEST-z
+                        // actuating window": the overlay is full-screen, so being
+                        // above the topmost driven window puts it above all of
+                        // them while still below anything stacked above them.
+                        // Pinning above one fixed window (the old last-active
+                        // behaviour) instead let any other driven window stacked
+                        // above it occlude its cursors — the blink-out. NB: this
+                        // is a RELATIVE z move (insert above a specific window),
+                        // which works from this non-foreground thread; an
+                        // absolute HWND_TOP can be refused by the foreground lock
+                        // and sink the overlay behind everything.
+                        let mut driven: Vec<u64> = Vec::new();
+                        for rs in map.cursors.values() {
+                            if !rs.core.visible || rs.core.idle_alpha < 0.004 {
+                                continue;
+                            }
+                            if let Some(w) = rs.core.pinned_wid {
+                                if !driven.contains(&w) {
+                                    driven.push(w);
+                                }
+                            }
                         }
-                    }
-                    let pinned = unsafe { topmost_of(&driven) };
+                        let pinned = unsafe { topmost_of(&driven) };
 
-                    // Composite every cursor into ONE virtual-screen pixmap and
-                    // blit it every frame. (An earlier "skip when idle" gate was
-                    // removed: starting/stopping the full-screen UpdateLayeredWindow
-                    // as activity comes and goes made all the resting cursors
-                    // flicker when any one of them clicked — very visible with many
-                    // cursors. A steady per-frame blit is flicker-free, and during
-                    // playback at least one cursor is almost always active anyway.)
-                    let _ = drained;
-                    let w = map.virt_w.max(1) as u32;
-                    let h = map.virt_h.max(1) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    for (_k, rs) in &map.cursors {
-                        cursor_overlay::paint_cursor(
-                            &mut pm,
-                            &rs.core,
-                            map.virt_x as f64,
-                            map.virt_y as f64,
-                            None, // focus-rect is macOS-only
-                        );
-                    }
+                        // Composite every cursor into ONE virtual-screen pixmap.
+                        // While ACTIVE this runs every ~8ms, so a steady
+                        // per-frame blit keeps resting cursors flicker-free as
+                        // others animate; once the loop goes idle the whole block
+                        // is skipped (the `should_render` gate above).
+                        let w = map.virt_w.max(1) as u32;
+                        let h = map.virt_h.max(1) as u32;
+                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
+                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                        for (_k, rs) in &map.cursors {
+                            // TODO: thread `GetDpiForWindow` / per-monitor
+                            // DPI awareness here so cursors render crisp on
+                            // HiDPI Windows displays. For now we default to
+                            // 1.0 — preserves pre-retina-fix behaviour on
+                            // Windows.
+                            cursor_overlay::paint_cursor(
+                                &mut pm,
+                                &rs.core,
+                                map.virt_x as f64,
+                                map.virt_y as f64,
+                                None, // focus-rect is macOS-only
+                                1.0,
+                            );
+                        }
 
-                    (Some(pm), arrived, pinned)
+                        (Some(pm), arrived, pinned, needs_tick)
+                    }
                 } else {
-                    (None, Vec::new(), None)
+                    (None, Vec::new(), None, false)
                 }
             };
 
             if let Some(pm) = pixmap {
                 update_layered_window(hwnd, &pm);
+
+                // Z-order maintenance every 80ms — delegate to the cross-platform
+                // ZOrderEnforcer so the contract for "z+1 of the application under
+                // test" is documented once in `cursor_overlay::z_order`. Only run
+                // while we actually rendered: a quiescent overlay leaves its z-slot
+                // untouched until the next command wakes the loop.
+                let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
+                if now_ms.wrapping_sub(last) >= 80 {
+                    LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(enforcer) = Z_ORDER.get() {
+                        enforcer.reassert(pinned_wid);
+                    }
+                }
             }
 
             // Fire arrival oneshots for cursors whose path just ended — unblocks
@@ -692,14 +827,19 @@ unsafe extern "system" fn wnd_proc(
                 arrival_fire(k);
             }
 
-            // Z-order maintenance every 80ms — delegate to the cross-platform
-            // ZOrderEnforcer so the contract for "z+1 of the application under
-            // test" is documented once in `cursor_overlay::z_order`.
-            let last = LAST_ZTICK.load(std::sync::atomic::Ordering::Relaxed);
-            if now_ms.wrapping_sub(last) >= 80 {
-                LAST_ZTICK.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-                if let Some(enforcer) = Z_ORDER.get() {
-                    enforcer.reassert(pinned_wid);
+            // ── Re-arm the render timer at the cadence the current state needs ─
+            // ACTIVE (~125 Hz) while animating/fading; IDLE (slow heartbeat) once
+            // quiescent so a static cursor stops burning CPU (issue #1808). We
+            // only call SetTimer on an actual cadence flip — re-arming with the
+            // same period every tick would itself be needless work.
+            let desired_ms = if needs_tick {
+                TIMER_MS_ACTIVE
+            } else {
+                TIMER_MS_IDLE
+            };
+            if TIMER_PERIOD_MS.swap(desired_ms, std::sync::atomic::Ordering::Relaxed) != desired_ms {
+                unsafe {
+                    SetTimer(hwnd, TIMER_ID, desired_ms, None);
                 }
             }
 
@@ -1070,6 +1210,69 @@ mod tests {
         let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
         assert!(!seeded, "ended session must not be seeded");
         assert!(!map.cursors.contains_key("sessA"), "ended session must not be resurrected");
+    }
+
+    #[test]
+    fn sentinel_cursor_is_quiescent_no_frame_tick() {
+        // A brand-new `mcp`/`serve` with no agent activity holds only the
+        // "default" cursor at the off-screen sentinel (-200, -200). It must NOT
+        // request frame ticks, so the render timer can drop to the slow idle
+        // cadence instead of compositing a full-screen pixmap at ~125 Hz
+        // (issue #1808 idle-CPU burn).
+        let map = empty_map();
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "an untouched sentinel-only overlay must be quiescent"
+        );
+    }
+
+    #[test]
+    fn animating_cursor_requests_frame_ticks() {
+        // After a MoveTo, the cursor has an in-flight path → the loop must keep
+        // ticking at frame cadence so the glide actually animates.
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 60.0, 60.0));
+        assert!(
+            render_map_needs_frame_tick(&map),
+            "a cursor with an in-flight glide must request frame ticks"
+        );
+        assert!(
+            map.cursors["sessA"].needs_frame_tick(),
+            "the animating cursor itself must report needs_frame_tick"
+        );
+    }
+
+    #[test]
+    fn click_pulse_requests_frame_ticks_then_goes_quiescent() {
+        let mut map = empty_map();
+        // ClickPulse seeds click_t = Some(0.0) → active.
+        apply_msg(
+            &mut map,
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessA".to_owned(),
+                cmd: OverlayCommand::ClickPulse { x: 10.0, y: 10.0 },
+            }),
+        );
+        assert!(
+            render_map_needs_frame_tick(&map),
+            "click pulse must keep ticking"
+        );
+
+        // Disable idle-hide so the only activity source is the click pulse, then
+        // advance time past the pulse: the cursor must fall quiescent so the
+        // loop can park.
+        for rs in map.cursors.values_mut() {
+            rs.core.motion.idle_hide_ms = 0.0;
+        }
+        for _ in 0..120 {
+            for rs in map.cursors.values_mut() {
+                rs.tick(0.016);
+            }
+        }
+        assert!(
+            !render_map_needs_frame_tick(&map),
+            "after the click pulse finishes the overlay must go quiescent"
+        );
     }
 
     #[test]

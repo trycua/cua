@@ -358,13 +358,16 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
 /// Uses a 3-second connect timeout (by polling) and a 10-second read timeout.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    let stream = UnixStream::connect(socket_path)
+    let mut stream = UnixStream::connect(socket_path)
         .map_err(|e| anyhow::anyhow!("connect to {socket_path}: {e}"))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    // Per-read timeout acts as a liveness poll, NOT a hard cap on the whole
+    // response: an AX-heavy `get_window_state` (slow tree walk) or a multi-MB
+    // SOM screenshot can legitimately take longer than one window to produce.
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
 
     let mut w = stream.try_clone()?;
@@ -372,11 +375,50 @@ pub fn send_request(socket_path: &str, req: &DaemonRequest) -> anyhow::Result<Da
     w.write_all(line.as_bytes())?;
     w.flush()?;
 
-    let reader = BufReader::new(stream);
-    let mut resp_line = String::new();
-    reader.lines().next()
-        .ok_or_else(|| anyhow::anyhow!("daemon closed connection without response"))??
-        .clone_into(&mut resp_line);
+    // Read the single newline-terminated response line. A blocking UnixStream
+    // with SO_RCVTIMEO returns `WouldBlock`/`TimedOut` (EAGAIN, os error 35)
+    // when the timeout elapses with no bytes ready — that is NOT a transport
+    // failure, just "the daemon is still working". Previously this surfaced as
+    // a fatal `daemon transport error … Resource temporarily unavailable`
+    // (#1864). Loop and keep waiting (re-arming the per-read poll) until we
+    // have a full line, the daemon closes the connection, or an overall
+    // deadline generous enough for the slowest AX walk / largest response.
+    let overall_deadline = Instant::now() + Duration::from_secs(120);
+    let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+    let mut chunk = [0u8; 64 * 1024];
+    let resp_line = loop {
+        if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+            break String::from_utf8_lossy(&buf[..nl]).into_owned();
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) => {
+                // EOF. Use whatever we buffered (some daemons close right after
+                // a final unterminated line); otherwise the daemon hung up.
+                if buf.is_empty() {
+                    anyhow::bail!("daemon closed connection without response");
+                }
+                break String::from_utf8_lossy(&buf).into_owned();
+            }
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if Instant::now() >= overall_deadline {
+                    anyhow::bail!(
+                        "timed out after 120s waiting for daemon response \
+                         (received {} bytes so far)",
+                        buf.len()
+                    );
+                }
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
     let resp: DaemonResponse = serde_json::from_str(&resp_line)?;
     Ok(resp)
 }
@@ -530,22 +572,40 @@ pub async fn run_serve(
                             }
                             "list" => {
                                 // Include full ToolDef (input_schema + annotation
-                                // hints) so MCP proxy callers can build a complete
-                                // `tools/list` response from one daemon round-trip.
-                                // Older clients that only read name/description
-                                // still work — the extra fields are ignored.
+                                // hints + capabilities) so MCP proxy callers can
+                                // build a complete `tools/list` response from
+                                // one daemon round-trip. Older clients that only
+                                // read name/description still work — the extra
+                                // fields are ignored.
+                                //
+                                // `capabilities` is sourced from the centralised
+                                // `cua_driver_core::tool::default_capabilities_for`
+                                // name → tokens map so the daemon and in-process
+                                // paths emit identical capability arrays.
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| serde_json::json!({
-                                        "name": name,
-                                        "description": def.description,
-                                        "input_schema": def.input_schema,
-                                        "read_only": def.read_only,
-                                        "destructive": def.destructive,
-                                        "idempotent": def.idempotent,
-                                        "open_world": def.open_world,
-                                    }))
+                                    .map(|(name, def)| {
+                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        serde_json::json!({
+                                            "name": name,
+                                            "description": def.description,
+                                            "input_schema": def.input_schema,
+                                            "read_only": def.read_only,
+                                            "destructive": def.destructive,
+                                            "idempotent": def.idempotent,
+                                            "open_world": def.open_world,
+                                            "capabilities": caps,
+                                        })
+                                    })
                                     .collect();
-                                let resp = DaemonResponse::ok(serde_json::json!({"tools": tools}));
+                                // Mirror `tools_list` envelope: include
+                                // capability_version + schema_version so MCP
+                                // proxy callers can pass them through verbatim
+                                // (one daemon round-trip, complete response).
+                                let resp = DaemonResponse::ok(serde_json::json!({
+                                    "tools": tools,
+                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
+                                    "schema_version": "1",
+                                }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1061,19 +1121,31 @@ pub async fn run_serve(
                                 // Include full ToolDef so MCP proxy callers can
                                 // build a complete `tools/list` response from
                                 // one daemon round-trip. See the unix branch
-                                // above for rationale.
+                                // above for rationale (capabilities map, etc.).
                                 let tools: Vec<serde_json::Value> = reg.iter_defs()
-                                    .map(|(name, def)| serde_json::json!({
-                                        "name": name,
-                                        "description": def.description,
-                                        "input_schema": def.input_schema,
-                                        "read_only": def.read_only,
-                                        "destructive": def.destructive,
-                                        "idempotent": def.idempotent,
-                                        "open_world": def.open_world,
-                                    }))
+                                    .map(|(name, def)| {
+                                        let caps = cua_driver_core::tool::default_capabilities_for(name);
+                                        serde_json::json!({
+                                            "name": name,
+                                            "description": def.description,
+                                            "input_schema": def.input_schema,
+                                            "read_only": def.read_only,
+                                            "destructive": def.destructive,
+                                            "idempotent": def.idempotent,
+                                            "open_world": def.open_world,
+                                            "capabilities": caps,
+                                        })
+                                    })
                                     .collect();
-                                let resp = DaemonResponse::ok(serde_json::json!({"tools": tools}));
+                                // Mirror `tools_list` envelope: include
+                                // capability_version + schema_version so MCP
+                                // proxy callers can pass them through verbatim
+                                // (one daemon round-trip, complete response).
+                                let resp = DaemonResponse::ok(serde_json::json!({
+                                    "tools": tools,
+                                    "capability_version": cua_driver_core::tool::CAPABILITY_VERSION,
+                                    "schema_version": "1",
+                                }));
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;

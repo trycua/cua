@@ -43,6 +43,12 @@ jobs:
             visual: false
             result_link: result-cua-driver-integration
             artifact_name: ""
+          - name: NixOS set_config persistence test
+            check_attr: cua-driver-set-config
+            timeout_minutes: 8
+            visual: false
+            result_link: result-cua-driver-set-config
+            artifact_name: ""
           - name: Linux cursor click GIF test
             check_attr: cua-driver-linux-cursor-click-gif
             timeout_minutes: 12
@@ -237,6 +243,13 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            # Container-based NixOS integration tests (testers.nixosTest with
+            # `containers`) run under systemd-nspawn instead of QEMU: no KVM
+            # needed, much faster/cheaper. The nspawn builds require an allocated
+            # UID range and cgroup delegation, advertised here on the builder.
+            extra-experimental-features = auto-allocate-uids cgroups
+            auto-allocate-uids = true
+            extra-system-features = uid-range
             substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }} https://cache.nixos.org
             trusted-substituters = s3://${{ env.NIX_CACHE_BUCKET }}?region=${{ env.AWS_REGION }}
             trusted-public-keys = ${{ steps.nix-key.outputs.public_key }} cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=

@@ -1195,6 +1195,40 @@ fn labels_contain(labels: &[String], needle: &str) -> bool {
     labels.iter().any(|label| label.contains(needle))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClickExpectedLabelStatus {
+    expected_change_satisfied: bool,
+    already_satisfied: bool,
+}
+
+fn click_expected_label_status(
+    pre_labels: &[String],
+    post_labels: &[String],
+    expected_present: Option<&str>,
+    expected_absent: Option<&str>,
+) -> ClickExpectedLabelStatus {
+    let present_ok = expected_present.map(|needle| {
+        let pre_has = labels_contain(pre_labels, needle);
+        let post_has = labels_contain(post_labels, needle);
+        post_has && !pre_has
+    }).unwrap_or(true);
+    let present_already = expected_present.map(|needle| {
+        labels_contain(pre_labels, needle) && labels_contain(post_labels, needle)
+    }).unwrap_or(false);
+    let absent_ok = expected_absent.map(|needle| {
+        let pre_has = labels_contain(pre_labels, needle);
+        let post_has = labels_contain(post_labels, needle);
+        pre_has && !post_has
+    }).unwrap_or(true);
+    let absent_already = expected_absent.map(|needle| {
+        !labels_contain(pre_labels, needle) && !labels_contain(post_labels, needle)
+    }).unwrap_or(false);
+    ClickExpectedLabelStatus {
+        expected_change_satisfied: present_ok && absent_ok,
+        already_satisfied: present_already || absent_already,
+    }
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TextDeltaSummary {
@@ -1273,9 +1307,13 @@ impl Tool for ClickVerifiedTool {
         };
         let state_changed = pre_labels != post_labels;
         let diff = text_delta_summary(&pre_labels, &post_labels, 12);
-        let present_ok = expected_present.as_deref().map(|needle| labels_contain(&post_labels, needle)).unwrap_or(true);
-        let absent_ok = expected_absent.as_deref().map(|needle| !labels_contain(&post_labels, needle)).unwrap_or(true);
-        let expected_change_satisfied = present_ok && absent_ok;
+        let expectation = click_expected_label_status(
+            &pre_labels,
+            &post_labels,
+            expected_present.as_deref(),
+            expected_absent.as_deref(),
+        );
+        let expected_change_satisfied = expectation.expected_change_satisfied;
         let verified = expected_change_satisfied;
         let success = os_dispatch_success && verified;
         let structured = json!({
@@ -1285,6 +1323,7 @@ impl Tool for ClickVerifiedTool {
             "state_changed": state_changed,
             "verified": verified,
             "expected_change_satisfied": expected_change_satisfied,
+            "already_satisfied": expectation.already_satisfied,
             "success": success,
             "expected_label_present": expected_present,
             "expected_label_absent": expected_absent,
@@ -6529,6 +6568,29 @@ mod chromium_flag_injection_tests {
 }
 
 
+
+#[cfg(test)]
+mod click_verified_expectation_tests {
+    use super::click_expected_label_status;
+
+    #[test]
+    fn absent_expectation_is_not_satisfied_when_label_was_already_absent() {
+        let pre = vec!["Ready".to_string()];
+        let post = vec!["Ready".to_string()];
+        let status = click_expected_label_status(&pre, &post, None, Some("Done"));
+        assert!(!status.expected_change_satisfied);
+        assert!(status.already_satisfied);
+    }
+
+    #[test]
+    fn absent_expectation_is_satisfied_by_present_to_absent_transition() {
+        let pre = vec!["Done".to_string()];
+        let post = vec!["Ready".to_string()];
+        let status = click_expected_label_status(&pre, &post, None, Some("Done"));
+        assert!(status.expected_change_satisfied);
+        assert!(!status.already_satisfied);
+    }
+}
 
 #[cfg(test)]
 mod uia_walk_timeout_tests {

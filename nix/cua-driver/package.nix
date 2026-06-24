@@ -51,7 +51,14 @@ pkgs.rustPlatform.buildRustPackage {
   cargoTestFlags = [ "-p" "cua-driver" "--features" "portal-libei" ];
 
   # Mostly pure Rust:
-  #   x11rb     -> RustConnection (no libxcb C binding)
+  #   x11rb     -> RustConnection (pure Rust) by default, but the
+  #                `allow-unsafe-code` feature also compiles its `xcb_ffi`
+  #                module (the libxcb-backed XCBConnection used as a fallback
+  #                when strict Xauthority cookie matching fails — #1978). That
+  #                module emits `cargo:rustc-link-lib=xcb`, so the binary now
+  #                hard-links libxcb and the derivation must provide it
+  #                (libxcb below); without it the link fails with `-lxcb` and
+  #                no matching `-L` path.
   #   ureq      -> rustls (no openssl)
   #   tiny-skia -> pure Rust 2D graphics
   #   ring      -> compiles own C/asm via stdenv's cc
@@ -74,6 +81,9 @@ pkgs.rustPlatform.buildRustPackage {
     libxi
     libxtst
     libxext
+    # x11rb's `allow-unsafe-code` feature links the libxcb-backed
+    # XCBConnection fallback (#1978); the binary now needs libxcb at link time.
+    libxcb
     # Wayland-parity additions: PipeWire is needed by the portal
     # ScreenCast capture path (wayland::portal_screencast). pipewire
     # already pulls libspa transitively in nixpkgs.

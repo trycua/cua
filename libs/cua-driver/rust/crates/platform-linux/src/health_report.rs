@@ -281,6 +281,29 @@ async fn check_wayland_backend() -> CheckEntry {
             format!("All wlroots manager globals advertised ({msg})."),
         );
     }
+    // Input-injection backend check (#1982). A non-wlroots compositor
+    // (KWin/Plasma, Mutter/GNOME) advertises no zwlr_virtual_pointer; on those
+    // the ONLY working input path is libei via xdg-desktop-portal. If this
+    // binary was built without `portal-libei` (the published tarball is — see
+    // #1967), input injection has no backend and silently no-ops: the agent
+    // cursor renders but clicks/keys are never delivered, while list_windows
+    // and capture still work. Report that explicitly instead of the misleading
+    // "input may fall back" partial-pass below.
+    if !snap.virtual_pointer && !crate::wayland::PORTAL_LIBEI_ENABLED {
+        return CheckEntry::fail(
+            NAME_WAYLAND_BACKEND,
+            format!(
+                "Input injection has no backend on this compositor ({msg}): it \
+                 advertises no zwlr_virtual_pointer and this build was compiled \
+                 without libei/portal support, so clicks and key presses will not \
+                 be delivered (the agent cursor still renders). list_windows and \
+                 screen capture are unaffected."
+            ),
+            "Use the portal-enabled Linux build (compiled with --features \
+             portal-libei) for input on KDE Plasma / GNOME, or a wlroots \
+             compositor (sway, labwc, hyprland) where zwlr_virtual_pointer exists.",
+        );
+    }
     // Partial-pass: list_windows + capture both work, but virtual-pointer
     // input is missing. Require `wl_shm` here too — `check_screen_capture_capability`
     // gates on both `screencopy && wl_shm`, so excluding `wl_shm` from the

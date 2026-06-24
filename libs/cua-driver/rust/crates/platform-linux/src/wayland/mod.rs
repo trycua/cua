@@ -853,17 +853,16 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
 
     let mut state = State::default();
     queue.roundtrip(&mut state)?;
-    if state.manager.is_none() {
-        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
-    }
     for _ in 0..4 {
         queue.roundtrip(&mut state)?;
     }
 
-    let seat = state
-        .seat
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
+    // Evaluate the virtual-pointer / NO_VPTR_MARKER path FIRST: on compositors
+    // that expose neither zwlr_virtual_pointer nor zwlr_foreign_toplevel
+    // (KWin/Plasma, Mutter/GNOME) we must surface the marker so
+    // `with_libei_fallback` re-routes through libei/portal. Requiring
+    // foreign-toplevel up front would mask the marker and leave the libei
+    // fallback dead. See #1982.
     let mgr = state.vptr_manager.clone().ok_or_else(|| {
         if PORTAL_LIBEI_ENABLED {
             // The caller (via `with_libei_fallback`) recognises NO_VPTR_MARKER
@@ -888,6 +887,17 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
         }
     })?;
 
+    // foreign-toplevel is only needed to activate a specific window before
+    // synthesising input; require it only when a caller actually asks for that.
+    if activate_window_id.is_some() && state.manager.is_none() {
+        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
+    }
+
+    let seat = state
+        .seat
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
+
     if let Some(id) = activate_window_id {
         let handle = state
             .handles
@@ -901,6 +911,42 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
     let (output_w, output_h) = (state.output_w.max(1), state.output_h.max(1));
     Ok(VptrSession { conn, queue, state, seat, vptr, output_w, output_h })
+}
+
+/// Query the first `wl_output`'s pixel dimensions via a short Wayland
+/// roundtrip, independent of the virtual-pointer protocol. Used by the libei
+/// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
+/// default-to-centre and clamp behaviour so both backends treat coordinates
+/// identically. Falls back to `(1, 1)` when no output reports a mode.
+#[cfg(feature = "portal-libei")]
+fn output_dimensions() -> anyhow::Result<(u32, u32)> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+    Ok((state.output_w.max(1), state.output_h.max(1)))
+}
+
+/// Reproduce the wlroots vptr path's coordinate handling for the libei
+/// fallback: `(0, 0)` defaults to the output centre, and any value is clamped
+/// to `[0, dim-1]`. Keeps `click(.., 0, 0, ..)` landing on centre rather than
+/// the top-left corner across both backends.
+#[cfg(feature = "portal-libei")]
+fn normalize_click_xy(x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
+    let (px, py) = if x == 0 && y == 0 {
+        ((w / 2) as i32, (h / 2) as i32)
+    } else {
+        (x, y)
+    };
+    (
+        px.clamp(0, (w as i32).saturating_sub(1)),
+        py.clamp(0, (h as i32).saturating_sub(1)),
+    )
 }
 
 /// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
@@ -1198,11 +1244,19 @@ pub fn hotkey(keys: &[String]) -> anyhow::Result<()> {
             let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
             #[cfg(feature = "portal-libei")]
             {
+                // A bare key (no modifiers) is just a single key press, which
+                // the libei adapter handles. Route it through the same wtype→
+                // libei fallback as `press_key`. Only true modifier chords stay
+                // unsupported: the worker doesn't yet wire ei_keyboard modifier
+                // state, so dropping the modifiers would mis-fire the bare key.
+                // See #1982.
+                if mods.is_empty() {
+                    return with_wtype_libei_fallback(
+                        || libei_press_key(&final_key),
+                        stderr,
+                    );
+                }
                 let _ = &stderr;
-                // The libei adapter exposes single-key press only; modifier
-                // chords (ei_keyboard modifier state) are not yet wired through
-                // the worker. Fail loudly rather than silently dropping the
-                // modifiers, which would mis-fire the bare key. See #1982.
                 anyhow::bail!(
                     "hotkey {keys:?} cannot be delivered: this compositor has no \
                      virtual-keyboard ({}) and the libei fallback does not yet \
@@ -1358,14 +1412,16 @@ fn cua_button_to_libei(button: u8) -> libei::Button {
 #[cfg(feature = "portal-libei")]
 fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     let btn = cua_button_to_libei(button);
-    libei::move_absolute(x as f64, y as f64)?;
+    let (w, h) = output_dimensions()?;
+    let (px, py) = normalize_click_xy(x, y, w, h);
+    libei::move_absolute(px as f64, py as f64)?;
     for i in 0..count.max(1) {
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
-        libei::click(x as f64, y as f64, btn)?;
+        libei::click(px as f64, py as f64, btn)?;
     }
-    record_synth_cursor(x, y);
+    record_synth_cursor(px, py);
     Ok(())
 }
 
@@ -1390,37 +1446,37 @@ fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
 
 #[cfg(feature = "portal-libei")]
 fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
-    libei::move_absolute(x as f64, y as f64)?;
-    record_synth_cursor(x, y);
+    // Match `move_cursor_absolute_vptr`: clamp to output bounds (no
+    // default-to-centre — an explicit (0,0) move means the top-left corner).
+    let (w, h) = output_dimensions()?;
+    let px = x.clamp(0, (w as i32).saturating_sub(1));
+    let py = y.clamp(0, (h as i32).saturating_sub(1));
+    libei::move_absolute(px as f64, py as f64)?;
+    record_synth_cursor(px, py);
     Ok(())
 }
 
 #[cfg(feature = "portal-libei")]
 fn libei_drag(
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
-    steps: u32,
-    button: u8,
+    _from_x: i32,
+    _from_y: i32,
+    _to_x: i32,
+    _to_y: i32,
+    _steps: u32,
+    _button: u8,
 ) -> anyhow::Result<()> {
-    // libei has no held-button primitive in this adapter; emulate the drag as
-    // move→click-at-end. This is a degraded fallback (no real press-drag) but
-    // keeps pointer ops functional on KDE/GNOME until the worker grows a
-    // button-hold command. Documented limitation for #1982.
-    let btn = cua_button_to_libei(button);
-    libei::move_absolute(from_x as f64, from_y as f64)?;
-    let n = steps.max(1);
-    for s in 1..=n {
-        let t = s as f64 / n as f64;
-        let ix = from_x as f64 + (to_x - from_x) as f64 * t;
-        let iy = from_y as f64 + (to_y - from_y) as f64 * t;
-        libei::move_absolute(ix, iy)?;
-        std::thread::sleep(std::time::Duration::from_millis(8));
-    }
-    libei::click(to_x as f64, to_y as f64, btn)?;
-    record_synth_cursor(to_x, to_y);
-    Ok(())
+    // A real drag needs the button HELD across the interpolated motion. The
+    // libei worker only exposes a combined press+release `click`, with no
+    // standalone button-hold (press/release) primitive, so we cannot perform a
+    // genuine press→move→release sequence. Emulating it as move→click-at-end
+    // would hold nothing and silently no-op drag-and-drop / selection / resize
+    // while reporting success — so fail loudly instead. See #1982.
+    anyhow::bail!(
+        "libei fallback cannot perform button-hold drags yet: the libei worker \
+         exposes no standalone button press/release primitive (only a combined \
+         click). Drag is unsupported on this compositor via the libei/portal \
+         backend (#1982)."
+    )
 }
 
 #[cfg(feature = "portal-libei")]
@@ -1459,6 +1515,58 @@ fn key_to_evdev(key: &str) -> Option<u32> {
         "end" => 107,             // KEY_END
         "pageup" | "page_up" => 104,    // KEY_PAGEUP
         "pagedown" | "page_down" => 109, // KEY_PAGEDOWN
+        // Letters a-z. evdev codes follow the QWERTY scancode layout, not the
+        // alphabet, so each is listed explicitly (linux/input-event-codes.h).
+        "a" => 30,  // KEY_A
+        "b" => 48,  // KEY_B
+        "c" => 46,  // KEY_C
+        "d" => 32,  // KEY_D
+        "e" => 18,  // KEY_E
+        "f" => 33,  // KEY_F
+        "g" => 34,  // KEY_G
+        "h" => 35,  // KEY_H
+        "i" => 23,  // KEY_I
+        "j" => 36,  // KEY_J
+        "k" => 37,  // KEY_K
+        "l" => 38,  // KEY_L
+        "m" => 50,  // KEY_M
+        "n" => 49,  // KEY_N
+        "o" => 24,  // KEY_O
+        "p" => 25,  // KEY_P
+        "q" => 16,  // KEY_Q
+        "r" => 19,  // KEY_R
+        "s" => 31,  // KEY_S
+        "t" => 20,  // KEY_T
+        "u" => 22,  // KEY_U
+        "v" => 47,  // KEY_V
+        "w" => 17,  // KEY_W
+        "x" => 45,  // KEY_X
+        "y" => 21,  // KEY_Y
+        "z" => 44,  // KEY_Z
+        // Digits. KEY_1=2 .. KEY_9=10, KEY_0=11 (input-event-codes.h).
+        "1" => 2,   // KEY_1
+        "2" => 3,   // KEY_2
+        "3" => 4,   // KEY_3
+        "4" => 5,   // KEY_4
+        "5" => 6,   // KEY_5
+        "6" => 7,   // KEY_6
+        "7" => 8,   // KEY_7
+        "8" => 9,   // KEY_8
+        "9" => 10,  // KEY_9
+        "0" => 11,  // KEY_0
+        // Function keys. KEY_F1=59 .. KEY_F10=68, then KEY_F11=87, KEY_F12=88.
+        "f1" => 59,
+        "f2" => 60,
+        "f3" => 61,
+        "f4" => 62,
+        "f5" => 63,
+        "f6" => 64,
+        "f7" => 65,
+        "f8" => 66,
+        "f9" => 67,
+        "f10" => 68,
+        "f11" => 87,
+        "f12" => 88,
         _ => return None,
     };
     Some(code)

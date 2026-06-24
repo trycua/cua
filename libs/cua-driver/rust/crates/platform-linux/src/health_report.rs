@@ -133,7 +133,16 @@ async fn check_ax_capability() -> CheckEntry {
             "X11 reachable; AT-SPI + XSendEvent input will work.",
         );
     }
-    let hint = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    let display_set = std::env::var_os("DISPLAY").is_some();
+    let xauth_unset = std::env::var_os("XAUTHORITY").is_none();
+    let hint = if display_set && xauth_unset {
+        // SSH-driven Wayland+Xwayland: DISPLAY inherited but no auth cookie (#1926).
+        "DISPLAY is set but XAUTHORITY is not (typical when driving a \
+         Wayland+Xwayland session over SSH): the X server's per-session auth \
+         cookie isn't discoverable, so X11 connects fail 'Authorization required'. \
+         Point XAUTHORITY at the Xwayland '-auth' cookie file, or restart the \
+         cua-driver daemon — it auto-discovers the cookie from /proc at startup."
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {

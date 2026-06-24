@@ -70,9 +70,9 @@ The prompts were benign here, so it did no damage in this setup. But it is the k
 
 ## What we've been using it for
 
-https://github.com/user-attachments/assets/5e606799-6fe5-49d0-b252-51b113887ffa
+<div align="center"><video src="https://github.com/user-attachments/assets/5e606799-6fe5-49d0-b252-51b113887ffa" width="600" controls></video></div>
 
-Gemini 3.5 Flash driving a KiCad task via the Antigravity CLI on top of Cua Driver.
+Gemini 3.5 Flash driving a live desktop app via the Antigravity CLI on top of Cua Driver.
 
 ## Try it
 
@@ -137,7 +137,7 @@ cua-driver mcp-config --client antigravity
 
 `agy` has no `agy mcp add` subcommand, so paste the printed JSON into `~/.gemini/config/mcp_config.json`, merging it under the top-level `mcpServers` object (on Windows, `%USERPROFILE%\.gemini\config\mcp_config.json`). Restart `agy` after saving - the same file is shared with the Antigravity IDE.
 
-Then point the client at `gemini-3.5-flash` with the native Computer Use API and give it a task. The driver exposes the screen and an action layer; the model observes, decides, and calls the tools until the task is done. _The clip above is Gemini 3.5 Flash driving KiCad through exactly this path - the Antigravity CLI on top of Cua Driver._
+Then point the client at `gemini-3.5-flash` with the native Computer Use API and give it a task. The driver exposes the screen and an action layer; the model observes, decides, and calls the tools until the task is done. _The clip above is Gemini 3.5 Flash driving a live desktop app through exactly this path - the Antigravity CLI on top of Cua Driver._
 
 You can also run Gemini 3.5 Flash with the [Cua Agent](https://github.com/trycua/cua) SDK (`pip install cua-agent`) against a Cua cloud sandbox; the SDK's Gemini Computer Use loop drives the native API directly.
 

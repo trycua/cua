@@ -590,10 +590,17 @@ fn structured_element_record(
         .or_else(|| n.help_text.clone());
     let element_token = cua_driver_core::element_token::token_for(snapshot_id, idx);
     let backend = if n.msaa_role.is_some() { "msaa" } else { "uia" };
+    let stable_id = n
+        .automation_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .map(|id| format!("{backend}:{pid}:{hwnd}:automation_id:{id}"));
+    let snapshot_debug_id = format!("{backend}:{pid}:{hwnd}:{idx}:{}:{}", n.automation_id.as_deref().unwrap_or(""), n.name.as_deref().unwrap_or(""));
     let mut entry = json!({
         "element_index": idx,
         "element_token": element_token,
-        "stable_id": format!("{backend}:{pid}:{hwnd}:{idx}:{}:{}", n.automation_id.as_deref().unwrap_or(""), n.name.as_deref().unwrap_or("")),
+        "stable_id": stable_id,
+        "snapshot_debug_id": snapshot_debug_id,
         "role": n.control_type.clone(),
         "name": n.name.clone(),
         "value": n.value.clone(),
@@ -6503,7 +6510,8 @@ mod structured_element_record_tests {
         let entry = structured_element_record(&sample_node(), 1234, 0xabc, 42, Some((2728, 402, 484, 801))).expect("indexed node emits structured record");
         assert_eq!(entry["element_index"], 7);
         assert_eq!(entry["element_token"], "s002a:7");
-        assert_eq!(entry["stable_id"], "uia:1234:2748:7:num3Button:Three");
+        assert_eq!(entry["stable_id"], "uia:1234:2748:automation_id:num3Button");
+        assert_eq!(entry["snapshot_debug_id"], "uia:1234:2748:7:num3Button:Three");
         assert_eq!(entry["role"], "Button");
         assert_eq!(entry["label"], "Three");
         assert_eq!(entry["name"], "Three");

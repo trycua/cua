@@ -1,6 +1,6 @@
 [project]
 name = "cua-sandbox-apps"
-version = "0.1.1"
+version = "0.1.2"
 description = "Universal app catalog and installer pipeline for CUA sandboxes — 10K+ apps across Linux, Windows, macOS, Android"
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "TryCua", email = "gh@trycua.com" }]

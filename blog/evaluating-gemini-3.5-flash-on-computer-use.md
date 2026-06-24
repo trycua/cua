@@ -2,7 +2,7 @@
 
 _Published on June 24, 2026 by Francesco Bonacci and Dillon DuPont_
 
-> 📎 **drag `hero.gif` here** — _Gemini 3.5 Flash computer-use on Cua-Bench (animated hero)_
+<img width="940" height="527" alt="hero" src="https://github.com/user-attachments/assets/8f381915-b176-42bd-924c-0471e068e248" />
 
 **TL;DR:**
 - Google gave us **early access** to the Computer Use tool powered by **Gemini 3.5 Flash** through the Gemini API.
@@ -28,13 +28,13 @@ We ran a **frontier-model head-to-head at a matched 200-step budget**: Gemini 3.
 
 Gemini 3.5 Flash was **not wrapped as a generic screenshot model**. We used the native Computer Use API, which evaluates the model in the shape Google intends: observe the environment, decide, call the tool, observe again, and continue until the task is done or the budget runs out.
 
-> 📎 **drag `methodology.png` here** — _How we tested_
+<img width="2400" height="1350" alt="methodology" src="https://github.com/user-attachments/assets/d6fda36d-4c35-4c93-8f08-4d6783ecf0cb" />
 
 ## Results
 
 On the Cua-Bench KiCad EDA suite, **Gemini 3.5 Flash posted the highest mean reward of any frontier model we tested: 0.267**, with 5 of 25 tasks solved fully and 3 more partially. GPT-5.5 solved the most tasks outright at 6 of 25, but earned no partial credit, so Gemini 3.5 Flash came out ahead on mean reward. _It did that at Flash latency and cost._
 
-> 📎 **drag `mean-reward-bars.png` here** — _Mean reward by model_
+<img width="2400" height="1350" alt="mean-reward-bars" src="https://github.com/user-attachments/assets/4fcae296-ec16-4a8f-a13e-18713b2c8062" />
 
 | Model | Full solves | Partial | Mean /25 |
 | --- | ---: | ---: | ---: |
@@ -52,11 +52,11 @@ No model solves the KiCad suite outright yet. The interesting gaps show up in th
 
 The first strong signal was **grounding**. On zoomed-in CAD targets, Gemini 3.5 Flash landed on the intended object instead of the nearby label, wire, or empty canvas. That is the difference between a model that can only use a desktop when controls are big and one that can work in tools built around precision.
 
-> 📎 **drag `grounding.png` here** — _Pixel-accurate grounding_
+<img width="2400" height="1350" alt="grounding" src="https://github.com/user-attachments/assets/fab9f0b8-aada-4268-9a0a-e4043d501ff6" />
 
 The second strong signal was **reasoning**. In one KiCad task, the model derived a resistor value from a feedback equation, snapped that value to the E96 series, and checked a datasheet to confirm it. We care about this because it crosses the boundary between GUI operation and engineering work. The GUI is still the interface, but the task is not only "click the thing." _The model has to know what value to enter before it can use the tool correctly._
 
-> 📎 **drag `signals-grounding-reasoning.png` here** — _Grounding + analog-design reasoning_
+<img width="2400" height="1350" alt="signals-grounding-reasoning" src="https://github.com/user-attachments/assets/a82240d1-efec-45fb-a6d4-5c748cc8c110" />
 
 ## Where it struggles
 
@@ -70,7 +70,7 @@ The prompts were benign here, so it did no damage in this setup. But it is the k
 
 ## What we've been using it for
 
-> 📎 **drag `demo-kicad-agy-cua-driver.mp4` here** — _Gemini 3.5 Flash driving KiCad via Antigravity CLI + Cua Driver_
+https://github.com/user-attachments/assets/5e606799-6fe5-49d0-b252-51b113887ffa
 
 Gemini 3.5 Flash driving a KiCad task via the Antigravity CLI on top of Cua Driver.
 

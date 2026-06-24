@@ -576,6 +576,20 @@ pub struct GetWindowStateTool {
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 
+fn screenshot_metadata(width: u32, height: u32, original_width: Option<u32>) -> serde_json::Value {
+    let scale_factor = original_width
+        .and_then(|ow| if width > 0 { Some(ow as f64 / width as f64) } else { None })
+        .unwrap_or(1.0);
+    json!({
+        "width": width,
+        "height": height,
+        "original_width": original_width,
+        "scale_factor": scale_factor,
+        "coordinate_space": if scale_factor == 1.0 { "window_pixels" } else { "scaled_window_pixels" },
+        "capture_scope": "window",
+    })
+}
+
 fn structured_element_record(
     n: &crate::uia::UiaNode,
     pid: u32,
@@ -880,13 +894,7 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
-                    structured["screenshot"] = json!({
-                        "width": w,
-                        "height": h,
-                        "scale_factor": 1.0,
-                        "coordinate_space": "window_pixels",
-                        "capture_scope": "window",
-                    });
+                    structured["screenshot"] = screenshot_metadata(w, h, orig_w);
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
@@ -6491,6 +6499,28 @@ mod chromium_flag_injection_tests {
 }
 
 
+
+#[cfg(test)]
+mod screenshot_metadata_tests {
+    use super::screenshot_metadata;
+
+    #[test]
+    fn reports_scaled_coordinate_space_when_screenshot_was_resized() {
+        let metadata = screenshot_metadata(1000, 500, Some(2000));
+        assert_eq!(metadata["width"], 1000);
+        assert_eq!(metadata["height"], 500);
+        assert_eq!(metadata["original_width"], 2000);
+        assert_eq!(metadata["scale_factor"], 2.0);
+        assert_eq!(metadata["coordinate_space"], "scaled_window_pixels");
+    }
+
+    #[test]
+    fn reports_window_pixels_when_screenshot_kept_original_size() {
+        let metadata = screenshot_metadata(1000, 500, Some(1000));
+        assert_eq!(metadata["scale_factor"], 1.0);
+        assert_eq!(metadata["coordinate_space"], "window_pixels");
+    }
+}
 
 #[cfg(test)]
 mod structured_element_record_tests {

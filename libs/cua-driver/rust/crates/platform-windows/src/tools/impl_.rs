@@ -576,6 +576,24 @@ pub struct GetWindowStateTool {
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 
+const UIA_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+async fn await_uia_walk_with_timeout(
+    walk: tokio::task::JoinHandle<crate::uia::UiaTreeResult>,
+    tool_name: &str,
+    hwnd: u64,
+    timeout: std::time::Duration,
+) -> Result<crate::uia::UiaTreeResult, ToolResult> {
+    match tokio::time::timeout(timeout, walk).await {
+        Ok(Ok(tr)) => Ok(tr),
+        Ok(Err(e)) => Err(ToolResult::error(format!("{tool_name} UIA walk failed: {e}"))),
+        Err(_) => Err(ToolResult::error(format!(
+            "{tool_name} timed out after {}s while walking UIA for hwnd 0x{hwnd:x}",
+            timeout.as_secs()
+        ))),
+    }
+}
+
 fn screenshot_metadata(width: u32, height: u32, original_width: Option<u32>) -> serde_json::Value {
     let scale_factor = original_width
         .and_then(|ow| if width > 0 { Some(ow as f64 / width as f64) } else { None })
@@ -1114,8 +1132,11 @@ impl Tool for FindElementTool {
         }
 
         let state = self.state.clone();
-        let walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
-        let tr = match walk { Ok(v) => v, Err(e) => return ToolResult::error(format!("find_element UIA walk failed: {e}")) };
+        let walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let tr = match await_uia_walk_with_timeout(walk, "find_element", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
         let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
         if is_msaa { state.element_cache.update_msaa(pid, hwnd, &tr.nodes); } else { state.element_cache.update(pid, hwnd, &tr.nodes); }
@@ -1235,20 +1256,20 @@ impl Tool for ClickVerifiedTool {
         let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(320);
         let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
 
-        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
-        let pre_labels = match pre_walk {
+        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let pre_labels = match await_uia_walk_with_timeout(pre_walk, "click_verified pre-state", hwnd, UIA_WALK_TIMEOUT).await {
             Ok(tr) => labels_from_nodes(&tr.nodes),
-            Err(e) => return ToolResult::error(format!("click_verified pre-state task failed: {e}")),
+            Err(e) => return e,
         };
 
         let click_result = ClickTool { state: self.state.clone() }.invoke(args.clone()).await;
         let os_dispatch_success = !click_result.is_error.unwrap_or(false);
 
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
-        let post_labels = match post_walk {
+        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let post_labels = match await_uia_walk_with_timeout(post_walk, "click_verified post-state", hwnd, UIA_WALK_TIMEOUT).await {
             Ok(tr) => labels_from_nodes(&tr.nodes),
-            Err(e) => return ToolResult::error(format!("click_verified post-state task failed after dispatch_success={os_dispatch_success}: {e}")),
+            Err(e) => return e,
         };
         let state_changed = pre_labels != post_labels;
         let diff = text_delta_summary(&pre_labels, &post_labels, 12);
@@ -3715,18 +3736,18 @@ impl Tool for SetValueVerifiedTool {
         let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(320);
         let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
 
-        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
-        let pre_texts = match pre_walk {
+        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let pre_texts = match await_uia_walk_with_timeout(pre_walk, "set_value_verified pre-state", hwnd, UIA_WALK_TIMEOUT).await {
             Ok(tr) => searchable_texts_from_nodes(&tr.nodes),
-            Err(e) => return ToolResult::error(format!("set_value_verified pre-state task failed: {e}")),
+            Err(e) => return e,
         };
         let set_result = SetValueTool { state: self.state.clone() }.invoke(args.clone()).await;
         let os_dispatch_success = !set_result.is_error.unwrap_or(false);
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth)).await;
-        let post_texts = match post_walk {
+        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let post_texts = match await_uia_walk_with_timeout(post_walk, "set_value_verified post-state", hwnd, UIA_WALK_TIMEOUT).await {
             Ok(tr) => searchable_texts_from_nodes(&tr.nodes),
-            Err(e) => return ToolResult::error(format!("set_value_verified post-state task failed after dispatch_success={os_dispatch_success}: {e}")),
+            Err(e) => return e,
         };
         let state_changed = pre_texts != post_texts;
         let diff = text_delta_summary(&pre_texts, &post_texts, 12);
@@ -6499,6 +6520,30 @@ mod chromium_flag_injection_tests {
 }
 
 
+
+#[cfg(test)]
+mod uia_walk_timeout_tests {
+    use super::await_uia_walk_with_timeout;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn returns_tool_error_when_uia_walk_task_exceeds_timeout() {
+        let walk = tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            crate::uia::UiaTreeResult { tree_markdown: String::new(), nodes: Vec::new() }
+        });
+        let result = await_uia_walk_with_timeout(walk, "find_element", 0x1234, Duration::from_millis(1)).await;
+        let err = match result {
+            Ok(_) => panic!("slow UIA walk should time out"),
+            Err(err) => err,
+        };
+        assert_eq!(err.is_error, Some(true));
+        assert!(err.content.iter().any(|c| match c {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.contains("find_element timed out") && text.contains("0x1234"),
+            _ => false,
+        }));
+    }
+}
 
 #[cfg(test)]
 mod screenshot_metadata_tests {

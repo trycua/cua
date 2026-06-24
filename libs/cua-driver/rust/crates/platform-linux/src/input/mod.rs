@@ -1140,11 +1140,29 @@ fn button_state_mask(button: u8) -> KeyButMask {
     }
 }
 
+/// Open an X11 connection for background input injection, failing *loudly* and
+/// actionably when input cannot be delivered — rather than letting a pure
+/// Wayland session fall through to an X11 path that silently no-ops yet reports
+/// success (#1921). On a pure Wayland session with the native backend off, this
+/// returns a clear error naming the fix; otherwise it connects and, on any
+/// connect failure, surfaces DISPLAY so the cause is diagnosable.
+fn connect_x11_for_input() -> Result<(RustConnection, usize)> {
+    if let Some(reason) = crate::wayland::wayland_input_unavailable_reason() {
+        bail!("{reason}");
+    }
+    RustConnection::connect(None).map_err(|e| {
+        anyhow!(
+            "cannot inject input: X11 connection failed (DISPLAY={:?}): {e}",
+            std::env::var("DISPLAY").ok()
+        )
+    })
+}
+
 /// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
 /// This can trigger toolkit-level focus handlers (e.g., Qt5's AT-SPI bridge) without
 /// moving the window manager's active window. Use with send_focus_out to restore state.
 pub fn send_focus_in(xid: u64) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
 
     let focus_in = FocusInEvent {
@@ -1162,7 +1180,7 @@ pub fn send_focus_in(xid: u64) -> Result<()> {
 
 /// Send a synthetic FocusOut event to restore focus state after send_focus_in.
 pub fn send_focus_out(xid: u64) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
 
     let focus_out = FocusOutEvent {
@@ -1180,7 +1198,7 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
 
     for _ in 0..count {
@@ -1244,7 +1262,7 @@ pub fn send_drag(
     steps: usize,
     button: u8,
 ) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 { duration_ms / steps as u64 } else { duration_ms };
@@ -1309,7 +1327,7 @@ pub fn send_drag(
 }
 
 pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let target = resolve_event_target(&conn, xid, x, y)?;
     let press = ButtonPressEvent {
@@ -1333,7 +1351,7 @@ pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
 }
 
 pub fn send_motion(xid: u64, x: i32, y: i32, button: Option<u8>) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let target = resolve_event_target(&conn, xid, x, y)?;
     let motion = MotionNotifyEvent {
@@ -1357,7 +1375,7 @@ pub fn send_motion(xid: u64, x: i32, y: i32, button: Option<u8>) -> Result<()> {
 }
 
 pub fn send_button_up(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let target = resolve_event_target(&conn, xid, x, y)?;
     let release = ButtonReleaseEvent {
@@ -1387,7 +1405,7 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
 
 /// Type a string with an additional `inter_char_ms` delay between each character.
 pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
@@ -1442,7 +1460,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
 /// focuses the target by clicking it first. `\n`/`\t` map to Return/Tab.
 pub fn send_type_text_xtest(text: &str) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     // Shift keycode (modifier index 0) for shifted characters.
     let modmap = conn.get_modifier_mapping()?.reply()?;
@@ -1477,7 +1495,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 
 /// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
-    let (conn, _) = RustConnection::connect(None)?;
+    let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
 

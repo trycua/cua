@@ -343,7 +343,7 @@ let
                             return msg
                 cmd("Runtime.enable")
                 cmd("Runtime.evaluate", {
-                    "expression": "var i=document.getElementById('cjk-input'); i.focus(); i.value=''; 'ok'"
+                    "expression": "var i=document.getElementById('cjk-input'); i.focus(); i.value=\"\"; 'ok'"
                 })
                 ws.close()
                 print("CDP focus: input focused and cleared", flush=True)

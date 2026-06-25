@@ -102,6 +102,31 @@ impl Tool for StartRecordingTool {
                             screenshots + JSON are recorded). On macOS this uses native \
                             ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
                             Windows + Linux it requires ffmpeg on PATH."
+                    },
+                    "demonstration": {
+                        "type": "boolean",
+                        "description": "Record a HUMAN demonstration on a specific window. \
+                            Shows a glowing recording border around the target window and \
+                            captures the human's clicks/scrolls/drags/typing on that \
+                            window (in addition to any agent tool calls), interleaved on \
+                            one timeline. Capture is window-scoped and gated on the visible \
+                            border being painted (you cannot capture input without the \
+                            border showing). Typed text is REDACTED by default. Requires \
+                            `pid` and `window_id`. Windows only for now. Default: false."
+                    },
+                    "pid": {
+                        "type": "integer",
+                        "description": "Target window's process id (demonstration mode)."
+                    },
+                    "window_id": {
+                        "type": "integer",
+                        "description": "Target window id / HWND (demonstration mode)."
+                    },
+                    "capture_raw_text": {
+                        "type": "boolean",
+                        "description": "Demonstration mode: also store literal typed text \
+                            (needed for faithful replay) instead of only a redacted \
+                            summary. Stores secrets — opt in deliberately. Default: false."
                     }
                 },
                 "additionalProperties": false
@@ -120,13 +145,47 @@ impl Tool for StartRecordingTool {
             return ToolResult::error("`output_dir` is required.");
         }
         let record_video = args.bool_or("record_video", false);
+        let demonstration = args.bool_or("demonstration", false);
+        let capture_raw_text = args.bool_or("capture_raw_text", false);
+        let demo_pid = args.opt_i64("pid");
+        let demo_window = args.opt_u64("window_id");
         // Daemon-injected ownership key (absent for one-shot CLI / anonymous
         // sessions). Stamps the recording so a session-scoped teardown
         // (session_end) only stops the recording its own session started.
         let owner = args.opt_str("_session_id");
 
+        if demonstration && (demo_pid.is_none() || demo_window.is_none()) {
+            return ToolResult::error(
+                "demonstration mode requires both `pid` and `window_id`.",
+            );
+        }
+
         match self.session.start(output_dir.as_deref().unwrap(), record_video, owner.as_deref()) {
             Ok(()) => {
+                // Begin human-input capture + glowing border if requested.
+                let mut demo_note = String::new();
+                if demonstration {
+                    match self.session.begin_demonstration(
+                        demo_pid.unwrap(),
+                        demo_window.unwrap(),
+                        capture_raw_text,
+                    ) {
+                        Ok(()) => {
+                            demo_note = format!(
+                                "\n\n🔴 Demonstration mode: glowing border on window {} — \
+                                 human input on that window is being captured{}.",
+                                demo_window.unwrap(),
+                                if capture_raw_text { " (raw text)" } else { " (text redacted)" }
+                            );
+                        }
+                        Err(e) => {
+                            demo_note = format!(
+                                "\n\n⚠️ Demonstration capture failed (agent-action recording \
+                                 still running): {e}"
+                            );
+                        }
+                    }
+                }
                 let state = self.session.current_state();
                 // When the caller asked for video and it failed (e.g. macOS
                 // ffmpeg TCC prompt deadlock), surface the actual error
@@ -145,9 +204,9 @@ impl Tool for StartRecordingTool {
                     };
                     format!("\n\n⚠️ Video capture failed (per-turn JSON+screenshot still running):\n{err}{hint}")
                 } else { String::new() };
-                let msg = format!("✅ Recording started -> {}{}",
+                let msg = format!("✅ Recording started -> {}{}{}",
                     state.output_dir.as_deref().unwrap_or("?"),
-                    video_note);
+                    video_note, demo_note);
                 ToolResult::text(msg).with_structured(recording_state_json(&state))
             }
             Err(e) => ToolResult::error(format!("Failed to start recording: {e}")),
@@ -465,6 +524,11 @@ fn recording_state_json(state: &RecordingState) -> Value {
         // proxy-exit teardown drives ownership via the daemon `session_end`
         // signal rather than reading this back.
         "owner": state.owner,
+        // True when a human-input demonstration is active (glowing border on +
+        // window-scoped capture). The "recording-LED": capture cannot run
+        // without the border being painted.
+        "demonstration": state.demonstration,
+        "human_turns": state.human_turns,
     })
 }
 
@@ -568,4 +632,185 @@ impl Tool for InstallFfmpegTool {
             Err(e) => ToolResult::error(format!("install task error: {e}")),
         }
     }
+}
+
+// ── process_recording ─────────────────────────────────────────────────────────
+//
+// Turn a recorded trajectory directory into a token-cheap, readable
+// `TRAJECTORY.md` (+ `SUMMARY.json`) so an agent can read the demonstration
+// without ingesting base64 screenshots, then author a skill from it. When
+// `author_skill: true` AND `ANTHROPIC_API_KEY` is set, also calls the Anthropic
+// API to write a `SKILL.md` directly; otherwise it returns the processed paths
+// plus instructions and points at the bundled cua-driver `DEMONSTRATION.md` guide.
+
+pub struct ProcessRecordingTool;
+static PROCESS_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
+
+/// System prompt for the optional Anthropic-backed skill author. Kept in sync
+/// with the bundled cua-driver `DEMONSTRATION.md` guide that a host agent follows
+/// when no API key is present.
+const SKILL_AUTHOR_SYSTEM: &str = "You are authoring a reusable agent SKILL from a recorded \
+    computer-use demonstration, following the Open Agent Skills Standard (SKILL.md). You are given \
+    a TRAJECTORY.md describing the human/agent \
+    actions taken on a window, with screenshots referenced by relative path. Write a single \
+    SKILL.md:\n\
+    - YAML frontmatter with exactly two keys: `name` (kebab-case) and `description`. The \
+      description is a ROUTING signal, not a summary — front-load 'Use when …' and, when useful, \
+      'Do NOT use when …'.\n\
+    - `## Inputs` — the variables the task needs, written as `{placeholders}` (e.g. `{month}`).\n\
+    - `## Steps` — a numbered list of SEMANTIC actions ('Click the **Submit** button', not 'click \
+      at 412,880'). Generalize pixel coordinates and literal text into intent and `{placeholders}`. \
+      Never hardcode coordinates or secrets. Refer to UI elements by name/role.\n\
+    - `## Verification` — how to confirm the task succeeded, and brief failure recovery.\n\
+    Output ONLY the SKILL.md content, no preamble.";
+
+#[async_trait]
+impl Tool for ProcessRecordingTool {
+    fn def(&self) -> &ToolDef {
+        PROCESS_REC_DEF.get_or_init(|| ToolDef {
+            name: "process_recording".into(),
+            description: "Process a recorded trajectory directory into a token-cheap, \
+                human-readable `TRAJECTORY.md` (+ `SUMMARY.json`): readable action prose, \
+                screenshots referenced by RELATIVE PATH (never inlined as base64), and only \
+                a few key frames embedded so reading it doesn't blow up your context. Read \
+                the resulting TRAJECTORY.md, then author a skill from it (see the bundled \
+                cua-driver `DEMONSTRATION.md` guide). If `author_skill: true` AND the \
+                ANTHROPIC_API_KEY env var is set, this also calls the Anthropic API to write \
+                a `SKILL.md` into the directory for you."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["dir"],
+                "properties": {
+                    "dir": { "type": "string",
+                        "description": "Recording directory (the `output_dir` passed to start_recording)." },
+                    "max_inline_frames": { "type": "integer",
+                        "description": "Max screenshots embedded inline in TRAJECTORY.md (rest are linked). Default 4." },
+                    "author_skill": { "type": "boolean",
+                        "description": "Also write SKILL.md via the Anthropic API (requires ANTHROPIC_API_KEY). Default false." },
+                    "model": { "type": "string",
+                        "description": "Model for author_skill. Default claude-haiku-4-5." }
+                },
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use crate::tool_args::ArgsExt;
+        let Some(dir) = args.opt_str("dir").filter(|s| !s.is_empty()) else {
+            return ToolResult::error("`dir` is required.");
+        };
+        let dir = crate::recording::expand_tilde(&dir);
+        let opts = crate::recording_markdown::ProcessOptions {
+            max_inline_frames: args.opt_u64("max_inline_frames").map(|n| n as usize).unwrap_or(4),
+        };
+
+        let dir2 = dir.clone();
+        let processed = tokio::task::spawn_blocking(move || {
+            crate::recording_markdown::process(&dir2, &opts)
+        })
+        .await;
+
+        let result = match processed {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return ToolResult::error(format!("Failed to process recording: {e}")),
+            Err(e) => return ToolResult::error(format!("processing task error: {e}")),
+        };
+
+        let traj_path = result.trajectory_md.clone();
+        let mut structured = json!({
+            "trajectory_md": result.trajectory_md.to_string_lossy(),
+            "summary_json": result.summary_json.to_string_lossy(),
+            "summary": {
+                "turn_count": result.summary.turn_count,
+                "human_turns": result.summary.human_turns,
+                "agent_turns": result.summary.agent_turns,
+                "duration_ms": result.summary.duration_ms,
+            },
+            "skill_authored": false,
+        });
+
+        let author = args.bool_or("author_skill", false);
+        let mut msg = format!(
+            "✅ Processed {} steps -> {}\n\nRead TRAJECTORY.md, then author a skill from it \
+             (see the bundled cua-driver `DEMONSTRATION.md` guide).",
+            result.summary.turn_count,
+            traj_path.display()
+        );
+
+        if author {
+            let model = args.opt_str("model").unwrap_or_else(|| "claude-haiku-4-5".into());
+            match author_skill(&traj_path, &model).await {
+                Ok(skill_path) => {
+                    structured["skill_authored"] = json!(true);
+                    structured["skill_md"] = json!(skill_path.to_string_lossy());
+                    msg.push_str(&format!("\n\n📝 Authored SKILL.md -> {}", skill_path.display()));
+                }
+                Err(e) => {
+                    msg.push_str(&format!(
+                        "\n\n⚠️ author_skill skipped: {e}\nThe TRAJECTORY.md is ready — author \
+                         the skill yourself using the `DEMONSTRATION.md` guide."
+                    ));
+                }
+            }
+        }
+
+        ToolResult::text(msg).with_structured(structured)
+    }
+}
+
+/// Call the Anthropic Messages API to author a SKILL.md from a TRAJECTORY.md.
+/// Errors (with a friendly message) when ANTHROPIC_API_KEY is unset so the
+/// caller can fall back to authoring it themselves.
+async fn author_skill(
+    traj_path: &std::path::Path,
+    model: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY is not set"))?;
+    let traj = std::fs::read_to_string(traj_path)?;
+    let out_path = traj_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("SKILL.md");
+    let model = model.to_string();
+
+    let skill = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let body = json!({
+            "model": model,
+            "max_tokens": 2048,
+            "system": SKILL_AUTHOR_SYSTEM,
+            "messages": [{
+                "role": "user",
+                "content": format!("Here is the demonstration trajectory:\n\n{traj}")
+            }]
+        });
+        let resp: Value = ureq::post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .send_json(&body)
+            .map_err(|e| anyhow::anyhow!("Anthropic request failed: {e}"))?
+            .body_mut()
+            .read_json::<Value>()
+            .map_err(|e| anyhow::anyhow!("Anthropic response parse failed: {e}"))?;
+        let text = resp
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|b| b.get("text"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| anyhow::anyhow!("unexpected Anthropic response shape: {resp}"))?;
+        Ok(text.to_string())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("author task error: {e}"))??;
+
+    std::fs::write(&out_path, skill)?;
+    Ok(out_path)
 }

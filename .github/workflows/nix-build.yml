@@ -189,6 +189,14 @@ jobs:
             visual: true
             result_link: result-linux-background-gui-electron-logseq
             artifact_name: cua-driver-linux-background-gui-electron-logseq
+          # Electron/CJK input test (CUA-629): validates Unicode/CJK text injection
+          # through cua-driver into an Electron app via CDP.
+          - name: NixOS Electron/CJK input test
+            check_attr: cua-driver-electron-cjk-input
+            timeout_minutes: 25
+            visual: false
+            result_link: result-cua-driver-electron-cjk-input
+            artifact_name: ""
           # Firefox is temporarily disabled: under the emulated CI VM (no KVM) it
           # does not surface its window within the launch timeout, so the job
           # times out before any AT-SPI subtest runs. The browser/AT-SPI read

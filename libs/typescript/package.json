@@ -28,6 +28,18 @@
       "protobufjs",
       "sharp",
       "unrs-resolver"
-    ]
+    ],
+    "overrides": {
+      "defu": "6.1.5",
+      "happy-dom": "20.8.9",
+      "picomatch": "4.0.4",
+      "postcss": "8.5.10",
+      "rollup": "4.59.0",
+      "uuid": "11.1.1",
+      "vite": "7.3.5",
+      "vitest": "4.1.0",
+      "ws": "8.21.0",
+      "yaml": "2.8.3"
+    }
   }
 }

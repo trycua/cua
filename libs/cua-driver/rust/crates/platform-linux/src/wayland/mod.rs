@@ -26,6 +26,16 @@ pub mod portal_screencast;
 #[cfg(feature = "portal-libei")]
 pub mod libei;
 
+/// Whether this binary was compiled with the `portal-libei` feature — the
+/// xdg-desktop-portal RemoteDesktop + libei input path. It is the ONLY input
+/// backend that works on non-wlroots compositors (KWin/Plasma, Mutter/GNOME),
+/// which do not implement `zwlr_virtual_pointer_v1`. The published
+/// curl-pipe-bash tarball is built WITHOUT it (#1967 — debian:11 CD container
+/// lacks a new-enough PipeWire/libei), so on those compositors input injection
+/// has no backend and silently no-ops. Consulted by the doctor and the input
+/// dispatch so that failure is reported instead of hidden. See #1982.
+pub const PORTAL_LIBEI_ENABLED: bool = cfg!(feature = "portal-libei");
+
 use std::collections::HashMap;
 
 use wayland_client::{
@@ -94,6 +104,30 @@ pub fn is_wayland() -> bool {
     wayland_enabled()
         && std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var_os("DISPLAY").is_none()
+}
+
+/// Reason string when X11 input injection cannot possibly work, so callers
+/// **fail loudly** instead of falling through to an X11 path that no-ops yet
+/// reports success. Triggers only on a *pure* Wayland session — `WAYLAND_DISPLAY`
+/// set, no X11 `DISPLAY` — with the native-Wayland backend NOT opted in (so
+/// [`is_wayland`] is false and the X11 path would be chosen). XWayland sessions
+/// (where `DISPLAY` is set) and X11 sessions return `None` and proceed normally.
+/// See #1921.
+pub fn wayland_input_unavailable_reason() -> Option<String> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_none()
+        && !wayland_enabled()
+    {
+        Some(format!(
+            "input cannot be delivered: pure Wayland session (no X11 DISPLAY) and \
+             the native-Wayland input backend is not enabled. Set {}=1 to enable \
+             the Wayland backend (wlroots compositors: sway, labwc, hyprland), or \
+             run the target under XWayland so an X11 DISPLAY is available.",
+            ENABLE_WAYLAND_ENV
+        ))
+    } else {
+        None
+    }
 }
 
 fn wl_sockets(dir: &str) -> std::collections::HashSet<String> {
@@ -786,10 +820,22 @@ pub fn open_vptr_session(activate_window_id: Option<u32>) -> anyhow::Result<Vptr
         .seat
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input"))?;
-    let mgr = state
-        .vptr_manager
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1"))?;
+    let mgr = state.vptr_manager.clone().ok_or_else(|| {
+        if PORTAL_LIBEI_ENABLED {
+            anyhow::anyhow!("compositor does not expose zwlr_virtual_pointer_manager_v1")
+        } else {
+            // KWin/Plasma and Mutter/GNOME don't implement zwlr_virtual_pointer,
+            // and this build has no libei/portal fallback — so input has no
+            // backend at all rather than silently no-op'ing. See #1982.
+            anyhow::anyhow!(
+                "no input backend for this compositor: it exposes no \
+                 zwlr_virtual_pointer_manager_v1 and this build was compiled \
+                 without libei/portal support (#1982). Use the portal-enabled \
+                 Linux build for input on KDE Plasma / GNOME, or a wlroots \
+                 compositor (sway, labwc, hyprland)."
+            )
+        }
+    })?;
 
     if let Some(id) = activate_window_id {
         let handle = state
@@ -1199,6 +1245,34 @@ pub fn inject_press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
     let app = app_id_for_window(window_id)
         .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
     inject_send(&[format!("k {app} {key}")])
+}
+
+/// Focus-free click into the window's surface via the nested EIS compositor.
+/// Coordinates are window-local, matching the rest of the inject protocol.
+pub fn inject_click(
+    window_id: u64,
+    x: f64,
+    y: f64,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let app = app_id_for_window(window_id)
+        .ok_or_else(|| anyhow::anyhow!("no Wayland app_id for window {window_id}"))?;
+    let btn = evdev_button(button as u32);
+    let n = count.max(1);
+    let mut lines = Vec::with_capacity((n as usize) * 4);
+    for i in 0..n {
+        if i > 0 {
+            // The line protocol is batch-oriented, so use a tiny move-only
+            // separator between clicks to give the compositor a frame boundary
+            // without introducing a protocol-level sleep primitive.
+            lines.push(format!("m {app} 0 {x:.1} {y:.1}"));
+        }
+        lines.push(format!("m {app} 0 {x:.1} {y:.1}"));
+        lines.push(format!("b {app} 0 {btn} 1"));
+        lines.push(format!("b {app} 0 {btn} 0"));
+    }
+    inject_send(&lines)
 }
 
 /// A single pointer drag for `inject_parallel_drags`: window-local waypoints,

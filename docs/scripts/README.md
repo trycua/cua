@@ -6,7 +6,7 @@ This directory contains scripts for crawling, indexing, and serving CUA document
 
 ### Local Scripts
 
-- **crawl_docs.py**: Crawls cua.ai/docs using crawl4ai
+- **crawl_docs.py**: Crawls cua.ai/docs using Playwright
 - **generate_db.py**: Creates LanceDB vector database for semantic search
 - **generate_sqlite.py**: Creates SQLite FTS5 database for full-text search
 
@@ -21,6 +21,11 @@ Install dependencies using uv:
 ```bash
 # From the repository root
 uv sync --group docs-scripts
+
+# crawl_docs.py drives a headless Chromium via Playwright; install the browser
+# binary once (the pip package alone does not include it). The Modal image
+# installs this automatically.
+uv run playwright install chromium
 ```
 
 ## Usage

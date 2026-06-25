@@ -91,18 +91,15 @@ def curl_examples():
     print("=== CURL Examples ===\n")
 
     print("1. Simple text request:")
-    print(
-        """curl http://localhost:8000/responses \\
+    print("""curl http://localhost:8000/responses \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "anthropic/claude-sonnet-4-5-20250929",
     "input": "Tell me a three sentence bedtime story about a unicorn."
-  }'"""
-    )
+  }'""")
 
     print("\n2. Multi-modal request with image:")
-    print(
-        """curl http://localhost:8000/responses \\
+    print("""curl http://localhost:8000/responses \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "anthropic/claude-sonnet-4-5-20250929",
@@ -118,12 +115,10 @@ def curl_examples():
         ]
       }
     ]
-  }'"""
-    )
+  }'""")
 
     print("\n3. Request with custom configuration:")
-    print(
-        """curl http://localhost:8000/responses \\
+    print("""curl http://localhost:8000/responses \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "anthropic/claude-sonnet-4-5-20250929",
@@ -136,8 +131,7 @@ def curl_examples():
       "os_type": "linux",
       "provider_type": "cloud"
     }
-  }'"""
-    )
+  }'""")
 
 
 async def test_p2p_client():

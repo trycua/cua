@@ -339,7 +339,7 @@ impl Drop for ZorderGuard {
 /// (right) click — both for `WM_POINTER`-aware apps (Chromium/WPF/UWP) and via
 /// pen→mouse promotion for legacy Win32. A fresh synthetic pen device is
 /// created and destroyed per tap (right/middle clicks are rare).
-fn pen_tap(sx: i32, sy: i32, barrel: bool) -> Result<()> {
+fn pen_taps(sx: i32, sy: i32, barrel: bool, count: usize) -> Result<()> {
     unsafe {
         let dev = CreateSyntheticPointerDevice(PT_PEN, 1, POINTER_FEEDBACK_DEFAULT)
             .map_err(|e| anyhow::anyhow!("CreateSyntheticPointerDevice(PEN): {e}"))?;
@@ -367,12 +367,28 @@ fn pen_tap(sx: i32, sy: i32, barrel: bool) -> Result<()> {
             },
         };
         let down = mk(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT);
-        let r1 = InjectSyntheticPointerInput(dev, &[down]);
-        sleep(Duration::from_millis(25));
         let up = mk(POINTER_FLAG_UP);
-        let r2 = InjectSyntheticPointerInput(dev, &[up]);
+        // Reuse the SAME synthetic device for every tap. A double/triple click
+        // is two/three down-up cycles from one digitizer; creating a fresh
+        // device per tap (the old loop) fails the next
+        // CreateSyntheticPointerDevice in quick succession — which is exactly
+        // why background double_click on Chromium errored. See #1984.
+        let mut result: Result<()> = Ok(());
+        let n = count.max(1);
+        for i in 0..n {
+            let r1 = InjectSyntheticPointerInput(dev, &[down]);
+            sleep(Duration::from_millis(25));
+            let r2 = InjectSyntheticPointerInput(dev, &[up]);
+            if let Err(e) = r1.and(r2) {
+                result = Err(anyhow::anyhow!("InjectSyntheticPointerInput(pen): {e}"));
+                break;
+            }
+            if i + 1 < n {
+                sleep(Duration::from_millis(70));
+            }
+        }
         let _ = DestroySyntheticPointerDevice(dev);
-        r1.and(r2).map_err(|e| anyhow::anyhow!("InjectSyntheticPointerInput(pen): {e}"))?;
+        result?;
     }
     Ok(())
 }
@@ -419,13 +435,8 @@ pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button: 
     // and hide/restore any residual z-order via the cloak/SWP guard.
     let _noact = NoActivateGuard::arm(target_h);
     let _guard = unsafe { ZorderGuard::arm(target_h) };
-    let count = count.max(1);
-    for i in 0..count {
-        pen_tap(sx, sy, barrel)?;
-        if i + 1 < count {
-            sleep(Duration::from_millis(70));
-        }
-    }
+    // One synthetic device does all `count` taps (single/double/triple click).
+    pen_taps(sx, sy, barrel, count)?;
     // _guard drops here: restore the user's foreground + uncloak target.
     Ok(())
 }

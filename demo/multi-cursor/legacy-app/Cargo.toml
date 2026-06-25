@@ -6,6 +6,11 @@ edition = "2021"
 [[bin]]
 name = "legacy-app"
 path = "src/main.rs"
+required-features = ["windows-app"]
+
+[features]
+default = []
+windows-app = []
 
 [dependencies]
 windows = { version = "0.58", features = [

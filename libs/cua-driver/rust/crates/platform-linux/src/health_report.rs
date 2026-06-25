@@ -133,7 +133,16 @@ async fn check_ax_capability() -> CheckEntry {
             "X11 reachable; AT-SPI + XSendEvent input will work.",
         );
     }
-    let hint = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    let display_set = std::env::var_os("DISPLAY").is_some();
+    let xauth_unset = std::env::var_os("XAUTHORITY").is_none();
+    let hint = if display_set && xauth_unset {
+        // SSH-driven Wayland+Xwayland: DISPLAY inherited but no auth cookie (#1926).
+        "DISPLAY is set but XAUTHORITY is not (typical when driving a \
+         Wayland+Xwayland session over SSH): the X server's per-session auth \
+         cookie isn't discoverable, so X11 connects fail 'Authorization required'. \
+         Point XAUTHORITY at the Xwayland '-auth' cookie file, or restart the \
+         cua-driver daemon — it auto-discovers the cookie from /proc at startup."
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {
@@ -180,7 +189,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
         // No wlr screencopy AND no ext-image-copy-capture. Probe the
         // portal as the last native tier. The probe is read-only — it
         // checks for a name owner on the bus, does NOT take a screenshot.
-        let portal_ok = tokio::task::spawn_blocking(crate::wayland::portal_screenshot::probe_portal)
+        let portal_ok = tokio::task::spawn_blocking(probe_portal_screenshot)
             .await
             .ok()
             .and_then(|r| r.ok())
@@ -279,6 +288,29 @@ async fn check_wayland_backend() -> CheckEntry {
         return CheckEntry::pass(
             NAME_WAYLAND_BACKEND,
             format!("All wlroots manager globals advertised ({msg})."),
+        );
+    }
+    // Input-injection backend check (#1982). A non-wlroots compositor
+    // (KWin/Plasma, Mutter/GNOME) advertises no zwlr_virtual_pointer; on those
+    // the ONLY working input path is libei via xdg-desktop-portal. If this
+    // binary was built without `portal-libei` (the published tarball is — see
+    // #1967), input injection has no backend and silently no-ops: the agent
+    // cursor renders but clicks/keys are never delivered, while list_windows
+    // and capture still work. Report that explicitly instead of the misleading
+    // "input may fall back" partial-pass below.
+    if !snap.virtual_pointer && !crate::wayland::PORTAL_LIBEI_ENABLED {
+        return CheckEntry::fail(
+            NAME_WAYLAND_BACKEND,
+            format!(
+                "Input injection has no backend on this compositor ({msg}): it \
+                 advertises no zwlr_virtual_pointer and this build was compiled \
+                 without libei/portal support, so clicks and key presses will not \
+                 be delivered (the agent cursor still renders). list_windows and \
+                 screen capture are unaffected."
+            ),
+            "Use the portal-enabled Linux build (compiled with --features \
+             portal-libei) for input on KDE Plasma / GNOME, or a wlroots \
+             compositor (sway, labwc, hyprland) where zwlr_virtual_pointer exists.",
         );
     }
     // Partial-pass: list_windows + capture both work, but virtual-pointer
@@ -402,6 +434,16 @@ fn probe_wayland_managers() -> anyhow::Result<WaylandManagers> {
     Ok(WaylandManagers::default())
 }
 
+#[cfg(target_os = "linux")]
+fn probe_portal_screenshot() -> anyhow::Result<bool> {
+    crate::wayland::portal_screenshot::probe_portal()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_portal_screenshot() -> anyhow::Result<bool> {
+    Ok(false)
+}
+
 /// Stub of `wayland::WaylandManagers` so off-Linux builds compile. Always
 /// reports nothing advertised — non-Linux code paths never call this.
 #[cfg(not(target_os = "linux"))]
@@ -409,6 +451,8 @@ fn probe_wayland_managers() -> anyhow::Result<WaylandManagers> {
 struct WaylandManagers {
     foreign_toplevel: bool,
     screencopy: bool,
+    ext_image_copy_capture: bool,
+    ext_output_image_capture_source: bool,
     virtual_pointer: bool,
     wl_shm: bool,
 }

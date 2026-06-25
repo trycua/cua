@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.3.41"
+version = "0.3.42"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
@@ -24,7 +24,7 @@ dependencies = [
     "websockets>=12.0",
     "pywinctl>=0.4.1",
     "playwright>=1.40.0",
-    "fastmcp>=2.0,<3",
+    "fastmcp>=3.2.0,<3.3.0",
     # PTY support (wraps cua-auto terminal engine)
     "cua-auto>=0.1.0",
     # OS-specific runtime deps
@@ -36,7 +36,7 @@ dependencies = [
     "python-certifi-win32; sys_platform == 'win32'",
     "cua-core>=0.3.0,<0.4.0",
     "grpcio==1.78.0",
-    "protobuf==6.31.1",
+    "protobuf==6.33.6",
 ]
 
 [project.optional-dependencies]

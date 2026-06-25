@@ -3511,6 +3511,54 @@ impl Tool for ScrollTool {
 // `GetWindowStateTool` — that's where the actual screenshot machinery
 // lives now.
 
+/// Chromium/Electron windows silently drop `PostMessage` mouse events — their
+/// input thread only honors SendInput-origin events (#1623). `ClickTool`
+/// auto-routes Chromium targets through SendInput, but `DoubleClickTool` /
+/// `RightClickTool` did not, so element/pixel gestures on Electron apps
+/// (Obsidian, VS Code, Slack, …) reached `post_click_screen` and no-op'd
+/// silently. This mirrors that short-circuit for those tools (#1984): when
+/// `hwnd` is a Chromium window, deliver `count` clicks of `button` at screen
+/// `(sx, sy)` via SendInput with async foreground restore and return
+/// `Some(result)`. Returns `None` for non-Chromium targets so the caller
+/// proceeds to its normal PostMessage path.
+async fn chromium_click_short_circuit(
+    hwnd: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    pid: u32,
+    gesture: &str,
+) -> Option<ToolResult> {
+    let is_chromium = tokio::task::spawn_blocking(move || {
+        crate::input::is_chromium_target_window(hwnd)
+    })
+    .await
+    .unwrap_or(false);
+    if !is_chromium {
+        return None;
+    }
+    // Capture the pre-click foreground so the poller can restore it even if
+    // Chromium re-activates itself from a renderer-side handler (same pattern
+    // and rationale as the ClickTool Chromium branch).
+    let prev_fg_addr = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
+    };
+    let button_owned = button.to_string();
+    let send_result = tokio::task::spawn_blocking(move || {
+        crate::input::send_click_synthesized(hwnd, sx, sy, count, &button_owned)
+    })
+    .await;
+    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+    Some(match send_result {
+        Ok(Ok(())) => ToolResult::text(format!(
+            "✅ Sent {gesture} via SendInput to pid {pid} at screen ({sx},{sy}) (Chromium target)."
+        )),
+        Ok(Err(e)) => ToolResult::error(e.to_string()),
+        Err(e) => ToolResult::error(format!("Task error: {e}")),
+    })
+}
+
 // ── double_click ──────────────────────────────────────────────────────────────
 
 pub struct DoubleClickTool {
@@ -3628,11 +3676,24 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
-            // dispatch:"background" — reject if PostMessage would be silently dropped.
+            // dispatch:"background" (default): Chromium/Electron & GTK targets
+            // silently drop posted clicks (#1984) — inject via the coordinate
+            // actuator (system input queue, NO foreground swap), exactly like
+            // ClickTool, instead of refusing. Only error if injection can't
+            // express this click (e.g. right/middle on such a target).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, cx, cy, 2, "left")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected double-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             // dispatch:"foreground" — route through SendInput at the cached coords.
             if dispatch == DispatchMode::Foreground {
@@ -3650,6 +3711,10 @@ impl Tool for DoubleClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, cx, cy, 2, "left", pid, "double-click").await {
+                return r;
             }
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
@@ -3682,11 +3747,21 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
-            // dispatch:"background" — reject if PostMessage would be silently dropped.
+            // dispatch:"background" (default): inject via the coordinate actuator
+            // (no foreground swap) for targets that drop posted clicks (#1984).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, sx_i, sy_i, 2, "left")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected double-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             // dispatch:"foreground" — SendInput at screen coords with FG swap.
             if dispatch == DispatchMode::Foreground {
@@ -3706,6 +3781,10 @@ impl Tool for DoubleClickTool {
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, sx_i, sy_i, 2, "left", pid, "double-click").await {
+                return r;
+            }
             let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 2, "left")).await;
             match result {
                 Ok(Ok(())) => {
@@ -3840,10 +3919,22 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            // dispatch:"background" (default): try coordinate injection (no
+            // foreground swap) for drop-prone targets (#1984); a right-click
+            // injection that the actuator can't express falls back to the error.
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, cx, cy, 1, "right")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected right-click to [{idx}] at screen ({cx},{cy}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             if dispatch == DispatchMode::Foreground {
                 let prev_fg_addr = unsafe {
@@ -3860,6 +3951,10 @@ impl Tool for RightClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, cx, cy, 1, "right", pid, "right-click").await {
+                return r;
             }
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
@@ -3893,10 +3988,21 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            // dispatch:"background" (default): try coordinate injection (no
+            // foreground swap) for drop-prone targets (#1984).
             if dispatch == DispatchMode::Background
                 && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                return background_unavailable_error(hwnd, EventKind::MouseClick);
+                let inj = tokio::task::spawn_blocking(move || {
+                    crate::input::inject_click_screen(hwnd, sx_i, sy_i, 1, "right")
+                }).await;
+                return match inj {
+                    Ok(Ok(())) => ToolResult::text(format!(
+                        "✅ Injected right-click to pid {pid} at screen ({sx_i},{sy_i}) (background, no foreground swap)."
+                    )),
+                    Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             if dispatch == DispatchMode::Foreground {
                 let prev_fg_addr = unsafe {
@@ -3915,6 +4021,10 @@ impl Tool for RightClickTool {
                 };
             }
             let (xi, yi) = (px as i32, py as i32);
+            // Chromium/Electron silently drops PostMessage clicks (#1984) — route via SendInput.
+            if let Some(r) = chromium_click_short_circuit(hwnd, sx_i, sy_i, 1, "right", pid, "right-click").await {
+                return r;
+            }
             let result = tokio::task::spawn_blocking(move || crate::input::post_click_screen(hwnd, sx_i, sy_i, 1, "right")).await;
             match result {
                 Ok(Ok(())) => {

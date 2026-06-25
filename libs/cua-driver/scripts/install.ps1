@@ -114,7 +114,7 @@ $BinaryName = "cua-driver.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated by CD workflow after each release — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.6.5"
+$Script:CuaDriverRsBakedVersion = "0.6.8"
 # ~~~ END_BAKED_VERSION ~~~
 
 # ---------- Path resolution ------------------------------------------------
@@ -544,6 +544,27 @@ function Test-IsElevated {
 #     Fetch the .psm1 from GitHub raw and Import-Module from a temp
 #     file. See Import-CuaDriverInstallModule below (defined inline so
 #     it's available before the module load itself).
+# Resolve a temp directory that actually exists. $env:TEMP / $env:TMP can point
+# at a missing or unresolvable short 8.3 profile path (e.g. C:\Users\SHORTN~1.DOM),
+# which makes Set-Content / Remove-Item fail. Pick the first candidate that
+# exists, expand 8.3 short components to the long form, and fall back to
+# %SystemRoot%\Temp (always present). See issue #1911.
+function Get-CuaDriverTempDir {
+    foreach ($cand in @($env:TEMP, $env:TMP, (Join-Path $env:LOCALAPPDATA 'Temp'), (Join-Path $env:SystemRoot 'Temp'))) {
+        if ([string]::IsNullOrWhiteSpace($cand)) { continue }
+        try {
+            if (Test-Path -LiteralPath $cand) {
+                return (Get-Item -LiteralPath $cand -ErrorAction Stop).FullName
+            }
+        } catch { }
+    }
+    $fallback = Join-Path $env:SystemRoot 'Temp'
+    if (-not (Test-Path -LiteralPath $fallback)) {
+        New-Item -ItemType Directory -Path $fallback -Force | Out-Null
+    }
+    return $fallback
+}
+
 function Import-CuaDriverInstallModuleBootstrap {
     [CmdletBinding()]
     param(
@@ -558,7 +579,7 @@ function Import-CuaDriverInstallModuleBootstrap {
         }
     }
     $body = Invoke-RestMethod -Uri $Url -UseBasicParsing
-    $tmp = Join-Path $env:TEMP ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
+    $tmp = Join-Path (Get-CuaDriverTempDir) ("CuaDriverInstall-" + [Guid]::NewGuid().ToString('N') + ".psm1")
     Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
     try {
         Import-Module -Name $tmp -Force -ErrorAction Stop
@@ -1063,7 +1084,7 @@ if (Test-Path -LiteralPath (Join-Path $versionedDir $BinaryName)) {
 }
 
 if (-not $skipDownload) {
-    $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("cua-driver-rs-install-" + [Guid]::NewGuid().ToString("N"))
+    $tmpRoot = Join-Path (Get-CuaDriverTempDir) ("cua-driver-rs-install-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
     try {
         $stageDir = Get-ReleaseAsset $version $archLabel $tmpRoot

@@ -1,11 +1,15 @@
 # CUA Driver native-Wayland cursor-click GIF test (per desktop).
 #
-# Launches two native Wayland terminals (foot) THROUGH cua-driver (launch_app) —
-# the second is the focused target — then clicks it (foreign-toplevel activate),
-# types a command via the Wayland virtual-keyboard (wtype), and verifies the
-# command RAN by checking a file it writes (display-server-agnostic proof).
+# Launches two native Wayland terminals (foot) THROUGH cua-driver (launch_app),
+# clicks the target, types a command through cua-driver's Wayland injection path,
+# and verifies the command RAN by checking a file it writes
+# (display-server-agnostic proof).
 # Records a GIF of the composited output via grim. On wlroots desktops the driver
-# drives the host compositor; on kde/gnome it drives its own nested labwc.
+# can drive the host compositor, but compositor-specific focus heuristics make
+# virtual-keyboard delivery after a click unreliable in headless CI. This visual
+# test therefore uses the same EIS-backed nested compositor as the background
+# terminal test so it remains a deterministic click+type regression guard across
+# labwc, sway, KDE, and GNOME hosts.
 #
 # To run: nix build .#checks.x86_64-linux.cua-driver-wayland-<desktop>-cursor-click-gif
 {
@@ -17,7 +21,7 @@
 }:
 
 let
-  session = import ./session.nix { inherit pkgs desktop; };
+  session = import ./session.nix { inherit pkgs desktop; eis = true; };
   driverClient = import ./driver-client.nix { inherit pkgs; };
   recordGifScript = import ./record-wayland-gif.nix { inherit pkgs; };
 
@@ -37,8 +41,10 @@ let
     d = Driver()
     try:
         d.initialize("nixos-wayland-click")
-        # Launch a control terminal then the target, so the target is the
-        # focused (last-mapped) window the keystrokes will reach.
+        # Launch a control terminal then the target. The click still exercises
+        # the target pointer path, while type_text/press_key use the EIS-backed
+        # injection path so headless compositor focus policy cannot make the
+        # test flaky.
         d.launch_app("foot --app-id=cua-wayland-control --title=cua-wayland-control")
         time.sleep(1)
         d.launch_app("foot --app-id=cua-wayland-target --title=cua-wayland-target")
@@ -47,8 +53,6 @@ let
         d.call("set_agent_cursor_enabled", {"enabled": True})
         d.call("move_cursor", {"x": 1100.0, "y": 900.0})
         time.sleep(0.6)
-        # click focuses+raises the target (foreign-toplevel activate); type +
-        # enter go to it via the Wayland virtual-keyboard.
         d.call("click", {"pid": pid, "window_id": wid, "x": 120.0, "y": 120.0})
         time.sleep(0.4)
         d.call("type_text", {"pid": pid, "window_id": wid,

@@ -73,7 +73,19 @@ export abstract class BaseComputerInterface {
     }
 
     // Create the WebSocket instance
-    this.ws = new WebSocket(this.wsUri, { headers });
+    this.ws = this.createWebSocket(headers);
+  }
+
+  private createWebSocket(headers: { [key: string]: string }): WebSocket {
+    const ws = new WebSocket(this.wsUri, { headers });
+    // Constructors open immediately, and some tests only verify inheritance
+    // without ever calling connect(). Keep those failed background attempts
+    // from surfacing as unhandled process errors; connect() still attaches its
+    // own one-shot error listener and rejects active connection attempts.
+    ws.on('error', (error: Error) => {
+      this.logger.debug(`WebSocket background error: ${error.message}`);
+    });
+    return ws;
   }
 
   /**
@@ -167,6 +179,7 @@ export abstract class BaseComputerInterface {
     // If the WebSocket is already open, check if we need to authenticate
     if (this.ws.readyState === WebSocket.OPEN) {
       this.logger.info('Websocket is open, ensuring authentication is complete.');
+      this.closed = false;
       return this.authenticate();
     }
 
@@ -178,14 +191,14 @@ export abstract class BaseComputerInterface {
         headers['X-API-Key'] = this.apiKey;
         headers['X-VM-Name'] = this.vmName;
       }
-      this.ws = new WebSocket(this.wsUri, { headers });
-      return this.authenticate();
+      this.ws = this.createWebSocket(headers);
     }
 
     // Connect and authenticate
     return new Promise((resolve, reject) => {
       const onOpen = async () => {
         try {
+          this.closed = false;
           // Always authenticate immediately after connection
           await this.authenticate();
           resolve();
@@ -213,7 +226,11 @@ export abstract class BaseComputerInterface {
       this.ws.on('close', () => {
         if (!this.closed) {
           // Attempt to reconnect
-          setTimeout(() => this.connect(), 1000);
+          setTimeout(() => {
+            this.connect().catch((error) => {
+              this.logger.error(`Error reconnecting to websocket: ${JSON.stringify(error)}`);
+            });
+          }, 1000);
         }
       });
     });

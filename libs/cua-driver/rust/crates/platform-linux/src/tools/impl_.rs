@@ -320,14 +320,74 @@ impl Tool for ListWindowsTool {
             lines.push(format!("  [xid={}] pid={:?} \"{}\" {}x{}+{}+{}",
                 w.xid, w.pid, w.title, w.width, w.height, w.x, w.y));
         }
-        let structured = json!({ "windows": windows.iter().map(|w| json!({
-            "window_id": w.xid,
-            "pid": w.pid,
-            "title": w.title,
-            "x": w.x, "y": w.y,
-            "width": w.width, "height": w.height,
-        })).collect::<Vec<_>>() });
+        let structured = json!({ "windows": windows.iter().map(window_record_json).collect::<Vec<_>>() });
         ToolResult::text(lines.join("\n")).with_structured(structured)
+    }
+}
+
+/// Build the structured `list_windows` record for one Linux window.
+///
+/// Emits the canonical cross-platform shape — geometry nested under a
+/// `bounds: {x,y,width,height}` object plus `app_name` / `is_on_screen`,
+/// matching the macOS and Windows backends (#2017) — while KEEPING the
+/// historical flat `x/y/width/height` fields inline as a legacy alias so
+/// existing Linux callers don't break. Fully additive; no field removed,
+/// no schema_version bump.
+///
+/// The Linux `WindowInfo` struct (see `crate::x11::WindowInfo`) exposes
+/// neither an app name nor a visibility flag, so `app_name` is an empty
+/// string and `is_on_screen` defaults to `true` — the same best-effort
+/// default the Windows backend uses.
+fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
+    json!({
+        "window_id": w.xid,
+        "pid": w.pid,
+        "app_name": "",
+        "title": w.title,
+        // Canonical cross-platform geometry (macOS/Windows parity).
+        "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+        "is_on_screen": true,
+        // Legacy alias: flat fields kept inline for pre-existing callers.
+        "x": w.x, "y": w.y,
+        "width": w.width, "height": w.height,
+    })
+}
+
+#[cfg(test)]
+mod list_windows_tests {
+    use super::*;
+
+    #[test]
+    fn record_has_bounds_and_flat_legacy_fields() {
+        let w = crate::x11::WindowInfo {
+            xid: 42,
+            pid: Some(1234),
+            title: "Example".to_owned(),
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 400,
+        };
+        let rec = window_record_json(&w);
+
+        // Canonical cross-platform shape: nested `bounds` object.
+        let bounds = rec.get("bounds").expect("record must carry a `bounds` object");
+        assert_eq!(bounds["x"], json!(10));
+        assert_eq!(bounds["y"], json!(20));
+        assert_eq!(bounds["width"], json!(300));
+        assert_eq!(bounds["height"], json!(400));
+
+        // Legacy alias: flat fields must still be present.
+        assert_eq!(rec["x"], json!(10));
+        assert_eq!(rec["y"], json!(20));
+        assert_eq!(rec["width"], json!(300));
+        assert_eq!(rec["height"], json!(400));
+
+        // Cross-platform companions.
+        assert_eq!(rec["app_name"], json!(""));
+        assert_eq!(rec["is_on_screen"], json!(true));
+        assert_eq!(rec["window_id"], json!(42));
+        assert_eq!(rec["title"], json!("Example"));
     }
 }
 
@@ -1047,12 +1107,16 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let result = tokio::task::spawn_blocking(move || {
-            // Native Wayland: focus+raise the target toplevel (foreign-toplevel
-            // `activate`), then drive `count` virtual-pointer button events at
-            // the requested coordinates. Wayland hides cross-window geometry,
-            // so callers should pass output-relative coords; (0,0) preserves
-            // the legacy "click the activated window's centre" behaviour.
             if crate::wayland::is_wayland() {
+                if crate::wayland::is_inject_mode() {
+                    return crate::wayland::inject_click(xid, x, y, count as u32, button);
+                }
+                // Native Wayland: focus+raise the target toplevel
+                // (foreign-toplevel `activate`), then drive `count`
+                // virtual-pointer button events at the requested coordinates.
+                // Wayland hides cross-window geometry, so callers should pass
+                // output-relative coords; (0,0) preserves the legacy
+                // "click the activated window's centre" behaviour.
                 return crate::wayland::click(xid, xi, yi, count as u32, button);
             }
             crate::input::send_click(xid, xi, yi, count, button)
@@ -2794,18 +2858,32 @@ impl Tool for GetScreenSizeTool {
         let result = tokio::task::spawn_blocking(|| {
             use x11rb::connection::Connection;
             use x11rb::rust_connection::RustConnection;
-            let (conn, screen_num) = RustConnection::connect(None)?;
+            let (conn, screen_num) = RustConnection::connect(None)
+                .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
             let setup = conn.setup();
             let screen = &setup.roots[screen_num];
+            let w = screen.width_in_pixels as u32;
+            let h = screen.height_in_pixels as u32;
+            // WSLg / headless XWayland quirk: the X server connects but the
+            // root screen advertises a 0-px geometry until a real output is
+            // attached. Returning {width:0,height:0} here would propagate a
+            // success with zero dimensions to the client, which then either
+            // divides by zero when scaling or feeds the value into `int(...)`
+            // after the missing key collapses to None. Fail loudly with an
+            // actionable, typed error instead (never emit a 0/null where the
+            // client expects a usable int). See issue #2005.
+            if w == 0 || h == 0 {
+                anyhow::bail!(
+                    "X11 connected but reports a 0x0 root screen — no usable \
+                     display geometry.{}",
+                    crate::no_display_hint()
+                );
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption).  Wayland/HiDPI X11 callers should query
             // `xrandr --query` for true scale.
-            Ok::<(u32, u32, f64), anyhow::Error>((
-                screen.width_in_pixels as u32,
-                screen.height_in_pixels as u32,
-                1.0,
-            ))
+            Ok::<(u32, u32, f64), anyhow::Error>((w, h, 1.0))
         }).await;
         match result {
             // Matches Swift text format 1:1.

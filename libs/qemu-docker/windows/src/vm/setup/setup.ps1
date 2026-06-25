@@ -42,35 +42,35 @@ Write-Host "Applying blank desktop hardening..."
 # Disable the 'restore previous folder windows on logon' option in Explorer so
 # it doesn't re-open any windows that were visible when the image was captured.
 try {
-    New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Force -ErrorAction SilentlyContinue | Out-Null
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'PersistBrowsers' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Force -ErrorAction Stop | Out-Null
+    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'PersistBrowsers' -Value 0 -Type DWord -ErrorAction Stop
     Write-Host "  Explorer: PersistBrowsers disabled"
 } catch { Write-Host "  Explorer PersistBrowsers warning: $($_.Exception.Message)" }
 
 # Disable the 'show recently used files/folders' in Quick Access (cosmetic, but avoids 'File Explorer' pop notification)
 try {
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name 'ShowRecent' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name 'ShowFrequent' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name 'ShowRecent' -Value 0 -Type DWord -ErrorAction Stop
+    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name 'ShowFrequent' -Value 0 -Type DWord -ErrorAction Stop
     Write-Host "  Explorer: recent/frequent items disabled"
 } catch { Write-Host "  Explorer recent items warning: $($_.Exception.Message)" }
 
 # Disable Windows Widgets (News and Interests) and Chat from taskbar - they can
 # open a popup/panel if clicked accidentally or on first login.
 try {
-    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarDa' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarMn' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarDa' -Value 0 -Type DWord -ErrorAction Stop
+    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarMn' -Value 0 -Type DWord -ErrorAction Stop
     Write-Host "  Taskbar: Widgets and Chat hidden"
 } catch { Write-Host "  Taskbar widgets warning: $($_.Exception.Message)" }
 
 # Suppress "New features and suggestions" / lock screen app suggestions
 try {
     $cdm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
-    New-Item -Path $cdm -Force -ErrorAction SilentlyContinue | Out-Null
-    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-338393Enabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353696Enabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353694Enabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $cdm -Name 'SoftLandingEnabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $cdm -Name 'FeatureManagementEnabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    New-Item -Path $cdm -Force -ErrorAction Stop | Out-Null
+    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-338393Enabled' -Value 0 -Type DWord -ErrorAction Stop
+    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353696Enabled' -Value 0 -Type DWord -ErrorAction Stop
+    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353694Enabled' -Value 0 -Type DWord -ErrorAction Stop
+    Set-ItemProperty -Path $cdm -Name 'SoftLandingEnabled' -Value 0 -Type DWord -ErrorAction Stop
+    Set-ItemProperty -Path $cdm -Name 'FeatureManagementEnabled' -Value 0 -Type DWord -ErrorAction Stop
     Write-Host "  ContentDeliveryManager: suggestions disabled"
 } catch { Write-Host "  ContentDeliveryManager warning: $($_.Exception.Message)" }
 
@@ -85,7 +85,9 @@ foreach ($key in $startupKeys) {
     foreach ($entry in $startupEntriesToRemove) {
         try {
             Remove-ItemProperty -Path $key -Name $entry -ErrorAction SilentlyContinue
-        } catch {}
+        } catch {
+            Write-Host "  Startup cleanup warning: key='$key', entry='$entry': $($_.Exception.Message)"
+        }
     }
 }
 Write-Host "  Startup: common startup entries removed"
@@ -93,8 +95,8 @@ Write-Host "  Startup: common startup entries removed"
 # Disable the 'Start' menu recommended apps and news on first login
 try {
     $startPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
-    New-Item -Path $startPolicies -Force -ErrorAction SilentlyContinue | Out-Null
-    Set-ItemProperty -Path $startPolicies -Name 'HideRecentlyAddedApps' -Value 1 -Type DWord -ErrorAction SilentlyContinue
+    New-Item -Path $startPolicies -Force -ErrorAction Stop | Out-Null
+    Set-ItemProperty -Path $startPolicies -Name 'HideRecentlyAddedApps' -Value 1 -Type DWord -ErrorAction Stop
     Write-Host "  Start menu: recently added apps hidden"
 } catch { Write-Host "  Start menu warning: $($_.Exception.Message)" }
 

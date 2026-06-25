@@ -26,8 +26,8 @@ Write-Log -LogFile $script:LogFile -Message "Applying blank desktop hardening...
 # modal onto the desktop on every boot.
 try {
   $reliability = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability'
-  New-Item -Path $reliability -Force -ErrorAction SilentlyContinue | Out-Null
-  Set-ItemProperty -Path $reliability -Name 'ShutdownReasonOn' -Value 0 -Type DWord
+  New-Item -Path $reliability -Force -ErrorAction Stop | Out-Null
+  Set-ItemProperty -Path $reliability -Name 'ShutdownReasonOn' -Value 0 -Type DWord -ErrorAction Stop
   Write-Log -LogFile $script:LogFile -Message "Shutdown Event Tracker disabled"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Shutdown Event Tracker warning: $($_.Exception.Message)"
@@ -36,10 +36,10 @@ try {
 # Disable Edge first-run experience and startup boost (Edge opens on first login otherwise)
 try {
   $edgePolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
-  New-Item -Path $edgePolicies -Force -ErrorAction SilentlyContinue | Out-Null
-  Set-ItemProperty -Path $edgePolicies -Name 'HideFirstRunExperience' -Value 1 -Type DWord
-  Set-ItemProperty -Path $edgePolicies -Name 'StartupBoostEnabled' -Value 0 -Type DWord
-  Set-ItemProperty -Path $edgePolicies -Name 'BackgroundModeEnabled' -Value 0 -Type DWord
+  New-Item -Path $edgePolicies -Force -ErrorAction Stop | Out-Null
+  Set-ItemProperty -Path $edgePolicies -Name 'HideFirstRunExperience' -Value 1 -Type DWord -ErrorAction Stop
+  Set-ItemProperty -Path $edgePolicies -Name 'StartupBoostEnabled' -Value 0 -Type DWord -ErrorAction Stop
+  Set-ItemProperty -Path $edgePolicies -Name 'BackgroundModeEnabled' -Value 0 -Type DWord -ErrorAction Stop
   Write-Log -LogFile $script:LogFile -Message "Edge first-run and startup boost disabled"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Edge policy warning: $($_.Exception.Message)"
@@ -47,10 +47,11 @@ try {
 
 # Disable OneDrive from launching at startup
 try {
+  # OneDrive entry may not exist; suppress the not-found error specifically
   Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'OneDrive' -ErrorAction SilentlyContinue
   $oneDrivePolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive'
-  New-Item -Path $oneDrivePolicies -Force -ErrorAction SilentlyContinue | Out-Null
-  Set-ItemProperty -Path $oneDrivePolicies -Name 'DisableFileSyncNGSC' -Value 1 -Type DWord
+  New-Item -Path $oneDrivePolicies -Force -ErrorAction Stop | Out-Null
+  Set-ItemProperty -Path $oneDrivePolicies -Name 'DisableFileSyncNGSC' -Value 1 -Type DWord -ErrorAction Stop
   Write-Log -LogFile $script:LogFile -Message "OneDrive startup disabled"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "OneDrive startup warning: $($_.Exception.Message)"
@@ -59,20 +60,15 @@ try {
 # Disable Windows Security notification icon from appearing on the desktop
 try {
   $notifications = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications'
-  New-Item -Path $notifications -Force -ErrorAction SilentlyContinue | Out-Null
-  Set-ItemProperty -Path $notifications -Name 'DisableNotifications' -Value 1 -Type DWord
+  New-Item -Path $notifications -Force -ErrorAction Stop | Out-Null
+  Set-ItemProperty -Path $notifications -Name 'DisableNotifications' -Value 1 -Type DWord -ErrorAction Stop
   Write-Log -LogFile $script:LogFile -Message "Windows Security notifications disabled"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Security notifications warning: $($_.Exception.Message)"
 }
-
-# Suppress "Windows needs your current credentials" / Network Location Wizard prompts
-try {
-  Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'LimitBlankPasswordUse' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-  Write-Log -LogFile $script:LogFile -Message "Blank password restriction disabled"
-} catch {
-  Write-Log -LogFile $script:LogFile -Message "Blank password warning: $($_.Exception.Message)"
-}
+# Note: LimitBlankPasswordUse is intentionally NOT modified here.
+# Disabling the blank-password restriction (setting it to 0) weakens system security
+# and is not required for a blank desktop. The default value (1) is preserved.
 
 Write-Log -LogFile $script:LogFile -Message "Blank desktop hardening applied"
 

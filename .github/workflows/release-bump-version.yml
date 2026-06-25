@@ -22,7 +22,7 @@ on:
           - pypi/sandbox
           - pypi/sandbox-apps
           - pypi/som
-          - pypi/train
+          - pypi/cloud
           - npm/cli
           - npm/computer
           - npm/core
@@ -119,8 +119,8 @@ jobs:
               echo "directory=libs/python/som" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
-            "pypi/train")
-              echo "directory=libs/python/cua-train" >> $GITHUB_OUTPUT
+            "pypi/cloud")
+              echo "directory=libs/python/cua-cloud" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "npm/cli")
@@ -425,13 +425,13 @@ jobs:
           echo "SOM version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Capture bumped train version
-        if: ${{ inputs.service == 'pypi/train' }}
-        id: train_version
+      - name: Capture bumped cloud version
+        if: ${{ inputs.service == 'pypi/cloud' }}
+        id: cloud_version
         run: |
-          cd libs/python/cua-train
+          cd libs/python/cua-cloud
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "Train version: $VERSION"
+          echo "Cloud version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped npm/cli version

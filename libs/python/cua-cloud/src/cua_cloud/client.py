@@ -1,4 +1,4 @@
-"""TrainClient — authenticated httpx client for the Cua Cloud API."""
+"""CloudClient — authenticated httpx client for the Cua Cloud API."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import time
 import httpx
 
 
-class TrainClient:
+class CloudClient:
     """Authenticated client for the Cua Cloud API.
 
     Obtain via :meth:`from_key` using a per-user key (``ukey-…``) from
@@ -50,7 +50,7 @@ class TrainClient:
         client_id: str,
         client_secret: str,
         base_url: str = _DEFAULT_BASE_URL,
-    ) -> "TrainClient":
+    ) -> "CloudClient":
         """Exchange client credentials for a bearer token.
 
         Args:

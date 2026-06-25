@@ -77,8 +77,10 @@ mod platform {
         WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     };
 
-    /// Glow band thickness in pixels, drawn outside the target window rect.
-    const GLOW: i32 = 10;
+    /// Outward glow radius in pixels. The glow starts exactly at the window's
+    /// bounding box (no gap) and fades outward over this many pixels, so the
+    /// window looks like it has a soft red blurred border + shadow.
+    const GLOW: i32 = 18;
     const TARGET_FPS_MS: u64 = 33;
 
     pub fn spawn(
@@ -274,30 +276,51 @@ mod platform {
             }
         }
 
-        /// Paint a glowing hollow rectangle frame into the buffer. The band is
-        /// `band` px wide around the edge; alpha falls off toward the inside so
-        /// it reads as a glow. Interior is fully transparent (click-through is
-        /// already guaranteed by WS_EX_TRANSPARENT).
-        fn paint_border(&mut self, w: i32, h: i32, band: i32, pulse: f64) {
-            // Cua amber/red recording color (distinct from the cyan focus rect).
-            let (cr, cg, cb) = (255.0f64, 70.0, 40.0);
+        /// Paint a red glow that emanates **outward** from the target window's
+        /// bounding box. The buffer is the window inflated by `glow` on all
+        /// sides; the inner rect `[glow, glow, w-glow, h-glow]` is the window
+        /// itself and stays fully transparent (its content shows through, and
+        /// WS_EX_TRANSPARENT keeps it click-through). For pixels outside the
+        /// window, alpha is brightest right at the window edge (no gap) and
+        /// falls off to 0 at `glow` px out — a soft blurred border + shadow.
+        fn paint_border(&mut self, w: i32, h: i32, glow: i32, pulse: f64) {
+            // Bright recording red (distinct from the cyan focus rect).
+            let (cr, cg, cb) = (255.0f64, 45.0, 30.0);
             let buf = unsafe { std::slice::from_raw_parts_mut(self.bits, (w * h * 4) as usize) };
-            let band = band.max(1);
+            let glow = glow.max(1);
+            let glow_f = glow as f64;
+            // Inner rect = the window bbox within the inflated buffer.
+            let (il, it, ir, ib) = (glow, glow, w - 1 - glow, h - 1 - glow);
             for y in 0..h {
                 for x in 0..w {
-                    let d_edge = x.min(y).min(w - 1 - x).min(h - 1 - y);
                     let i = ((y * w + x) * 4) as usize;
-                    if d_edge >= band {
-                        // interior: transparent
+                    // Distance the pixel lies OUTSIDE the window rect (0 inside).
+                    let dx = (il - x).max(x - ir).max(0) as f64;
+                    let dy = (it - y).max(y - ib).max(0) as f64;
+                    if dx == 0.0 && dy == 0.0 {
+                        // inside the window: fully transparent
                         buf[i] = 0;
                         buf[i + 1] = 0;
                         buf[i + 2] = 0;
                         buf[i + 3] = 0;
                         continue;
                     }
-                    // falloff: 1.0 at the outer edge -> 0 at the band's inner edge
-                    let f = 1.0 - (d_edge as f64 / band as f64);
-                    let a = (f * f * 255.0 * pulse).clamp(0.0, 255.0);
+                    let d = (dx * dx + dy * dy).sqrt();
+                    if d > glow_f {
+                        buf[i] = 0;
+                        buf[i + 1] = 0;
+                        buf[i + 2] = 0;
+                        buf[i + 3] = 0;
+                        continue;
+                    }
+                    // 1.0 at the window edge -> 0.0 at the outer edge of the glow.
+                    let f = 1.0 - d / glow_f;
+                    let mut a = f * f * 235.0 * pulse;
+                    // Crisp bright line hugging the window edge (no gap).
+                    if d <= 2.0 {
+                        a = a.max(230.0 * pulse);
+                    }
+                    let a = a.clamp(0.0, 255.0);
                     let af = a / 255.0;
                     // premultiplied BGRA for ULW_ALPHA
                     buf[i] = (cb * af) as u8;

@@ -835,6 +835,12 @@ impl ToolRegistry {
         )));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
         self.register(Box::new(crate::recording_tools::ProcessRecordingTool));
+        self.register(Box::new(crate::recording_tools::StartDemonstrationTool::new(
+            self.recording.clone(),
+        )));
+        self.register(Box::new(crate::recording_tools::StopDemonstrationTool::new(
+            self.recording.clone(),
+        )));
     }
 
     /// Install the encrypted history hook and its two permission-gated,

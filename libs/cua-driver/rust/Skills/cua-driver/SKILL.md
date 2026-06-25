@@ -56,7 +56,9 @@ Cross-cutting topics also have their own files:
 - `BROWSER.md` — exact native-window binding, explicit browser preparation,
   typed Chromium/Electron page tools, input trust classes, and native
   fallbacks for browser chrome and unsupported engines.
-- `RECORDING.md` — session recording + `replay_trajectory`.
+- `RECORDING.md` — session recording, human demonstrations, and
+  `replay_trajectory`.
+- `DEMONSTRATION.md` — turning a human demonstration into a reusable skill.
 
 Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry

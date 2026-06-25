@@ -943,6 +943,33 @@ fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool>
 
 // ── click ─────────────────────────────────────────────────────────────────────
 
+/// Build the result text for a coordinate-based `click`.
+///
+/// X11 clicks are injected with `XSendEvent`, whose events carry a `send_event`
+/// flag that some toolkits deliberately ignore — GTK menus/popups while they
+/// hold a pointer grab, SDL, and Allegro are the known cases. On that path the
+/// event is dispatched but may never reach the application, and we cannot
+/// confirm delivery per click. Reporting a bare "✅ Clicked" there reads as
+/// guaranteed success, so the X11 path instead exposes the uncertainty and
+/// points at the reliable AT-SPI route. The Wayland virtual-pointer path and
+/// the AT-SPI `element_index` path deliver for real, so they keep the plain
+/// success line.
+///
+/// See trycua/cua#2022 — the pointer counterpart of the keyboard
+/// XSendEvent→XTEST migration in #1805.
+fn coord_click_result_text(x: f64, y: f64, count: usize, x11_synthetic: bool) -> String {
+    let base = format!("✅ Clicked at ({x:.1}, {y:.1}) × {count}.");
+    if x11_synthetic {
+        format!(
+            "{base} (X11 synthetic event — GTK menus/popups, SDL and Allegro may \
+             ignore it; if the target didn't respond, retry it via element_index \
+             for AT-SPI delivery.)"
+        )
+    } else {
+        base
+    }
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -1122,10 +1149,44 @@ impl Tool for ClickTool {
             crate::input::send_click(xid, xi, yi, count, button)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Clicked at ({x:.1}, {y:.1}) × {count}.")),
+            Ok(Ok(())) => ToolResult::text(coord_click_result_text(
+                x,
+                y,
+                count,
+                !crate::wayland::is_wayland(),
+            )),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod coord_click_result_text_tests {
+    use super::coord_click_result_text;
+
+    #[test]
+    fn x11_synthetic_path_exposes_delivery_uncertainty() {
+        let msg = coord_click_result_text(12.0, 34.5, 1, true);
+        // Keeps the actionable facts an agent already relies on…
+        assert!(msg.contains("(12.0, 34.5)"), "keeps coordinates: {msg}");
+        assert!(msg.contains("× 1"), "keeps count: {msg}");
+        // …and stops asserting delivery: names the mechanism and the reliable route.
+        assert!(
+            msg.to_ascii_lowercase().contains("synthetic"),
+            "names the delivery mechanism: {msg}"
+        );
+        assert!(
+            msg.contains("element_index"),
+            "points at the reliable AT-SPI route: {msg}"
+        );
+    }
+
+    #[test]
+    fn delivering_paths_keep_plain_success() {
+        // Wayland virtual-pointer / AT-SPI element paths deliver for real.
+        let msg = coord_click_result_text(12.0, 34.0, 2, false);
+        assert_eq!(msg, "✅ Clicked at (12.0, 34.0) × 2.");
     }
 }
 

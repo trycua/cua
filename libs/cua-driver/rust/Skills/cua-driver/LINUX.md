@@ -83,7 +83,7 @@ ask the user.
 | Intent | Status |
 |---|---|
 | Snapshot AT-SPI tree | ✅ GTK3/4, Qt5/6, wxWidgets, Electron (GTK4/Qt6 can be partial — re-snapshot) |
-| Pixel click | ✅ background `XSendEvent`, no focus steal, no pointer move |
+| Pixel click | ✅ background `XSendEvent`, no focus steal, no pointer move — but GTK menus/popups, SDL and Allegro filter synthetic events, so prefer **element-indexed click** for those (trycua/cua#2022) |
 | Element-indexed click | ✅ AT-SPI `do_action` |
 | Type text | ✅ AT-SPI focus-free, with XTest / pty fallback for the focused widget |
 | Hotkey / `press_key` | ✅ |

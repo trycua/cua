@@ -10,6 +10,15 @@
 //! `crate::tty`. We deliberately do NOT fall back to the XTest extension for
 //! them, because XTest delivers to the *focused* window and would break the
 //! no-focus-steal contract.
+//!
+//! The same `send_event`-filtering bites *pointer* clicks too: GTK menus/popups
+//! under a grab, SDL, and Allegro drop the synthetic button events from
+//! [`send_click`], so a `click` is dispatched but never reaches the app — while
+//! `keyboard` input was migrated to XTEST in #1805. We can't confirm pointer
+//! delivery per click on this path, so the `click` tool no longer reports a bare
+//! "✅ Clicked" for it and points callers at the reliable AT-SPI `element_index`
+//! route (see `tools::impl_::coord_click_result_text`). Making the click itself
+//! land focus-free is tracked in trycua/cua#2022.
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::HashMap;

@@ -45,7 +45,7 @@ impl Tool for GetScreenSizeTool {
 /// The previous NSScreen-based implementation required `MainThreadMarker::new()`
 /// which always returns `None` on async tokio threads, causing the tool to
 /// return an error even when a display is attached.
-fn main_screen_size() -> Option<(i64, i64, f64)> {
+pub(crate) fn main_screen_size() -> Option<(i64, i64, f64)> {
     use core_graphics::display::{CGMainDisplayID, CGDisplayBounds};
 
     // SAFETY: CGMainDisplayID / CGDisplayBounds are thread-safe CG APIs.

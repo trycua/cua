@@ -21,6 +21,7 @@ mod scroll;
 // etc.) live elsewhere under CuaDriverCore::Capture and are reached
 // through GetWindowStateTool.
 pub(crate) mod get_screen_size;
+mod get_desktop_state;
 mod get_cursor_position;
 mod move_cursor;
 mod cursor_tools;
@@ -353,6 +354,7 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     // screenshot path is `get_window_state` with `capture_mode:"vision"`.
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
+    registry.register(Box::new(get_desktop_state::GetDesktopStateTool));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));
     registry.register(Box::new(cursor_tools::SetAgentCursorEnabledTool::new(state.clone())));

@@ -201,6 +201,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "screen.capture.region",
         ],
         "get_screen_size" => &["screen.dimensions"],
+        "get_desktop_state" => &["screen.capture", "screen.dimensions"],
         "get_cursor_position" => &["screen.cursor.position"],
 
         // ── accessibility / window state ─────────────────────────────
@@ -520,7 +521,8 @@ mod capability_tests {
         // keyboard
         "type_text", "type_text_chars", "press_key", "hotkey", "set_value",
         // screen
-        "zoom", "get_screen_size", "get_cursor_position",
+        "zoom", "get_screen_size", "get_desktop_state",
+        "get_cursor_position",
         // accessibility
         "get_accessibility_tree", "get_window_state",
         // app / window

@@ -320,14 +320,74 @@ impl Tool for ListWindowsTool {
             lines.push(format!("  [xid={}] pid={:?} \"{}\" {}x{}+{}+{}",
                 w.xid, w.pid, w.title, w.width, w.height, w.x, w.y));
         }
-        let structured = json!({ "windows": windows.iter().map(|w| json!({
-            "window_id": w.xid,
-            "pid": w.pid,
-            "title": w.title,
-            "x": w.x, "y": w.y,
-            "width": w.width, "height": w.height,
-        })).collect::<Vec<_>>() });
+        let structured = json!({ "windows": windows.iter().map(window_record_json).collect::<Vec<_>>() });
         ToolResult::text(lines.join("\n")).with_structured(structured)
+    }
+}
+
+/// Build the structured `list_windows` record for one Linux window.
+///
+/// Emits the canonical cross-platform shape — geometry nested under a
+/// `bounds: {x,y,width,height}` object plus `app_name` / `is_on_screen`,
+/// matching the macOS and Windows backends (#2017) — while KEEPING the
+/// historical flat `x/y/width/height` fields inline as a legacy alias so
+/// existing Linux callers don't break. Fully additive; no field removed,
+/// no schema_version bump.
+///
+/// The Linux `WindowInfo` struct (see `crate::x11::WindowInfo`) exposes
+/// neither an app name nor a visibility flag, so `app_name` is an empty
+/// string and `is_on_screen` defaults to `true` — the same best-effort
+/// default the Windows backend uses.
+fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
+    json!({
+        "window_id": w.xid,
+        "pid": w.pid,
+        "app_name": "",
+        "title": w.title,
+        // Canonical cross-platform geometry (macOS/Windows parity).
+        "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+        "is_on_screen": true,
+        // Legacy alias: flat fields kept inline for pre-existing callers.
+        "x": w.x, "y": w.y,
+        "width": w.width, "height": w.height,
+    })
+}
+
+#[cfg(test)]
+mod list_windows_tests {
+    use super::*;
+
+    #[test]
+    fn record_has_bounds_and_flat_legacy_fields() {
+        let w = crate::x11::WindowInfo {
+            xid: 42,
+            pid: Some(1234),
+            title: "Example".to_owned(),
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 400,
+        };
+        let rec = window_record_json(&w);
+
+        // Canonical cross-platform shape: nested `bounds` object.
+        let bounds = rec.get("bounds").expect("record must carry a `bounds` object");
+        assert_eq!(bounds["x"], json!(10));
+        assert_eq!(bounds["y"], json!(20));
+        assert_eq!(bounds["width"], json!(300));
+        assert_eq!(bounds["height"], json!(400));
+
+        // Legacy alias: flat fields must still be present.
+        assert_eq!(rec["x"], json!(10));
+        assert_eq!(rec["y"], json!(20));
+        assert_eq!(rec["width"], json!(300));
+        assert_eq!(rec["height"], json!(400));
+
+        // Cross-platform companions.
+        assert_eq!(rec["app_name"], json!(""));
+        assert_eq!(rec["is_on_screen"], json!(true));
+        assert_eq!(rec["window_id"], json!(42));
+        assert_eq!(rec["title"], json!("Example"));
     }
 }
 

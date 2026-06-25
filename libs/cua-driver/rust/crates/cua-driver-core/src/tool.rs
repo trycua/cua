@@ -670,6 +670,7 @@ impl ToolRegistry {
             self.replay_registry.clone(),
         )));
         self.register(Box::new(crate::recording_tools::InstallFfmpegTool));
+        self.register(Box::new(crate::recording_tools::ProcessRecordingTool));
     }
 
     /// Register the platform-independent session-lifecycle tools

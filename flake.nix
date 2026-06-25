@@ -102,6 +102,36 @@
                 };
               };
 
+              # RED regressions for issue #2022: toolkit-specific X11 click
+              # repros where cua-driver reports success but the target toolkit
+              # ignores XSendEvent button input (`send_event = True`).
+              cua-driver-issue-2022-gtk3-mini-menubar-regression = import ./nix/cua-driver/tests/issue-2022-gtk3-mini-menubar-regression.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
+              cua-driver-issue-2022-gtk3-mousepad-menu-popup-regression = import ./nix/cua-driver/tests/linux-gtk3-mousepad-menu-popup-regression-2022.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
+              cua-driver-issue-2022-sdl-click-regression = import ./nix/cua-driver/tests/linux-sdl-send-event-click-regression-issue-2022.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+                cuaDriverModule = {
+                  imports = [ ./nix/cua-driver/module.nix ];
+                  services.cua-driver.package = cuaDriverPackage;
+                };
+              };
+
               # Multi-cursor (MPX) parallel-drag test on a REAL Xorg brought up
               # by NixOS services.xserver (dummy video + libinput, on a seat via
               # a display manager). This is the CI-viable replacement for the

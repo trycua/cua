@@ -306,6 +306,20 @@ mod tests {
                 None,
             )
             .expect("CreateWindowExW failed");
+
+            // RAII guard so the visible test window is always destroyed, even
+            // if a precondition assertion below panics before the explicit
+            // teardown runs.
+            struct WindowGuard(HWND);
+            impl Drop for WindowGuard {
+                fn drop(&mut self) {
+                    unsafe {
+                        let _ = DestroyWindow(self.0);
+                    }
+                }
+            }
+            let window_guard = WindowGuard(hwnd);
+
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             pump_messages(5);
 
@@ -325,9 +339,10 @@ mod tests {
             let windows = list_windows(Some(pid));
             let found = windows.iter().find(|w| w.hwnd == hwnd.0 as u64).cloned();
 
-            // Tear the window down before asserting so a failed assert can't
-            // leak it onto the desktop for the rest of the test run.
-            let _ = DestroyWindow(hwnd);
+            // Tear the window down before the final asserts. Dropping the guard
+            // runs DestroyWindow; if an assertion above already panicked, the
+            // guard's Drop ran during unwind, so the window is gone either way.
+            drop(window_guard);
             pump_messages(2);
 
             let found = found.expect(

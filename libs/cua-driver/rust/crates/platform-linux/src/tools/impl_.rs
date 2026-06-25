@@ -19,11 +19,12 @@ use cursor_overlay::CursorRegistry;
 #[derive(Clone)]
 pub struct DriverConfig {
     pub capture_mode: String,
+    pub capture_scope: String,
     pub max_image_dimension: u32,
 }
 
 impl Default for DriverConfig {
-    fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 1568 } }
+    fn default() -> Self { Self { capture_mode: "som".into(), capture_scope: "window".into(), max_image_dimension: 1568 } }
 }
 
 /// Load `DriverConfig` from `~/.cua-driver/config.json`, falling back to
@@ -3373,6 +3374,7 @@ impl Tool for GetConfigTool {
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "linux",
                 "capture_mode": cfg.capture_mode,
+                "capture_scope": cfg.capture_scope,
                 "max_image_dimension": cfg.max_image_dimension,
                 "experimental_pip": pip_enabled,
                 "experimental_pip_geometry": pip_geometry
@@ -3405,6 +3407,7 @@ impl Tool for SetConfigTool {
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape. Default capture mode for get_window_state."},
+                "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window or whole desktop. Default window."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},
                 "experimental_pip_geometry":{"type":"string","description":"PiP window size + optional position in `WxH` or `WxH+X+Y` form."}
@@ -3434,6 +3437,11 @@ impl Tool for SetConfigTool {
                         parts.push(format!("capture_mode={s}"));
                     }
                     None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
+                },
+                "capture_scope" => match val.as_str() {
+                    Some(s @ ("window" | "desktop")) => { cfg.capture_scope = s.to_owned(); parts.push(format!("capture_scope={s}")); }
+                    Some(other) => return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{other}\".")),
+                    None => return ToolResult::error(format!("`capture_scope` must be a string, got {val}.")),
                 },
                 "max_image_dimension" => match val.as_u64() {
                     Some(n) => {
@@ -3469,7 +3477,7 @@ impl Tool for SetConfigTool {
                     None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
                 },
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                    "Unknown config key `{other}`. Known: capture_mode, capture_scope, max_image_dimension, experimental_pip, experimental_pip_geometry."
                 )),
             }
         }
@@ -3480,6 +3488,13 @@ impl Tool for SetConfigTool {
             }
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;
+        }
+        if let Some(scope) = args.opt_str("capture_scope") {
+            if scope != "window" && scope != "desktop" {
+                return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."));
+            }
+            parts.push(format!("capture_scope={scope}"));
+            cfg.capture_scope = scope;
         }
         if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
@@ -3514,6 +3529,7 @@ impl Tool for SetConfigTool {
         ToolResult::text(msg)
             .with_structured(json!({
                 "capture_mode": cfg.capture_mode,
+                "capture_scope": cfg.capture_scope,
                 "max_image_dimension": cfg.max_image_dimension,
                 "experimental_pip": pip_enabled,
                 "experimental_pip_geometry": pip_geometry
@@ -3928,5 +3944,15 @@ mod click_button_schema_tests {
         let lc = desc.to_ascii_lowercase();
         assert!(lc.contains("left"), "description should mention default");
         assert!(lc.contains("wayland"), "description should call out wayland fallback");
+    }
+}
+
+#[cfg(test)]
+mod driver_config_tests {
+    use super::DriverConfig;
+
+    #[test]
+    fn capture_scope_defaults_to_window() {
+        assert_eq!(DriverConfig::default().capture_scope, "window");
     }
 }

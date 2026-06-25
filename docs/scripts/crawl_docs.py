@@ -128,6 +128,7 @@ def is_valid_url(url: str) -> bool:
 # ---------------------------------------------------------------------------
 
 async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple[str, str] | None:
+    """Fetch *url* and return ``(final_url, html)`` or ``None`` on failure."""
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
             if resp.status != 200:
@@ -144,6 +145,7 @@ async def fetch_page(session: aiohttp.ClientSession, url: str) -> tuple[str, str
 
 
 def extract_links(base_url: str, html: str) -> list[str]:
+    """Extract and normalise valid links from *html* relative to *base_url*."""
     soup = BeautifulSoup(html, "html.parser")
     links: list[str] = []
     for tag in soup.find_all("a", href=True):
@@ -159,6 +161,7 @@ def extract_links(base_url: str, html: str) -> list[str]:
 
 
 def extract_text(url: str, html: str) -> dict:
+    """Strip navigation chrome from *html* and return a ``{url, title, text}`` dict."""
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
@@ -170,6 +173,7 @@ def extract_text(url: str, html: str) -> dict:
 
 
 async def crawl(seed_urls: list[str]) -> list[dict]:
+    """BFS crawl starting from *seed_urls*; return list of ``{url, title, text}`` dicts."""
     visited: set[str] = set()
     queue: list[str] = list(seed_urls)
     pages: list[dict] = []
@@ -209,6 +213,7 @@ async def crawl(seed_urls: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """Split *text* into overlapping chunks of roughly *chunk_size* chars."""
     if len(text) <= chunk_size:
         return [text]
     chunks: list[str] = []
@@ -219,6 +224,8 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         if boundary > start + overlap:
             end = boundary
         chunks.append(text[start:end].strip())
+        if end >= len(text):
+            break
         start = end - overlap
     return [c for c in chunks if c]
 
@@ -228,6 +235,7 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 # ---------------------------------------------------------------------------
 
 def build_databases(pages: list[dict], out_dir: Path) -> None:
+    """Embed *pages* with OpenAI and write LanceDB + SQLite FTS5 databases to *out_dir*."""
     import os
     import lancedb
     import openai
@@ -294,6 +302,7 @@ def build_databases(pages: list[dict], out_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """CLI entry point: parse arguments, crawl, and optionally build databases."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out-dir", default="./docs_db_local", help="Output directory for databases")
     parser.add_argument("--no-embed", action="store_true", help="Crawl only; skip embedding and database build")

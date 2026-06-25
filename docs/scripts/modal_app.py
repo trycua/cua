@@ -266,6 +266,8 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         if boundary > start + overlap:
             end = boundary
         chunks.append(text[start:end].strip())
+        if end >= len(text):
+            break
         start = end - overlap
     return [c for c in chunks if c]
 

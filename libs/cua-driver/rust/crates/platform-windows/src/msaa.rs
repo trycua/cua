@@ -63,6 +63,29 @@ const ROLE_SYSTEM_SPLITBUTTON: i32 = 0x3E;
 const MAX_DEPTH: usize = 25;
 const MAX_TOTAL_ELEMENTS: usize = 5000;
 
+// MSAA state flags (subset from oleacc.h STATE_SYSTEM_*).
+const STATE_SYSTEM_UNAVAILABLE: i32 = 0x0000_0001;
+const STATE_SYSTEM_SELECTED: i32 = 0x0000_0002;
+const STATE_SYSTEM_FOCUSED: i32 = 0x0000_0004;
+const STATE_SYSTEM_INVISIBLE: i32 = 0x0000_8000;
+const STATE_SYSTEM_OFFSCREEN: i32 = 0x0001_0000;
+
+fn enabled_from_state(state: Option<i32>) -> bool {
+    state.map(|s| s & STATE_SYSTEM_UNAVAILABLE == 0).unwrap_or(true)
+}
+
+fn visible_from_state(state: Option<i32>, has_rect: bool) -> bool {
+    has_rect && state.map(|s| s & (STATE_SYSTEM_INVISIBLE | STATE_SYSTEM_OFFSCREEN) == 0).unwrap_or(true)
+}
+
+fn selected_from_state(state: Option<i32>) -> Option<bool> {
+    state.map(|s| s & STATE_SYSTEM_SELECTED != 0)
+}
+
+fn focused_from_state(state: Option<i32>) -> Option<bool> {
+    state.map(|s| s & STATE_SYSTEM_FOCUSED != 0)
+}
+
 /// Walk the MSAA tree for the window with the given HWND. Used as fallback
 /// for SAL/VCL targets where the UIA walker would hang.
 pub fn walk_msaa_tree(hwnd: u64) -> UiaTreeResult {
@@ -134,6 +157,10 @@ unsafe fn walk(
         .ok()
         .map(|b| b.to_string())
         .filter(|s| !s.trim().is_empty());
+    let state_int: Option<i32> = acc
+        .get_accState(&self_var)
+        .ok()
+        .and_then(|v| variant_to_i32(&v));
 
     // accLocation: out left, top, width, height (screen coords).
     let rect: Option<(i32, i32, i32, i32)> = {
@@ -179,7 +206,12 @@ unsafe fn walk(
                 name: name.clone(),
                 value: None,
                 automation_id: None,
+                class_name: Some("MSAA".into()),
                 help_text: None,
+                enabled: enabled_from_state(state_int),
+                visible: visible_from_state(state_int, rect.is_some()),
+                selected: selected_from_state(state_int),
+                focused: focused_from_state(state_int),
                 actions: actions.clone(),
                 element_ptr: ptr,
                 center_x,
@@ -196,7 +228,12 @@ unsafe fn walk(
                 name: name.clone(),
                 value: None,
                 automation_id: None,
+                class_name: Some("MSAA".into()),
                 help_text: None,
+                enabled: enabled_from_state(state_int),
+                visible: visible_from_state(state_int, rect.is_some()),
+                selected: selected_from_state(state_int),
+                focused: focused_from_state(state_int),
                 actions: Vec::new(),
                 element_ptr: ptr,
                 center_x: 0,
@@ -256,6 +293,29 @@ unsafe fn variant_to_i32(v: &VARIANT) -> Option<i32> {
 
 /// Map MSAA role id → control_type string. For roles not in this list we
 /// emit `Role_<hex>` so the agent at least sees something diagnostic.
+#[cfg(test)]
+mod state_flag_tests {
+    use super::{enabled_from_state, focused_from_state, selected_from_state, visible_from_state, STATE_SYSTEM_FOCUSED, STATE_SYSTEM_INVISIBLE, STATE_SYSTEM_OFFSCREEN, STATE_SYSTEM_SELECTED, STATE_SYSTEM_UNAVAILABLE};
+
+    #[test]
+    fn derives_enabled_visible_selected_and_focused_from_msaa_state_bits() {
+        let state = STATE_SYSTEM_SELECTED | STATE_SYSTEM_FOCUSED;
+        assert!(enabled_from_state(Some(state)));
+        assert!(visible_from_state(Some(state), true));
+        assert_eq!(selected_from_state(Some(state)), Some(true));
+        assert_eq!(focused_from_state(Some(state)), Some(true));
+    }
+
+    #[test]
+    fn unavailable_and_offscreen_state_clear_enabled_and_visible() {
+        let state = STATE_SYSTEM_UNAVAILABLE | STATE_SYSTEM_OFFSCREEN | STATE_SYSTEM_INVISIBLE;
+        assert!(!enabled_from_state(Some(state)));
+        assert!(!visible_from_state(Some(state), true));
+        assert_eq!(selected_from_state(Some(state)), Some(false));
+        assert_eq!(focused_from_state(Some(state)), Some(false));
+    }
+}
+
 fn role_to_control_type(role: i32) -> String {
     match role {
         ROLE_SYSTEM_TITLEBAR => "TitleBar",

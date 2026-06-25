@@ -575,6 +575,104 @@ pub struct GetWindowStateTool {
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+
+const UIA_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+async fn await_uia_walk_with_timeout(
+    walk: tokio::task::JoinHandle<crate::uia::UiaTreeResult>,
+    tool_name: &str,
+    hwnd: u64,
+    timeout: std::time::Duration,
+) -> Result<crate::uia::UiaTreeResult, ToolResult> {
+    match tokio::time::timeout(timeout, walk).await {
+        Ok(Ok(tr)) => Ok(tr),
+        Ok(Err(e)) => Err(ToolResult::error(format!("{tool_name} UIA walk failed: {e}"))),
+        Err(_) => Err(ToolResult::error(format!(
+            "{tool_name} timed out after {}s while walking UIA for hwnd 0x{hwnd:x}",
+            timeout.as_secs()
+        ))),
+    }
+}
+
+fn screenshot_metadata(width: u32, height: u32, original_width: Option<u32>) -> serde_json::Value {
+    let scale_factor = original_width
+        .and_then(|ow| if width > 0 { Some(ow as f64 / width as f64) } else { None })
+        .unwrap_or(1.0);
+    json!({
+        "width": width,
+        "height": height,
+        "original_width": original_width,
+        "scale_factor": scale_factor,
+        "coordinate_space": if scale_factor == 1.0 { "window_pixels" } else { "scaled_window_pixels" },
+        "capture_scope": "window",
+    })
+}
+
+fn structured_element_record(
+    n: &crate::uia::UiaNode,
+    pid: u32,
+    hwnd: u64,
+    snapshot_id: u32,
+    target_window_bounds: Option<(i32, i32, i32, i32)>,
+) -> Option<serde_json::Value> {
+    let idx = n.element_index?;
+    let label = n.name.clone()
+        .or_else(|| n.value.clone())
+        .or_else(|| n.automation_id.clone())
+        .or_else(|| n.help_text.clone());
+    let element_token = cua_driver_core::element_token::token_for(snapshot_id, idx);
+    let backend = if n.msaa_role.is_some() { "msaa" } else { "uia" };
+    let stable_id = n
+        .automation_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .map(|id| format!("{backend}:{pid}:{hwnd}:automation_id:{id}"));
+    let snapshot_debug_id = format!("{backend}:{pid}:{hwnd}:{idx}:{}:{}", n.automation_id.as_deref().unwrap_or(""), n.name.as_deref().unwrap_or(""));
+    let mut entry = json!({
+        "element_index": idx,
+        "element_token": element_token,
+        "stable_id": stable_id,
+        "snapshot_debug_id": snapshot_debug_id,
+        "role": n.control_type.clone(),
+        "name": n.name.clone(),
+        "value": n.value.clone(),
+        "text": n.value.clone(),
+        "label": label,
+        "enabled": n.enabled,
+        "focused": n.focused,
+        "selected": n.selected,
+        "visible": n.visible,
+        "automation_id": n.automation_id.clone(),
+        "class_name": n.class_name.clone(),
+        "actions": n.actions.clone(),
+        "backend": backend,
+        "depth": n.depth,
+    });
+    if let Some(parent) = n.parent_element_index { entry["parent_index"] = json!(parent); }
+    if let Some((l, t, r, b)) = n.rect {
+        let width = (r - l).max(0);
+        let height = (b - t).max(0);
+        entry["frame"] = json!({"x": l, "y": t, "w": width, "h": height});
+        entry["bounds_screen"] = json!({"x": l, "y": t, "width": width, "height": height});
+        entry["center_screen"] = json!({"x": n.center_x, "y": n.center_y});
+        if let Some((wx, wy, _ww, _wh)) = target_window_bounds {
+            entry["bounds_window"] = json!({"x": l - wx, "y": t - wy, "width": width, "height": height});
+            entry["center_window"] = json!({"x": n.center_x - wx, "y": n.center_y - wy});
+        } else {
+            entry["bounds_window"] = serde_json::Value::Null;
+            entry["center_window"] = serde_json::Value::Null;
+        }
+    } else {
+        entry["frame"] = serde_json::Value::Null;
+        entry["bounds_screen"] = serde_json::Value::Null;
+        entry["bounds_window"] = serde_json::Value::Null;
+        entry["center_screen"] = serde_json::Value::Null;
+        entry["center_window"] = serde_json::Value::Null;
+        entry["geometry_error"] = json!("UIA/MSAA did not report a usable bounding rectangle");
+    }
+    Some(entry)
+}
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
@@ -648,7 +746,11 @@ impl Tool for GetWindowStateTool {
         // Validate window belongs to pid — Swift's hard error.
         let windows_for_pid = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
             .await.unwrap_or_default();
-        if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
+        let target_window_bounds = windows_for_pid
+            .iter()
+            .find(|w| w.hwnd == hwnd)
+            .map(|w| (w.x, w.y, w.width, w.height));
+        if target_window_bounds.is_none() {
             // Check if the window exists under a different pid.
             let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
                 .await.unwrap_or_default();
@@ -749,7 +851,7 @@ impl Tool for GetWindowStateTool {
         match result {
             Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
-                let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                let mut structured = json!({ "window_id": hwnd, "pid": pid, "capture_scope": "window", "capture_mode": capture_mode });
 
                 if let Some(tr) = tree_opt {
                     let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
@@ -784,39 +886,7 @@ impl Tool for GetWindowStateTool {
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
-                        .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label`: name → value → automation_id → help_text.
-                            let label = n.name.clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.automation_id.clone())
-                                .or_else(|| n.help_text.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                // Surface 6: opaque token paired to the
-                                // integer index. See cua-driver-core's
-                                // `element_token` module for the format
-                                // and validity contract.
-                                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
-                                "role": n.control_type,
-                                "depth": n.depth,
-                            });
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((l, t, r, b)) = n.rect {
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
-                                });
-                            }
-                            Some(entry)
-                        })
+                        .filter_map(|n| structured_element_record(n, pid, hwnd, snapshot_id, target_window_bounds))
                         .collect();
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
@@ -842,6 +912,7 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    structured["screenshot"] = screenshot_metadata(w, h, orig_w);
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
@@ -997,6 +1068,348 @@ fn inject_chromium_anti_throttling_flags(extra_args: &mut Vec<String>) {
         }
     }
     let _ = CHROMIUM_ANTI_THROTTLING_FLAGS; // referenced for docs alignment
+}
+
+
+
+// ── find_element ─────────────────────────────────────────────────────────────
+
+pub struct FindElementTool { state: Arc<ToolState> }
+
+static FIND_ELEMENT_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn str_matches(haystack: Option<&str>, needle: &str, exact: bool) -> bool {
+    let Some(haystack) = haystack else { return false; };
+    if exact { haystack == needle } else { haystack.to_lowercase().contains(&needle.to_lowercase()) }
+}
+
+#[async_trait]
+impl Tool for FindElementTool {
+    fn def(&self) -> &ToolDef {
+        FIND_ELEMENT_DEF.get_or_init(|| ToolDef {
+            name: "find_element".into(),
+            description: "Find matching elements in a window by label/name/automation_id/role/query and return the same enriched element records as get_window_state. This refreshes the window snapshot and updates element_token/cache entries.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid","window_id"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND to inspect."},
+                    "label":{"type":"string","description":"Match element label (name → value → automation_id → help_text). Case-insensitive contains by default."},
+                    "name":{"type":"string","description":"Match UIA/MSAA name. Case-insensitive contains by default."},
+                    "automation_id":{"type":"string","description":"Match UIA automation_id. Case-insensitive contains by default."},
+                    "role":{"type":"string","description":"Match role/control type, e.g. Button, Edit, TabItem. Case-insensitive contains by default."},
+                    "query":{"type":"string","description":"Broad search across label, name, value, automation_id, class_name, role, and actions."},
+                    "exact":{"type":"boolean","description":"When true, string filters must match exactly instead of contains."},
+                    "limit":{"type":"integer","minimum":1,"maximum":200,"description":"Maximum matches to return. Default 20."},
+                    "max_elements":{"type":"integer","minimum":1,"description":"Bound the UIA walk. Defaults to get_window_state's cap."},
+                    "max_depth":{"type":"integer","minimum":1,"description":"Bound UIA depth. Defaults to get_window_state's cap."}
+                },"additionalProperties":false
+            }),
+            read_only: true, destructive: false, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let hwnd = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
+        let label_filter = args.opt_str("label");
+        let name_filter = args.opt_str("name");
+        let automation_id_filter = args.opt_str("automation_id");
+        let role_filter = args.opt_str("role");
+        let query_filter = args.opt_str("query");
+        if label_filter.is_none() && name_filter.is_none() && automation_id_filter.is_none() && role_filter.is_none() && query_filter.is_none() {
+            return ToolResult::error("find_element requires at least one of label, name, automation_id, role, or query");
+        }
+        let exact = args.bool_or("exact", false);
+        let limit = args.u64_or("limit", 20).clamp(1, 200) as usize;
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+
+        let windows_for_pid = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid))).await.unwrap_or_default();
+        let target_window_bounds = windows_for_pid.iter().find(|w| w.hwnd == hwnd).map(|w| (w.x, w.y, w.width, w.height));
+        if target_window_bounds.is_none() {
+            return ToolResult::error(format!("No window with window_id {hwnd} exists for pid {pid}. Call list_windows({{\"pid\": {pid}}}) for candidates."));
+        }
+
+        let state = self.state.clone();
+        let walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let tr = match await_uia_walk_with_timeout(walk, "find_element", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let count = tr.nodes.iter().filter(|n| n.element_index.is_some()).count();
+        let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
+        if is_msaa { state.element_cache.update_msaa(pid, hwnd, &tr.nodes); } else { state.element_cache.update(pid, hwnd, &tr.nodes); }
+        let snapshot_id = cua_driver_core::element_token::global().register_snapshot(pid as i32, hwnd as u32, count);
+
+        let mut matches = Vec::new();
+        for n in &tr.nodes {
+            if n.element_index.is_none() { continue; }
+            let label = n.name.as_deref().or(n.value.as_deref()).or(n.automation_id.as_deref()).or(n.help_text.as_deref());
+            if let Some(v) = label_filter.as_deref() { if !str_matches(label, v, exact) { continue; } }
+            if let Some(v) = name_filter.as_deref() { if !str_matches(n.name.as_deref(), v, exact) { continue; } }
+            if let Some(v) = automation_id_filter.as_deref() { if !str_matches(n.automation_id.as_deref(), v, exact) { continue; } }
+            if let Some(v) = role_filter.as_deref() { if !str_matches(Some(&n.control_type), v, exact) { continue; } }
+            if let Some(v) = query_filter.as_deref() {
+                let action_match = n.actions.iter().any(|a| str_matches(Some(a), v, exact));
+                let any_match = str_matches(label, v, exact)
+                    || str_matches(n.name.as_deref(), v, exact)
+                    || str_matches(n.value.as_deref(), v, exact)
+                    || str_matches(n.automation_id.as_deref(), v, exact)
+                    || str_matches(n.class_name.as_deref(), v, exact)
+                    || str_matches(Some(&n.control_type), v, exact)
+                    || action_match;
+                if !any_match { continue; }
+            }
+            if let Some(entry) = structured_element_record(n, pid, hwnd, snapshot_id, target_window_bounds) {
+                matches.push(entry);
+                if matches.len() >= limit { break; }
+            }
+        }
+        let structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "snapshot_id": snapshot_id,
+            "element_count": count,
+            "match_count": matches.len(),
+            "matches": matches,
+        });
+        ToolResult::text(format!("find_element matched {} of {count} indexed elements", structured["match_count"].as_u64().unwrap_or(0))).with_structured(structured)
+    }
+}
+
+
+// ── click_verified ───────────────────────────────────────────────────────────
+
+pub struct ClickVerifiedTool { state: Arc<ToolState> }
+
+static CLICK_VERIFIED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn labels_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
+    nodes.iter().filter_map(|n| {
+        n.name.clone().or_else(|| n.value.clone()).or_else(|| n.automation_id.clone()).or_else(|| n.help_text.clone())
+    }).collect()
+}
+
+fn labels_contain(labels: &[String], needle: &str) -> bool {
+    labels.iter().any(|label| label.contains(needle))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClickExpectedLabelStatus {
+    expected_change_satisfied: bool,
+    already_satisfied: bool,
+}
+
+fn click_expected_label_status(
+    pre_labels: &[String],
+    post_labels: &[String],
+    expected_present: Option<&str>,
+    expected_absent: Option<&str>,
+) -> ClickExpectedLabelStatus {
+    let present_ok = expected_present.map(|needle| {
+        let pre_has = labels_contain(pre_labels, needle);
+        let post_has = labels_contain(post_labels, needle);
+        post_has && !pre_has
+    }).unwrap_or(true);
+    let present_already = expected_present.map(|needle| {
+        labels_contain(pre_labels, needle) && labels_contain(post_labels, needle)
+    }).unwrap_or(false);
+    let absent_ok = expected_absent.map(|needle| {
+        let pre_has = labels_contain(pre_labels, needle);
+        let post_has = labels_contain(post_labels, needle);
+        pre_has && !post_has
+    }).unwrap_or(true);
+    let absent_already = expected_absent.map(|needle| {
+        !labels_contain(pre_labels, needle) && !labels_contain(post_labels, needle)
+    }).unwrap_or(false);
+    ClickExpectedLabelStatus {
+        expected_change_satisfied: present_ok && absent_ok,
+        already_satisfied: present_already || absent_already,
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TextDeltaSummary {
+    added: Vec<String>,
+    removed: Vec<String>,
+    added_count: usize,
+    removed_count: usize,
+}
+
+fn text_delta_summary(pre: &[String], post: &[String], sample_limit: usize) -> TextDeltaSummary {
+    use std::collections::BTreeSet;
+    let pre_set: BTreeSet<&str> = pre.iter().map(String::as_str).filter(|s| !s.is_empty()).collect();
+    let post_set: BTreeSet<&str> = post.iter().map(String::as_str).filter(|s| !s.is_empty()).collect();
+    let mut added_all: Vec<String> = post_set.difference(&pre_set).map(|s| (*s).to_string()).collect();
+    let mut removed_all: Vec<String> = pre_set.difference(&post_set).map(|s| (*s).to_string()).collect();
+    let added_count = added_all.len();
+    let removed_count = removed_all.len();
+    added_all.truncate(sample_limit);
+    removed_all.truncate(sample_limit);
+    TextDeltaSummary { added: added_all, removed: removed_all, added_count, removed_count }
+}
+
+#[async_trait]
+impl Tool for ClickVerifiedTool {
+    fn def(&self) -> &ToolDef {
+        CLICK_VERIFIED_DEF.get_or_init(|| ToolDef {
+            name: "click_verified".into(),
+            description: "Perform a click transaction with pre/post accessibility snapshots and simple expected-label verification. Reports os_dispatch_success separately from state_changed, verified, expected_change_satisfied, and success. Use this when a click must be verified rather than trusted from dispatch success alone.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid","window_id"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"Target HWND."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state/find_element."},
+                    "element_token":{"type":"string","description":"Opaque element token from get_window_state/find_element. Preferred over element_index."},
+                    "x":{"type":"number","description":"Window-relative x coordinate, same as click."},
+                    "y":{"type":"number","description":"Window-relative y coordinate, same as click."},
+                    "button":{"type":"string","enum":["left","right","middle"],"default":"left"},
+                    "click_count":{"type":"integer","minimum":1,"maximum":3,"default":1},
+                    "dispatch": crate::input::dispatch::dispatch_schema(),
+                    "expected_label_present":{"type":"string","description":"Verification succeeds only if any post-state element label/name/value contains this string."},
+                    "expected_label_absent":{"type":"string","description":"Verification succeeds only if no post-state element label/name/value contains this string."},
+                    "max_elements":{"type":"integer","minimum":1,"description":"Bound pre/post UIA walks. Default 320."},
+                    "max_depth":{"type":"integer","minimum":1,"description":"Bound pre/post UIA depth. Default platform limit."}
+                },"additionalProperties":false
+            }),
+            read_only: false, destructive: true, idempotent: false, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let hwnd = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
+        let expected_present = args.opt_str("expected_label_present");
+        let expected_absent = args.opt_str("expected_label_absent");
+        if expected_present.is_none() && expected_absent.is_none() {
+            return ToolResult::error("click_verified requires expected_label_present or expected_label_absent so the transaction can verify an outcome");
+        }
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(320);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+
+        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let pre_labels = match await_uia_walk_with_timeout(pre_walk, "click_verified pre-state", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(tr) => labels_from_nodes(&tr.nodes),
+            Err(e) => return e,
+        };
+
+        let click_result = ClickTool { state: self.state.clone() }.invoke(args.clone()).await;
+        let os_dispatch_success = !click_result.is_error.unwrap_or(false);
+
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let post_labels = match await_uia_walk_with_timeout(post_walk, "click_verified post-state", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(tr) => labels_from_nodes(&tr.nodes),
+            Err(e) => return e,
+        };
+        let state_changed = pre_labels != post_labels;
+        let diff = text_delta_summary(&pre_labels, &post_labels, 12);
+        let expectation = click_expected_label_status(
+            &pre_labels,
+            &post_labels,
+            expected_present.as_deref(),
+            expected_absent.as_deref(),
+        );
+        let expected_change_satisfied = expectation.expected_change_satisfied;
+        let verified = expected_change_satisfied;
+        let success = os_dispatch_success && verified;
+        let structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "os_dispatch_success": os_dispatch_success,
+            "state_changed": state_changed,
+            "verified": verified,
+            "expected_change_satisfied": expected_change_satisfied,
+            "already_satisfied": expectation.already_satisfied,
+            "success": success,
+            "expected_label_present": expected_present,
+            "expected_label_absent": expected_absent,
+            "pre_label_count": pre_labels.len(),
+            "post_label_count": post_labels.len(),
+            "added_labels": diff.added,
+            "removed_labels": diff.removed,
+            "added_label_count": diff.added_count,
+            "removed_label_count": diff.removed_count,
+            "click_is_error": click_result.is_error.unwrap_or(false),
+        });
+        let msg = format!("click_verified success={success} os_dispatch_success={os_dispatch_success} state_changed={state_changed} expected_change_satisfied={expected_change_satisfied}");
+        if success { ToolResult::text(msg).with_structured(structured) } else { ToolResult::error(msg).with_structured(structured) }
+    }
+}
+
+// ── get_element_geometry ─────────────────────────────────────────────────────
+
+pub struct GetElementGeometryTool { state: Arc<ToolState> }
+
+static GEG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for GetElementGeometryTool {
+    fn def(&self) -> &ToolDef {
+        GEG_DEF.get_or_init(|| ToolDef {
+            name: "get_element_geometry".into(),
+            description: "Return cached screen/window geometry for one element from the latest get_window_state snapshot. Accepts element_token (preferred) or element_index + window_id. Call get_window_state first for the same pid/window_id to populate the cache.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Optional when element_token is supplied because the token carries it."},
+                    "element_index":{"type":"integer","description":"Element index from the latest get_window_state snapshot for the same (pid, window_id)."},
+                    "element_token":{"type":"string","description":"Opaque element token from structuredContent.elements[].element_token. Preferred over element_index; detects stale snapshots."}
+                },"additionalProperties":false
+            }),
+            read_only: true, destructive: false, idempotent: true, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "get_element_geometry",
+        ) { Ok(r) => r, Err(e) => return e };
+        let (window_id, element_index) = match resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, element_index, .. } => {
+                let Some(window_id) = window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")) else {
+                    return ToolResult::error("get_element_geometry requires window_id when element_index is used without element_token");
+                };
+                (window_id, element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => return ToolResult::error("get_element_geometry requires element_token or element_index"),
+        };
+        let Some((center_x, center_y)) = self.state.element_cache.get_element_center(pid, window_id, element_index) else {
+            return ToolResult::error(format!("No cached element {element_index} for pid {pid}, window_id {window_id}. Call get_window_state for this window first."));
+        };
+        let Some((l, t, r, b)) = self.state.element_cache.get_element_rect(pid, window_id, element_index) else {
+            let structured = json!({"pid": pid, "window_id": window_id, "element_index": element_index,
+                "bounds_screen": serde_json::Value::Null, "bounds_window": serde_json::Value::Null,
+                "center_screen": {"x": center_x, "y": center_y}, "center_window": serde_json::Value::Null,
+                "geometry_error": "UIA/MSAA did not report a usable bounding rectangle"});
+            return ToolResult::text("element geometry unavailable: UIA/MSAA did not report a usable bounding rectangle").with_structured(structured);
+        };
+        let width = (r - l).max(0);
+        let height = (b - t).max(0);
+        let target_window_bounds = tokio::task::spawn_blocking(move || {
+            crate::win32::list_windows(Some(pid)).into_iter().find(|w| w.hwnd == window_id).map(|w| (w.x, w.y, w.width, w.height))
+        }).await.unwrap_or(None);
+        let (bounds_window, center_window) = if let Some((wx, wy, _ww, _wh)) = target_window_bounds {
+            (json!({"x": l - wx, "y": t - wy, "width": width, "height": height}), json!({"x": center_x - wx, "y": center_y - wy}))
+        } else { (serde_json::Value::Null, serde_json::Value::Null) };
+        let structured = json!({"pid": pid, "window_id": window_id, "element_index": element_index,
+            "coordinate_space": "screen_pixels",
+            "bounds_screen": {"x": l, "y": t, "width": width, "height": height},
+            "bounds_window": bounds_window,
+            "center_screen": {"x": center_x, "y": center_y},
+            "center_window": center_window,
+            "frame": {"x": l, "y": t, "w": width, "h": height}});
+        ToolResult::text(format!("element {element_index} geometry: screen=({l},{t}) {width}x{height}, center=({center_x},{center_y})")).with_structured(structured)
+    }
 }
 
 // ── launch_app ───────────────────────────────────────────────────────────────
@@ -3297,6 +3710,120 @@ impl Tool for SetValueTool {
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+
+// ── set_value_verified ───────────────────────────────────────────────────────
+
+pub struct SetValueVerifiedTool { state: Arc<ToolState> }
+
+static SET_VALUE_VERIFIED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+fn value_texts_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|n| n.value.as_ref())
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect()
+}
+
+fn searchable_texts_from_nodes(nodes: &[crate::uia::UiaNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for n in nodes {
+        for v in [&n.name, &n.value, &n.automation_id, &n.help_text, &n.class_name] {
+            if let Some(s) = v { if !s.is_empty() { out.push(s.clone()); } }
+        }
+        if !n.control_type.is_empty() { out.push(n.control_type.clone()); }
+    }
+    out
+}
+
+#[async_trait]
+impl Tool for SetValueVerifiedTool {
+    fn def(&self) -> &ToolDef {
+        SET_VALUE_VERIFIED_DEF.get_or_init(|| ToolDef {
+            name: "set_value_verified".into(),
+            description: "Set a UIA value with pre/post accessibility snapshots and expected value/label verification. Reports os_dispatch_success separately from state_changed, verified, expected_change_satisfied, and success.".into(),
+            input_schema: json!({
+                "type":"object","required":["pid","value"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"Target HWND. Required when element_index is used; optional with element_token."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state/find_element."},
+                    "element_token":{"type":"string","description":"Opaque element token from get_window_state/find_element. Preferred over element_index."},
+                    "value":{"type":"string","description":"New value to set through UIA ValuePattern/RangeValuePattern."},
+                    "expected_value":{"type":"string","description":"Verification succeeds only if the post-state contains this value/text substring."},
+                    "expected_label_present":{"type":"string","description":"Verification succeeds only if any post-state searchable element text contains this string."},
+                    "max_elements":{"type":"integer","minimum":1,"description":"Bound pre/post UIA walks. Default 320."},
+                    "max_depth":{"type":"integer","minimum":1,"description":"Bound pre/post UIA depth. Default platform limit."}
+                },"additionalProperties":false
+            }),
+            read_only: false, destructive: true, idempotent: true, open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
+        let value = match args.require_str("value") { Ok(v) => v, Err(e) => return e };
+        let expected_value = args.opt_str("expected_value").unwrap_or_else(|| value.clone());
+        let expected_label_present = args.opt_str("expected_label_present");
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_u64("window_id").map(|v| v as u32),
+            "set_value_verified",
+        ) { Ok(r) => r, Err(e) => return e };
+        let hwnd = match resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id: Some(wid), .. } => wid as u64,
+            cua_driver_core::element_token::ResolvedElement::Element { window_id: None, .. } => return ToolResult::error("set_value_verified requires window_id when element_index is used without element_token"),
+            cua_driver_core::element_token::ResolvedElement::None => return ToolResult::error("set_value_verified requires element_token or element_index"),
+        };
+        let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(320);
+        let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize).unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+
+        let pre_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let pre_texts = match await_uia_walk_with_timeout(pre_walk, "set_value_verified pre-state", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(tr) => searchable_texts_from_nodes(&tr.nodes),
+            Err(e) => return e,
+        };
+        let set_result = SetValueTool { state: self.state.clone() }.invoke(args.clone()).await;
+        let os_dispatch_success = !set_result.is_error.unwrap_or(false);
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let post_walk = tokio::task::spawn_blocking(move || crate::uia::walk_tree_bounded(hwnd, None, max_elements, max_depth));
+        let (post_texts, post_values) = match await_uia_walk_with_timeout(post_walk, "set_value_verified post-state", hwnd, UIA_WALK_TIMEOUT).await {
+            Ok(tr) => (searchable_texts_from_nodes(&tr.nodes), value_texts_from_nodes(&tr.nodes)),
+            Err(e) => return e,
+        };
+        let state_changed = pre_texts != post_texts;
+        let diff = text_delta_summary(&pre_texts, &post_texts, 12);
+        let value_ok = labels_contain(&post_values, &expected_value);
+        let label_ok = expected_label_present.as_deref().map(|needle| labels_contain(&post_texts, needle)).unwrap_or(true);
+        let expected_change_satisfied = value_ok && label_ok;
+        let verified = expected_change_satisfied;
+        let success = os_dispatch_success && verified;
+        let structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "os_dispatch_success": os_dispatch_success,
+            "state_changed": state_changed,
+            "verified": verified,
+            "expected_change_satisfied": expected_change_satisfied,
+            "success": success,
+            "expected_value": expected_value,
+            "expected_label_present": expected_label_present,
+            "pre_text_count": pre_texts.len(),
+            "post_text_count": post_texts.len(),
+            "added_texts": diff.added,
+            "removed_texts": diff.removed,
+            "added_text_count": diff.added_count,
+            "removed_text_count": diff.removed_count,
+            "set_value_is_error": set_result.is_error.unwrap_or(false),
+        });
+        let msg = format!("set_value_verified success={success} os_dispatch_success={os_dispatch_success} state_changed={state_changed} expected_change_satisfied={expected_change_satisfied}");
+        if success { ToolResult::text(msg).with_structured(structured) } else { ToolResult::error(msg).with_structured(structured) }
     }
 }
 
@@ -5849,6 +6376,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(ListAppsTool));
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool { state: state.clone() }));
+    r.register(Box::new(GetElementGeometryTool { state: state.clone() }));
+    r.register(Box::new(FindElementTool { state: state.clone() }));
+    r.register(Box::new(ClickVerifiedTool { state: state.clone() }));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
     r.register(Box::new(BringToFrontTool));
@@ -5861,6 +6391,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool { state: state.clone() }));
+    r.register(Box::new(SetValueVerifiedTool { state: state.clone() }));
     r.register(Box::new(ScrollTool));
     // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
     // — `get_window_state` with `capture_mode:"vision"` is the single
@@ -6146,12 +6677,256 @@ mod chromium_flag_injection_tests {
     }
 }
 
+
+
+#[cfg(test)]
+mod click_verified_expectation_tests {
+    use super::click_expected_label_status;
+
+    #[test]
+    fn absent_expectation_is_not_satisfied_when_label_was_already_absent() {
+        let pre = vec!["Ready".to_string()];
+        let post = vec!["Ready".to_string()];
+        let status = click_expected_label_status(&pre, &post, None, Some("Done"));
+        assert!(!status.expected_change_satisfied);
+        assert!(status.already_satisfied);
+    }
+
+    #[test]
+    fn absent_expectation_is_satisfied_by_present_to_absent_transition() {
+        let pre = vec!["Done".to_string()];
+        let post = vec!["Ready".to_string()];
+        let status = click_expected_label_status(&pre, &post, None, Some("Done"));
+        assert!(status.expected_change_satisfied);
+        assert!(!status.already_satisfied);
+    }
+}
+
+#[cfg(test)]
+mod uia_walk_timeout_tests {
+    use super::await_uia_walk_with_timeout;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn returns_tool_error_when_uia_walk_task_exceeds_timeout() {
+        let walk = tokio::task::spawn_blocking(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            crate::uia::UiaTreeResult { tree_markdown: String::new(), nodes: Vec::new() }
+        });
+        let result = await_uia_walk_with_timeout(walk, "find_element", 0x1234, Duration::from_millis(1)).await;
+        let err = match result {
+            Ok(_) => panic!("slow UIA walk should time out"),
+            Err(err) => err,
+        };
+        assert_eq!(err.is_error, Some(true));
+        assert!(err.content.iter().any(|c| match c {
+            cua_driver_core::protocol::Content::Text { text, .. } => text.contains("find_element timed out") && text.contains("0x1234"),
+            _ => false,
+        }));
+    }
+}
+
+#[cfg(test)]
+mod screenshot_metadata_tests {
+    use super::screenshot_metadata;
+
+    #[test]
+    fn reports_scaled_coordinate_space_when_screenshot_was_resized() {
+        let metadata = screenshot_metadata(1000, 500, Some(2000));
+        assert_eq!(metadata["width"], 1000);
+        assert_eq!(metadata["height"], 500);
+        assert_eq!(metadata["original_width"], 2000);
+        assert_eq!(metadata["scale_factor"], 2.0);
+        assert_eq!(metadata["coordinate_space"], "scaled_window_pixels");
+    }
+
+    #[test]
+    fn reports_window_pixels_when_screenshot_kept_original_size() {
+        let metadata = screenshot_metadata(1000, 500, Some(1000));
+        assert_eq!(metadata["scale_factor"], 1.0);
+        assert_eq!(metadata["coordinate_space"], "window_pixels");
+    }
+}
+
+#[cfg(test)]
+mod structured_element_record_tests {
+    use super::structured_element_record;
+    use crate::uia::UiaNode;
+
+    fn sample_node() -> UiaNode {
+        UiaNode { element_index: Some(7), control_type: "Button".into(), name: Some("Three".into()), value: None,
+            automation_id: Some("num3Button".into()), class_name: Some("Button".into()), help_text: Some("Digit button".into()),
+            enabled: true, visible: true, selected: Some(false), focused: Some(true), actions: vec!["invoke".into()],
+            element_ptr: 0, center_x: 3029, center_y: 1077, rect: Some((2972, 1039, 3086, 1116)), msaa_role: None,
+            depth: 5, parent_element_index: Some(3) }
+    }
+
+    #[test]
+    fn emits_legacy_and_enriched_geometry_fields() {
+        let entry = structured_element_record(&sample_node(), 1234, 0xabc, 42, Some((2728, 402, 484, 801))).expect("indexed node emits structured record");
+        assert_eq!(entry["element_index"], 7);
+        assert_eq!(entry["element_token"], "s002a:7");
+        assert_eq!(entry["stable_id"], "uia:1234:2748:automation_id:num3Button");
+        assert_eq!(entry["snapshot_debug_id"], "uia:1234:2748:7:num3Button:Three");
+        assert_eq!(entry["role"], "Button");
+        assert_eq!(entry["label"], "Three");
+        assert_eq!(entry["name"], "Three");
+        assert!(entry["value"].is_null());
+        assert!(entry["text"].is_null());
+        assert_eq!(entry["enabled"], true);
+        assert_eq!(entry["visible"], true);
+        assert_eq!(entry["selected"], false);
+        assert_eq!(entry["focused"], true);
+        assert_eq!(entry["automation_id"], "num3Button");
+        assert_eq!(entry["class_name"], "Button");
+        assert_eq!(entry["actions"], serde_json::json!(["invoke"]));
+        assert_eq!(entry["backend"], "uia");
+        assert_eq!(entry["depth"], 5);
+        assert_eq!(entry["parent_index"], 3);
+        assert_eq!(entry["frame"], serde_json::json!({"x": 2972, "y": 1039, "w": 114, "h": 77}));
+        assert_eq!(entry["bounds_screen"], serde_json::json!({"x": 2972, "y": 1039, "width": 114, "height": 77}));
+        assert_eq!(entry["center_screen"], serde_json::json!({"x": 3029, "y": 1077}));
+        assert_eq!(entry["bounds_window"], serde_json::json!({"x": 244, "y": 637, "width": 114, "height": 77}));
+        assert_eq!(entry["center_window"], serde_json::json!({"x": 301, "y": 675}));
+    }
+
+    #[test]
+    fn reports_geometry_error_when_rect_missing() {
+        let mut node = sample_node(); node.rect = None;
+        let entry = structured_element_record(&node, 1234, 0xabc, 42, Some((2728, 402, 484, 801))).expect("indexed node emits structured record");
+        assert!(entry["frame"].is_null());
+        assert!(entry["bounds_screen"].is_null());
+        assert!(entry["bounds_window"].is_null());
+        assert!(entry["center_screen"].is_null());
+        assert!(entry["center_window"].is_null());
+        assert_eq!(entry["geometry_error"], "UIA/MSAA did not report a usable bounding rectangle");
+    }
+
+    #[test]
+    fn skips_unindexed_nodes() {
+        let mut node = sample_node(); node.element_index = None;
+        assert!(structured_element_record(&node, 1234, 0xabc, 42, Some((2728, 402, 484, 801))).is_none());
+    }
+}
+
+#[cfg(test)]
+mod get_element_geometry_schema_tests {
+    #[test]
+    fn registry_advertises_get_element_geometry() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("get_element_geometry").expect("get_element_geometry registered");
+        assert_eq!(tool.name, "get_element_geometry");
+        assert!(tool.read_only);
+        assert!(!tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "element_index", "element_token"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["element_token"]["type"], "string");
+        assert_eq!(props["element_index"]["type"], "integer");
+    }
+}
+
+
+
+#[cfg(test)]
+mod find_element_schema_tests {
+    #[test]
+    fn registry_advertises_find_element() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("find_element").expect("find_element registered");
+        assert_eq!(tool.name, "find_element");
+        assert!(tool.read_only);
+        assert!(!tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "label", "name", "automation_id", "role", "query", "limit"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["query"]["type"], "string");
+        assert_eq!(props["limit"]["type"], "integer");
+    }
+}
+
+
+
+
+
+
+
+#[cfg(test)]
+mod verified_action_diff_tests {
+    #[test]
+    fn summarizes_added_and_removed_labels_with_cap() {
+        let pre = vec!["A".to_string(), "B".to_string(), "B".to_string(), "Old".to_string()];
+        let post = vec!["A".to_string(), "B".to_string(), "New".to_string(), "Extra".to_string()];
+        let diff = super::text_delta_summary(&pre, &post, 1);
+        assert_eq!(diff.added, vec!["Extra".to_string()]);
+        assert_eq!(diff.removed, vec!["Old".to_string()]);
+        assert_eq!(diff.added_count, 2);
+        assert_eq!(diff.removed_count, 1);
+    }
+}
+
+#[cfg(test)]
+mod set_value_verified_text_tests {
+    use super::{searchable_texts_from_nodes, value_texts_from_nodes};
+    use crate::uia::UiaNode;
+
+    fn node_with_metadata_only() -> UiaNode {
+        UiaNode { element_index: Some(1), control_type: "Button".into(), name: Some("Submit".into()), value: None,
+            automation_id: Some("submitButton".into()), class_name: Some("Button".into()), help_text: Some("Help".into()),
+            enabled: true, visible: true, selected: None, focused: None, actions: vec![], element_ptr: 0,
+            center_x: 0, center_y: 0, rect: None, msaa_role: None, depth: 1, parent_element_index: None }
+    }
+
+    #[test]
+    fn value_texts_exclude_role_class_and_automation_metadata() {
+        let nodes = vec![node_with_metadata_only()];
+        assert!(searchable_texts_from_nodes(&nodes).iter().any(|s| s == "Button"));
+        assert!(value_texts_from_nodes(&nodes).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod set_value_verified_schema_tests {
+    #[test]
+    fn registry_advertises_set_value_verified_transaction() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("set_value_verified").expect("set_value_verified registered");
+        assert_eq!(tool.name, "set_value_verified");
+        assert!(!tool.read_only);
+        assert!(tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "element_index", "element_token", "value", "expected_value", "expected_label_present"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["value"]["type"], "string");
+        assert_eq!(props["expected_value"]["type"], "string");
+    }
+}
+
+#[cfg(test)]
+mod click_verified_schema_tests {
+    #[test]
+    fn registry_advertises_click_verified_transaction() {
+        let registry = super::build_registry(false);
+        let tool = registry.get_def("click_verified").expect("click_verified registered");
+        assert_eq!(tool.name, "click_verified");
+        assert!(!tool.read_only);
+        assert!(tool.destructive);
+        let props = tool.input_schema.get("properties").expect("properties");
+        for required in ["pid", "window_id", "element_index", "element_token", "x", "y", "expected_label_present", "expected_label_absent", "dispatch"] {
+            assert!(props.get(required).is_some(), "missing schema property {required}");
+        }
+        assert_eq!(props["expected_label_present"]["type"], "string");
+        assert_eq!(props["expected_label_absent"]["type"], "string");
+    }
+}
+
 #[cfg(test)]
 mod click_button_schema_tests {
     use super::ClickTool;
     use cua_driver_core::tool::Tool;
-    use std::sync::Arc;
-
     /// Surface 5: schema must keep advertising the three canonical button
     /// values. Windows was already shipping `button` (pre-Surface-5) so this
     /// test is the freeze test — guards against an inadvertent rename/removal.

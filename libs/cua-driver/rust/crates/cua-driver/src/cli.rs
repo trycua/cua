@@ -1112,14 +1112,21 @@ pub fn run_mcp_config(client: Option<&str>) {
             //
             // No `qwen mcp add` subcommand — paste the printed JSON into the
             // config file and restart Qwen Code.
-            println!(r#"{{
-  "mcpServers": {{
-    "cua-driver": {{
-      "command": "{binary}",
-      "args": ["mcp"]
-    }}
-  }}
-}}"#);
+            //
+            // Forward slashes in the binary path so the JSON literal is valid on
+            // Windows (backslashes would need escaping inside a JSON string).
+            let normalised = binary.replace('\\', "/");
+            let full = serde_json::json!({
+                "mcpServers": {
+                    "cua-driver": {
+                        "command": normalised,
+                        "args": ["mcp"],
+                    }
+                }
+            });
+            let pretty = serde_json::to_string_pretty(&full)
+                .unwrap_or_else(|_| full.to_string());
+            println!("{pretty}");
         }
         Some("droid") | Some("droid-cli") => {
             // Droid CLI (Factory AI — https://factory.ai) supports a
@@ -1129,7 +1136,10 @@ pub fn run_mcp_config(client: Option<&str>) {
             //
             // The name here is "cua-driver" to stay consistent with other
             // client registrations.
-            println!("droid mcp add cua-driver {binary} mcp --type stdio");
+            //
+            // Quote the binary path so paths containing spaces are treated as a
+            // single argument by the shell.
+            println!("droid mcp add cua-driver \"{binary}\" mcp --type stdio");
         }
         Some(other) => {
             eprintln!("Unknown client '{other}'. Valid: claude, codex, cursor, antigravity, openclaw, opencode, hermes, qwen, droid, pi.");

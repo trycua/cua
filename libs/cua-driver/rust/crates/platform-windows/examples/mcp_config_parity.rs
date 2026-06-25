@@ -18,7 +18,7 @@ fn main() {
         (vec!["--client", "openclaw"], vec!["openclaw mcp set cua-driver"]),
         (vec!["--client", "opencode"], vec!["opencode.ai/config.json", "\"type\": \"local\""]),
         (vec!["--client", "hermes"], vec!["mcp_servers:", "cua-driver:"]),
-        (vec!["--client", "qwen"],   vec!["\"mcpServers\"", "\"args\": [\"mcp\"]"]),
+        (vec!["--client", "qwen"],   vec!["\"mcpServers\"", "\"command\":", "\"args\":"]),
         (vec!["--client", "droid"],  vec!["droid mcp add cua-driver"]),
         (vec!["--client", "pi"],     vec!["does not support MCP natively"]),
     ];

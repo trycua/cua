@@ -37,7 +37,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::{BSTR, Interface};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    GetWindowRect, GetWindowThreadProcessId,
 };
 
 use crate::win32::windows::WindowInfo;
@@ -95,9 +95,11 @@ fn get_uia() -> Option<IUIAutomation> {
 /// Enumerate top-level windows visible to UI Automation.
 ///
 /// Returns one `WindowInfo` per non-offscreen child of the UIA desktop root
-/// whose `NativeWindowHandle` is non-null and resolves to a window with a
-/// non-empty title. Windows whose HWND is zero (pure UIA virtual elements,
-/// rare) are skipped because the rest of the driver pipeline keys off HWND.
+/// whose `NativeWindowHandle` is non-null and resolves to a listable top-level
+/// window (empty captions included — see
+/// `crate::win32::windows::is_listable_top_level`). Windows whose HWND is zero
+/// (pure UIA virtual elements, rare) are skipped because the rest of the driver
+/// pipeline keys off HWND.
 ///
 /// Returns an empty vec on any UIA failure — callers should treat UIA as a
 /// best-effort source and union with `EnumWindows`.
@@ -616,7 +618,8 @@ fn extract_shortcut_from_name(name: &str) -> Option<String> {
 
 /// Build a `WindowInfo` from a single UIA child element of the desktop root.
 /// Returns `None` if the element doesn't correspond to a real, on-screen,
-/// non-empty-titled HWND.
+/// listable top-level HWND. Empty-caption windows ARE listable — see
+/// `crate::win32::windows::is_listable_top_level`.
 unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<WindowInfo> {
     // NativeWindowHandle is an i32-sized handle in UIA; cast to HWND.
     let raw = elem.CurrentNativeWindowHandle().ok()?;
@@ -635,6 +638,15 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         }
     }
 
+    // Apply the SAME listability filter as the EnumWindows path so the two
+    // enumeration sources can't disagree about a given HWND. That divergence —
+    // both EnumWindows and UIA filtered on a non-empty title while
+    // `debug_window_info` did not — was the root cause of trycua/cua#2020.
+    // Crucially this admits visible, owner-less, empty-caption windows.
+    if !crate::win32::windows::is_listable_top_level(hwnd) {
+        return None;
+    }
+
     // Resolve pid via the standard Win32 path. We deliberately do not trust
     // the UIA ProcessId property here because the rest of the driver indexes
     // windows by (hwnd, pid) tuples obtained from `GetWindowThreadProcessId`,
@@ -645,21 +657,12 @@ unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<Wi
         return None;
     }
 
-    // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
-    // UIA's `CurrentName` sometimes returns the AX-friendly label (e.g. the
-    // tab title) instead of the OS-level window caption, which would diverge
-    // from any caller already keyed on the GetWindowText value.
-    let title_len = GetWindowTextLengthW(hwnd);
-    if title_len == 0 {
-        return None;
-    }
-    let mut buf = vec![0u16; (title_len + 1) as usize];
-    GetWindowTextW(hwnd, &mut buf);
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    let title = String::from_utf16_lossy(&buf[..len]);
-    if title.trim().is_empty() {
-        return None;
-    }
+    // Caption — read via the shared Win32 `GetWindowTextW` helper for parity
+    // with the EnumWindows path. UIA's `CurrentName` sometimes returns the
+    // AX-friendly label (e.g. a tab title) instead of the OS-level window
+    // caption, which would diverge from any caller keyed on GetWindowText.
+    // Empty is fine; the window is still listed.
+    let title = crate::win32::windows::window_title(hwnd);
 
     let (x, y, w, h) = window_bounds(hwnd);
 

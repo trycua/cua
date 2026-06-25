@@ -437,10 +437,21 @@ window manager's canonical top-to-bottom z-order, so it's the authoritative
 source for both window membership and ordering. It then asks UI Automation
 for any top-level windows EnumWindows missed
 (`AutomationElement::RootElement.FindAll(TreeScope::Children, TrueCondition)`,
-filtered to `IsOffscreen == false` + non-empty `GetWindowTextW`) and appends
-those at the end of the merged list, deduped by HWND. UIA elements contribute
-their `NativeWindowHandle` as the canonical HWND so downstream code keyed on
-`(pid, window_id)` keeps working unchanged.
+filtered to `IsOffscreen == false`) and appends those at the end of the merged
+list, deduped by HWND. UIA elements contribute their `NativeWindowHandle` as
+the canonical HWND so downstream code keyed on `(pid, window_id)` keeps working
+unchanged.
+
+**Listability filter (shared).** Both sources gate each HWND through the same
+`crate::win32::windows::is_listable_top_level` predicate — visible
+(`IsWindowVisible`), not minimized (`!IsIconic`), owner-less (`GW_OWNER` null,
+so no tool-tips / owned pop-ups) and not DWM-cloaked (`DWMWA_CLOAKED == 0`, so
+no suspended-UWP background frames). The window **title is read for display
+only and is not a filter**: empty-caption top-level windows (WPF
+`HwndWrapper[App.exe;;<guid>]`, borderless / custom-chrome apps) are listed.
+This fixes trycua/cua#2020, where a non-empty-title check at both sources hid
+such windows from the agent even though `debug_window_info` could still see
+them.
 
 Why UIA at all: modern apps (WebView2-hosted Notepad, packaged-UWP frames,
 some Electron containers) sometimes hide their visible window inside a host

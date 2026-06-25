@@ -13,6 +13,7 @@ members = [
     "crates/platform-linux",
     "crates/cursor-overlay",
     "crates/pip-preview",
+    "crates/input-capture",
 ]
 
 [workspace.package]

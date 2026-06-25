@@ -79,6 +79,7 @@ const SKILL_FILES: &[&str] = &[
     "LINUX.md",
     "BROWSER.md",
     "RECORDING.md",
+    "DEMONSTRATION.md",
     "EMBEDDING.md",
 ];
 

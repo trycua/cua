@@ -37,6 +37,9 @@ pub fn load_driver_config() -> DriverConfig {
     if let Some(v) = pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned)) {
         cfg.capture_mode = v;
     }
+    if let Some(v) = pip_preview::read_config_value("capture_scope").and_then(|v| v.as_str().map(str::to_owned)) {
+        cfg.capture_scope = v;
+    }
     if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64()) {
         if let Ok(v32) = u32::try_from(v) { cfg.max_image_dimension = v32; }
     }
@@ -2873,33 +2876,11 @@ impl Tool for GetScreenSizeTool {
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         let result = tokio::task::spawn_blocking(|| {
-            use x11rb::connection::Connection;
-            use x11rb::rust_connection::RustConnection;
-            let (conn, screen_num) = RustConnection::connect(None)
-                .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
-            let setup = conn.setup();
-            let screen = &setup.roots[screen_num];
-            let w = screen.width_in_pixels as u32;
-            let h = screen.height_in_pixels as u32;
-            // WSLg / headless XWayland quirk: the X server connects but the
-            // root screen advertises a 0-px geometry until a real output is
-            // attached. Returning {width:0,height:0} here would propagate a
-            // success with zero dimensions to the client, which then either
-            // divides by zero when scaling or feeds the value into `int(...)`
-            // after the missing key collapses to None. Fail loudly with an
-            // actionable, typed error instead (never emit a 0/null where the
-            // client expects a usable int). See issue #2005.
-            if w == 0 || h == 0 {
-                anyhow::bail!(
-                    "X11 connected but reports a 0x0 root screen — no usable \
-                     display geometry.{}",
-                    crate::no_display_hint()
-                );
-            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption).  Wayland/HiDPI X11 callers should query
             // `xrandr --query` for true scale.
+            let (w, h) = x11_screen_size()?;
             Ok::<(u32, u32, f64), anyhow::Error>((w, h, 1.0))
         }).await;
         match result {
@@ -2907,6 +2888,111 @@ impl Tool for GetScreenSizeTool {
             Ok(Ok((w, h, scale))) => ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
                 .with_structured(json!({ "width": w, "height": h, "scale_factor": scale })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
+        }
+    }
+}
+
+/// Read the true X11 root-window size in pixels: (width, height).
+/// Shared by `get_screen_size` and `get_desktop_state`.
+fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
+    use x11rb::connection::Connection;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, screen_num) = RustConnection::connect(None)
+        .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
+    let setup = conn.setup();
+    let screen = &setup.roots[screen_num];
+    let w = screen.width_in_pixels as u32;
+    let h = screen.height_in_pixels as u32;
+    // WSLg / headless XWayland quirk: the X server connects but the
+    // root screen advertises a 0-px geometry until a real output is
+    // attached. Returning {width:0,height:0} here would propagate a
+    // success with zero dimensions to the client, which then either
+    // divides by zero when scaling or feeds the value into `int(...)`
+    // after the missing key collapses to None. Fail loudly with an
+    // actionable, typed error instead (never emit a 0/null where the
+    // client expects a usable int). See issue #2005.
+    if w == 0 || h == 0 {
+        anyhow::bail!(
+            "X11 connected but reports a 0x0 root screen — no usable \
+             display geometry.{}",
+            crate::no_display_hint()
+        );
+    }
+    Ok((w, h))
+}
+
+// ── get_desktop_state ─────────────────────────────────────────────────────────
+
+pub struct GetDesktopStateTool;
+static GDS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+#[async_trait]
+impl Tool for GetDesktopStateTool {
+    fn def(&self) -> &ToolDef {
+        GDS_DEF.get_or_init(|| ToolDef {
+            name: "get_desktop_state".into(),
+            description: "Full-display vision screenshot in true screen pixels (no downscale), \
+                for capture_scope=\"desktop\" GUI loops. Captures the entire display (root \
+                window) as native-size PNG so screen-absolute pixel coordinates land exactly. \
+                No AT-SPI walk.".into(),
+            input_schema: json!({"type":"object","properties":{
+                "session":{"type":"string","description":"Optional session id."},
+                "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."}
+            },"additionalProperties":false}),
+            read_only: true, destructive: false, idempotent: false, open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let out_file = args.opt_str("screenshot_out_file");
+
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            // Vision-only: capture the FULL DISPLAY at native size. No downscale
+            // so screen-absolute pixels land exactly.
+            let png = crate::capture::screenshot_display_bytes()?;
+            let (shot_w, shot_h) = crate::capture::png_dimensions_pub(&png)?;
+            // True screen size from the X11 root window.
+            let (screen_w, screen_h) = x11_screen_size()?;
+            // Optional: write PNG to disk instead of returning base64.
+            let written = if let Some(path) = out_file.as_deref() {
+                std::fs::write(path, &png)?;
+                Some(path.to_string())
+            } else {
+                None
+            };
+            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+            let b64 = if written.is_some() { None } else { Some(B64.encode(&png)) };
+            Ok((b64, shot_w, shot_h, screen_w, screen_h, written))
+        }).await;
+
+        match result {
+            Ok(Ok((b64_opt, shot_w, shot_h, screen_w, screen_h, written))) => {
+                let mut content = Vec::new();
+                let mut structured = json!({
+                    "platform": "linux",
+                    "screenshot_width": shot_w,
+                    "screenshot_height": shot_h,
+                    "screen_width": screen_w,
+                    "screen_height": screen_h,
+                    "screenshot_mime_type": "image/png",
+                });
+                if let Some(b64) = b64_opt {
+                    content.push(cua_driver_core::protocol::Content::image_png(b64));
+                }
+                if let Some(path) = written {
+                    structured["screenshot_file_path"] = json!(path);
+                    content.push(cua_driver_core::protocol::Content::text(format!(
+                        "✅ Desktop screenshot {shot_w}x{shot_h} written to {path} (screen {screen_w}x{screen_h})"
+                    )));
+                } else {
+                    content.push(cua_driver_core::protocol::Content::text(format!(
+                        "✅ Desktop screenshot {shot_w}x{shot_h} (screen {screen_w}x{screen_h})"
+                    )));
+                }
+                ToolResult { content, is_error: None, structured_content: Some(structured) }
+            }
+            Ok(Err(e)) => ToolResult::error(format!("Capture error: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -3439,7 +3525,13 @@ impl Tool for SetConfigTool {
                     None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
                 },
                 "capture_scope" => match val.as_str() {
-                    Some(s @ ("window" | "desktop")) => { cfg.capture_scope = s.to_owned(); parts.push(format!("capture_scope={s}")); }
+                    Some(s @ ("window" | "desktop")) => {
+                        cfg.capture_scope = s.to_owned();
+                        if let Err(e) = pip_preview::write_config_key("capture_scope", Value::String(s.to_owned())) {
+                            tracing::warn!("set_config: failed to persist capture_scope: {e}");
+                        }
+                        parts.push(format!("capture_scope={s}"));
+                    }
                     Some(other) => return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{other}\".")),
                     None => return ToolResult::error(format!("`capture_scope` must be a string, got {val}.")),
                 },
@@ -3492,6 +3584,9 @@ impl Tool for SetConfigTool {
         if let Some(scope) = args.opt_str("capture_scope") {
             if scope != "window" && scope != "desktop" {
                 return ToolResult::error(format!("`capture_scope` must be \"window\" or \"desktop\", got \"{scope}\"."));
+            }
+            if let Err(e) = pip_preview::write_config_key("capture_scope", Value::String(scope.clone())) {
+                tracing::warn!("set_config: failed to persist capture_scope: {e}");
             }
             parts.push(format!("capture_scope={scope}"));
             cfg.capture_scope = scope;
@@ -3883,6 +3978,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     // screenshot path is `get_window_state` with `capture_mode:"vision"`.
     let _ = compat;
     r.register(Box::new(GetScreenSizeTool));
+    r.register(Box::new(GetDesktopStateTool));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool { state: state.clone() }));
     r.register(Box::new(SetAgentCursorEnabledTool { state: state.clone() }));

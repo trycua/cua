@@ -22,9 +22,10 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
-        description: "Scroll the target pid's focused region by synthesized keystrokes.\n\n\
-            Mapping: by='page' → PageDown/PageUp × amount; by='line' → DownArrow/UpArrow × amount. \
-            Horizontal variants use Left/Right arrow keys.\n\n\
+        description: "Scroll the target pid's focused region.\n\n\
+            If the target element advertises a native AX scroll action, that action is used first. \
+            Otherwise, by='page' maps to PageDown/PageUp × amount and by='line' maps to \
+            DownArrow/UpArrow × amount. Horizontal variants use Left/Right arrow keys.\n\n\
             Optional element_index + window_id pre-focuses the element before scrolling.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -46,7 +47,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 50,
-                    "description": "Number of keystroke repetitions. Default: 3."
+                    "description": "Number of native AX scroll action or fallback keystroke repetitions. Default: 3."
                 },
                 "window_id": { "type": "integer" },
                 "element_index": { "type": "integer" },
@@ -115,9 +116,11 @@ impl Tool for ScrollTool {
             _                                                 => "down",
         };
         let key = key.to_owned();
+        let ax_direction = direction.to_owned();
+        let ax_by = by.to_owned();
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // Scroll keystrokes (PageDown / arrow) into search-box autocomplete
+        // Scroll actions or fallback keystrokes into search-box autocomplete
         // can spawn floating helper windows; rare but real. Wrap for parity
         // with the other action tools.
         //
@@ -130,7 +133,7 @@ impl Tool for ScrollTool {
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
             prior_front,
-            "scroll.CGEvent",
+            "scroll",
             || async move {
                 // Pre-focus the element under suppression so its
                 // side-effects are captured by the snapshot + lease.
@@ -139,6 +142,22 @@ impl Tool for ScrollTool {
                         crate::input::ax_actions::focus_element(element_ptr)
                     }).await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+                    let direction = ax_direction.clone();
+                    let by = ax_by.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        crate::input::ax_actions::perform_ax_scroll_action_if_supported(
+                            element_ptr,
+                            &direction,
+                            &by,
+                            amount,
+                        )
+                    }).await {
+                        Ok(Ok(Some(action))) => return Ok(Ok(action.to_owned())),
+                        Ok(Ok(None)) => {},
+                        Ok(Err(e)) => return Ok(Err(e)),
+                        Err(e) => return Err(e),
+                    }
                 }
 
                 tokio::task::spawn_blocking(move || {
@@ -148,7 +167,7 @@ impl Tool for ScrollTool {
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    Ok(())
+                    Ok("key synthesis".to_owned())
                 })
                 .await
             },
@@ -158,8 +177,8 @@ impl Tool for ScrollTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "Scrolled {direction} by {by} × {amount}.{}",
+            Ok(Ok(method)) => ToolResult::text(format!(
+                "Scrolled {direction} by {by} × {amount} via {method}.{}",
                 changes.result_suffix()
             )),
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),

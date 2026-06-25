@@ -814,3 +814,191 @@ async fn author_skill(
     std::fs::write(&out_path, skill)?;
     Ok(out_path)
 }
+
+// ── start_demonstration / stop_demonstration ────────────────────────────────
+//
+// Intuitive one-call surface for the demonstration -> skill workflow, so an
+// agent doesn't have to know the `start_recording(demonstration:true, ...)`
+// flag combo:
+//
+//   start_demonstration(window_id, pid)  -> border on, capture begins
+//   ...human performs the task...
+//   stop_demonstration()                 -> stops, processes, returns TRAJECTORY.md
+//
+// Both wrap the same RecordingSession the other recording tools use.
+
+pub struct StartDemonstrationTool {
+    session: Arc<RecordingSession>,
+}
+impl StartDemonstrationTool {
+    pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
+}
+static START_DEMO_DEF: OnceLock<ToolDef> = OnceLock::new();
+
+#[async_trait]
+impl Tool for StartDemonstrationTool {
+    fn def(&self) -> &ToolDef {
+        START_DEMO_DEF.get_or_init(|| ToolDef {
+            name: "start_demonstration".into(),
+            description: "Record a HUMAN demonstration on one window, to turn into a skill. \
+                Shows a glowing red recording border around the target window and captures the \
+                human's clicks / scrolls / drags / typing on THAT window (window-scoped — input \
+                elsewhere is ignored). Typed text is REDACTED by default. Call this, let the human \
+                perform the task, then call `stop_demonstration` to finish and get a readable \
+                TRAJECTORY.md you can author a skill from (see the bundled `DEMONSTRATION.md` \
+                guide). Get `window_id` + `pid` from `list_windows`. Windows only for now."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["window_id", "pid"],
+                "properties": {
+                    "window_id": { "type": "integer", "description": "Target window id / HWND (from list_windows)." },
+                    "pid": { "type": "integer", "description": "Target window's process id (from list_windows)." },
+                    "output_dir": { "type": "string", "description": "Where to write the recording. Default: a fresh temp dir (returned in the result)." },
+                    "capture_raw_text": { "type": "boolean", "description": "Also store literal typed text (needed for faithful replay) instead of only a redacted summary. Stores secrets — opt in deliberately. Default: false." }
+                },
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use crate::tool_args::ArgsExt;
+        let Some(window_id) = args.opt_u64("window_id") else {
+            return ToolResult::error("`window_id` is required.");
+        };
+        let Some(pid) = args.opt_i64("pid") else {
+            return ToolResult::error("`pid` is required.");
+        };
+        let capture_raw_text = args.bool_or("capture_raw_text", false);
+        let owner = args.opt_str("_session_id");
+        let dir = args.opt_str("output_dir").filter(|s| !s.is_empty()).unwrap_or_else(|| {
+            crate::recording::expand_tilde(&format!(
+                "{}/cua-demonstrations/demo-{}",
+                std::env::temp_dir().to_string_lossy(),
+                crate::recording::now_ms()
+            ))
+            .to_string_lossy()
+            .into_owned()
+        });
+
+        if let Err(e) = self.session.start(&dir, false, owner.as_deref()) {
+            return ToolResult::error(format!("Failed to start demonstration: {e}"));
+        }
+        if let Err(e) = self.session.begin_demonstration(pid, window_id, capture_raw_text) {
+            let _ = self.session.stop_owner(None);
+            return ToolResult::error(format!("Failed to start demonstration capture: {e}"));
+        }
+        let state = self.session.current_state();
+        let msg = format!(
+            "🔴 Demonstration started — glowing border on window {window_id}. Human input on that \
+             window is being captured ({}). Perform the task, then call `stop_demonstration`.\n\n\
+             Recording -> {dir}",
+            if capture_raw_text { "raw text" } else { "text redacted" }
+        );
+        ToolResult::text(msg).with_structured(recording_state_json(&state))
+    }
+}
+
+pub struct StopDemonstrationTool {
+    session: Arc<RecordingSession>,
+}
+impl StopDemonstrationTool {
+    pub fn new(session: Arc<RecordingSession>) -> Self { Self { session } }
+}
+static STOP_DEMO_DEF: OnceLock<ToolDef> = OnceLock::new();
+
+#[async_trait]
+impl Tool for StopDemonstrationTool {
+    fn def(&self) -> &ToolDef {
+        STOP_DEMO_DEF.get_or_init(|| ToolDef {
+            name: "stop_demonstration".into(),
+            description: "Stop the active demonstration (removes the border + capture) and process \
+                it into a readable, token-cheap TRAJECTORY.md (+ SUMMARY.json): action prose with \
+                screenshots referenced by relative path, only a few key frames embedded. Read the \
+                returned TRAJECTORY.md, then author a SKILL.md from it (see the bundled \
+                `DEMONSTRATION.md` guide). If `author_skill: true` AND ANTHROPIC_API_KEY is set, \
+                also drafts the SKILL.md for you."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "author_skill": { "type": "boolean", "description": "Also draft SKILL.md via the Anthropic API (requires ANTHROPIC_API_KEY). Default false." },
+                    "model": { "type": "string", "description": "Model for author_skill. Default claude-haiku-4-5." }
+                },
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        })
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use crate::tool_args::ArgsExt;
+        // Capture the output dir BEFORE stopping (stop clears it).
+        let dir = self.session.current_state().output_dir;
+        if let Err(e) = self.session.stop_owner(None) {
+            return ToolResult::error(format!("Failed to stop demonstration: {e}"));
+        }
+        let Some(dir) = dir else {
+            return ToolResult::text("Stopped. (No active recording to process.)");
+        };
+        let dir = crate::recording::expand_tilde(&dir);
+
+        let dir2 = dir.clone();
+        let processed = tokio::task::spawn_blocking(move || {
+            crate::recording_markdown::process(&dir2, &crate::recording_markdown::ProcessOptions::default())
+        })
+        .await;
+        let result = match processed {
+            Ok(Ok(r)) => r,
+            // No turns captured is a normal outcome (the human didn't act on the
+            // window), not an error — report it softly.
+            Ok(Err(_)) => {
+                return ToolResult::text(format!(
+                    "✅ Demonstration stopped. No input was captured on the target window \
+                     (nothing to process). Recording dir: {}",
+                    dir.display()
+                ))
+            }
+            Err(e) => return ToolResult::error(format!("Stopped, but processing task error: {e}")),
+        };
+
+        let traj_path = result.trajectory_md.clone();
+        let mut structured = json!({
+            "trajectory_md": result.trajectory_md.to_string_lossy(),
+            "summary_json": result.summary_json.to_string_lossy(),
+            "summary": {
+                "turn_count": result.summary.turn_count,
+                "human_turns": result.summary.human_turns,
+                "agent_turns": result.summary.agent_turns,
+                "duration_ms": result.summary.duration_ms,
+            },
+            "skill_authored": false,
+        });
+        let mut msg = format!(
+            "✅ Demonstration stopped — {} steps captured.\n📄 {}\n\nRead TRAJECTORY.md, then \
+             author a SKILL.md from it (see the bundled `DEMONSTRATION.md` guide).",
+            result.summary.turn_count,
+            traj_path.display()
+        );
+        if args.bool_or("author_skill", false) {
+            let model = args.opt_str("model").unwrap_or_else(|| "claude-haiku-4-5".into());
+            match author_skill(&traj_path, &model).await {
+                Ok(p) => {
+                    structured["skill_authored"] = json!(true);
+                    structured["skill_md"] = json!(p.to_string_lossy());
+                    msg.push_str(&format!("\n\n📝 Authored SKILL.md -> {}", p.display()));
+                }
+                Err(e) => msg.push_str(&format!("\n\n⚠️ author_skill skipped: {e}")),
+            }
+        }
+        ToolResult::text(msg).with_structured(structured)
+    }
+}

@@ -70,6 +70,7 @@ pub enum Command {
     Stop { socket: Option<String> },
     Status { socket: Option<String> },
     Recording { subcommand: String, args: Vec<String>, socket: Option<String> },
+    Demonstration { subcommand: String, args: Vec<String>, socket: Option<String> },
     DumpDocs { pretty: bool, doc_type: String },
     Update { apply: bool, json: bool },
     /// `cua-driver check-update [--json] [--no-cache]` — pure check verb.
@@ -161,7 +162,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, demonstration, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -319,6 +320,11 @@ pub fn parse_command() -> Command {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let rest: Vec<String> = pos.map(str::to_owned).collect();
             Command::Recording { subcommand, args: rest, socket }
+        }
+        Some("demonstration") | Some("demo") => {
+            let subcommand = pos.next().unwrap_or("status").to_string();
+            let rest: Vec<String> = pos.map(str::to_owned).collect();
+            Command::Demonstration { subcommand, args: rest, socket }
         }
         Some("dump-docs") => {
             let pretty = args.iter().any(|a| a == "--pretty" || a == "-p");
@@ -1518,6 +1524,144 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
         other => {
             eprintln!("Unknown recording subcommand '{other}'. Valid: start <dir>, stop, status, render <dir> --output <out.mp4>");
+            process::exit(64);
+        }
+    }
+}
+
+/// `cua-driver demonstration <start|stop|status>` — record a human
+/// demonstration on a window (glowing border + window-scoped capture) and
+/// process it into a readable trajectory. Thin wrapper over the
+/// `start_demonstration` / `stop_demonstration` / `get_recording_state` tools.
+/// Requires a running daemon (`cua-driver serve`).
+///
+///   cua-driver demonstration start <window_id> <pid> [output-dir] [--raw]
+///   cua-driver demonstration stop [--author-skill]
+///   cua-driver demonstration status
+pub fn run_demonstration_cmd(subcommand: &str, args: &[String], socket: Option<&str>) {
+    let socket_path = socket
+        .map(str::to_owned)
+        .unwrap_or_else(crate::serve::default_socket_path);
+
+    if !crate::serve::is_daemon_listening(&socket_path) {
+        eprintln!(
+            "Cua Driver daemon is not running.\n\
+             Start it first with: cua-driver serve"
+        );
+        process::exit(1);
+    }
+
+    match subcommand {
+        "start" => {
+            let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+            let (window_id, pid) = match (
+                positional.first().and_then(|s| s.parse::<u64>().ok()),
+                positional.get(1).and_then(|s| s.parse::<i64>().ok()),
+            ) {
+                (Some(w), Some(p)) => (w, p),
+                _ => {
+                    eprintln!(
+                        "Usage: cua-driver demonstration start <window_id> <pid> [output-dir] [--raw]\n\
+                         (get window_id + pid from `cua-driver list-windows`)"
+                    );
+                    process::exit(64);
+                }
+            };
+            let raw = args.iter().any(|a| a == "--raw");
+            let mut call = serde_json::json!({ "window_id": window_id, "pid": pid });
+            if raw {
+                call["capture_raw_text"] = serde_json::json!(true);
+            }
+            if let Some(dir) = positional.get(2) {
+                call["output_dir"] = serde_json::json!(dir);
+            }
+            let req = crate::serve::DaemonRequest {
+                method: "call".into(),
+                name: Some("start_demonstration".into()),
+                args: Some(call),
+                session_id: None,
+            };
+            match crate::serve::send_request(&socket_path, &req) {
+                Ok(resp) if resp.ok => {
+                    println!("Demonstration started — interact with window {window_id}, then run `cua-driver demonstration stop`.");
+                }
+                Ok(resp) => {
+                    if let Some(e) = resp.error { eprintln!("{e}"); }
+                    process::exit(1);
+                }
+                Err(e) => { eprintln!("demonstration start: {e}"); process::exit(1); }
+            }
+        }
+
+        "stop" => {
+            let author = args.iter().any(|a| a == "--author-skill");
+            let req = crate::serve::DaemonRequest {
+                method: "call".into(),
+                name: Some("stop_demonstration".into()),
+                args: Some(serde_json::json!({ "author_skill": author })),
+                session_id: None,
+            };
+            match crate::serve::send_request(&socket_path, &req) {
+                Ok(resp) if resp.ok => {
+                    // Surface the human-readable text (trajectory path + guidance).
+                    if let Some(result) = resp.result {
+                        if let Some(text) = result
+                            .get("content")
+                            .and_then(|c| c.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|b| b.get("text"))
+                            .and_then(|t| t.as_str())
+                        {
+                            println!("{text}");
+                        } else {
+                            println!("Demonstration stopped.");
+                        }
+                    } else {
+                        println!("Demonstration stopped.");
+                    }
+                }
+                Ok(resp) => {
+                    if let Some(e) = resp.error { eprintln!("{e}"); }
+                    process::exit(1);
+                }
+                Err(e) => { eprintln!("demonstration stop: {e}"); process::exit(1); }
+            }
+        }
+
+        "status" | "" => {
+            let req = crate::serve::DaemonRequest {
+                method: "call".into(),
+                name: Some("get_recording_state".into()),
+                args: Some(serde_json::json!({})),
+                session_id: None,
+            };
+            match crate::serve::send_request(&socket_path, &req) {
+                Ok(resp) if resp.ok => {
+                    if let Some(result) = resp.result {
+                        let sc = result.get("structuredContent")
+                            .or_else(|| result.get("structured_content"))
+                            .cloned()
+                            .unwrap_or(serde_json::json!({}));
+                        let demo = sc.get("demonstration").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let human = sc.get("human_turns").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let out_dir = sc.get("output_dir").and_then(|v| v.as_str()).unwrap_or("(none)");
+                        println!("Demonstration: {}", if demo { "active 🔴" } else { "inactive" });
+                        if demo {
+                            println!("  output_dir:  {out_dir}");
+                            println!("  human_turns: {human}");
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    if let Some(e) = resp.error { eprintln!("{e}"); }
+                    process::exit(1);
+                }
+                Err(e) => { eprintln!("demonstration status: {e}"); process::exit(1); }
+            }
+        }
+
+        other => {
+            eprintln!("Unknown demonstration subcommand '{other}'. Valid: start <window_id> <pid> [dir] [--raw], stop [--author-skill], status");
             process::exit(64);
         }
     }
@@ -2820,6 +2964,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
         Command::McpConfig { .. } => "cua_driver_mcp_config".to_owned(),
         Command::Manifest { .. } => "cua_driver_manifest".to_owned(),
         Command::Recording { .. } => event::RECORDING.to_owned(),
+        Command::Demonstration { .. } => event::RECORDING.to_owned(),
         Command::Config { .. } => event::CONFIG.to_owned(),
         Command::DumpDocs { .. } => "cua_driver_dump_docs".to_owned(),
         Command::Update { .. } => "cua_driver_update".to_owned(),

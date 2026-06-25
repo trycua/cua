@@ -16,6 +16,66 @@ $script:LogFile = Join-Path $LogDir ("setup_cua_server_" + $RunId + ".log")
 
 Write-Log -LogFile $script:LogFile -Message "=== Installing Cua Computer Server ==="
 
+# --- Blank Desktop Hardening ---
+# Prevent various Windows UI elements and startup apps from appearing at login,
+# ensuring instances launch to a clean blank desktop.
+Write-Log -LogFile $script:LogFile -Message "Applying blank desktop hardening..."
+
+# Disable the Shutdown Event Tracker ("Why did the computer shut down unexpectedly?").
+# The VM is force-stopped between sessions, so Windows would otherwise pop this
+# modal onto the desktop on every boot.
+try {
+  $reliability = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability'
+  New-Item -Path $reliability -Force -ErrorAction SilentlyContinue | Out-Null
+  Set-ItemProperty -Path $reliability -Name 'ShutdownReasonOn' -Value 0 -Type DWord
+  Write-Log -LogFile $script:LogFile -Message "Shutdown Event Tracker disabled"
+} catch {
+  Write-Log -LogFile $script:LogFile -Message "Shutdown Event Tracker warning: $($_.Exception.Message)"
+}
+
+# Disable Edge first-run experience and startup boost (Edge opens on first login otherwise)
+try {
+  $edgePolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+  New-Item -Path $edgePolicies -Force -ErrorAction SilentlyContinue | Out-Null
+  Set-ItemProperty -Path $edgePolicies -Name 'HideFirstRunExperience' -Value 1 -Type DWord
+  Set-ItemProperty -Path $edgePolicies -Name 'StartupBoostEnabled' -Value 0 -Type DWord
+  Set-ItemProperty -Path $edgePolicies -Name 'BackgroundModeEnabled' -Value 0 -Type DWord
+  Write-Log -LogFile $script:LogFile -Message "Edge first-run and startup boost disabled"
+} catch {
+  Write-Log -LogFile $script:LogFile -Message "Edge policy warning: $($_.Exception.Message)"
+}
+
+# Disable OneDrive from launching at startup
+try {
+  Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'OneDrive' -ErrorAction SilentlyContinue
+  $oneDrivePolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive'
+  New-Item -Path $oneDrivePolicies -Force -ErrorAction SilentlyContinue | Out-Null
+  Set-ItemProperty -Path $oneDrivePolicies -Name 'DisableFileSyncNGSC' -Value 1 -Type DWord
+  Write-Log -LogFile $script:LogFile -Message "OneDrive startup disabled"
+} catch {
+  Write-Log -LogFile $script:LogFile -Message "OneDrive startup warning: $($_.Exception.Message)"
+}
+
+# Disable Windows Security notification icon from appearing on the desktop
+try {
+  $notifications = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications'
+  New-Item -Path $notifications -Force -ErrorAction SilentlyContinue | Out-Null
+  Set-ItemProperty -Path $notifications -Name 'DisableNotifications' -Value 1 -Type DWord
+  Write-Log -LogFile $script:LogFile -Message "Windows Security notifications disabled"
+} catch {
+  Write-Log -LogFile $script:LogFile -Message "Security notifications warning: $($_.Exception.Message)"
+}
+
+# Suppress "Windows needs your current credentials" / Network Location Wizard prompts
+try {
+  Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'LimitBlankPasswordUse' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+  Write-Log -LogFile $script:LogFile -Message "Blank password restriction disabled"
+} catch {
+  Write-Log -LogFile $script:LogFile -Message "Blank password warning: $($_.Exception.Message)"
+}
+
+Write-Log -LogFile $script:LogFile -Message "Blank desktop hardening applied"
+
 # Ensure Chocolatey and Python 3.12 are present
 try {
   $ChocoExe = Resolve-ChocoPath

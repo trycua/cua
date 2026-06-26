@@ -52,6 +52,23 @@ fn electron_exe() -> PathBuf {
 
 // ── shared session helper ────────────────────────────────────────────────────
 
+/// Wait (up to ~5s) for `port` to become free. These web tests use FIXED CDP
+/// ports (9222/9223) and a process-global `CUA_DRIVER_CDP_PORT`, so they must
+/// run serially (`--test-threads=1`). A previous test's host can still be
+/// releasing its port when the next launches; reusing it before then makes the
+/// daemon discover the OLD host's page (`pages[0]`), so the click lands on a
+/// stale window and the counter check fails. This guard closes that teardown
+/// overlap — belt-and-braces on top of serial execution.
+fn wait_port_free(port: u16) {
+    for _ in 0..50 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    eprintln!("warning: CDP port {port} still bound after 5s — prior host may not have released it");
+}
+
 /// Launch the harness exe + a cua-driver child with `CUA_DRIVER_CDP_PORT`
 /// pointing at the harness's CDP endpoint. Polls list_windows until the
 /// host's window appears.
@@ -63,6 +80,9 @@ where
         eprintln!("{label} host exe not found at {host_exe:?} — run test-harness/build/windows.ps1");
         return;
     }
+    // A prior test's host may still hold this fixed CDP port — wait for it to
+    // free so the daemon doesn't discover the stale host's page.
+    wait_port_free(cdp_port);
     // Set the CDP port the daemon should probe; the spawned cua-driver child
     // inherits it from this process's environment.
     std::env::set_var("CUA_DRIVER_CDP_PORT", cdp_port.to_string());

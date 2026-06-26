@@ -279,6 +279,24 @@ fn validate_authorize_query(
     let client_id = required(params, "client_id")?;
     let redirect_uri = required(params, "redirect_uri")?;
     let code_challenge = required(params, "code_challenge")?;
+    if params.get("response_type").map(String::as_str) != Some("code") {
+        return Err(oauth_error(
+            400,
+            "unsupported_response_type",
+            "response_type must be code",
+        ));
+    }
+    let scope = params
+        .get("scope")
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_SCOPE.to_owned());
+    if !scope.split_whitespace().all(|s| s == DEFAULT_SCOPE) {
+        return Err(oauth_error(
+            400,
+            "invalid_scope",
+            "only mcp:tools is supported",
+        ));
+    }
     let method = params
         .get("code_challenge_method")
         .map(String::as_str)
@@ -319,10 +337,7 @@ fn validate_authorize_query(
         client_id,
         client_name: client.client_name.clone(),
         redirect_uri,
-        scope: params
-            .get("scope")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_SCOPE.to_owned()),
+        scope,
         state: params.get("state").cloned(),
         resource,
         code_challenge,
@@ -1034,6 +1049,58 @@ mod tests {
     fn append_query_preserves_existing_query() {
         let url = append_query("https://example.test/cb?x=1", &[("code", "a b")]);
         assert_eq!(url, "https://example.test/cb?x=1&code=a%20b");
+    }
+
+    #[test]
+    fn authorize_requires_code_response_type_and_supported_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = HandlerContext {
+            options: Options {
+                public_url: "https://example.test".to_owned(),
+                listen: DEFAULT_LISTEN.to_owned(),
+                storage_dir: Some(dir.path().to_path_buf()),
+                token_ttl_seconds: 3600,
+                code_ttl_seconds: 300,
+                require_user_consent: true,
+            },
+            registry: Arc::new(ToolRegistry::new()),
+            store: Arc::new(JsonStore::new(dir.path().to_path_buf(), 3600, 300)),
+        };
+        ctx.store
+            .upsert_client(
+                "client",
+                Client {
+                    client_secret: "secret".to_owned(),
+                    client_name: "test".to_owned(),
+                    redirect_uris: vec!["https://client.test/callback".to_owned()],
+                    token_endpoint_auth_method: "client_secret_post".to_owned(),
+                    created_at: now_secs(),
+                },
+            )
+            .unwrap();
+
+        let mut params = HashMap::from([
+            ("client_id".to_owned(), "client".to_owned()),
+            (
+                "redirect_uri".to_owned(),
+                "https://client.test/callback".to_owned(),
+            ),
+            ("response_type".to_owned(), "token".to_owned()),
+            ("scope".to_owned(), DEFAULT_SCOPE.to_owned()),
+            ("code_challenge".to_owned(), "challenge".to_owned()),
+            ("code_challenge_method".to_owned(), "S256".to_owned()),
+        ]);
+        let err = validate_authorize_query(&params, &ctx).unwrap_err();
+        assert_eq!(err.status, 400);
+        let body: Value = serde_json::from_slice(&err.body).unwrap();
+        assert_eq!(body["error"], "unsupported_response_type");
+
+        params.insert("response_type".to_owned(), "code".to_owned());
+        params.insert("scope".to_owned(), "mcp:tools admin".to_owned());
+        let err = validate_authorize_query(&params, &ctx).unwrap_err();
+        assert_eq!(err.status, 400);
+        let body: Value = serde_json::from_slice(&err.body).unwrap();
+        assert_eq!(body["error"], "invalid_scope");
     }
 
     #[tokio::test]

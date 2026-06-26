@@ -21,3 +21,30 @@ claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-cod
 This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
 
 Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+
+## Experimental OAuth connector bridge
+
+`cua-driver mcp` remains the recommended local stdio MCP entry point. For
+OAuth-only MCP clients, such as custom connector flows that require OAuth
+metadata and Dynamic Client Registration before they will call an MCP endpoint,
+`cua-driver` also has an experimental HTTP front door:
+
+```bash
+cua-driver mcp-oauth --public-url https://your-tunnel.example
+```
+
+The bridge listens on `127.0.0.1:7676` by default and expects you to put a
+trusted HTTPS tunnel in front of it. It exposes OAuth discovery, Dynamic Client
+Registration, authorization-code + PKCE, token exchange, and a Bearer-protected
+`POST /mcp` endpoint backed by the normal CuaDriver tool registry.
+
+Keep this entry point opt-in and temporary:
+
+- Use an HTTPS public URL; the command rejects plain `http://` public URLs.
+- Keep the listener on loopback unless you know exactly why you need otherwise.
+- Stop the tunnel and the `mcp-oauth` process when the connector is not in use.
+- Delete `~/.cua-driver/oauth` to remove registered clients and issued tokens.
+
+This first slice supports request/response JSON-RPC over `POST /mcp`. Full
+Streamable HTTP/SSE session handling and built-in tunnel management are not part
+of this experimental command yet.

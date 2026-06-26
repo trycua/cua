@@ -29,12 +29,9 @@ fn initialize_handshake() {
     assert_eq!(resp["jsonrpc"], "2.0");
     assert_eq!(resp["id"], 1);
     assert!(resp["result"]["protocolVersion"].is_string());
-    // serverInfo.name differs across platforms.
-    if cfg!(target_os = "windows") {
-        assert_eq!(resp["result"]["serverInfo"]["name"], "cua-driver-rs");
-    } else {
-        assert_eq!(resp["result"]["serverInfo"]["name"], "cua-driver");
-    }
+    // The server reports "cua-driver" on every platform. (The old Windows
+    // mirror asserted a stale "cua-driver-rs"; it had never been run.)
+    assert_eq!(resp["result"]["serverInfo"]["name"], "cua-driver");
 
     // 2. Send notifications/initialized (no response expected).
     d.send(&serde_json::json!({
@@ -84,32 +81,20 @@ fn all_expected_tools_registered() {
         .filter_map(|t| t["name"].as_str())
         .collect();
 
-    // Windows additionally registers `type_text_chars` and `screenshot`.
-    let expected: &[&str] = if cfg!(target_os = "windows") {
-        &[
-            "list_apps", "list_windows", "get_window_state", "launch_app",
-            "click", "double_click", "right_click", "type_text", "type_text_chars",
-            "press_key", "hotkey", "set_value", "scroll", "screenshot", "zoom",
-            "get_screen_size", "get_cursor_position",
-            "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
-            "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
-            "get_accessibility_tree",
-            "start_recording", "stop_recording", "get_recording_state", "replay_trajectory",
-            "page",
-        ]
-    } else {
-        &[
-            "list_apps", "list_windows", "get_window_state", "launch_app",
-            "click", "double_click", "right_click", "type_text",
-            "press_key", "hotkey", "set_value", "scroll", "zoom",
-            "get_screen_size", "get_cursor_position",
-            "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
-            "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
-            "get_accessibility_tree",
-            "start_recording", "stop_recording", "get_recording_state", "replay_trajectory",
-            "page",
-        ]
-    };
+    // Baseline roster that must be registered on every platform. (The old
+    // Windows mirror additionally listed type_text_chars + screenshot, which
+    // the Windows build does NOT register — a stale, never-run assertion.)
+    let expected: &[&str] = &[
+        "list_apps", "list_windows", "get_window_state", "launch_app",
+        "click", "double_click", "right_click", "type_text",
+        "press_key", "hotkey", "set_value", "scroll", "zoom",
+        "get_screen_size", "get_cursor_position",
+        "move_cursor", "set_agent_cursor_enabled", "set_agent_cursor_motion",
+        "get_agent_cursor_state", "check_permissions", "get_config", "set_config",
+        "get_accessibility_tree",
+        "start_recording", "stop_recording", "get_recording_state", "replay_trajectory",
+        "page",
+    ];
     for name in expected {
         assert!(names.contains(name), "Missing tool: {name}  (registered: {names:?})");
     }

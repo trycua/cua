@@ -2,18 +2,25 @@
 """
 Windows Arc PAYG license probe against a run.cua.ai Windows workspace pool.
 
-End-to-end operational probe that exercises the full "license a Windows box,
-prove it's alive, then unlicense it" loop against the cua cloud — driven
-entirely through the run.cua.ai backend with an OAuth client id/secret (no
-kubectl, no cluster VPN):
+End-to-end operational probe against the cua cloud, driven entirely through the
+run.cua.ai backend with an OAuth client id/secret (no kubectl, no cluster VPN).
 
-  1. provision the Windows workspace pool if it does not exist
+DEFAULT MODE — pre-baked licensed image (cua-server-windows-2025, a warm pool of
+size 1). The image is already Windows Server 2025 full-edition + Arc-connected +
+PAYG activated at build time, so the probe does no Azure work:
+
+  1. provision the Windows workspace pool (replicas=1) if it does not exist
   2. claim a sandbox from the pool and wait for it to bind
-  3. attach the Azure Arc pay-as-you-go (PAYG) Windows Server license
   4. take a screenshot of the bound desktop (cua-computer SDK, through the proxy)
   5. upload the screenshot to S3 and mint a presigned URL
   6. POST the presigned URL to Alertmanager (am.cua.ai)
-  7. deactivate the license and return the claim to the pool (always runs)
+  7. return the claim to the pool (always runs)
+
+RUNTIME-ONBOARDING MODE (the non-baked alternative) — set ARC_MACHINE +
+AZURE_SUBSCRIPTION_ID and the probe also:
+
+  3. attaches the Azure Arc PAYG Windows Server license (before the screenshot)
+  7. deactivates the license (after), then returns the claim
 
 Steps 1/2/4 talk to run.cua.ai. Authentication is the client_credentials
 exchange handled by ``cua_train.TrainClient.from_key`` — set CUA_CLIENT_ID /
@@ -72,10 +79,13 @@ log = logging.getLogger("windows-arc-license-probe")
 
 DEFAULT_TOKEN_URL = "https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
 DEFAULT_BASE_URL = "https://run.cua.ai"
-# Windows computer-server image: Windows Server 2022 + computer_server on :8000
-# (HTTP/WS API at /cmd, /ws, /status; MCP at /mcp). dockur-built GPT/UEFI image,
-# so the pool MUST boot it with efi firmware.
-DEFAULT_IMAGE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:latest"
+# Windows computer-server image: Windows Server 2025 + computer_server on :8000
+# (HTTP/WS API at /cmd, /ws, /status; MCP at /mcp), PRE-LICENSED via Azure Arc
+# PAYG at build time (cua-server-windows-2025-workspace). dockur-built GPT/UEFI
+# image, so the pool MUST boot it with efi firmware. Because the image is
+# pre-licensed, the probe does NOT toggle licensing per run unless ARC_MACHINE
+# is set (the runtime-onboarding alternative).
+DEFAULT_IMAGE = "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows-2025:latest"
 
 # OSGymWorkspacePool — the single-object pool CR the run.cua.ai SPA creates
 # (cua.ai/v1); the pool-operator compat shim projects it into the native

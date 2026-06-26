@@ -25,6 +25,7 @@
 //! them to a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job, so the OS reaps the whole
 //! tree even on panic / SIGKILL / Ctrl-C — no orphaned windows or held ports.
 
+pub mod ax;
 mod driver;
 mod mcp;
 mod cli;

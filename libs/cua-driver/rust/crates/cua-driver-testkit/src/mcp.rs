@@ -3,6 +3,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -87,6 +88,31 @@ impl McpDriver {
     /// lifetime should be tied to this driver.
     pub fn reaper(&mut self) -> &mut ChildReaper {
         &mut self.reaper
+    }
+
+    /// Poll `list_windows` until a window of `pid` whose title contains
+    /// `title_substr` appears (up to ~12s). Returns `(window_id, title)`.
+    /// Replaces the per-file `find_harness_window` helper.
+    pub fn find_window(&mut self, pid: i64, title_substr: &str) -> Option<(u64, String)> {
+        let deadline = Instant::now() + Duration::from_secs(12);
+        loop {
+            let r = self.call("list_windows", serde_json::json!({ "pid": pid }));
+            if let Some(wins) = r.structured()["windows"].as_array() {
+                for w in wins {
+                    if w["pid"].as_i64() != Some(pid) {
+                        continue;
+                    }
+                    let title = w["title"].as_str().unwrap_or("");
+                    if title.contains(title_substr) {
+                        return Some((w["window_id"].as_u64()?, title.to_string()));
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
     }
 
     /// Raw JSON-RPC response envelope, for the rare assertion needing it.

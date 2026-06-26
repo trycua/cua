@@ -41,9 +41,18 @@ jobs:
   probe:
     name: Windows Arc License Probe
     runs-on: ubuntu-latest
+    env:
+      # secrets.* can't be used in step `if:` directly, so surface the presence
+      # of Azure creds here. The default pre-baked image mode has no Azure creds
+      # configured; without this gate the scheduled (cron) run would always hit
+      # `azure/login` (inputs.skip_license is empty on schedule) and fail.
+      HAS_AZURE_CREDS: ${{ secrets.AZURE_CREDENTIALS != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # The probe does no git operations; don't persist GITHUB_TOKEN.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -52,11 +61,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install cua-train cua-computer httpx boto3 requests \
+          pip install cua-train "cua-computer>=0.5.19" httpx boto3 requests \
             --extra-index-url https://wheels.cua.ai/simple/
 
       - name: Azure login
-        if: ${{ !inputs.skip_license }}
+        # Only when licensing at runtime (Arc creds present + not skipped). The
+        # default pre-baked image mode skips this entirely.
+        if: ${{ !inputs.skip_license && env.HAS_AZURE_CREDS == 'true' }}
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}

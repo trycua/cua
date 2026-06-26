@@ -216,7 +216,18 @@ def ensure_pool(http: httpx.Client, a: argparse.Namespace) -> None:
     }
     r = http.post(pool_url(a.pool), json=body)
     if r.status_code == 409:
-        log.info("pool %s already exists — reusing it", a.pool)
+        # Reuse an existing pool, but don't silently validate the wrong VM:
+        # if the existing pool boots a different image, fail loudly. (We compare
+        # only the containerDisk image — the server normalizes/defaults other
+        # spec fields, so a full-spec equality check would misfire.)
+        existing = http.get(pool_url(a.pool, a.pool))
+        existing.raise_for_status()
+        cur_image = (((existing.json().get("spec") or {}).get("template") or {})
+                     .get("containerDiskImage"))
+        if cur_image and cur_image != a.image:
+            sys.exit(f"pool {a.pool} already exists with a different image "
+                     f"({cur_image} != {a.image}) — refusing to reuse it")
+        log.info("pool %s already exists with the expected image — reusing it", a.pool)
         return
     if r.status_code == 403:
         sys.exit("403 creating pool — use a per-USER key (ukey-…, POST /api/user-keys)")
@@ -247,7 +258,11 @@ def pool_counts(get_http: Callable[[], httpx.Client], pool: str) -> tuple[int, i
         r.raise_for_status()
         st = r.json().get("status") or {}
         return int(st.get("totalCount", 0)), int(st.get("availableCount", 0)), st.get("phase", "Unknown")
-    except Exception:  # noqa: BLE001
+    except (httpx.TimeoutException, httpx.TransportError) as e:
+        # Only swallow transient transport errors (retried by the caller's poll
+        # loop). Auth/RBAC/server/JSON errors propagate so the probe fails fast
+        # instead of looping to a misleading warm-pool timeout.
+        log.warning("transient error reading pool status: %s", e)
         return 0, 0, "Unknown"
 
 
@@ -330,7 +345,14 @@ def wait_service_ready(get_http: Callable[[], httpx.Client], url: str, a: argpar
         try:
             resp = get_http().get(url, timeout=15.0)
             reason = f"HTTP {resp.status_code}"
-            ok = resp.status_code not in (502, 503, 504)
+            # Require a real 2xx from /status — a persistent 401/404/500 means
+            # broken auth, a wrong service path, or a failed computer-server, and
+            # should fail at readiness rather than feed a broken VM to the
+            # screenshot step. 502/503/504 are the normal "guest still booting"
+            # proxy codes and keep polling.
+            ok = 200 <= resp.status_code < 300
+            if not ok and resp.status_code not in (502, 503, 504):
+                reason = f"HTTP {resp.status_code}: {resp.text[:200]}"
         except httpx.HTTPError as e:
             reason, ok = type(e).__name__, False
         if ok:
@@ -359,7 +381,12 @@ def _az_rest(method: str, url: str, body: dict | None = None) -> dict:
     if body is not None:
         cmd += ["--body", json.dumps(body)]
     log.debug("$ %s", " ".join(cmd))
-    cp = subprocess.run(cmd, text=True, capture_output=True, check=True)
+    try:
+        cp = subprocess.run(cmd, text=True, capture_output=True, check=True, timeout=120)
+    except subprocess.TimeoutExpired as e:
+        # An az CLI auth/network hang would otherwise stall the probe until the
+        # workflow timeout and delay cleanup/alerting — fail fast instead.
+        raise RuntimeError(f"az rest timed out after {e.timeout}s") from e
     out = (cp.stdout or "").strip()
     return json.loads(out) if out else {}
 

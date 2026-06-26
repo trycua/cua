@@ -8,7 +8,7 @@ use std::fs;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -86,6 +86,7 @@ async fn serve(
         options.code_ttl_seconds,
     ));
     fs::create_dir_all(&store.dir)?;
+    let sessions = Arc::new(SessionStore::default());
     let listener = TcpListener::bind(addr).await?;
     eprintln!(
         "cua-driver mcp-oauth listening on http://{}; configure your HTTPS tunnel to target this address",
@@ -97,6 +98,7 @@ async fn serve(
             options: options.clone(),
             registry: registry.clone(),
             store: store.clone(),
+            sessions: sessions.clone(),
         };
         tokio::spawn(async move {
             let _ = serve_conn(stream, ctx).await;
@@ -109,6 +111,7 @@ struct HandlerContext {
     options: Options,
     registry: Arc<ToolRegistry>,
     store: Arc<JsonStore>,
+    sessions: Arc<SessionStore>,
 }
 
 async fn serve_conn(mut stream: TcpStream, ctx: HandlerContext) -> anyhow::Result<()> {
@@ -473,20 +476,130 @@ fn handle_token(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
 }
 
 async fn handle_mcp(req: HttpRequest, ctx: &HandlerContext) -> HttpResponse {
-    if !req.method.eq_ignore_ascii_case("POST") {
-        return json_response(
-            405,
-            json!({"error": "method_not_allowed", "error_description": "Use POST /mcp with a JSON-RPC body"}),
-        );
-    }
     match authorize_bearer(&req, ctx) {
         Ok(()) => {}
         Err(resp) => return resp,
     }
-    match dispatch_mcp(&req.body, &ctx.registry).await {
-        Some(body) => HttpResponse::new(200, "application/json", body.into_bytes()),
-        None => HttpResponse::new(202, "application/json", Vec::new()),
+    if let Err(resp) = validate_protocol_version(&req) {
+        return resp;
     }
+    match req.method.as_str() {
+        "POST" => handle_mcp_post(req, ctx).await,
+        "GET" => handle_mcp_get(&req, ctx),
+        "DELETE" => handle_mcp_delete(&req, ctx),
+        _ => json_response(
+            405,
+            json!({"error": "method_not_allowed", "error_description": "Use POST, GET, or DELETE /mcp"}),
+        ),
+    }
+}
+
+async fn handle_mcp_post(req: HttpRequest, ctx: &HandlerContext) -> HttpResponse {
+    if !accepts_post_response(&req) {
+        return json_response(
+            406,
+            json!({"error": "not_acceptable", "error_description": "POST /mcp must accept application/json and text/event-stream"}),
+        );
+    }
+    let mut rpc_req: Request = match serde_json::from_slice(&req.body) {
+        Ok(r) => r,
+        Err(_) => {
+            return HttpResponse::new(
+                200,
+                "application/json",
+                serialize(&Response::parse_error()).into_bytes(),
+            )
+        }
+    };
+    let is_initialize = rpc_req.method == "initialize";
+    let session_id = if is_initialize {
+        None
+    } else {
+        match require_active_session(&req, ctx) {
+            Ok(id) => Some(id),
+            Err(resp) => return resp,
+        }
+    };
+    apply_transport_session_identity(&mut rpc_req, session_id.as_deref());
+    if rpc_req.id.is_none() {
+        return HttpResponse::new(202, "application/json", Vec::new());
+    }
+    let id = rpc_req.id.clone().unwrap_or(Value::Null);
+    let mut resp = HttpResponse::new(
+        200,
+        "application/json",
+        serialize(&handle_request(rpc_req, id, &ctx.registry).await).into_bytes(),
+    );
+    if is_initialize {
+        let sid = ctx.sessions.create();
+        cua_driver_core::session::touch_session(&sid);
+        resp.headers.push(("MCP-Session-Id".into(), sid));
+    }
+    resp
+}
+
+fn handle_mcp_get(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
+    let session_id = match require_active_session(req, ctx) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    if !accepts_sse(req) {
+        return json_response(
+            406,
+            json!({"error": "not_acceptable", "error_description": "GET /mcp requires Accept: text/event-stream"}),
+        );
+    }
+    cua_driver_core::session::touch_session(&session_id);
+    let mut resp = HttpResponse::new(
+        200,
+        "text/event-stream",
+        b": cua-driver mcp-oauth stream ready\n\n".to_vec(),
+    );
+    resp.headers.push(("MCP-Session-Id".into(), session_id));
+    resp.headers
+        .push(("Cache-Control".into(), "no-cache".into()));
+    resp
+}
+
+fn handle_mcp_delete(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
+    let session_id = match require_active_session(req, ctx) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    ctx.sessions.end(&session_id);
+    cua_driver_core::session::fire_session_end(&session_id);
+    HttpResponse::new(202, "application/json", Vec::new())
+}
+
+fn validate_protocol_version(req: &HttpRequest) -> Result<(), HttpResponse> {
+    match req.headers.get("mcp-protocol-version").map(String::as_str) {
+        None | Some("2025-06-18") | Some("2025-03-26") => Ok(()),
+        Some(version) => Err(json_response(
+            400,
+            json!({"error": "unsupported_protocol_version", "error_description": format!("unsupported MCP-Protocol-Version: {version}")}),
+        )),
+    }
+}
+
+fn require_active_session(req: &HttpRequest, ctx: &HandlerContext) -> Result<String, HttpResponse> {
+    let sid = req
+        .headers
+        .get("mcp-session-id")
+        .filter(|v| !v.is_empty())
+        .cloned()
+        .ok_or_else(|| {
+            json_response(
+                400,
+                json!({"error": "missing_session", "error_description": "MCP-Session-Id is required after initialize"}),
+            )
+        })?;
+    if !ctx.sessions.contains(&sid) {
+        return Err(json_response(
+            404,
+            json!({"error": "unknown_session", "error_description": "MCP session is unknown or has ended"}),
+        ));
+    }
+    Ok(sid)
 }
 
 fn authorize_bearer(req: &HttpRequest, ctx: &HandlerContext) -> Result<(), HttpResponse> {
@@ -516,16 +629,46 @@ fn authorize_bearer(req: &HttpRequest, ctx: &HandlerContext) -> Result<(), HttpR
     Ok(())
 }
 
-async fn dispatch_mcp(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
-    let req: Request = match serde_json::from_slice(body) {
-        Ok(r) => r,
-        Err(_) => return Some(serialize(&Response::parse_error())),
-    };
-    if req.id.is_none() {
-        return None;
+fn accepts_post_response(req: &HttpRequest) -> bool {
+    match req.headers.get("accept") {
+        None => true,
+        Some(accept) if accept.contains("*/*") => true,
+        Some(accept) => {
+            let accept = accept.to_ascii_lowercase();
+            accept.contains("application/json") && accept.contains("text/event-stream")
+        }
     }
-    let id = req.id.clone().unwrap_or(Value::Null);
-    Some(serialize(&handle_request(req, id, registry).await))
+}
+
+fn accepts_sse(req: &HttpRequest) -> bool {
+    match req.headers.get("accept") {
+        None => false,
+        Some(accept) if accept.contains("*/*") => true,
+        Some(accept) => accept.to_ascii_lowercase().contains("text/event-stream"),
+    }
+}
+
+fn apply_transport_session_identity(req: &mut Request, session_id: Option<&str>) {
+    let Some(params) = req.params.as_mut() else {
+        return;
+    };
+    let Some(args) = params.get_mut("arguments").and_then(|a| a.as_object_mut()) else {
+        return;
+    };
+    let explicit_session = args
+        .get("session")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    if let Some(sess) = explicit_session {
+        args.entry("_session_id")
+            .or_insert_with(|| Value::String(sess.clone()));
+        cua_driver_core::session::touch_session(&sess);
+    } else if let Some(sid) = session_id {
+        args.entry("_session_id")
+            .or_insert_with(|| Value::String(sid.to_owned()));
+        cua_driver_core::session::touch_session(sid);
+    }
 }
 
 fn serialize(resp: &Response) -> String {
@@ -564,6 +707,34 @@ fn authorize_page(pending: &PendingAuthorization, public_url: &str) -> String {
         html_escape(&pending.code_challenge_method),
         html_escape(pending.state.as_deref().unwrap_or("")),
     )
+}
+
+#[derive(Default, Debug)]
+struct SessionStore {
+    active: Mutex<HashMap<String, ()>>,
+}
+
+impl SessionStore {
+    fn create(&self) -> String {
+        let id = random_id();
+        let mut active = self.active.lock().expect("session store mutex poisoned");
+        active.insert(id.clone(), ());
+        id
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.active
+            .lock()
+            .expect("session store mutex poisoned")
+            .contains_key(id)
+    }
+
+    fn end(&self, id: &str) {
+        self.active
+            .lock()
+            .expect("session store mutex poisoned")
+            .remove(id);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -856,7 +1027,7 @@ fn add_cors(headers: &mut Vec<(String, String)>) {
     ));
     headers.push((
         "Access-Control-Allow-Headers".into(),
-        "Content-Type, Authorization, MCP-Session-Id, Last-Event-ID".into(),
+        "Content-Type, Authorization, MCP-Session-Id, MCP-Protocol-Version, Last-Event-ID".into(),
     ));
     headers.push((
         "Access-Control-Expose-Headers".into(),
@@ -910,6 +1081,7 @@ fn reason(status: u16) -> &'static str {
         401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        406 => "Not Acceptable",
         500 => "Internal Server Error",
         _ => "OK",
     }
@@ -1065,6 +1237,7 @@ mod tests {
             },
             registry: Arc::new(ToolRegistry::new()),
             store: Arc::new(JsonStore::new(dir.path().to_path_buf(), 3600, 300)),
+            sessions: Arc::new(SessionStore::default()),
         };
         ctx.store
             .upsert_client(
@@ -1117,6 +1290,7 @@ mod tests {
             },
             registry: Arc::new(ToolRegistry::new()),
             store: Arc::new(JsonStore::new(dir.path().to_path_buf(), 3600, 300)),
+            sessions: Arc::new(SessionStore::default()),
         };
 
         let register = handle_http(
@@ -1195,5 +1369,135 @@ mod tests {
         assert_eq!(replay.status, 400);
         let replay_body: Value = serde_json::from_slice(&replay.body).unwrap();
         assert_eq!(replay_body["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn mcp_streamable_http_session_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = HandlerContext {
+            options: Options {
+                public_url: "https://example.test".to_owned(),
+                listen: DEFAULT_LISTEN.to_owned(),
+                storage_dir: Some(dir.path().to_path_buf()),
+                token_ttl_seconds: 3600,
+                code_ttl_seconds: 300,
+                require_user_consent: false,
+            },
+            registry: Arc::new(ToolRegistry::new()),
+            store: Arc::new(JsonStore::new(dir.path().to_path_buf(), 3600, 300)),
+            sessions: Arc::new(SessionStore::default()),
+        };
+        ctx.store
+            .upsert_token(
+                "token",
+                AccessToken {
+                    client_id: "client".to_owned(),
+                    scope: DEFAULT_SCOPE.to_owned(),
+                    resource: Some("https://example.test/mcp".to_owned()),
+                    created_at: now_secs(),
+                    expires_at: now_secs() + 3600,
+                },
+            )
+            .unwrap();
+
+        let mut headers = HashMap::from([
+            ("authorization".to_owned(), "Bearer token".to_owned()),
+            (
+                "accept".to_owned(),
+                "application/json, text/event-stream".to_owned(),
+            ),
+            ("mcp-protocol-version".to_owned(), "2025-06-18".to_owned()),
+        ]);
+        let initialize = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/mcp".to_owned(),
+                headers: headers.clone(),
+                body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(initialize.status, 200);
+        let session_id = initialize
+            .headers
+            .iter()
+            .find(|(k, _)| k == "MCP-Session-Id")
+            .map(|(_, v)| v.clone())
+            .expect("initialize response includes MCP-Session-Id");
+        assert!(ctx.sessions.contains(&session_id));
+
+        let missing_session = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/mcp".to_owned(),
+                headers: headers.clone(),
+                body: br#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#.to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(missing_session.status, 400);
+
+        headers.insert("mcp-session-id".to_owned(), session_id.clone());
+        let tools_list = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/mcp".to_owned(),
+                headers: headers.clone(),
+                body: br#"{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}"#.to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(tools_list.status, 200);
+
+        headers.insert("accept".to_owned(), "text/event-stream".to_owned());
+        let stream = handle_http(
+            HttpRequest {
+                method: "GET".to_owned(),
+                path: "/mcp".to_owned(),
+                headers: headers.clone(),
+                body: Vec::new(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(stream.status, 200);
+        assert!(stream
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v == "text/event-stream"));
+
+        let delete = handle_http(
+            HttpRequest {
+                method: "DELETE".to_owned(),
+                path: "/mcp".to_owned(),
+                headers: headers.clone(),
+                body: Vec::new(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(delete.status, 202);
+        assert!(!ctx.sessions.contains(&session_id));
+
+        let ended = handle_http(
+            HttpRequest {
+                method: "GET".to_owned(),
+                path: "/mcp".to_owned(),
+                headers,
+                body: Vec::new(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(ended.status, 404);
     }
 }

@@ -36,7 +36,7 @@ cua-driver mcp-oauth --public-url https://your-tunnel.example
 The bridge listens on `127.0.0.1:7676` by default and expects you to put a
 trusted HTTPS tunnel in front of it. It exposes OAuth discovery, Dynamic Client
 Registration, authorization-code + PKCE, token exchange, and a Bearer-protected
-`POST /mcp` endpoint backed by the normal CuaDriver tool registry.
+`/mcp` endpoint backed by the normal CuaDriver tool registry.
 
 Keep this entry point opt-in and temporary:
 
@@ -45,6 +45,7 @@ Keep this entry point opt-in and temporary:
 - Stop the tunnel and the `mcp-oauth` process when the connector is not in use.
 - Delete `~/.cua-driver/oauth` to remove registered clients and issued tokens.
 
-This first slice supports request/response JSON-RPC over `POST /mcp`. Full
-Streamable HTTP/SSE session handling and built-in tunnel management are not part
-of this experimental command yet.
+The `/mcp` endpoint implements the Streamable HTTP basics: `initialize` returns
+`MCP-Session-Id`, later requests must send that header, `GET /mcp` opens an SSE
+stream, and `DELETE /mcp` ends the session. Built-in tunnel management and
+server-initiated message queues are not part of this experimental command yet.

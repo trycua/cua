@@ -16,7 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\scenarios\scenarios.json" Link="scenarios.json">
+    <None Include="..\..\..\shared\scenarios.json" Link="scenarios.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

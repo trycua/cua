@@ -572,8 +572,14 @@ const customStyles = `
     transition: opacity 0.15s ease;
   }
 
-  .copilotkit-assistant-message-wrapper:hover .copilotkit-copy-response-container {
+  .copilotkit-assistant-message-wrapper:hover .copilotkit-copy-response-container,
+  .copilotkit-assistant-message-wrapper:focus-within .copilotkit-copy-response-container {
     opacity: 1;
+  }
+
+  .copilotkit-copy-response-button:focus-visible {
+    outline: 2px solid var(--copilot-kit-primary-color, #4f46e5);
+    outline-offset: 2px;
   }
 
   .copilotkit-copy-response-button {

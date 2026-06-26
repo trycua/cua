@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/cua-driver",
+    "crates/cua-driver-testkit",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
     "crates/platform-macos",

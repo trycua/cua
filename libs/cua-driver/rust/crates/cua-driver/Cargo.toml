@@ -73,6 +73,9 @@ portal-libei = ["platform-linux/portal-libei"]
 embed-resource = "2"
 
 [dev-dependencies]
+# Shared integration-test harness (MCP/CLI transports, child reaping, paths,
+# response accessors). Dev-only — never linked into the shipped driver.
+cua-driver-testkit = { path = "../cua-driver-testkit" }
 tokio = { workspace = true, features = ["full"] }
 image = { workspace = true }
 base64 = { workspace = true }

@@ -1,0 +1,18 @@
+---
+title: "Autoscaling"
+description: "How a pool grows and shrinks its sandbox replicas in response to live claim demand."
+---
+
+**Autoscaling** lets a [pool](/explanation/sandbox/pools) size itself to demand instead of a fixed replica count. The pool grows when work is waiting and shrinks when it is idle.
+
+## What drives scaling
+
+Scaling is driven by **claim demand** — the live count of pending plus bound [claims](/explanation/sandbox/claims). A pending claim is unmet demand, so the pool grows; deleting claims lowers demand, so the pool shrinks.
+
+## Scaling up and down
+
+When demand exceeds ready capacity, the pool provisions more sandboxes. When demand falls, the pool drains spare replicas. Draining is done so that in-use sandboxes are never pulled out from under a running task.
+
+## When to enable it
+
+Autoscaling fits bursty or unpredictable workloads where a fixed pool would either waste idle capacity or fail to keep up. Steady workloads can run on a fixed pool size instead.

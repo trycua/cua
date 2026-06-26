@@ -1,0 +1,18 @@
+---
+title: "Pools"
+description: "How warm pools keep pre-provisioned sandboxes ready so work can start without waiting for a cold boot."
+---
+
+A **pool** is a managed set of sandboxes kept ready ahead of demand. Instead of booting a sandbox on request and paying the cold-start latency, work draws from a pool of already-provisioned machines.
+
+## Why pools exist
+
+Provisioning a sandbox takes time — allocating compute, booting the OS, and reaching a ready state. A warm pool absorbs that cost up front so a task can be served quickly.
+
+## Warm pools and replicas
+
+A pool maintains a target number of ready replicas. As replicas are taken, the pool replenishes itself back toward its target so capacity stays available.
+
+## Pools and claims
+
+A pool does not assign sandboxes directly. Work reserves a sandbox from a pool through a [claim](/explanation/sandbox/claims), and the number of outstanding claims is what a pool scales against.

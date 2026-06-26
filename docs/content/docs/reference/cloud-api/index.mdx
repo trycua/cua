@@ -1,0 +1,24 @@
+---
+title: "Cloud REST API reference"
+description: "REST API reference for the CUA Cloud API, generated from its OpenAPI specification."
+---
+
+The **CUA Cloud API** is the REST API for managing cloud VMs and sandboxes. This reference is generated from the API's OpenAPI specification, so it always matches the deployed service.
+
+## Base path
+
+All endpoints are served under the `/api` base path.
+
+## Authentication
+
+Most endpoints require a JWT bearer token issued by Clerk, sent in the `Authorization: Bearer <token>` header. A few endpoints — such as the health check and the public VM-types listing — are unauthenticated.
+
+## Endpoint groups
+
+| Group | What it covers |
+|-------|----------------|
+| VMs | Provision, start, stop, and terminate VMs and sandboxes. |
+| VM types | List the available VM sizes and capabilities. |
+| Admin | Operational endpoints such as cleanup candidates. |
+
+> This page is a stub. The full endpoint reference is generated from the OpenAPI specification (`openapi.json` / `swagger.json`) and will be rendered here.

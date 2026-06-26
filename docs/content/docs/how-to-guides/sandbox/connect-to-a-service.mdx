@@ -1,0 +1,23 @@
+---
+title: "Connect to a service"
+description: "Reach a service running inside a sandbox — a web app, API, or database — from your local machine or another process."
+---
+
+Connect to a service when a process inside the sandbox listens on a port and you need to reach it from outside.
+
+## Expose the port
+
+Declare the port on the image so the sandbox exposes it when it boots.
+
+## Open a tunnel
+
+Forward the exposed port out of the sandbox so it is reachable from your machine or another process.
+
+## Connect to the service
+
+Point your client at the forwarded address and use the service as if it were running locally.
+
+## See also
+
+- [Forward a port out of a sandbox](/how-to-guides/sandbox/tunneling)
+- [Services](/explanation/sandbox/services)

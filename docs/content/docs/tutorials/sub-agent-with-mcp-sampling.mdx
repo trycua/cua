@@ -1,0 +1,24 @@
+---
+title: "Computer-use sub-agent with MCP sampling"
+description: "Use MCP sampling to let a computer-use sub-agent request model completions from the host through the MCP connection."
+---
+
+In this tutorial you build a computer-use sub-agent that uses **MCP sampling** to request completions from the host model instead of holding its own model credentials.
+
+## What you will build
+
+A sub-agent exposed over MCP that drives a sandbox and calls back to the host for its model completions through sampling.
+
+## Prerequisites
+
+The Cua SDK installed, an MCP client that supports sampling, and a Cua API key.
+
+## Steps
+
+1. Run the computer-use sub-agent as an MCP server.
+2. Connect a sampling-capable MCP client.
+3. Have the sub-agent request completions through sampling while it drives the sandbox.
+
+## Next steps
+
+- [Connect your agent to Cua docs](/how-to-guides/agent-context/connect-your-agent-to-cua-docs)

@@ -1,0 +1,18 @@
+---
+title: "Services"
+description: "How a process listening on a port inside a sandbox is exposed and reached from outside the sandbox."
+---
+
+A **service** is any process listening on a port inside a sandbox — a web app, an API, a database, or a tool the task starts. Because a sandbox is isolated, a service is only reachable once it is explicitly exposed.
+
+## Exposing a service
+
+An image declares the ports a sandbox will listen on, and the sandbox exposes those ports so they can be reached from outside the machine.
+
+## Reaching a service
+
+A tunnel forwards an exposed port to your local machine or another process, so you can connect to a service running inside the sandbox as if it were local.
+
+## Services and isolation
+
+Exposing a service does not break sandbox isolation. Only the ports you expose are reachable, and they are reachable only for as long as the sandbox lives.

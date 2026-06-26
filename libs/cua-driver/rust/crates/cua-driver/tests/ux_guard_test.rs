@@ -24,27 +24,16 @@
 
 #![cfg(target_os = "windows")]
 
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-// ── helpers shared with mcp_protocol_test ────────────────────────────────────
+use cua_driver_testkit::{driver_binary, spawn_in_job, workspace_root, Driver, McpDriver};
 
-fn binary_path() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest)
-        .parent().unwrap()
-        .parent().unwrap()
-        .join("target/debug/cua-driver.exe")
-}
+// ── focus-monitor + test-app fixtures ────────────────────────────────────────
 
 fn focus_monitor_path() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest)
-        .parent().unwrap()
-        .parent().unwrap()
-        .join("target/debug/focus-monitor-win.exe")
+    workspace_root().join("target/debug/focus-monitor-win.exe")
 }
 
 fn test_app_path() -> PathBuf {
@@ -54,35 +43,31 @@ fn test_app_path() -> PathBuf {
         let pb = PathBuf::from(p);
         if pb.exists() { return pb; }
     }
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest)
-        .parent().unwrap()
-        .parent().unwrap()
-        .join("test-apps/desktop-test-app-electron.0.1.0.exe")
+    workspace_root().join("test-apps/desktop-test-app-electron.0.1.0.exe")
 }
 
-/// Launch the electron test app in the background and return (process, pid).
-/// Waits up to 10s for the app's HTTP health endpoint to respond.
-/// Returns None if the binary doesn't exist or the app fails to start.
-fn launch_test_app() -> Option<(Child, u32)> {
+/// Launch the electron test app in the background (tied to the driver's reaper)
+/// and return its pid. Waits up to 10s for the app's HTTP health endpoint to
+/// respond. Returns None if the binary doesn't exist or the app fails to start.
+fn launch_test_app(driver: &mut McpDriver) -> Option<u32> {
     let exe = test_app_path();
     if !exe.exists() {
         eprintln!("desktop-test-app-electron not found at {exe:?} — skipping");
         return None;
     }
-    let child = Command::new(&exe)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let child = spawn_in_job(
+        Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null()),
+    )
+    .ok()?;
     let pid = child.id();
+    driver.reaper().push(child);
     // Poll the HTTP health endpoint until it responds or timeout.
     // Allow extra time for cold-start in sandbox (no cached Electron DLLs).
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if std::time::Instant::now() > deadline {
             eprintln!("desktop-test-app-electron HTTP /health did not respond within 10s");
-            return Some((child, pid));
+            return Some(pid);
         }
         if let Ok(stream) = std::net::TcpStream::connect("127.0.0.1:6769") {
             drop(stream);
@@ -92,7 +77,7 @@ fn launch_test_app() -> Option<(Child, u32)> {
     }
     // Extra settle time for the window to appear.
     std::thread::sleep(Duration::from_millis(500));
-    Some((child, pid))
+    Some(pid)
 }
 
 fn loss_file() -> PathBuf {
@@ -107,51 +92,6 @@ fn read_losses(path: &std::path::Path) -> u32 {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0)
-}
-
-fn send_rpc(stdin: &mut impl Write, req: &serde_json::Value) {
-    let line = serde_json::to_string(req).unwrap();
-    writeln!(stdin, "{line}").unwrap();
-}
-
-fn recv_rpc(reader: &mut impl BufRead) -> serde_json::Value {
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("read_line");
-    serde_json::from_str(line.trim()).expect("parse JSON")
-}
-
-/// Spawn cua-driver and do the MCP initialize handshake.
-fn spawn_driver() -> (Child, std::process::ChildStdin, BufReader<std::process::ChildStdout>) {
-    let binary = binary_path();
-    let mut child = Command::new(&binary)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let stdin  = child.stdin.take().unwrap();
-    let stdout = BufReader::new(child.stdout.take().unwrap());
-    (child, stdin, stdout)
-}
-
-fn init_driver(stdin: &mut impl Write, stdout: &mut impl BufRead) {
-    send_rpc(stdin, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    recv_rpc(stdout);
-}
-
-fn call_tool(
-    stdin: &mut impl Write,
-    stdout: &mut impl BufRead,
-    id: u64,
-    name: &str,
-    args: serde_json::Value,
-) -> serde_json::Value {
-    send_rpc(stdin, &serde_json::json!({
-        "jsonrpc":"2.0","id":id,"method":"tools/call",
-        "params":{"name":name,"arguments":args}
-    }));
-    recv_rpc(stdout)
-}
-
-fn tool_ok(resp: &serde_json::Value) -> bool {
-    resp["error"].is_null() && !resp["result"]["isError"].as_bool().unwrap_or(false)
 }
 
 fn focus_pid_file()  -> PathBuf { std::env::temp_dir().join("focus_monitor_pid.txt") }
@@ -171,11 +111,10 @@ fn launch_focus_monitor() -> (Child, u64, u32) {
     let _ = std::fs::remove_file(focus_pid_file());
     let _ = std::fs::remove_file(focus_hwnd_file());
 
-    let child = Command::new(&exe)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn focus-monitor-win");
+    let child = spawn_in_job(
+        Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null()),
+    )
+    .expect("spawn focus-monitor-win");
 
     // Poll temp files until both PID and HWND are written (max 15s).
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -201,15 +140,10 @@ fn launch_focus_monitor() -> (Child, u64, u32) {
 }
 
 /// Find the first on-screen window belonging to the given pid.
-fn find_window_for_pid(
-    stdin: &mut impl Write,
-    stdout: &mut impl BufRead,
-    id: u64,
-    pid: i64,
-) -> Option<u64> {
-    let resp = call_tool(stdin, stdout, id, "list_windows",
+fn find_window_for_pid(driver: &mut McpDriver, pid: i64) -> Option<u64> {
+    let resp = driver.call("list_windows",
         serde_json::json!({"pid": pid, "on_screen_only": true}));
-    resp["result"]["structuredContent"]["windows"]
+    resp.structured()["windows"]
         .as_array()?
         .iter()
         .find_map(|w| w["window_id"].as_u64())
@@ -241,39 +175,37 @@ fn test_background_click_and_type_no_focus_steal() {
     //! 3. Click inside the app and type text via cua-driver.
     //! 4. Assert act_losses on FocusMonitorWin stayed at 0.
 
-    let binary = binary_path();
-    if !binary.exists() { eprintln!("Binary not found — skipping"); return; }
+    if !driver_binary().exists() { eprintln!("Binary not found — skipping"); return; }
 
     let (mut fm_proc, _fm_hwnd, _fm_pid) = launch_focus_monitor();
     let losses_before = read_losses(&loss_file());
 
-    let (mut drv, mut stdin, mut stdout) = spawn_driver();
-    init_driver(&mut stdin, &mut stdout);
+    let Some(mut driver) = McpDriver::spawn() else { fm_proc.kill().ok(); return; };
 
-    let Some((mut app_proc, app_pid)) = launch_test_app() else {
+    let Some(app_pid) = launch_test_app(&mut driver) else {
         eprintln!("test app not available — skipping");
-        drv.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
-    let Some(app_wid) = find_window_for_pid(&mut stdin, &mut stdout, 3, app_pid as i64) else {
+    let Some(app_wid) = find_window_for_pid(&mut driver, app_pid as i64) else {
         eprintln!("test app window not found — skipping");
-        drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
 
     // Click inside the app (background, via PostMessage).
-    let r = call_tool(&mut stdin, &mut stdout, 4, "click",
+    let r = driver.call("click",
         serde_json::json!({"pid": app_pid, "window_id": app_wid, "x": 200.0, "y": 200.0}));
-    assert!(r["error"].is_null(), "Protocol error from click: {r:?}");
+    assert!(r.raw["error"].is_null(), "Protocol error from click: {:?}", r.raw);
 
     // Type text into the app (background, via PostMessage).
-    let r = call_tool(&mut stdin, &mut stdout, 5, "type_text",
+    let r = driver.call("type_text",
         serde_json::json!({"pid": app_pid, "window_id": app_wid, "text": "ux-guard-test"}));
-    assert!(r["error"].is_null(), "Protocol error from type_text: {r:?}");
+    assert!(r.raw["error"].is_null(), "Protocol error from type_text: {:?}", r.raw);
 
     // ux_guard: FocusMonitorWin must not have lost activation.
     assert_ux_guard(losses_before, 0,
         "background click + type_text into desktop-test-app-electron");
 
-    drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok();
+    fm_proc.kill().ok();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,8 +218,7 @@ fn test_launch_app_no_focus_steal() {
     //!
     //! launch_app (path variant) must open a window without displacing FocusMonitorWin.
 
-    let binary = binary_path();
-    if !binary.exists() { return; }
+    if !driver_binary().exists() { return; }
 
     let exe = test_app_path();
     if !exe.exists() { eprintln!("test app not available — skipping"); return; }
@@ -295,24 +226,22 @@ fn test_launch_app_no_focus_steal() {
     let (mut fm_proc, _fm_hwnd, _fm_pid) = launch_focus_monitor();
     let losses_before = read_losses(&loss_file());
 
-    let (mut drv, mut stdin, mut stdout) = spawn_driver();
-    init_driver(&mut stdin, &mut stdout);
+    let Some(mut driver) = McpDriver::spawn() else { fm_proc.kill().ok(); return; };
 
     // Launch the test app via cua-driver launch_app (full path, SW_SHOWNOACTIVATE).
     let path_str = exe.to_string_lossy().into_owned();
-    let r = call_tool(&mut stdin, &mut stdout, 2, "launch_app",
-        serde_json::json!({"path": path_str}));
-    if !tool_ok(&r) {
-        eprintln!("launch_app failed — skipping: {:?}", r);
-        drv.kill().ok(); fm_proc.kill().ok(); return;
+    let r = driver.call("launch_app", serde_json::json!({"path": path_str}));
+    if r.is_error() {
+        eprintln!("launch_app failed — skipping: {:?}", r.raw);
+        fm_proc.kill().ok(); return;
     }
 
     // Wait for the app window to appear (Electron startup ~2-3s).
     let mut app_pid: Option<i64> = None;
     for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(500));
-        let r2 = call_tool(&mut stdin, &mut stdout, 3, "list_apps", serde_json::json!({}));
-        if let Some(procs) = r2["result"]["structuredContent"]["processes"].as_array() {
+        let r2 = driver.call("list_apps", serde_json::json!({}));
+        if let Some(procs) = r2.structured()["processes"].as_array() {
             if let Some(p) = procs.iter().find(|p| {
                 p["name"].as_str().map(|n| n.to_lowercase().contains("desktop-test-app")).unwrap_or(false)
             }) {
@@ -323,7 +252,7 @@ fn test_launch_app_no_focus_steal() {
     }
     if app_pid.is_none() {
         eprintln!("desktop-test-app not found in process list after launch_app — skipping");
-        drv.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     }
 
     // ux_guard: FocusMonitorWin must not have lost activation.
@@ -332,7 +261,7 @@ fn test_launch_app_no_focus_steal() {
     // Kill the launched app by exe name.
     Command::new("taskkill").args(["/F", "/T", "/IM", "desktop-test-app-electron.0.1.0.exe"])
         .stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
-    drv.kill().ok(); fm_proc.kill().ok();
+    fm_proc.kill().ok();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -346,33 +275,31 @@ fn test_background_hotkey_no_focus_steal() {
     //! Send Ctrl+A to a background desktop-test-app-electron window.
     //! FocusMonitorWin must never lose activation.
 
-    let binary = binary_path();
-    if !binary.exists() { return; }
+    if !driver_binary().exists() { return; }
 
     let (mut fm_proc, _fm_hwnd, _fm_pid) = launch_focus_monitor();
     let losses_before = read_losses(&loss_file());
 
-    let (mut drv, mut stdin, mut stdout) = spawn_driver();
-    init_driver(&mut stdin, &mut stdout);
+    let Some(mut driver) = McpDriver::spawn() else { fm_proc.kill().ok(); return; };
 
-    let Some((mut app_proc, app_pid)) = launch_test_app() else {
+    let Some(app_pid) = launch_test_app(&mut driver) else {
         eprintln!("test app not available — skipping");
-        drv.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
-    let Some(app_wid) = find_window_for_pid(&mut stdin, &mut stdout, 3, app_pid as i64) else {
+    let Some(app_wid) = find_window_for_pid(&mut driver, app_pid as i64) else {
         eprintln!("test app window not found — skipping");
-        drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
 
     // Send Ctrl+A hotkey to background app (PostMessage, no focus steal).
-    let r = call_tool(&mut stdin, &mut stdout, 4, "hotkey",
+    let r = driver.call("hotkey",
         serde_json::json!({"pid": app_pid, "window_id": app_wid, "keys": ["ctrl", "a"]}));
-    assert!(r["error"].is_null(), "Protocol error from hotkey: {r:?}");
+    assert!(r.raw["error"].is_null(), "Protocol error from hotkey: {:?}", r.raw);
 
     // ux_guard: FocusMonitorWin must not have lost activation.
     assert_ux_guard(losses_before, 0, "background hotkey ctrl+a to desktop-test-app-electron");
 
-    drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok();
+    fm_proc.kill().ok();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -390,28 +317,26 @@ fn test_background_click_opens_new_window_focus_preserved() {
     //! Verifies PostMessage doesn't inadvertently activate any new window that
     //! appears as a side-effect of the click.
 
-    let binary = binary_path();
-    if !binary.exists() { return; }
+    if !driver_binary().exists() { return; }
 
     let (mut fm_proc, _fm_hwnd, _fm_pid) = launch_focus_monitor();
     let losses_before = read_losses(&loss_file());
 
-    let (mut drv, mut stdin, mut stdout) = spawn_driver();
-    init_driver(&mut stdin, &mut stdout);
+    let Some(mut driver) = McpDriver::spawn() else { fm_proc.kill().ok(); return; };
 
-    let Some((mut app_proc, app_pid)) = launch_test_app() else {
+    let Some(app_pid) = launch_test_app(&mut driver) else {
         eprintln!("test app not available — skipping");
-        drv.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
-    let Some(app_wid) = find_window_for_pid(&mut stdin, &mut stdout, 3, app_pid as i64) else {
+    let Some(app_wid) = find_window_for_pid(&mut driver, app_pid as i64) else {
         eprintln!("test app window not found — skipping");
-        drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
 
     // Click somewhere in the app content area (may trigger navigation/new window).
-    let r = call_tool(&mut stdin, &mut stdout, 4, "click",
+    let r = driver.call("click",
         serde_json::json!({"pid": app_pid, "window_id": app_wid, "x": 400.0, "y": 350.0}));
-    assert!(r["error"].is_null(), "Protocol error from click: {r:?}");
+    assert!(r.raw["error"].is_null(), "Protocol error from click: {:?}", r.raw);
 
     // Brief wait for any side-effect windows to appear.
     std::thread::sleep(Duration::from_millis(500));
@@ -426,7 +351,7 @@ fn test_background_click_opens_new_window_focus_preserved() {
         "FocusMonitorWin crashed during the test"
     );
 
-    drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok();
+    fm_proc.kill().ok();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -437,33 +362,30 @@ fn test_background_click_opens_new_window_focus_preserved() {
 fn test_background_screenshot_no_focus_steal() {
     //! PrintWindow captures a background window without activating it.
 
-    let binary = binary_path();
-    if !binary.exists() { return; }
+    if !driver_binary().exists() { return; }
 
     let (mut fm_proc, _fm_hwnd, _fm_pid) = launch_focus_monitor();
     let losses_before = read_losses(&loss_file());
 
-    let (mut drv, mut stdin, mut stdout) = spawn_driver();
-    init_driver(&mut stdin, &mut stdout);
+    let Some(mut driver) = McpDriver::spawn() else { fm_proc.kill().ok(); return; };
 
-    let Some((mut app_proc, app_pid)) = launch_test_app() else {
+    let Some(app_pid) = launch_test_app(&mut driver) else {
         eprintln!("test app not available — skipping");
-        drv.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
-    let Some(app_wid) = find_window_for_pid(&mut stdin, &mut stdout, 3, app_pid as i64) else {
+    let Some(app_wid) = find_window_for_pid(&mut driver, app_pid as i64) else {
         eprintln!("test app window not found — skipping");
-        drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok(); return;
+        fm_proc.kill().ok(); return;
     };
 
     // Screenshot via PrintWindow — must not activate the window.
-    let r = call_tool(&mut stdin, &mut stdout, 4, "screenshot",
-        serde_json::json!({"window_id": app_wid}));
-    assert!(r["error"].is_null(), "Protocol error from screenshot: {r:?}");
+    let r = driver.call("screenshot", serde_json::json!({"window_id": app_wid}));
+    assert!(r.raw["error"].is_null(), "Protocol error from screenshot: {:?}", r.raw);
 
     // ux_guard
     assert_ux_guard(losses_before, 0, "screenshot of background desktop-test-app-electron");
 
-    drv.kill().ok(); app_proc.kill().ok(); fm_proc.kill().ok();
+    fm_proc.kill().ok();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,24 +404,20 @@ fn test_agent_cursor_visible_on_screen() {
     //!   4. Decode the PNG and sample a 40×40 px patch centred on the cursor.
     //!   5. Assert the patch contains cursor-like pixels (bright or saturated).
 
-    let binary = binary_path();
-    if !binary.exists() { eprintln!("Binary not found — skipping"); return; }
+    if !driver_binary().exists() { eprintln!("Binary not found — skipping"); return; }
 
-    let (mut drv, mut stdin, mut stdout) = spawn_driver();
-    init_driver(&mut stdin, &mut stdout);
+    let Some(mut driver) = McpDriver::spawn() else { return };
 
     // Safe centre-ish position on primary monitor.
     let cx = 640.0_f64;
     let cy = 400.0_f64;
 
     // Enable cursor overlay and glide to target.
-    let r = call_tool(&mut stdin, &mut stdout, 2, "set_agent_cursor_enabled",
-        serde_json::json!({"enabled": true}));
-    assert!(r["error"].is_null(), "set_agent_cursor_enabled failed: {r:?}");
+    let r = driver.call("set_agent_cursor_enabled", serde_json::json!({"enabled": true}));
+    assert!(r.raw["error"].is_null(), "set_agent_cursor_enabled failed: {:?}", r.raw);
 
-    let r = call_tool(&mut stdin, &mut stdout, 3, "move_cursor",
-        serde_json::json!({"x": cx, "y": cy}));
-    assert!(r["error"].is_null(), "move_cursor failed: {r:?}");
+    let r = driver.call("move_cursor", serde_json::json!({"x": cx, "y": cy}));
+    assert!(r.raw["error"].is_null(), "move_cursor failed: {:?}", r.raw);
 
     // Wait for the glide animation (750ms default) + a few render frames.
     std::thread::sleep(Duration::from_millis(900));
@@ -508,7 +426,7 @@ fn test_agent_cursor_visible_on_screen() {
     let png_bytes = platform_windows::capture::screenshot_display_bytes()
         .expect("screenshot_display_bytes failed");
 
-    drv.kill().ok();
+    drop(driver);
 
     // Decode PNG.
     let img = image::load_from_memory(&png_bytes).expect("decode PNG");

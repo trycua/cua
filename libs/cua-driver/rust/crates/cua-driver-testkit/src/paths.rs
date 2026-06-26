@@ -17,15 +17,22 @@ pub fn workspace_root() -> PathBuf {
         .to_owned()
 }
 
-/// The built `cua-driver` binary (`.exe` on Windows). One impl replaces the
-/// four divergent spellings that were copy-pasted across the test files.
+/// The built `cua-driver` binary (`.exe` on Windows), preferring a release
+/// build when present and falling back to debug. One impl replaces the four
+/// divergent spellings (and the macOS release-or-debug variant) that were
+/// copy-pasted across the test files.
 pub fn driver_binary() -> PathBuf {
     let name = if cfg!(target_os = "windows") {
         "cua-driver.exe"
     } else {
         "cua-driver"
     };
-    workspace_root().join("target/debug").join(name)
+    let root = workspace_root();
+    let release = root.join("target/release").join(name);
+    if release.exists() {
+        return release;
+    }
+    root.join("target/debug").join(name)
 }
 
 /// A built harness app under `test-apps/<dir>/<exe>` (produced by

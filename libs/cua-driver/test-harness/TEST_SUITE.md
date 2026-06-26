@@ -54,6 +54,7 @@ flowchart LR
 | | `harness_appkit_test` | mac | AppKit: AX tree, AXPress, NSTextField, NSScrollView, NSMenu |
 | | `harness_swiftui_test` | mac | SwiftUI: AX tree, `.popover()` |
 | **modality_** | `modality_background_test` | win | background-modality / no-focus-steal sentinel + `capture_mode` ax/vision/som |
+| | `modality_capture_mode_test` | mac+win+linux | `capture_mode` axis on each native harness: `ax`→tree-only, `vision`→image-only, `som`→both |
 | | `modality_input_e2e_test` | win | unified background input across Electron/Tauri/Win32, no z-raise |
 | | `modality_desktop_scope_test` | win | desktop-scope (foreground): `capture_scope=desktop`, `get_desktop_state`, window-less screen-absolute actions |
 | | `modality_focus_test` | mac | background automation does not steal focus |
@@ -86,8 +87,32 @@ mirror pairs into single `cfg!`-branching tests, sharing one `RawDriver`.
 - **Foreground / desktop-scope** is covered by `modality_desktop_scope`.
 - **Transport** is now a first-class axis: `transport_config_persistence`
   exercises CLI (disk) vs MCP (session) directly; most other tests run over MCP.
-- **Known gaps** (honest): desktop-scope/foreground has no macOS or Linux test;
-  `capture_mode` only on Windows; CLI transport is otherwise lightly exercised.
+
+### The modality matrix: `capture_mode` × `dispatch` × `capture_scope`
+
+The user-facing matrix is documented in
+`docs/content/docs/explanation/capture-and-dispatch-modalities.mdx`. Coverage of
+its five valid cells, per platform:
+
+| Cell (`scope`/`mode`/`dispatch`) | Windows | macOS | Linux |
+|---|---|---|---|
+| `window`/`ax`/`background` (default) | `harness_*`, `modality_background` | `harness_{appkit,swiftui}`, `modality_focus`, `modality_capture_mode` | `harness_gtk3`, `modality_capture_mode` |
+| `window`/`ax`/`foreground` | `harness_wpf` (`dispatch:"foreground"`) | activation differs | activation differs |
+| `window`/`vision`/`background` | `modality_background`, `modality_capture_mode`, `modality_input_e2e` | `modality_capture_mode` | `modality_capture_mode` |
+| `window`/`vision`/`foreground` | gap | n/a (no `bring_to_front`) | n/a (stubbed) |
+| `desktop`/`vision`/`foreground` | `modality_desktop_scope` | rolling out | rolling out |
+| **negative gate** (`desktop_scope_disabled`) | `window_scope_rejects_windowless_click` | — | — |
+
+`modality_capture_mode_test` is the cross-platform spine of the `capture_mode`
+axis: it drives each platform's native harness and asserts `ax`→tree-only,
+`vision`→image-only, `som`→both. It closes the prior "`capture_mode` only on
+Windows" gap.
+
+- **Remaining gaps** (honest): `window`/`vision`/`foreground` has no explicit
+  test on any platform; the desktop-scope window-less actuator is Windows-only
+  (macOS click still requires `pid`), so the desktop cell and its negative gate
+  are Windows-only until that loop lands on macOS/Linux; CLI transport is
+  otherwise lightly exercised.
 
 ## Where they run
 

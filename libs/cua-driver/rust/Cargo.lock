@@ -608,6 +608,7 @@ dependencies = [
  "async-trait",
  "base64",
  "cua-driver-core",
+ "cua-driver-testkit",
  "cursor-overlay",
  "embed-resource",
  "flate2",
@@ -644,6 +645,14 @@ dependencies = [
  "tokio",
  "tracing",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "cua-driver-testkit"
+version = "0.6.8"
+dependencies = [
+ "serde_json",
+ "windows 0.61.3",
 ]
 
 [[package]]

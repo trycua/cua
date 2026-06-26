@@ -24,6 +24,7 @@ jobs:
           SERVICE_TAG_DIR["pypi/auto"]="auto-v|libs/python/cua-auto/"
           SERVICE_TAG_DIR["pypi/agent"]="agent-v|libs/python/agent/"
           SERVICE_TAG_DIR["pypi/computer"]="computer-v|libs/python/computer/"
+          SERVICE_TAG_DIR["pypi/cloud"]="cloud-v|libs/python/cua-cloud/"
           SERVICE_TAG_DIR["pypi/core"]="core-v|libs/python/core/"
           SERVICE_TAG_DIR["pypi/som"]="som-v|libs/python/som/"
           SERVICE_TAG_DIR["pypi/bench"]="bench-v|libs/cua-bench/"

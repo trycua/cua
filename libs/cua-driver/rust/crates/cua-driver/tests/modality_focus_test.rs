@@ -80,6 +80,24 @@ mod macos_focus_tests {
         let initial_focus = frontmost_bundle_id();
         println!("Initial focus: {}", initial_focus);
 
+        // Precondition: the decoy (Terminal) must REALLY be the frontmost,
+        // non-harness window before we touch the background app. Without this
+        // guard the test passes vacuously: if `focus_terminal()` silently
+        // failed (Terminal not installed / activation blocked) and Calculator
+        // were frontmost instead, every "focus unchanged" assertion below would
+        // still hold — even though the harness owns the foreground, which is
+        // exactly the regression these tests exist to catch. Mirrors the
+        // sentinel-is-up precondition the Windows background tests get for free
+        // from the focus-monitor-win pid/hwnd files.
+        assert!(
+            !initial_focus.is_empty()
+                && !initial_focus.eq_ignore_ascii_case("com.apple.calculator"),
+            "decoy precondition failed: frontmost app is {initial_focus:?}, expected a \
+             non-harness control window (Terminal) to hold the foreground before the \
+             background action. Calculator (the harness) must NOT be frontmost, otherwise \
+             the no-focus-steal assertions below are vacuous."
+        );
+
         // Start the MCP driver (skips if the binary isn't built).
         let Some(mut driver) = McpDriver::spawn() else { return };
 

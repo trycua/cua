@@ -39,60 +39,128 @@ Write-Host ""
 # =============================================================================
 Write-Host "Applying blank desktop hardening..."
 
-# Disable the 'restore previous folder windows on logon' option in Explorer so
-# it doesn't re-open any windows that were visible when the image was captured.
-try {
-    New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Force -ErrorAction Stop | Out-Null
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'PersistBrowsers' -Value 0 -Type DWord -ErrorAction Stop
-    Write-Host "  Explorer: PersistBrowsers disabled"
-} catch { Write-Host "  Explorer PersistBrowsers warning: $($_.Exception.Message)" }
+# This script runs as SYSTEM during image provisioning, so HKCU writes would
+# land in the SYSTEM hive rather than the Docker user's profile.  Instead, we
+# load the Default User hive (C:\Users\Default\NTUSER.DAT) under a temporary
+# HKLM mount and write all per-user registry tweaks there.  Any new user
+# account created on this image (including "Docker") inherits the Default User
+# hive on first logon, so the values will be present from the very first login.
+$defaultUserHivePath = 'C:\Users\Default\NTUSER.DAT'
+$tempHiveMount        = 'HKLM:\TempDefaultUser'
+$tempHiveMountReg     = 'HKLM\TempDefaultUser'   # reg.exe / REG LOAD syntax (no colon)
 
-# Disable the 'show recently used files/folders' in Quick Access (cosmetic, but avoids 'File Explorer' pop notification)
+Write-Host "  Loading Default User hive from $defaultUserHivePath..."
 try {
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name 'ShowRecent' -Value 0 -Type DWord -ErrorAction Stop
-    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name 'ShowFrequent' -Value 0 -Type DWord -ErrorAction Stop
-    Write-Host "  Explorer: recent/frequent items disabled"
-} catch { Write-Host "  Explorer recent items warning: $($_.Exception.Message)" }
+    # Unload any stale mount from a previous failed run before loading
+    if (Test-Path $tempHiveMount) {
+        & reg.exe UNLOAD $tempHiveMountReg 2>&1 | Out-Null
+    }
+    $regLoadResult = & reg.exe LOAD $tempHiveMountReg $defaultUserHivePath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "reg.exe LOAD failed (exit $LASTEXITCODE): $regLoadResult"
+    }
+    Write-Host "  Default User hive loaded at $tempHiveMount"
+} catch {
+    Write-Host "  WARNING: Could not load Default User hive — per-user tweaks skipped: $($_.Exception.Message)"
+    # Skip the per-user block entirely; HKLM policy tweaks below still apply.
+    $tempHiveMount = $null
+}
 
-# Disable Windows Widgets (News and Interests) and Chat from taskbar - they can
-# open a popup/panel if clicked accidentally or on first login.
-try {
-    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarDa' -Value 0 -Type DWord -ErrorAction Stop
-    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarMn' -Value 0 -Type DWord -ErrorAction Stop
-    Write-Host "  Taskbar: Widgets and Chat hidden"
-} catch { Write-Host "  Taskbar widgets warning: $($_.Exception.Message)" }
-
-# Suppress "New features and suggestions" / lock screen app suggestions
-try {
-    $cdm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
-    New-Item -Path $cdm -Force -ErrorAction Stop | Out-Null
-    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-338393Enabled' -Value 0 -Type DWord -ErrorAction Stop
-    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353696Enabled' -Value 0 -Type DWord -ErrorAction Stop
-    Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353694Enabled' -Value 0 -Type DWord -ErrorAction Stop
-    Set-ItemProperty -Path $cdm -Name 'SoftLandingEnabled' -Value 0 -Type DWord -ErrorAction Stop
-    Set-ItemProperty -Path $cdm -Name 'FeatureManagementEnabled' -Value 0 -Type DWord -ErrorAction Stop
-    Write-Host "  ContentDeliveryManager: suggestions disabled"
-} catch { Write-Host "  ContentDeliveryManager warning: $($_.Exception.Message)" }
-
-# Remove common startup entries that can show windows on login
-# (OneDrive, Microsoft Teams, Windows Security, etc.)
-$startupKeys = @(
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
-)
-$startupEntriesToRemove = @('OneDrive', 'MicrosoftTeams', 'Teams', 'SecurityHealth')
-foreach ($key in $startupKeys) {
-    foreach ($entry in $startupEntriesToRemove) {
+if ($tempHiveMount) {
+    try {
+        # ------------------------------------------------------------------
+        # Explorer: disable 'restore previous folder windows on logon'
+        # ------------------------------------------------------------------
         try {
-            Remove-ItemProperty -Path $key -Name $entry -ErrorAction SilentlyContinue
-        } catch {
-            Write-Host "  Startup cleanup warning: key='$key', entry='$entry': $($_.Exception.Message)"
+            New-Item -Path "$tempHiveMount\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Force -ErrorAction Stop | Out-Null
+            Set-ItemProperty -Path "$tempHiveMount\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name 'PersistBrowsers' -Value 0 -Type DWord -ErrorAction Stop
+            Write-Host "  Explorer: PersistBrowsers disabled"
+        } catch { Write-Host "  Explorer PersistBrowsers warning: $($_.Exception.Message)" }
+
+        # ------------------------------------------------------------------
+        # Explorer: disable 'show recently used files/folders' in Quick Access
+        # ------------------------------------------------------------------
+        try {
+            Set-ItemProperty -Path "$tempHiveMount\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name 'ShowRecent'   -Value 0 -Type DWord -ErrorAction Stop
+            Set-ItemProperty -Path "$tempHiveMount\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name 'ShowFrequent' -Value 0 -Type DWord -ErrorAction Stop
+            Write-Host "  Explorer: recent/frequent items disabled"
+        } catch { Write-Host "  Explorer recent items warning: $($_.Exception.Message)" }
+
+        # ------------------------------------------------------------------
+        # Taskbar: hide Widgets (News and Interests) and Chat icons
+        # ------------------------------------------------------------------
+        try {
+            New-Item -Path "$tempHiveMount\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Force -ErrorAction Stop | Out-Null
+            Set-ItemProperty -Path "$tempHiveMount\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name 'TaskbarDa' -Value 0 -Type DWord -ErrorAction Stop
+            Set-ItemProperty -Path "$tempHiveMount\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name 'TaskbarMn' -Value 0 -Type DWord -ErrorAction Stop
+            Write-Host "  Taskbar: Widgets and Chat hidden"
+        } catch { Write-Host "  Taskbar widgets warning: $($_.Exception.Message)" }
+
+        # ------------------------------------------------------------------
+        # ContentDeliveryManager: suppress "New features and suggestions"
+        # ------------------------------------------------------------------
+        try {
+            $cdm = "$tempHiveMount\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            New-Item -Path $cdm -Force -ErrorAction Stop | Out-Null
+            Set-ItemProperty -Path $cdm -Name 'SubscribedContent-338393Enabled' -Value 0 -Type DWord -ErrorAction Stop
+            Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353696Enabled' -Value 0 -Type DWord -ErrorAction Stop
+            Set-ItemProperty -Path $cdm -Name 'SubscribedContent-353694Enabled' -Value 0 -Type DWord -ErrorAction Stop
+            Set-ItemProperty -Path $cdm -Name 'SoftLandingEnabled'              -Value 0 -Type DWord -ErrorAction Stop
+            Set-ItemProperty -Path $cdm -Name 'FeatureManagementEnabled'        -Value 0 -Type DWord -ErrorAction Stop
+            Write-Host "  ContentDeliveryManager: suggestions disabled"
+        } catch { Write-Host "  ContentDeliveryManager warning: $($_.Exception.Message)" }
+
+        # ------------------------------------------------------------------
+        # Startup cleanup: remove per-user startup entries (HKCU Run key) that
+        # can open windows on login (OneDrive, Teams, SecurityHealth, etc.)
+        # The HKLM Run key is handled separately below after hive unload.
+        # Fix: use -ErrorAction Stop so real failures surface; catch handles
+        # the expected "property does not exist" case without noisy output.
+        # ------------------------------------------------------------------
+        $startupEntriesToRemove = @('OneDrive', 'MicrosoftTeams', 'Teams', 'SecurityHealth')
+        foreach ($entry in $startupEntriesToRemove) {
+            try {
+                Remove-ItemProperty -Path "$tempHiveMount\Software\Microsoft\Windows\CurrentVersion\Run" -Name $entry -ErrorAction Stop
+            } catch [System.Management.Automation.PSArgumentException] {
+                # Property does not exist — expected, not an error
+            } catch {
+                Write-Host "  Startup cleanup warning: DefaultUser Run key, entry='$entry': $($_.Exception.Message)"
+            }
+        }
+        Write-Host "  Startup: per-user startup entries removed from Default User hive"
+
+    } finally {
+        # Always unload the hive to avoid handle leaks
+        Write-Host "  Unloading Default User hive..."
+        [gc]::Collect()
+        [gc]::WaitForPendingFinalizers()
+        $regUnloadResult = & reg.exe UNLOAD $tempHiveMountReg 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  WARNING: Failed to unload Default User hive (exit $LASTEXITCODE): $regUnloadResult"
+        } else {
+            Write-Host "  Default User hive unloaded."
         }
     }
 }
-Write-Host "  Startup: common startup entries removed"
+
+# Remove common startup entries from the machine-wide HKLM Run key
+# (OneDrive, Microsoft Teams, Windows Security, etc.)
+# Fix: use -ErrorAction Stop so real failures surface in the catch block;
+# the catch distinguishes missing-property (expected) from actual errors.
+$startupEntriesToRemove = @('OneDrive', 'MicrosoftTeams', 'Teams', 'SecurityHealth')
+foreach ($entry in $startupEntriesToRemove) {
+    try {
+        Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name $entry -ErrorAction Stop
+    } catch [System.Management.Automation.PSArgumentException] {
+        # Property does not exist — expected, not an error
+    } catch {
+        Write-Host "  Startup cleanup warning: HKLM Run key, entry='$entry': $($_.Exception.Message)"
+    }
+}
+Write-Host "  Startup: HKLM startup entries removed"
 
 # Disable the 'Start' menu recommended apps and news on first login
+# (HKLM policy — machine-wide, no per-user hive needed)
 try {
     $startPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
     New-Item -Path $startPolicies -Force -ErrorAction Stop | Out-Null

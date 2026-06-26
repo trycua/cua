@@ -2952,8 +2952,20 @@ impl Tool for GetDesktopStateTool {
             // so screen-absolute pixels land exactly.
             let png = crate::capture::screenshot_display_bytes()?;
             let (shot_w, shot_h) = crate::capture::png_dimensions_pub(&png)?;
-            // True screen size from the X11 root window.
-            let (screen_w, screen_h) = x11_screen_size()?;
+            // True screen size. On a pure-Wayland session (native backend
+            // opted in, no X11 DISPLAY) the capture above came from the
+            // wlroots `zwlr_screencopy` cascade, whose full-display buffer is
+            // the whole output at native (physical) pixels — so the PNG
+            // dimensions ARE the true screen size. Querying the X11 root
+            // window here would fail with "$DISPLAY variable not set" and
+            // abort the tool even though the screenshot already succeeded.
+            // Only fall back to the X11 root-window geometry off Wayland, so
+            // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
+            let (screen_w, screen_h) = if crate::wayland::is_wayland() {
+                (shot_w, shot_h)
+            } else {
+                x11_screen_size()?
+            };
             // Optional: write PNG to disk instead of returning base64.
             let written = if let Some(path) = out_file.as_deref() {
                 std::fs::write(path, &png)?;

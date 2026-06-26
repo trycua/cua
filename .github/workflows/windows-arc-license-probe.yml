@@ -1,0 +1,115 @@
+name: "Windows Arc License Probe"
+
+# Provisions a Windows OSGym warm pool (if absent), claims a VM, attaches the
+# Azure Arc PAYG Windows Server license, screenshots the desktop, ships the
+# screenshot to S3, posts the presigned URL to Alertmanager (am.cua.ai), then
+# unlicenses the box and returns the claim to the pool.
+#
+# The script reaches the private K3s cluster that runs OSGym, so the runner
+# joins the tailnet first and a kubeconfig pointed at the in-tailnet API
+# server is supplied via the KUBECONFIG_B64 secret.
+#
+# Required repo secrets (see scripts/windows_arc_license_probe.py header):
+#   TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET  - Tailscale OAuth client (cluster reach)
+#   KUBECONFIG_B64                        - base64 kubeconfig for the OSGym cluster
+#   AZURE_CREDENTIALS                     - azure/login SP JSON (Owner on the sub)
+#   AZURE_SUBSCRIPTION_ID                 - sponsorship subscription id
+#   ARC_MACHINE                           - pre-onboarded Arc machine to license
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY - S3 upload creds
+# Optional repo variables (vars.*): ARC_RESOURCE_GROUP, ARC_REGION,
+#   S3_BUCKET_NAME, OSGYM_POOL, OSGYM_WINDOWS_IMAGE.
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_license:
+        description: "Skip Arc license attach/detach (probe only)"
+        type: boolean
+        default: false
+  schedule:
+    # Daily at 06:17 UTC.
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-arc-license-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Windows Arc License Probe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install boto3 requests
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Connect to tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Write kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Azure login
+        if: ${{ !inputs.skip_license }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Run probe
+        run: python scripts/windows_arc_license_probe.py -v
+        env:
+          # kubectl reads ~/.kube/config written above by default.
+          # OSGym
+          OSGYM_POOL: ${{ vars.OSGYM_POOL || 'arc-windows' }}
+          OSGYM_WINDOWS_IMAGE: ${{ vars.OSGYM_WINDOWS_IMAGE }}
+          # Azure Arc licensing
+          SKIP_LICENSE: ${{ inputs.skip_license && '1' || '0' }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARC_MACHINE: ${{ secrets.ARC_MACHINE }}
+          ARC_RESOURCE_GROUP: ${{ vars.ARC_RESOURCE_GROUP || 'arc-trial-rg' }}
+          ARC_REGION: ${{ vars.ARC_REGION || 'eastus' }}
+          # S3
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+          S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME || 'cua-agent-artifacts' }}
+
+      - name: Alert Alertmanager on failure
+        if: failure()
+        run: |
+          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+            -H 'Content-Type: application/json' \
+            -d '[{
+              "labels": {
+                "alertname": "WindowsArcLicenseProbeFailed",
+                "severity": "warning",
+                "service": "cua-sdk",
+                "job": "windows-arc-license-probe"
+              },
+              "annotations": {
+                "summary": "Windows Arc license probe workflow failed",
+                "description": "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                "dashboard": "https://github.com/${{ github.repository }}/actions/workflows/windows-arc-license-probe.yml"
+              },
+              "generatorURL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }]'

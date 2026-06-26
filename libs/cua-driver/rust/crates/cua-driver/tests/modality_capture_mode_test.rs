@@ -72,16 +72,18 @@ fn snapshot(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> ToolRespo
 
 /// Snapshot, retrying until the accessibility tree has populated (the marker
 /// appears) or the attempts are exhausted. The AX/AT-SPI tree can lag a
-/// cold-launched window by a few hundred ms (notably macOS AX registration),
-/// so the tree-bearing modes (`ax`, `som`) settle before asserting rather than
-/// racing the first snapshot.
+/// cold-launched window by several seconds: macOS AX registration is a few
+/// hundred ms, but a freshly launched GTK3 harness needs the AT-SPI atk-bridge
+/// to register on the a11y bus, which on a cold bus (CI cold boot) can take a
+/// few seconds. The budget is ~8s so the tree-bearing modes (`ax`, `som`)
+/// reliably exercise their assertions instead of degrading to a cold-start skip.
 fn snapshot_settled(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> ToolResponse {
     let mut resp = snapshot(driver, pid, wid, mode);
-    for _ in 0..6 {
+    for _ in 0..16 {
         if tree_has_marker(&resp) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(400));
+        std::thread::sleep(Duration::from_millis(500));
         resp = snapshot(driver, pid, wid, mode);
     }
     resp

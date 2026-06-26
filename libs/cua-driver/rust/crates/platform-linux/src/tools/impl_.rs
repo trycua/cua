@@ -26,6 +26,22 @@ impl Default for DriverConfig {
     fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 1568 } }
 }
 
+/// Load `DriverConfig` from `~/.cua-driver/config.json`, falling back to
+/// defaults for any missing/malformed keys. Called once at `ToolState`
+/// construction (i.e. on every fresh `cua-driver call` process) so that a
+/// prior `set_config capture_mode=vision` survives across stateless one-shot
+/// invocations — matching the macOS daemon's startup load. See #2008.
+pub fn load_driver_config() -> DriverConfig {
+    let mut cfg = DriverConfig::default();
+    if let Some(v) = pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned)) {
+        cfg.capture_mode = v;
+    }
+    if let Some(v) = pip_preview::read_config_value("max_image_dimension").and_then(|v| v.as_u64()) {
+        if let Ok(v32) = u32::try_from(v) { cfg.max_image_dimension = v32; }
+    }
+    cfg
+}
+
 pub struct ResizeRegistry {
     ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
 }
@@ -91,7 +107,7 @@ impl ToolState {
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             mouse_hold: std::sync::Mutex::new(Default::default()),
-            config: Arc::new(RwLock::new(DriverConfig::default())),
+            config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
 }
@@ -3410,11 +3426,23 @@ impl Tool for SetConfigTool {
         ) {
             match key {
                 "capture_mode" => match val.as_str() {
-                    Some(s) => { cfg.capture_mode = s.to_owned(); parts.push(format!("capture_mode={s}")); }
+                    Some(s) => {
+                        cfg.capture_mode = s.to_owned();
+                        if let Err(e) = pip_preview::write_config_key("capture_mode", Value::String(s.to_owned())) {
+                            tracing::warn!("set_config: failed to persist capture_mode: {e}");
+                        }
+                        parts.push(format!("capture_mode={s}"));
+                    }
                     None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
                 },
                 "max_image_dimension" => match val.as_u64() {
-                    Some(n) => { cfg.max_image_dimension = n as u32; parts.push(format!("max_image_dimension={n}")); }
+                    Some(n) => {
+                        cfg.max_image_dimension = n as u32;
+                        if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(n)) {
+                            tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
+                        }
+                        parts.push(format!("max_image_dimension={n}"));
+                    }
                     None => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
                 },
                 "experimental_pip" => match val.as_bool() {
@@ -3447,11 +3475,17 @@ impl Tool for SetConfigTool {
         }
         // Legacy per-field shape.
         if let Some(mode) = args.opt_str("capture_mode") {
+            if let Err(e) = pip_preview::write_config_key("capture_mode", Value::String(mode.clone())) {
+                tracing::warn!("set_config: failed to persist capture_mode: {e}");
+            }
             parts.push(format!("capture_mode={mode}"));
             cfg.capture_mode = mode;
         }
         if let Some(dim) = args.opt_u64("max_image_dimension") {
             cfg.max_image_dimension = dim as u32;
+            if let Err(e) = pip_preview::write_config_key("max_image_dimension", Value::from(dim)) {
+                tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
+            }
             parts.push(format!("max_image_dimension={dim}"));
         }
         if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {

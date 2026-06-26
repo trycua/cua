@@ -39,6 +39,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -613,6 +614,8 @@ class _ParityMixin:
     # ── CLI: serve / stop / status daemon lifecycle ───────────────────────────
 
     def _tmp_socket(self) -> str:
+        if os.name == "nt":
+            return rf"\\.\pipe\cua-parity-test-{uuid.uuid4().hex}"
         return tempfile.mktemp(suffix=".sock", prefix="cua-parity-test-")
 
     def test_status_exits_1_when_no_daemon(self) -> None:

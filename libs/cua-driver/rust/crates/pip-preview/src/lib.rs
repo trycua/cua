@@ -17,12 +17,25 @@
 use std::sync::OnceLock;
 
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
-/// `set_config` tools write to. Returns `None` when `$HOME` is unset
-/// (sandboxed CI).
+/// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
+/// back to `%USERPROFILE%` (Windows, where `HOME` is usually unset). Returns
+/// `None` when neither is set (sandboxed CI).
 pub fn default_config_path() -> Option<std::path::PathBuf> {
-    std::env::var("HOME")
-        .ok()
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
+}
+
+/// Read a single key from `~/.cua-driver/config.json` as a raw JSON value,
+/// returning `None` when the file is missing/malformed or the key is absent.
+/// Used by the per-platform `load_driver_config` helpers to rehydrate the
+/// in-memory `DriverConfig` at process startup so `set_config` writes survive
+/// across stateless `cua-driver call` invocations.
+pub fn read_config_value(key: &str) -> Option<serde_json::Value> {
+    let path = default_config_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    json.get(key).cloned()
 }
 
 /// Merge a single `key`/`value` into `~/.cua-driver/config.json`,

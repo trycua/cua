@@ -233,6 +233,20 @@ fn main() {
             require_user_consent,
         } => {
             version_check::maybe_announce_update();
+            if cli::should_use_daemon_proxy(false) {
+                if let Err(e) = cli::relaunch_mcp_oauth_via_app(
+                    &public_url,
+                    listen.as_deref(),
+                    storage_dir.as_deref(),
+                    token_ttl_seconds,
+                    code_ttl_seconds,
+                    require_user_consent,
+                ) {
+                    eprintln!("cua-driver mcp-oauth error: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
             install_macos_core_callbacks();
             let reg = Arc::new(build_macos_registry());
             reg.init_self_weak();

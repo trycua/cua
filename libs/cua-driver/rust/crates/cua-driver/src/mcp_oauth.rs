@@ -9,7 +9,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use cua_driver_core::protocol::{Request, Response};
@@ -20,10 +20,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time;
 use uuid::Uuid;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:7676";
 const DEFAULT_SCOPE: &str = "mcp:tools";
+const HTTP_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_BODY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -85,7 +88,7 @@ async fn serve(
         options.token_ttl_seconds,
         options.code_ttl_seconds,
     ));
-    fs::create_dir_all(&store.dir)?;
+    ensure_private_dir(&store.dir)?;
     let sessions = Arc::new(SessionStore::default());
     let listener = TcpListener::bind(addr).await?;
     eprintln!(
@@ -187,10 +190,24 @@ fn handle_register(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
     };
     let redirect_uris = match input.get("redirect_uris").and_then(|v| v.as_array()) {
         Some(items) => {
-            let uris: Vec<String> = items
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect();
+            let mut uris = Vec::new();
+            for item in items {
+                let Some(uri) = item.as_str() else {
+                    return oauth_error(
+                        400,
+                        "invalid_redirect_uri",
+                        "redirect_uris must contain strings",
+                    );
+                };
+                if !is_allowed_redirect_uri(uri) {
+                    return oauth_error(
+                        400,
+                        "invalid_redirect_uri",
+                        "redirect_uri must be https or loopback http and must not contain fragments or control characters",
+                    );
+                }
+                uris.push(uri.to_owned());
+            }
             if uris.is_empty() {
                 return oauth_error(
                     400,
@@ -253,7 +270,20 @@ fn handle_authorize_get(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse
     let query = parse_query(&req.path);
     match validate_authorize_query(&query, ctx) {
         Ok(pending) if !ctx.options.require_user_consent => issue_authorization_code(pending, ctx),
-        Ok(pending) => html_response(200, authorize_page(&pending, &ctx.options.public_url)),
+        Ok(pending) => {
+            let nonce = random_id();
+            if let Err(e) = ctx.store.upsert_consent(&nonce, &pending) {
+                return oauth_error(
+                    500,
+                    "server_error",
+                    &format!("failed to persist consent transaction: {e}"),
+                );
+            }
+            html_response(
+                200,
+                authorize_page(&pending, &ctx.options.public_url, &nonce),
+            )
+        }
         Err(resp) => resp,
     }
 }
@@ -269,9 +299,19 @@ fn handle_authorize_post(req: &HttpRequest, ctx: &HandlerContext) -> HttpRespons
             &[("error", "access_denied"), ("state", &state)],
         ));
     }
-    match validate_authorize_query(&form, ctx) {
-        Ok(pending) => issue_authorization_code(pending, ctx),
-        Err(resp) => resp,
+    let nonce = match form.get("consent_nonce").filter(|v| !v.is_empty()) {
+        Some(v) => v.to_owned(),
+        None => return oauth_error(400, "invalid_request", "missing consent_nonce"),
+    };
+    match ctx.store.consume_consent(&nonce) {
+        Ok(Some(pending)) if pending.matches_form(&form) => issue_authorization_code(pending, ctx),
+        Ok(Some(_)) => oauth_error(400, "invalid_request", "consent transaction mismatch"),
+        Ok(None) => oauth_error(
+            400,
+            "invalid_request",
+            "unknown or expired consent transaction",
+        ),
+        Err(e) => oauth_error(500, "server_error", &e.to_string()),
     }
 }
 
@@ -293,7 +333,7 @@ fn validate_authorize_query(
         .get("scope")
         .cloned()
         .unwrap_or_else(|| DEFAULT_SCOPE.to_owned());
-    if !scope.split_whitespace().all(|s| s == DEFAULT_SCOPE) {
+    if !is_valid_scope(&scope) {
         return Err(oauth_error(
             400,
             "invalid_scope",
@@ -419,58 +459,26 @@ fn handle_token(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
             return oauth_error(401, "invalid_client", "invalid client_secret");
         }
     }
-    let mut codes = match ctx.store.load_codes() {
-        Ok(v) => v,
+    let token = match ctx
+        .store
+        .redeem_code_for_token(&code, &client_id, &redirect_uri, &verifier)
+    {
+        Ok(TokenRedeem::Issued(v)) => v,
+        Ok(TokenRedeem::InvalidGrant(description)) => {
+            return oauth_error(400, "invalid_grant", description)
+        }
+        Ok(TokenRedeem::InvalidScope) => {
+            return oauth_error(400, "invalid_scope", "only mcp:tools is supported")
+        }
         Err(e) => return oauth_error(500, "server_error", &e.to_string()),
     };
-    let Some(stored) = codes.get_mut(&code) else {
-        return oauth_error(400, "invalid_grant", "unknown authorization code");
-    };
-    if stored.used {
-        return oauth_error(
-            400,
-            "invalid_grant",
-            "authorization code has already been used",
-        );
-    }
-    if now_secs().saturating_sub(stored.created_at) > ctx.store.code_ttl_seconds {
-        return oauth_error(400, "invalid_grant", "authorization code has expired");
-    }
-    if stored.client_id != client_id || stored.redirect_uri != redirect_uri {
-        return oauth_error(400, "invalid_grant", "authorization code binding mismatch");
-    }
-    if !verify_pkce(
-        &verifier,
-        &stored.code_challenge,
-        &stored.code_challenge_method,
-    ) {
-        return oauth_error(400, "invalid_grant", "PKCE verification failed");
-    }
-    let token_scope = stored.scope.clone();
-    let token_resource = stored.resource.clone();
-    stored.used = true;
-    if let Err(e) = ctx.store.save_codes(&codes) {
-        return oauth_error(500, "server_error", &e.to_string());
-    }
-    let access_token = random_id();
-    let now = now_secs();
-    let token = AccessToken {
-        client_id,
-        scope: token_scope,
-        resource: token_resource,
-        created_at: now,
-        expires_at: now.saturating_add(ctx.store.token_ttl_seconds),
-    };
-    if let Err(e) = ctx.store.upsert_token(&access_token, token) {
-        return oauth_error(500, "server_error", &e.to_string());
-    }
     json_response(
-        200,
+        token.status,
         json!({
-            "access_token": access_token,
+            "access_token": token.access_token,
             "token_type": "Bearer",
             "expires_in": ctx.store.token_ttl_seconds,
-            "scope": DEFAULT_SCOPE,
+            "scope": token.scope,
         }),
     )
 }
@@ -623,7 +631,7 @@ fn authorize_bearer(req: &HttpRequest, ctx: &HandlerContext) -> Result<(), HttpR
     if now_secs() > stored.expires_at {
         return Err(bearer_error("Expired token"));
     }
-    if stored.scope.split_whitespace().all(|s| s != DEFAULT_SCOPE) {
+    if !is_valid_scope(&stored.scope) {
         return Err(bearer_error("Token does not carry mcp:tools scope"));
     }
     Ok(())
@@ -677,7 +685,7 @@ fn serialize(resp: &Response) -> String {
     })
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct PendingAuthorization {
     client_id: String,
     client_name: String,
@@ -689,23 +697,41 @@ struct PendingAuthorization {
     code_challenge_method: String,
 }
 
-fn authorize_page(pending: &PendingAuthorization, public_url: &str) -> String {
-    let resource = pending
+impl PendingAuthorization {
+    fn matches_form(&self, form: &HashMap<String, String>) -> bool {
+        form.get("client_id") == Some(&self.client_id)
+            && form.get("redirect_uri") == Some(&self.redirect_uri)
+            && form.get("scope") == Some(&self.scope)
+            && form.get("code_challenge") == Some(&self.code_challenge)
+            && form.get("code_challenge_method") == Some(&self.code_challenge_method)
+            && optional_form_value(form, "state") == self.state.as_deref()
+            && optional_form_value(form, "resource") == self.resource.as_deref()
+    }
+}
+
+fn optional_form_value<'a>(form: &'a HashMap<String, String>, key: &str) -> Option<&'a str> {
+    form.get(key).map(String::as_str).filter(|v| !v.is_empty())
+}
+
+fn authorize_page(pending: &PendingAuthorization, public_url: &str, nonce: &str) -> String {
+    let display_resource = pending
         .resource
         .clone()
         .unwrap_or_else(|| format!("{public_url}/mcp"));
+    let form_resource = pending.resource.as_deref().unwrap_or("");
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>Authorize cua-driver</title><style>body{{font-family:system-ui,sans-serif;background:#111;color:#f5f5f5;display:grid;place-items:center;min-height:100vh;margin:0}}main{{max-width:520px;padding:32px}}button{{padding:10px 16px;margin-right:8px}}</style></head><body><main><h1>Authorize cua-driver MCP</h1><p><strong>{}</strong> is requesting access to <code>{}</code>.</p><p>Scope: <code>{}</code></p><form method="post" action="/authorize"><input type="hidden" name="client_id" value="{}"><input type="hidden" name="redirect_uri" value="{}"><input type="hidden" name="scope" value="{}"><input type="hidden" name="resource" value="{}"><input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}"><input type="hidden" name="state" value="{}"><button name="decision" value="allow">Authorize</button><button name="decision" value="deny">Deny</button></form></main></body></html>"#,
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>Authorize cua-driver</title><style>body{{font-family:system-ui,sans-serif;background:#111;color:#f5f5f5;display:grid;place-items:center;min-height:100vh;margin:0}}main{{max-width:520px;padding:32px}}button{{padding:10px 16px;margin-right:8px}}</style></head><body><main><h1>Authorize cua-driver MCP</h1><p><strong>{}</strong> is requesting access to <code>{}</code>.</p><p>Scope: <code>{}</code></p><form method="post" action="/authorize"><input type="hidden" name="client_id" value="{}"><input type="hidden" name="redirect_uri" value="{}"><input type="hidden" name="scope" value="{}"><input type="hidden" name="resource" value="{}"><input type="hidden" name="code_challenge" value="{}"><input type="hidden" name="code_challenge_method" value="{}"><input type="hidden" name="state" value="{}"><input type="hidden" name="consent_nonce" value="{}"><button name="decision" value="allow">Authorize</button><button name="decision" value="deny">Deny</button></form></main></body></html>"#,
         html_escape(&pending.client_name),
-        html_escape(&resource),
+        html_escape(&display_resource),
         html_escape(&pending.scope),
         html_escape(&pending.client_id),
         html_escape(&pending.redirect_uri),
         html_escape(&pending.scope),
-        html_escape(&resource),
+        html_escape(form_resource),
         html_escape(&pending.code_challenge),
         html_escape(&pending.code_challenge_method),
         html_escape(pending.state.as_deref().unwrap_or("")),
+        html_escape(nonce),
     )
 }
 
@@ -742,6 +768,7 @@ struct JsonStore {
     dir: PathBuf,
     token_ttl_seconds: u64,
     code_ttl_seconds: u64,
+    lock: Arc<Mutex<()>>,
 }
 
 impl JsonStore {
@@ -750,6 +777,7 @@ impl JsonStore {
             dir,
             token_ttl_seconds,
             code_ttl_seconds,
+            lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -761,6 +789,9 @@ impl JsonStore {
     }
     fn tokens_path(&self) -> PathBuf {
         self.dir.join("tokens.json")
+    }
+    fn consents_path(&self) -> PathBuf {
+        self.dir.join("consents.json")
     }
 
     fn load_clients(&self) -> io::Result<HashMap<String, Client>> {
@@ -775,28 +806,113 @@ impl JsonStore {
         read_json_map(&self.tokens_path())
     }
 
-    fn save_codes(&self, codes: &HashMap<String, AuthCode>) -> io::Result<()> {
-        write_json_atomic(&self.codes_path(), codes)
-    }
-
     fn upsert_client(&self, id: &str, client: Client) -> io::Result<()> {
+        let _guard = self.lock.lock().expect("oauth store mutex poisoned");
         let mut clients = self.load_clients()?;
         clients.insert(id.to_owned(), client);
         write_json_atomic(&self.clients_path(), &clients)
     }
 
     fn upsert_code(&self, code: &str, value: AuthCode) -> io::Result<()> {
+        let _guard = self.lock.lock().expect("oauth store mutex poisoned");
         let mut codes = self.load_codes()?;
         prune_codes(&mut codes, self.code_ttl_seconds);
         codes.insert(code.to_owned(), value);
         write_json_atomic(&self.codes_path(), &codes)
     }
 
+    #[cfg(test)]
     fn upsert_token(&self, token: &str, value: AccessToken) -> io::Result<()> {
+        let _guard = self.lock.lock().expect("oauth store mutex poisoned");
         let mut tokens = self.load_tokens()?;
         self.prune_tokens(&mut tokens);
         tokens.insert(token.to_owned(), value);
         write_json_atomic(&self.tokens_path(), &tokens)
+    }
+
+    fn upsert_consent(&self, nonce: &str, pending: &PendingAuthorization) -> io::Result<()> {
+        let _guard = self.lock.lock().expect("oauth store mutex poisoned");
+        let mut consents = read_json_map(&self.consents_path())?;
+        prune_consents(&mut consents, self.code_ttl_seconds);
+        consents.insert(
+            nonce.to_owned(),
+            ConsentTransaction {
+                pending: pending.clone(),
+                created_at: now_secs(),
+            },
+        );
+        write_json_atomic(&self.consents_path(), &consents)
+    }
+
+    fn consume_consent(&self, nonce: &str) -> io::Result<Option<PendingAuthorization>> {
+        let _guard = self.lock.lock().expect("oauth store mutex poisoned");
+        let mut consents: HashMap<String, ConsentTransaction> =
+            read_json_map(&self.consents_path())?;
+        prune_consents(&mut consents, self.code_ttl_seconds);
+        let pending = consents.remove(nonce).map(|c| c.pending);
+        write_json_atomic(&self.consents_path(), &consents)?;
+        Ok(pending)
+    }
+
+    fn redeem_code_for_token(
+        &self,
+        code: &str,
+        client_id: &str,
+        redirect_uri: &str,
+        verifier: &str,
+    ) -> io::Result<TokenRedeem> {
+        let _guard = self.lock.lock().expect("oauth store mutex poisoned");
+        let mut codes = self.load_codes()?;
+        let Some(stored) = codes.get_mut(code) else {
+            return Ok(TokenRedeem::InvalidGrant("unknown authorization code"));
+        };
+        if stored.used {
+            return Ok(TokenRedeem::InvalidGrant(
+                "authorization code has already been used",
+            ));
+        }
+        if now_secs().saturating_sub(stored.created_at) > self.code_ttl_seconds {
+            return Ok(TokenRedeem::InvalidGrant("authorization code has expired"));
+        }
+        if stored.client_id != client_id || stored.redirect_uri != redirect_uri {
+            return Ok(TokenRedeem::InvalidGrant(
+                "authorization code binding mismatch",
+            ));
+        }
+        if !verify_pkce(
+            verifier,
+            &stored.code_challenge,
+            &stored.code_challenge_method,
+        ) {
+            return Ok(TokenRedeem::InvalidGrant("PKCE verification failed"));
+        }
+        if !is_valid_scope(&stored.scope) {
+            return Ok(TokenRedeem::InvalidScope);
+        }
+
+        let access_token = random_id();
+        let now = now_secs();
+        let token_scope = stored.scope.clone();
+        let token = AccessToken {
+            client_id: client_id.to_owned(),
+            scope: token_scope.clone(),
+            resource: stored.resource.clone(),
+            created_at: now,
+            expires_at: now.saturating_add(self.token_ttl_seconds),
+        };
+        stored.used = true;
+        write_json_atomic(&self.codes_path(), &codes)?;
+
+        let mut tokens = self.load_tokens()?;
+        self.prune_tokens(&mut tokens);
+        tokens.insert(access_token.clone(), token);
+        write_json_atomic(&self.tokens_path(), &tokens)?;
+
+        Ok(TokenRedeem::Issued(TokenIssue {
+            status: 200,
+            access_token,
+            scope: token_scope,
+        }))
     }
 
     fn prune_tokens(&self, tokens: &mut HashMap<String, AccessToken>) {
@@ -827,6 +943,12 @@ struct AuthCode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct ConsentTransaction {
+    pending: PendingAuthorization,
+    created_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct AccessToken {
     client_id: String,
     scope: String,
@@ -835,14 +957,34 @@ struct AccessToken {
     expires_at: u64,
 }
 
+#[derive(Debug)]
+struct TokenIssue {
+    status: u16,
+    access_token: String,
+    scope: String,
+}
+
+#[derive(Debug)]
+enum TokenRedeem {
+    Issued(TokenIssue),
+    InvalidGrant(&'static str),
+    InvalidScope,
+}
+
 fn prune_codes(codes: &mut HashMap<String, AuthCode>, ttl: u64) {
     let now = now_secs();
     codes.retain(|_, c| !c.used && now.saturating_sub(c.created_at) <= ttl);
 }
 
+fn prune_consents(consents: &mut HashMap<String, ConsentTransaction>, ttl: u64) {
+    let now = now_secs();
+    consents.retain(|_, c| now.saturating_sub(c.created_at) <= ttl);
+}
+
 fn read_json_map<T: for<'de> Deserialize<'de>>(path: &Path) -> io::Result<HashMap<String, T>> {
     match fs::read(path) {
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(HashMap::new()),
         Err(e) => Err(e),
     }
@@ -850,12 +992,84 @@ fn read_json_map<T: for<'de> Deserialize<'de>>(path: &Path) -> io::Result<HashMa
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_private_dir(parent)?;
     }
     let tmp = path.with_extension(format!("tmp-{}", Uuid::new_v4().simple()));
     let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
-    fs::write(&tmp, bytes)?;
+    write_private_file(&tmp, &bytes)?;
     fs::rename(tmp, path)
+}
+
+fn is_valid_scope(scope: &str) -> bool {
+    scope == DEFAULT_SCOPE
+}
+
+fn is_allowed_redirect_uri(uri: &str) -> bool {
+    if uri.is_empty()
+        || uri.bytes().any(|b| b.is_ascii_control())
+        || uri.contains('#')
+        || uri.contains(' ')
+    {
+        return false;
+    }
+    if let Some(rest) = uri.strip_prefix("https://") {
+        return valid_uri_authority(rest).is_some();
+    }
+    if let Some(rest) = uri.strip_prefix("http://") {
+        let Some(authority) = valid_uri_authority(rest) else {
+            return false;
+        };
+        return authority == "localhost"
+            || authority.starts_with("localhost:")
+            || authority == "127.0.0.1"
+            || authority.starts_with("127.0.0.1:")
+            || authority == "[::1]"
+            || authority.starts_with("[::1]:");
+    }
+    false
+}
+
+fn valid_uri_authority(rest: &str) -> Option<&str> {
+    let authority = rest.split(['/', '?']).next().unwrap_or("").trim();
+    if authority.is_empty() || authority.contains('@') {
+        None
+    } else {
+        Some(authority)
+    }
+}
+
+#[cfg(unix)]
+fn ensure_private_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(windows)]
+fn ensure_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn ensure_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    std::io::Write::write_all(&mut file, bytes)
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    fs::write(path, bytes)
 }
 
 fn verify_pkce(verifier: &str, challenge: &str, method: &str) -> bool {
@@ -939,7 +1153,9 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     let mut head = Vec::with_capacity(1024);
     let mut byte = [0u8; 1];
     loop {
-        let n = stream.read(&mut byte).await?;
+        let n = time::timeout(HTTP_HEADER_TIMEOUT, stream.read(&mut byte))
+            .await
+            .map_err(|_| anyhow::anyhow!("HTTP header read timed out"))??;
         if n == 0 {
             return Ok(None);
         }
@@ -982,7 +1198,9 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     }
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
-        stream.read_exact(&mut body).await?;
+        time::timeout(HTTP_BODY_TIMEOUT, stream.read_exact(&mut body))
+            .await
+            .map_err(|_| anyhow::anyhow!("HTTP body read timed out"))??;
     }
     Ok(Some(HttpRequest {
         method,
@@ -1224,6 +1442,36 @@ mod tests {
     }
 
     #[test]
+    fn redirect_uri_validation_allows_https_and_loopback_http_only() {
+        assert!(is_allowed_redirect_uri("https://client.test/callback"));
+        assert!(is_allowed_redirect_uri("http://localhost:3000/callback"));
+        assert!(is_allowed_redirect_uri("http://127.0.0.1/callback"));
+        assert!(is_allowed_redirect_uri("http://[::1]:3000/callback"));
+
+        assert!(!is_allowed_redirect_uri("http://evil.test/callback"));
+        assert!(!is_allowed_redirect_uri(
+            "https://client.test/callback#frag"
+        ));
+        assert!(!is_allowed_redirect_uri(
+            "https://client.test/\r\nX-Bad: yes"
+        ));
+        assert!(!is_allowed_redirect_uri("javascript:alert(1)"));
+        assert!(!is_allowed_redirect_uri(
+            "https://user@client.test/callback"
+        ));
+    }
+
+    #[test]
+    fn read_json_map_reports_malformed_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clients.json");
+        fs::write(&path, b"{not-json").unwrap();
+
+        let err = read_json_map::<Client>(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn authorize_requires_code_response_type_and_supported_scope() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = HandlerContext {
@@ -1274,6 +1522,113 @@ mod tests {
         assert_eq!(err.status, 400);
         let body: Value = serde_json::from_slice(&err.body).unwrap();
         assert_eq!(body["error"], "invalid_scope");
+    }
+
+    #[tokio::test]
+    async fn register_rejects_unsafe_redirect_uris() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path(), true);
+
+        for uri in [
+            "http://client.test/callback",
+            "https://client.test/callback#frag",
+            "https://client.test/\r\nLocation: https://evil.test/",
+        ] {
+            let register = handle_http(
+                HttpRequest {
+                    method: "POST".to_owned(),
+                    path: "/register".to_owned(),
+                    headers: HashMap::new(),
+                    body: serde_json::to_vec(&json!({
+                        "client_name": "bad",
+                        "redirect_uris": [uri],
+                    }))
+                    .unwrap(),
+                    keep_alive: false,
+                },
+                &ctx,
+            )
+            .await;
+            assert_eq!(register.status, 400);
+            let body: Value = serde_json::from_slice(&register.body).unwrap();
+            assert_eq!(body["error"], "invalid_redirect_uri");
+        }
+    }
+
+    #[tokio::test]
+    async fn consent_post_requires_nonce_and_rejects_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path(), true);
+        ctx.store
+            .upsert_client(
+                "client",
+                Client {
+                    client_secret: "secret".to_owned(),
+                    client_name: "test".to_owned(),
+                    redirect_uris: vec!["https://client.test/callback".to_owned()],
+                    token_endpoint_auth_method: "client_secret_post".to_owned(),
+                    created_at: now_secs(),
+                },
+            )
+            .unwrap();
+
+        let authorize_path = "/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fclient.test%2Fcallback&scope=mcp%3Atools&state=abc&resource=https%3A%2F%2Fexample.test%2Fmcp&code_challenge=challenge&code_challenge_method=S256";
+        let authorize = handle_http(
+            HttpRequest {
+                method: "GET".to_owned(),
+                path: authorize_path.to_owned(),
+                headers: HashMap::new(),
+                body: Vec::new(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(authorize.status, 200);
+        let page = String::from_utf8(authorize.body).unwrap();
+        let nonce = extract_hidden_value(&page, "consent_nonce").unwrap();
+
+        let without_nonce = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/authorize".to_owned(),
+                headers: HashMap::new(),
+                body: b"decision=allow&client_id=client&redirect_uri=https%3A%2F%2Fclient.test%2Fcallback&scope=mcp%3Atools&state=abc&resource=https%3A%2F%2Fexample.test%2Fmcp&code_challenge=challenge&code_challenge_method=S256".to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(without_nonce.status, 400);
+
+        let form = format!(
+            "decision=allow&client_id=client&redirect_uri=https%3A%2F%2Fclient.test%2Fcallback&scope=mcp%3Atools&state=abc&resource=https%3A%2F%2Fexample.test%2Fmcp&code_challenge=challenge&code_challenge_method=S256&consent_nonce={nonce}"
+        );
+        let approved = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/authorize".to_owned(),
+                headers: HashMap::new(),
+                body: form.clone().into_bytes(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(approved.status, 302);
+
+        let replay = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/authorize".to_owned(),
+                headers: HashMap::new(),
+                body: form.into_bytes(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(replay.status, 400);
     }
 
     #[tokio::test]
@@ -1499,5 +1854,28 @@ mod tests {
         )
         .await;
         assert_eq!(ended.status, 404);
+    }
+
+    fn test_ctx(dir: &Path, require_user_consent: bool) -> HandlerContext {
+        HandlerContext {
+            options: Options {
+                public_url: "https://example.test".to_owned(),
+                listen: DEFAULT_LISTEN.to_owned(),
+                storage_dir: Some(dir.to_path_buf()),
+                token_ttl_seconds: 3600,
+                code_ttl_seconds: 300,
+                require_user_consent,
+            },
+            registry: Arc::new(ToolRegistry::new()),
+            store: Arc::new(JsonStore::new(dir.to_path_buf(), 3600, 300)),
+            sessions: Arc::new(SessionStore::default()),
+        }
+    }
+
+    fn extract_hidden_value(page: &str, name: &str) -> Option<String> {
+        let needle = format!(r#"name="{name}" value=""#);
+        let start = page.find(&needle)? + needle.len();
+        let end = page[start..].find('"')?;
+        Some(page[start..start + end].to_owned())
     }
 }

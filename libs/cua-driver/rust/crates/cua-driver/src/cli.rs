@@ -171,7 +171,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, mcp-oauth, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
+        println!("Subcommands: mcp, mcp-oauth, mcp-config, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, dump-docs");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -332,14 +332,14 @@ pub fn parse_command() -> Command {
                 eprintln!("Usage: cua-driver mcp-oauth --public-url <https-url> [--listen 127.0.0.1:7676]");
                 process::exit(64);
             };
+            let token_ttl_seconds = parse_optional_u64_flag(&args, "--token-ttl-seconds");
+            let code_ttl_seconds = parse_optional_u64_flag(&args, "--code-ttl-seconds");
             Command::McpOauth {
                 public_url,
                 listen: flag_value(&args, "--listen"),
                 storage_dir: flag_value(&args, "--storage-dir"),
-                token_ttl_seconds: flag_value(&args, "--token-ttl-seconds")
-                    .and_then(|v| v.parse::<u64>().ok()),
-                code_ttl_seconds: flag_value(&args, "--code-ttl-seconds")
-                    .and_then(|v| v.parse::<u64>().ok()),
+                token_ttl_seconds,
+                code_ttl_seconds,
                 require_user_consent: !args.iter().any(|a| a == "--no-consent-page"),
             }
         }
@@ -513,6 +513,15 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn parse_optional_u64_flag(args: &[String], flag: &str) -> Option<u64> {
+    flag_value(args, flag).map(|value| {
+        value.parse::<u64>().unwrap_or_else(|_| {
+            eprintln!("cua-driver: {flag} must be an unsigned integer, got `{value}`");
+            process::exit(64);
+        })
+    })
 }
 
 /// Print all tools in the registry, one per line: `name: first sentence`.
@@ -739,6 +748,70 @@ pub fn launch_daemon_and_wait(
          CuaDriver.app in System Settings and retry. Pass --no-daemon-relaunch \
          to stay in-process."
     );
+}
+
+#[cfg(target_os = "macos")]
+pub fn relaunch_mcp_oauth_via_app(
+    public_url: &str,
+    listen: Option<&str>,
+    storage_dir: Option<&str>,
+    token_ttl_seconds: Option<u64>,
+    code_ttl_seconds: Option<u64>,
+    require_user_consent: bool,
+) -> anyhow::Result<()> {
+    use std::process::{Command as Cmd, Stdio};
+
+    let mut open_args = vec![
+        "-n".to_owned(),
+        "-g".to_owned(),
+        "-a".to_owned(),
+        "CuaDriver".to_owned(),
+        "--args".to_owned(),
+        "mcp-oauth".to_owned(),
+        "--public-url".to_owned(),
+        public_url.to_owned(),
+    ];
+    if let Some(listen) = listen {
+        open_args.push("--listen".to_owned());
+        open_args.push(listen.to_owned());
+    }
+    if let Some(storage_dir) = storage_dir {
+        open_args.push("--storage-dir".to_owned());
+        open_args.push(storage_dir.to_owned());
+    }
+    if let Some(ttl) = token_ttl_seconds {
+        open_args.push("--token-ttl-seconds".to_owned());
+        open_args.push(ttl.to_string());
+    }
+    if let Some(ttl) = code_ttl_seconds {
+        open_args.push("--code-ttl-seconds".to_owned());
+        open_args.push(ttl.to_string());
+    }
+    if !require_user_consent {
+        open_args.push("--no-consent-page".to_owned());
+    }
+
+    let status = Cmd::new("/usr/bin/open")
+        .args(&open_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to exec `/usr/bin/open` for mcp-oauth relaunch: {e}. \
+                 Set CUA_DRIVER_RS_MCP_NO_RELAUNCH=1 to bypass."
+            )
+        })?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "`open -n -g -a CuaDriver --args mcp-oauth ...` exited {:?}. \
+             Check that `/Applications/CuaDriver.app` is installed, or set \
+             CUA_DRIVER_RS_MCP_NO_RELAUNCH=1 to bypass.",
+            status.code()
+        );
+    }
+    Ok(())
 }
 
 /// Run the MCP proxy path: ensure a daemon is up (spawning via

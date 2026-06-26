@@ -43,7 +43,9 @@ Keep this entry point opt-in and temporary:
 - Use an HTTPS public URL; the command rejects plain `http://` public URLs.
 - Keep the listener on loopback unless you know exactly why you need otherwise.
 - Stop the tunnel and the `mcp-oauth` process when the connector is not in use.
-- Delete `~/.cua-driver/oauth` to remove registered clients and issued tokens.
+- Delete the OAuth data directory to remove registered clients and issued tokens:
+  the configured `--storage-dir` when one was supplied, otherwise
+  `~/.cua-driver/oauth`.
 
 The `/mcp` endpoint implements the Streamable HTTP basics: `initialize` returns
 `MCP-Session-Id`, later requests must send that header, `GET /mcp` opens an SSE

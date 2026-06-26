@@ -30,6 +30,7 @@ ureq = { version = "3", features = ["json"] }
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".
 semver = "1"
+ring = "0.17"
 # Bounded `Child::wait_timeout` for the Linux AT-SPI / gdbus probe in
 # `doctor`. We can't rely on `gdbus introspect` returning quickly when the
 # session D-Bus is hung — without a timeout, `doctor` would block forever

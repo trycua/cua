@@ -29,6 +29,7 @@ mod bundle;
 mod cli;
 mod doctor;
 mod mcp_http;
+mod mcp_oauth;
 mod proxy;
 mod responsibility;
 mod serve;
@@ -162,6 +163,32 @@ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::Tool
     r
 }
 
+#[cfg(target_os = "macos")]
+fn install_macos_core_callbacks() {
+    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
+        if let Some(wid) = window_id {
+            platform_macos::capture::screenshot_window_bytes(wid as u32).ok()
+        } else if let Some(p) = pid {
+            platform_macos::windows::resolve_main_window_id(p as i32).ok()
+                .and_then(|wid| platform_macos::capture::screenshot_window_bytes(wid).ok())
+        } else {
+            platform_macos::capture::screenshot_display_bytes().ok()
+        }
+    });
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, cx, cy| {
+        platform_macos::capture::crosshair_png_bytes(png_bytes, cx, cy).ok()
+    });
+    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    });
+    cua_driver_core::recording::set_element_bounds_fn(|wid, pid, idx| {
+        platform_macos::recording_hooks::element_window_local_xy(wid, pid, idx)
+    });
+    cua_driver_core::video::set_video_backend_factory(
+        Box::new(platform_macos::video_sckit::SckitVideoBackendFactory),
+    );
+}
+
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -195,6 +222,32 @@ fn main() {
         }
         cli::Command::McpConfig { client } => {
             cli::run_mcp_config(client.as_deref());
+            return;
+        }
+        cli::Command::McpOauth {
+            public_url,
+            listen,
+            storage_dir,
+            token_ttl_seconds,
+            code_ttl_seconds,
+            require_user_consent,
+        } => {
+            version_check::maybe_announce_update();
+            install_macos_core_callbacks();
+            let reg = Arc::new(build_macos_registry());
+            reg.init_self_weak();
+            let opts = mcp_oauth::Options::new(
+                public_url,
+                listen,
+                storage_dir,
+                token_ttl_seconds,
+                code_ttl_seconds,
+                require_user_consent,
+            );
+            if let Err(e) = mcp_oauth::run(opts, reg) {
+                eprintln!("cua-driver mcp-oauth error: {e}");
+                std::process::exit(1);
+            }
             return;
         }
         cli::Command::Manifest { pretty } => {
@@ -567,6 +620,31 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::McpConfig { client } => {
             cli::run_mcp_config(client.as_deref());
+            return Ok(());
+        }
+        cli::Command::McpOauth {
+            public_url,
+            listen,
+            storage_dir,
+            token_ttl_seconds,
+            code_ttl_seconds,
+            require_user_consent,
+        } => {
+            version_check::maybe_announce_update();
+            let reg = Arc::new(build_registry_no_cursor());
+            reg.init_self_weak();
+            let opts = mcp_oauth::Options::new(
+                public_url,
+                listen,
+                storage_dir,
+                token_ttl_seconds,
+                code_ttl_seconds,
+                require_user_consent,
+            );
+            if let Err(e) = mcp_oauth::run(opts, reg) {
+                eprintln!("cua-driver mcp-oauth error: {e}");
+                std::process::exit(1);
+            }
             return Ok(());
         }
         cli::Command::Manifest { pretty } => {

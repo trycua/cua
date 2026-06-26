@@ -36,6 +36,14 @@ pub enum Command {
         /// Code, where this is the documented best-practice install.
         claude_code_compat: bool,
     },
+    McpOauth {
+        public_url: String,
+        listen: Option<String>,
+        storage_dir: Option<String>,
+        token_ttl_seconds: Option<u64>,
+        code_ttl_seconds: Option<u64>,
+        require_user_consent: bool,
+    },
     ListTools,
     Describe(String),
     Call {
@@ -140,6 +148,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--cursor-icon", "--cursor-id", "--cursor-palette", "--cursor-shape",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
     "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
+    "--public-url", "--listen", "--storage-dir", "--token-ttl-seconds",
+    "--code-ttl-seconds",
     // Experimental PiP preview — value flag for the optional geometry
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
@@ -161,7 +171,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
+        println!("Subcommands: mcp, mcp-oauth, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -210,6 +220,18 @@ pub fn parse_command() -> Command {
         println!("                          screenshot tool itself was removed in #1692, so the flag");
         println!("                          has no tool-surface effect today; the wiring is in place");
         println!("                          for any future compat-gated tool.");
+        println!();
+        println!("mcp-oauth options (experimental):");
+        println!("  cua-driver mcp-oauth --public-url <https-url>");
+        println!("                          Run an OAuth 2.0 + DCR HTTP front door for");
+        println!("                          ChatGPT-style custom MCP connectors. The listener");
+        println!("                          defaults to 127.0.0.1:7676; expose it through your");
+        println!("                          own trusted HTTPS tunnel when needed.");
+        println!("  --listen <addr:port>    Bind address (default: 127.0.0.1:7676).");
+        println!("  --storage-dir <path>    OAuth client/code/token JSON store.");
+        println!("  --token-ttl-seconds <n> Access-token TTL (default: 86400).");
+        println!("  --code-ttl-seconds <n>  Authorization-code TTL (default: 300).");
+        println!("  --no-consent-page       Auto-approve /authorize requests. Local testing only.");
         println!();
         println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -305,6 +327,22 @@ pub fn parse_command() -> Command {
             socket: socket.clone(),
             claude_code_compat,
         },
+        Some("mcp-oauth") => {
+            let Some(public_url) = flag_value(&args, "--public-url") else {
+                eprintln!("Usage: cua-driver mcp-oauth --public-url <https-url> [--listen 127.0.0.1:7676]");
+                process::exit(64);
+            };
+            Command::McpOauth {
+                public_url,
+                listen: flag_value(&args, "--listen"),
+                storage_dir: flag_value(&args, "--storage-dir"),
+                token_ttl_seconds: flag_value(&args, "--token-ttl-seconds")
+                    .and_then(|v| v.parse::<u64>().ok()),
+                code_ttl_seconds: flag_value(&args, "--code-ttl-seconds")
+                    .and_then(|v| v.parse::<u64>().ok()),
+                require_user_consent: !args.iter().any(|a| a == "--no-consent-page"),
+            }
+        }
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
         Some("serve") => Command::Serve {
@@ -845,6 +883,16 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." }
+              ] },
+            { "name": "mcp-oauth",
+              "description": "Run the experimental OAuth 2.0 + DCR HTTP front door for custom MCP connectors.",
+              "args": [
+                  { "name": "--public-url", "type": "string", "description": "Externally reachable HTTPS base URL." },
+                  { "name": "--listen", "type": "string", "description": "Bind address. Defaults to 127.0.0.1:7676." },
+                  { "name": "--storage-dir", "type": "string", "description": "OAuth client/code/token JSON store." },
+                  { "name": "--token-ttl-seconds", "type": "integer", "description": "Access-token lifetime." },
+                  { "name": "--code-ttl-seconds", "type": "integer", "description": "Authorization-code lifetime." },
+                  { "name": "--no-consent-page", "type": "flag", "description": "Auto-approve /authorize requests. Local testing only." }
               ] },
             { "name": "serve",
               "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
@@ -2799,6 +2847,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
     use crate::telemetry::event;
     let name = match cmd {
         Command::Mcp { .. } => event::MCP.to_owned(),
+        Command::McpOauth { .. } => "cua_driver_mcp_oauth".to_owned(),
         Command::Serve { .. } => event::SERVE.to_owned(),
         Command::Stop { .. } => event::STOP.to_owned(),
         Command::Status { .. } => event::STATUS.to_owned(),

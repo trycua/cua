@@ -618,6 +618,7 @@ dependencies = [
  "platform-linux",
  "platform-macos",
  "platform-windows",
+ "ring",
  "semver",
  "serde",
  "serde_json",

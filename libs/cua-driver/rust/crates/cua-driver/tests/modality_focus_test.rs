@@ -124,7 +124,7 @@ mod macos_focus_tests {
         // Walk AX tree.
         let resp = driver.call(
             "get_window_state",
-            serde_json::json!({ "pid": calc_pid, "window_id": window_id, "capture_mode": "tree" }),
+            serde_json::json!({ "pid": calc_pid, "window_id": window_id, "capture_mode": "ax" }),
         );
         println!(
             "get_window_state: {}",

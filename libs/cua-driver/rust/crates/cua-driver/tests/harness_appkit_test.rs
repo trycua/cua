@@ -90,7 +90,7 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
         serde_json::json!({
             "pid": pid as i64,
             "window_id": window_id,
-            "capture_mode": "tree"
+            "capture_mode": "ax"
         }))
 }
 

@@ -91,7 +91,7 @@ fn snapshot(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolResponse {
     driver.call("get_window_state", serde_json::json!({
         "pid": pid as i64,
         "window_id": window_id,
-        "capture_mode": "tree"
+        "capture_mode": "ax"
     }))
 }
 
@@ -422,7 +422,7 @@ fn harness_wpf_modal_messagebox() {
 
         // Walk the modal's UIA tree — expect OK and Cancel buttons.
         let modal_snap = driver.call("get_window_state", serde_json::json!({
-            "pid": pid as i64, "window_id": modal_wid, "capture_mode": "tree"
+            "pid": pid as i64, "window_id": modal_wid, "capture_mode": "ax"
         }));
         let modal_text = modal_snap.text();
         assert!(modal_text.contains("\"OK\""),
@@ -470,7 +470,7 @@ fn harness_wpf_owned_popup() {
         let owned_wid = owned["window_id"].as_u64().unwrap();
 
         let owned_snap = driver.call("get_window_state", serde_json::json!({
-            "pid": pid as i64, "window_id": owned_wid, "capture_mode": "tree"
+            "pid": pid as i64, "window_id": owned_wid, "capture_mode": "ax"
         }));
         let owned_text = owned_snap.text();
         assert!(owned_text.contains("OWNED_POPUP_MARKER_v1"),

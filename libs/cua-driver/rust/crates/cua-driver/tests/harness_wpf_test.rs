@@ -551,16 +551,14 @@ fn harness_wpf_slider_drag() {
 
         let resp = driver.call("drag", serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            // drag screen-coords path: send_drag_synthesized takes screen
-            // coords directly. The harness window is centered at
-            // (517, 66) with the slider track at client (50-330, 275);
-            // convert to screen via ClientToScreen approximation by
-            // offsetting by window position + non-client chrome
-            // (title bar + border ~30,8). screen coords here are
-            // re-derived in window-local form by the tool's existing
-            // ClientToScreen step.
-            "from_x": 50.0, "from_y": 275.0,
-            "to_x": 330.0,  "to_y": 275.0,
+            // Window-local coords along the slider TRACK. The track row sits at
+            // window-local y≈304 (verified on the VM: y=275 landed ~29px above
+            // it, on empty GroupBox space, so the thumb never moved); the thumb
+            // rests at the left (x≈44) at value=0. Dragging left→right advances
+            // the value. (TODO: derive these from the `sld-value` element frame
+            // in get_window_state for DPI/placement independence.)
+            "from_x": 44.0, "from_y": 304.0,
+            "to_x": 330.0, "to_y": 304.0,
             "duration_ms": 700, "steps": 40,
             "dispatch": "foreground"
         }));

@@ -166,6 +166,54 @@ impl Default for DriverConfig {
     fn default() -> Self { Self { capture_mode: "som".into(), max_image_dimension: 1568 } }
 }
 
+fn config_file_path() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|home| std::path::PathBuf::from(home).join(".cua-driver").join("config.json"))
+}
+
+fn load_driver_config() -> DriverConfig {
+    let mut cfg = DriverConfig::default();
+    let path = match config_file_path() {
+        Some(path) => path,
+        None => return cfg,
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(_) => return cfg,
+    };
+    let json: Value = match serde_json::from_str(&text) {
+        Ok(json) => json,
+        Err(_) => return cfg,
+    };
+    if let Some(mode) = json.get("capture_mode").and_then(|value| value.as_str()) {
+        cfg.capture_mode = mode.to_owned();
+    }
+    if let Some(dim) = json.get("max_image_dimension").and_then(|value| value.as_u64()) {
+        if let Ok(dim32) = u32::try_from(dim) {
+            cfg.max_image_dimension = dim32;
+        }
+    }
+    cfg
+}
+
+fn write_driver_config_key(key: &str, value: &Value) -> Result<(), String> {
+    let path = config_file_path().ok_or_else(|| "$HOME is not set".to_string())?;
+    let mut json: Value = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({}));
+    json[key] = value.clone();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let body = serde_json::to_string_pretty(&json).map_err(|err| err.to_string())?;
+    std::fs::write(&path, body).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 pub struct ResizeRegistry {
     ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
 }
@@ -219,7 +267,7 @@ impl ToolState {
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
-            config: Arc::new(RwLock::new(DriverConfig::default())),
+            config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
 }
@@ -5005,57 +5053,90 @@ impl Tool for SetConfigTool {
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        let mut cfg = self.state.config.write().unwrap();
         let mut applied = false;
-        // Swift-compatible {key, value} shape.
-        if let (Some(key), Some(val)) = (
-            args.get("key").and_then(|v| v.as_str()),
-            args.get("value"),
-        ) {
-            match key {
-                "capture_mode" => match val.as_str() {
-                    Some(s) => { cfg.capture_mode = s.to_owned(); applied = true; }
-                    None    => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
-                },
-                "max_image_dimension" => match val.as_u64() {
-                    Some(n) => { cfg.max_image_dimension = n as u32; applied = true; }
-                    None    => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
-                },
-                "experimental_pip" => match val.as_bool() {
-                    Some(b) => {
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
-                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+        let mut persisted_capture_mode: Option<String> = None;
+        let mut persisted_max_image_dimension: Option<u32> = None;
+        let (capture_mode, max_image_dimension) = {
+            let mut cfg = self.state.config.write().unwrap();
+            // Swift-compatible {key, value} shape.
+            if let (Some(key), Some(val)) = (
+                args.get("key").and_then(|v| v.as_str()),
+                args.get("value"),
+            ) {
+                match key {
+                    "capture_mode" => match val.as_str() {
+                        Some(s) => {
+                            cfg.capture_mode = s.to_owned();
+                            persisted_capture_mode = Some(s.to_owned());
+                            applied = true;
                         }
-                        applied = true;
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
-                },
-                "experimental_pip_geometry" => match val.as_str() {
-                    Some(s) => {
-                        if pip_preview::PipGeometry::parse(s).is_none() {
-                            return ToolResult::error(format!(
-                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
-                            ));
+                        None => return ToolResult::error(format!("`capture_mode` must be a string, got {val}.")),
+                    },
+                    "max_image_dimension" => match val.as_u64() {
+                        Some(n) => match u32::try_from(n) {
+                            Ok(dim32) => {
+                                cfg.max_image_dimension = dim32;
+                                persisted_max_image_dimension = Some(dim32);
+                                applied = true;
+                            }
+                            Err(_) => {
+                                return ToolResult::error(format!(
+                                    "`max_image_dimension` must fit in u32, got {n}."
+                                ));
+                            }
+                        },
+                        None => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
+                    },
+                    "experimental_pip" => match val.as_bool() {
+                        Some(b) => {
+                            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
+                                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
+                            }
+                            applied = true;
                         }
-                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
-                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+                        None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
+                    },
+                    "experimental_pip_geometry" => match val.as_str() {
+                        Some(s) => {
+                            if pip_preview::PipGeometry::parse(s).is_none() {
+                                return ToolResult::error(format!(
+                                    "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
+                                ));
+                            }
+                            if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
+                                return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
+                            }
+                            applied = true;
                         }
-                        applied = true;
-                    }
-                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
-                },
-                other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
-                )),
+                        None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
+                    },
+                    other => return ToolResult::error(format!(
+                        "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                    )),
+                }
             }
-        }
-        // Legacy per-field shape.
-        if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
-            cfg.capture_mode = mode.to_owned(); applied = true;
-        }
-        if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
-            cfg.max_image_dimension = dim as u32; applied = true;
-        }
+            // Legacy per-field shape.
+            if let Some(mode) = args.get("capture_mode").and_then(|v| v.as_str()) {
+                cfg.capture_mode = mode.to_owned();
+                persisted_capture_mode = Some(mode.to_owned());
+                applied = true;
+            }
+            if let Some(dim) = args.get("max_image_dimension").and_then(|v| v.as_u64()) {
+                match u32::try_from(dim) {
+                    Ok(dim32) => {
+                        cfg.max_image_dimension = dim32;
+                        persisted_max_image_dimension = Some(dim32);
+                        applied = true;
+                    }
+                    Err(_) => {
+                        return ToolResult::error(format!(
+                            "`max_image_dimension` must fit in u32, got {dim}."
+                        ));
+                    }
+                }
+            }
+            (cfg.capture_mode.clone(), cfg.max_image_dimension)
+        };
         if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
             if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled)) {
                 return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
@@ -5076,6 +5157,19 @@ impl Tool for SetConfigTool {
         if !applied {
             return ToolResult::error("Missing required string field `key` (or a known legacy per-field).");
         }
+        if let Some(mode) = persisted_capture_mode {
+            if let Err(err) = write_driver_config_key("capture_mode", &Value::String(mode)) {
+                tracing::warn!("set_config: failed to persist capture_mode: {err}");
+            }
+        }
+        if let Some(dim32) = persisted_max_image_dimension {
+            if let Err(err) = write_driver_config_key(
+                "max_image_dimension",
+                &Value::Number(u64::from(dim32).into()),
+            ) {
+                tracing::warn!("set_config: failed to persist max_image_dimension: {err}");
+            }
+        }
         // Emit the same pretty-JSON payload as `get_config` (matches Swift's
         // `set_config` return shape — both tools echo the full config after).
         let cursor_enabled = self.state.cursor_registry.all_states()
@@ -5087,8 +5181,8 @@ impl Tool for SetConfigTool {
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
             "platform":            "windows",
-            "capture_mode":        cfg.capture_mode,
-            "max_image_dimension": cfg.max_image_dimension,
+            "capture_mode":        capture_mode,
+            "max_image_dimension": max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
             "experimental_pip":    pip_enabled,
             "experimental_pip_geometry": pip_geometry,

@@ -51,6 +51,7 @@ def _run(
     args: list[str],
     timeout: int = 20,
     stdin: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     return subprocess.run(
         args,
@@ -58,6 +59,7 @@ def _run(
         text=True,
         timeout=timeout,
         input=stdin,
+        env=env,
     )
 
 
@@ -1166,6 +1168,73 @@ class SwiftParityTests(_ParityMixin, unittest.TestCase):
 
 class RustParityTests(_ParityMixin, unittest.TestCase):
     """Run the full parity suite against the Rust cua-driver-rs binary."""
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only config persistence regression")
+    def test_config_cli_and_daemon_share_persisted_max_image_dimension(self) -> None:
+        sock = self._tmp_socket()
+        with tempfile.TemporaryDirectory() as home:
+            cfg_dir = os.path.join(home, ".cua-driver")
+            os.makedirs(cfg_dir, exist_ok=True)
+            cfg_path = os.path.join(cfg_dir, "config.json")
+            with open(cfg_path, "w", encoding="utf-8") as fh:
+                json.dump({"max_image_dimension": 777}, fh, indent=2)
+
+            env = os.environ.copy()
+            env["HOME"] = home
+
+            proc = subprocess.Popen(
+                [self.binary, "serve", "--socket", sock],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+            try:
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    r = _run([self.binary, "status", "--socket", sock], env=env)
+                    if r.returncode == 0:
+                        break
+                    time.sleep(0.1)
+                else:
+                    self.fail("daemon did not become ready in 5 s")
+
+                r = _run([self.binary, "config", "--socket", sock], env=env)
+                self.assertEqual(r.returncode, 0, f"config stderr: {r.stderr}")
+                shown = json.loads(r.stdout)
+                self.assertEqual(shown["max_image_dimension"], 777)
+
+                r = _run(
+                    [self.binary, "config", "get", "max_image_dimension", "--socket", sock],
+                    env=env,
+                )
+                self.assertEqual(r.returncode, 0, f"config get stderr: {r.stderr}")
+                self.assertEqual(r.stdout.strip(), "777")
+
+                r = _run(
+                    [self.binary, "config", "set", "max_image_dimension", "888", "--socket", sock],
+                    env=env,
+                )
+                self.assertEqual(r.returncode, 0, f"config set stderr: {r.stderr}")
+
+                r = _run([self.binary, "config", "--socket", sock], env=env)
+                self.assertEqual(r.returncode, 0, f"config stderr: {r.stderr}")
+                shown = json.loads(r.stdout)
+                self.assertEqual(shown["max_image_dimension"], 888)
+
+                r = _run(
+                    [self.binary, "config", "get", "max_image_dimension", "--socket", sock],
+                    env=env,
+                )
+                self.assertEqual(r.returncode, 0, f"config get stderr: {r.stderr}")
+                self.assertEqual(r.stdout.strip(), "888")
+
+                with open(cfg_path, encoding="utf-8") as fh:
+                    persisted = json.load(fh)
+                self.assertEqual(persisted["max_image_dimension"], 888)
+            finally:
+                _run([self.binary, "stop", "--socket", sock], env=env)
+                proc.wait(timeout=3)
 
     @classmethod
     def setUpClass(cls) -> None:

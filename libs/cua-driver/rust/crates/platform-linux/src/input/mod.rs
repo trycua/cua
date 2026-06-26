@@ -1499,7 +1499,14 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
 
-    let keycode = key_name_to_keycode(&conn, key)?;
+    // Resolve the named key to a keysym, then to a keycode. On sparse/headless
+    // keymaps (e.g. a minimal Xwayland :0) the keysym may have no keycode at all
+    // — historically this failed with "Keysym 0x.. not in keyboard map".
+    // `keycode_for_keysym` instead borrows a spare keycode and hands back a guard
+    // that restores the original mapping once the event has been delivered.
+    let keysym = key_name_to_keysym(key)?;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let (keycode, remap_guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
     let state = modifiers_to_state(modifiers);
 
     let press = KeyPressEvent {
@@ -1534,6 +1541,18 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     sleep(Duration::from_millis(KEY_DELAY_MS));
     conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
     conn.flush()?;
+
+    // If we borrowed a spare keycode for this keysym, give the target client a
+    // moment to translate the synthetic event under the temporary mapping before
+    // we restore it. The keycode->keysym lookup is client-side, so restoring too
+    // eagerly would race delivery. A server round-trip (which only returns once
+    // our queued requests have been processed) plus a short settle keeps that
+    // race closed; the guard then reinstates the original keysyms on drop.
+    if remap_guard.is_some() {
+        let _ = conn.get_input_focus()?.reply();
+        sleep(Duration::from_millis(KEY_DELAY_MS));
+    }
+    drop(remap_guard);
     Ok(())
 }
 
@@ -1557,7 +1576,10 @@ fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Opti
     None
 }
 
-fn key_name_to_keycode(conn: &RustConnection, key: &str) -> Result<u8> {
+/// Map a human key name (e.g. "Return", "F5", "a") to its X11 keysym. Pure name
+/// resolution — no server interaction — split out from keycode lookup so the
+/// keysym can be remapped onto a spare keycode when the keymap lacks it.
+fn key_name_to_keysym(key: &str) -> Result<u32> {
     // Common X11 keysym names.
     let keysym: u32 = match key.to_lowercase().as_str() {
         "return" | "enter" => 0xFF0D,
@@ -1583,15 +1605,108 @@ fn key_name_to_keycode(conn: &RustConnection, key: &str) -> Result<u8> {
         s if s.len() == 1 => s.chars().next().unwrap() as u32,
         _ => anyhow::bail!("Unknown key: {key}"),
     };
+    Ok(keysym)
+}
 
-    let km = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let kpc = km.keysyms_per_keycode as usize;
-    for (i, syms) in km.keysyms.chunks(kpc).enumerate() {
-        if syms.iter().any(|&s| s == keysym) {
-            return Ok((8 + i) as u8);
+/// A keycode we have *temporarily* rebound to host a keysym that is absent from
+/// the current X keyboard map (sparse/headless keymaps such as a minimal
+/// Xwayland). On drop it reinstates the keycode's original keysyms so the
+/// server's mapping is left exactly as we found it. Modelled on xdotool's
+/// remap-a-spare-keycode trick (`_xdo_charcodemap` / `XChangeKeyboardMapping`).
+struct RemappedKeycode<'a> {
+    conn: &'a RustConnection,
+    keycode: u8,
+    keysyms_per_keycode: u8,
+    original_keysyms: Vec<u32>,
+}
+
+impl Drop for RemappedKeycode<'_> {
+    fn drop(&mut self) {
+        // Best-effort restore: re-install the original keysyms for this keycode
+        // and flush. Errors are swallowed deliberately — Drop must not panic in
+        // the daemon, and the worst case of a failed restore is a single spare
+        // keycode left mapped (it was unused to begin with), never a crash.
+        let _ = self.conn.change_keyboard_mapping(
+            1,
+            self.keycode,
+            self.keysyms_per_keycode,
+            &self.original_keysyms,
+        );
+        let _ = self.conn.flush();
+    }
+}
+
+/// Temporarily bind `keysym` onto a spare (fully unused) keycode so it can be
+/// injected even when no existing keycode emits it. Returns a guard that
+/// restores the original mapping on drop. Errors only if the keymap has no free
+/// keycode left to borrow.
+fn remap_spare_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    keysym: u32,
+) -> Result<RemappedKeycode<'a>> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per == 0 {
+        bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
+    }
+
+    // Find a keycode whose every keysym slot is NoSymbol (0) — i.e. completely
+    // unused — so borrowing it cannot clobber a real key. Scan high-to-low:
+    // high keycodes are far likelier to be free than the low, populated ones.
+    let spare = mapping
+        .keysyms
+        .chunks(per)
+        .enumerate()
+        .rev()
+        .find(|(_, syms)| syms.iter().all(|&s| s == 0))
+        .map(|(i, _)| (8 + i) as u8)
+        .ok_or_else(|| anyhow!("no spare keycode available to remap keysym 0x{keysym:X}"))?;
+
+    // Snapshot the original keysyms (all NoSymbol, but capture them so restore is
+    // exact regardless), then bind the requested keysym across every column of
+    // the borrowed keycode so it resolves irrespective of modifier state/group.
+    let idx = (spare as usize - 8) * per;
+    let original_keysyms = mapping.keysyms[idx..idx + per].to_vec();
+    let new_keysyms = vec![keysym; per];
+    conn.change_keyboard_mapping(1, spare, per as u8, &new_keysyms)?;
+    // Round-trip so the server has installed the new mapping before we emit the
+    // key event against it.
+    let _ = conn.get_input_focus()?.reply();
+
+    Ok(RemappedKeycode {
+        conn,
+        keycode: spare,
+        keysyms_per_keycode: per as u8,
+        original_keysyms,
+    })
+}
+
+/// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
+/// the existing keyboard mapping; if no keycode emits the keysym (common on
+/// sparse headless keymaps like a minimal Xwayland) it borrows a spare keycode
+/// and remaps it, returning a guard that restores the original mapping on drop.
+/// The guard is `None` when the keysym was already present (no cleanup needed).
+fn keycode_for_keysym<'a>(
+    conn: &'a RustConnection,
+    mapping: &GetKeyboardMappingReply,
+    keysym: u32,
+    key: &str,
+) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+    let per = mapping.keysyms_per_keycode as usize;
+    if per > 0 {
+        for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
+            if syms.iter().any(|&s| s == keysym) {
+                return Ok(((8 + i) as u8, None));
+            }
         }
     }
-    anyhow::bail!("Keysym 0x{keysym:X} not in keyboard map for key '{key}'")
+
+    // Not in the map — fall back to remapping a spare keycode (xdotool-style).
+    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
+        format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
+    })?;
+    let keycode = guard.keycode;
+    Ok((keycode, Some(guard)))
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {

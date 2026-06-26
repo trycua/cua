@@ -172,6 +172,9 @@ where F: FnOnce() {
 /// the target's handler calls Focus() before cua-driver gets control).
 /// The cua-driver fg_bypass restores foreground after, and this check
 /// asserts that restoration actually worked.
+// Documented oracle kept for the foreground-restore scenarios; not currently
+// wired to a live test (preserved verbatim from before the testkit migration).
+#[allow(dead_code)]
 fn assert_foreground_restored<F>(label: &str, f: F)
 where F: FnOnce() {
     let sentinel_hwnd: u64 = std::fs::read_to_string(focus_hwnd_file())
@@ -228,6 +231,8 @@ fn bg_modality_get_window_state_no_focus_steal() {
 /// rename to `..._no_focus_steal`.
 #[test]
 #[ignore]
+// Name intentionally documents a KNOWN focus-steal (see doc comment above).
+#[allow(non_snake_case)]
 fn bg_modality_uia_invoke_click_DOCUMENTED_steals_focus() {
     let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
     let _ = driver.call("set_agent_cursor_enabled",
@@ -257,6 +262,8 @@ fn bg_modality_uia_invoke_click_DOCUMENTED_steals_focus() {
 /// bg_modality_uia_invoke_click_DOCUMENTED_steals_focus.
 #[test]
 #[ignore]
+// Name intentionally documents a KNOWN focus-steal (see doc comment above).
+#[allow(non_snake_case)]
 fn bg_modality_set_value_DOCUMENTED_steals_focus() {
     let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
     let _ = driver.call("set_agent_cursor_enabled",

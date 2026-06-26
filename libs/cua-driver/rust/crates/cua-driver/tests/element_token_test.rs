@@ -7,6 +7,11 @@
 //! `cua-driver-core::element_token` and the per-platform tool modules —
 //! this file is only for what's visible across the JSON-RPC boundary.
 
+// element_token resolution is exercised on macOS/Linux only; gate the whole
+// file (helpers included) so Windows excludes it instead of warning about the
+// then-unused tools/list helpers.
+#![cfg(any(target_os = "macos", target_os = "linux"))]
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 

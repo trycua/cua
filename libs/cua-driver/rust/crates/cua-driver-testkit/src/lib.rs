@@ -30,11 +30,13 @@ mod driver;
 mod mcp;
 mod cli;
 mod paths;
+mod raw;
 mod reaper;
 mod response;
 
 pub use driver::Driver;
 pub use mcp::McpDriver;
+pub use raw::RawDriver;
 pub use cli::CliDriver;
 pub use paths::{driver_binary, harness_app, workspace_root};
 pub use reaper::{spawn_in_job, ChildReaper};

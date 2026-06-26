@@ -36,13 +36,16 @@ libs/cua-driver/test-harness/
 └── README.md
 
 libs/cua-driver/rust/crates/cua-driver/tests/   ◀── the CONSUMERS (Rust integration tests)
+│   (all build on the cua-driver-testkit crate; named by 4-family taxonomy —
+│    harness_ / modality_ / protocol_ / guard_. See TEST_SUITE.md.)
 ├── harness_wpf_test.rs           (Windows)
 ├── harness_winui3_test.rs        (Windows)
-├── harness_web_windows_test.rs   (Windows — WebView2 + Electron via CDP)
-├── harness_bg_modality_test.rs   (Windows — focus-steal sentinel + capture_mode)
-├── harness_lo_vcl_test.rs        (Windows — LibreOffice VCL/SAL via MSAA)
+├── harness_web_test.rs           (Windows — WebView2 + Electron via CDP)
+├── harness_libreoffice_test.rs   (Windows — LibreOffice VCL/SAL via MSAA)
 ├── harness_appkit_test.rs        (macOS)
 └── harness_swiftui_test.rs       (macOS)
+    (the focus-steal sentinel + capture_mode tests now live under
+     modality_background_test.rs — see TEST_SUITE.md for the full inventory)
 ```
 
 ## How the pieces connect
@@ -92,14 +95,14 @@ The loop per test: **launch the built app → read `scenarios.json` for the expe
 
 | App (`apps/…`) | OS | `scenarios.json` key | What it exercises | Rust test(s) |
 |---|---|---|---|---|
-| `windows/wpf` | Windows | `wpf` | UIA Invoke, PostMessage type, right/double-click, scroll, modal MessageBox, owned + layered popups, native child HWNDs, accelerators | `harness_wpf_test`, `harness_bg_modality_test` |
+| `windows/wpf` | Windows | `wpf` | UIA Invoke, PostMessage type, right/double-click, scroll, modal MessageBox, owned + layered popups, native child HWNDs, accelerators | `harness_wpf_test`, `modality_background_test` |
 | `windows/winui3` | Windows | `winui3` | UIA ValuePattern text, CommandBarFlyout, XAML Popup primitive | `harness_winui3_test` |
-| `windows/webview2` | Windows | `webview` | Chromium DevTools Protocol (CDP) `page` tool over the shared web page | `harness_web_windows_test` |
-| `cross-platform/electron` | Win / macOS / Linux | `electron` | CDP `page` tool over the shared web page | `harness_web_windows_test` (+ macOS) |
+| `windows/webview2` | Windows | `webview` | Chromium DevTools Protocol (CDP) `page` tool over the shared web page | `harness_web_test` |
+| `cross-platform/electron` | Win / macOS / Linux | `electron` | CDP `page` tool over the shared web page | `harness_web_test` (+ macOS) |
 | `macos/appkit` | macOS | `appkit` | AX tree, NSButton AXPress, NSTextField, NSScrollView, NSMenu | `harness_appkit_test` |
 | `macos/swiftui` | macOS | `swiftui` | AX tree, SwiftUI `.popover()` (separate AXWindow) | `harness_swiftui_test` |
-| *(LibreOffice — not a harness app)* | Windows | — | VCL/SAL SplitButton, modal dialogs, color picker via MSAA fallback | `harness_lo_vcl_test` |
-| *(WPF + focus sentinel)* | Windows | `wpf` | background-modality / no-focus-steal sentinel + `capture_mode` (ax / vision / som) | `harness_bg_modality_test` |
+| *(LibreOffice — not a harness app)* | Windows | — | VCL/SAL SplitButton, modal dialogs, color picker via MSAA fallback | `harness_libreoffice_test` |
+| *(WPF + focus sentinel)* | Windows | `wpf` | background-modality / no-focus-steal sentinel + `capture_mode` (ax / vision / som) | `modality_background_test` |
 
 ## Runtime requirements (why CI coverage is uneven)
 

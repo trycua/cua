@@ -1,23 +1,23 @@
 name: "Windows Arc License Probe"
 
-# Provisions a Windows OSGym warm pool (if absent), claims a VM, attaches the
-# Azure Arc PAYG Windows Server license, screenshots the desktop, ships the
-# screenshot to S3, posts the presigned URL to Alertmanager (am.cua.ai), then
-# unlicenses the box and returns the claim to the pool.
+# Provisions a Windows workspace pool on run.cua.ai (if absent), claims a VM,
+# attaches the Azure Arc PAYG Windows Server license, screenshots the desktop,
+# ships the screenshot to S3, posts the presigned URL to Alertmanager
+# (am.cua.ai), then unlicenses the box and returns the claim to the pool.
 #
-# The script reaches the private K3s cluster that runs OSGym, so the runner
-# joins the tailnet first and a kubeconfig pointed at the in-tailnet API
-# server is supplied via the KUBECONFIG_B64 secret.
+# All run.cua.ai access is via an OAuth client id/secret (per-USER key) — no
+# kubectl, no cluster VPN.
 #
 # Required repo secrets (see scripts/windows_arc_license_probe.py header):
-#   TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET  - Tailscale OAuth client (cluster reach)
-#   KUBECONFIG_B64                        - base64 kubeconfig for the OSGym cluster
-#   AZURE_CREDENTIALS                     - azure/login SP JSON (Owner on the sub)
-#   AZURE_SUBSCRIPTION_ID                 - sponsorship subscription id
-#   ARC_MACHINE                           - pre-onboarded Arc machine to license
-#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY - S3 upload creds
-# Optional repo variables (vars.*): ARC_RESOURCE_GROUP, ARC_REGION,
-#   S3_BUCKET_NAME, OSGYM_POOL, OSGYM_WINDOWS_IMAGE.
+#   CUA_CLIENT_ID / CUA_CLIENT_SECRET     - per-USER key (ukey-…) from POST /api/user-keys
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY - S3 upload + presign
+#   AZURE_CREDENTIALS                     - azure/login SP JSON (Owner on the sub)  [license only]
+#   AZURE_SUBSCRIPTION_ID                 - sponsorship subscription id             [license only]
+#   ARC_MACHINE                           - pre-onboarded Arc machine to license    [license only]
+# Optional repo variables (vars.*): CUA_POOL, CUA_WINDOWS_IMAGE, ARC_RESOURCE_GROUP,
+#   ARC_REGION, S3_BUCKET_NAME, AWS_REGION.
+# If ARC_MACHINE / AZURE_SUBSCRIPTION_ID are unset (or skip_license=true) the
+# license steps are skipped and the probe just claims + screenshots.
 
 on:
   workflow_dispatch:
@@ -51,23 +51,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install boto3 requests
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Connect to tailnet
-        uses: tailscale/github-action@v3
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
-      - name: Write kubeconfig
         run: |
-          mkdir -p "$HOME/.kube"
-          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$HOME/.kube/config"
-          chmod 600 "$HOME/.kube/config"
+          pip install cua-train cua-computer httpx boto3 requests \
+            --extra-index-url https://wheels.cua.ai/simple/
 
       - name: Azure login
         if: ${{ !inputs.skip_license }}
@@ -78,11 +64,12 @@ jobs:
       - name: Run probe
         run: python scripts/windows_arc_license_probe.py -v
         env:
-          # kubectl reads ~/.kube/config written above by default.
-          # OSGym
-          OSGYM_POOL: ${{ vars.OSGYM_POOL || 'arc-windows' }}
-          OSGYM_WINDOWS_IMAGE: ${{ vars.OSGYM_WINDOWS_IMAGE }}
-          # Azure Arc licensing
+          # run.cua.ai
+          CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+          CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+          CUA_POOL: ${{ vars.CUA_POOL || 'arc-windows' }}
+          CUA_WINDOWS_IMAGE: ${{ vars.CUA_WINDOWS_IMAGE }}
+          # Azure Arc licensing (skipped if ARC_MACHINE unset)
           SKIP_LICENSE: ${{ inputs.skip_license && '1' || '0' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARC_MACHINE: ${{ secrets.ARC_MACHINE }}

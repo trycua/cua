@@ -31,6 +31,12 @@ fn def() -> &'static ToolDef {
                     "enum": ["som", "vision", "ax"],
                     "description": "Default capture mode for get_window_state."
                 },
+                "capture_scope": {
+                    "type": "string",
+                    "enum": ["window", "desktop"],
+                    "description": "Capture scope for get_window_state: 'window' crops to the \
+                        target window; 'desktop' captures the full display."
+                },
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
@@ -80,10 +86,22 @@ impl Tool for SetConfigTool {
         };
         let capture_mode = args.opt_str("capture_mode");
 
+        // Validate capture_scope up front so both branches share the check and
+        // we never half-apply an invalid value.
+        let capture_scope = args.opt_str("capture_scope");
+        if let Some(scope) = capture_scope.as_deref() {
+            if scope != "window" && scope != "desktop" {
+                return ToolResult::error(format!(
+                    "capture_scope `{scope}` is invalid; expected `window` or `desktop`"
+                ));
+            }
+        }
+
         let (effective_mode, effective_dim) = if let Some(sid) = session_id.as_deref() {
             // Session-scoped override: in-memory only, no global write, no disk.
             self.state.session_config.set(sid, ConfigOverrides {
                 capture_mode: capture_mode.clone(),
+                capture_scope: capture_scope.clone(),
                 max_image_dimension: max_dim,
             });
             self.state.session_config.effective(Some(sid), &self.state.config.read().unwrap())
@@ -97,6 +115,12 @@ impl Tool for SetConfigTool {
                     tracing::warn!("set_config: failed to persist capture_mode: {e}");
                 }
             }
+            if let Some(scope) = capture_scope.clone() {
+                cfg.capture_scope = scope.clone();
+                if let Err(e) = write_driver_config_key("capture_scope", &Value::String(scope)) {
+                    tracing::warn!("set_config: failed to persist capture_scope: {e}");
+                }
+            }
             if let Some(dim32) = max_dim {
                 cfg.max_image_dimension = dim32;
                 if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(u64::from(dim32).into())) {
@@ -105,6 +129,13 @@ impl Tool for SetConfigTool {
             }
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
+        // Resolve the effective capture_scope for the echo via the same
+        // session/global precedence (kept separate from `effective()` so its
+        // `(String, u32)` signature stays unchanged for other call sites).
+        let effective_scope = self
+            .state
+            .session_config
+            .effective_scope(session_id.as_deref(), &self.state.config.read().unwrap());
         // PiP keys persist to the same config.json but take effect only on
         // next daemon restart — the backend is initialised once at startup.
         let mut pip_note = String::new();
@@ -134,8 +165,8 @@ impl Tool for SetConfigTool {
             ""
         };
         ToolResult::text(format!(
-            "Config updated: capture_mode={}, max_image_dimension={}{}{}",
-            effective_mode, effective_dim, scope_note, pip_note
+            "Config updated: capture_mode={}, capture_scope={}, max_image_dimension={}{}{}",
+            effective_mode, effective_scope, effective_dim, scope_note, pip_note
         ))
     }
 }

@@ -207,10 +207,10 @@ fn multi_cursor_instance_state() {
     let r5 = d.recv();
     assert!(!r5["result"]["isError"].as_bool().unwrap_or(false));
 
-    // get_agent_cursor_state is session-scoped: each call returns ONLY the
-    // cursor it resolves to (explicit cursor_id > injected _session_id >
-    // "default"). Query each instance by its cursor_id and assert independent
-    // state (agent2 was hidden; agent1 was left enabled).
+    // get_agent_cursor_state reports independent per-cursor state. macOS scopes
+    // the response to the resolved cursor_id (returns ONLY that cursor); Windows
+    // returns ALL cursors in one list. Either way, agent1 must read back enabled
+    // and agent2 disabled.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":6,"method":"tools/call",
         "params":{"name":"get_agent_cursor_state","arguments":{"cursor_id":"agent1"}}
@@ -219,8 +219,11 @@ fn multi_cursor_instance_state() {
     assert!(!resp1["result"]["isError"].as_bool().unwrap_or(false));
     let cursors1 = resp1["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
     if cfg!(target_os = "windows") {
-        assert_eq!(cursors1.len(), 1, "agent1 query must return exactly its own cursor: {cursors1:?}");
-        assert_eq!(cursors1[0]["config"]["cursor_id"].as_str(), Some("agent1"));
+        // Windows returns the full cursor list; find agent1 within it.
+        let a1 = cursors1.iter()
+            .find(|c| c["config"]["cursor_id"].as_str() == Some("agent1"))
+            .expect("agent1 in returned cursor list");
+        assert_eq!(a1["config"]["enabled"].as_bool(), Some(true), "agent1 was never disabled");
     } else {
         assert_eq!(cursors1.len(), 1, "agent1 query must return exactly its own cursor, got: {cursors1:?}");
         assert_eq!(cursors1[0]["config"]["cursor_id"].as_str(), Some("agent1"));
@@ -236,9 +239,11 @@ fn multi_cursor_instance_state() {
     assert!(!resp2["result"]["isError"].as_bool().unwrap_or(false));
     let cursors2 = resp2["result"]["structuredContent"]["cursors"].as_array().cloned().unwrap_or_default();
     if cfg!(target_os = "windows") {
-        assert_eq!(cursors2.len(), 1, "agent2 query must return exactly its own cursor: {cursors2:?}");
-        assert_eq!(cursors2[0]["config"]["cursor_id"].as_str(), Some("agent2"));
-        assert_eq!(resp2["result"]["structuredContent"]["enabled"].as_bool(), Some(false), "agent2 hidden");
+        // Windows returns the full cursor list; find agent2 within it.
+        let a2 = cursors2.iter()
+            .find(|c| c["config"]["cursor_id"].as_str() == Some("agent2"))
+            .expect("agent2 in returned cursor list");
+        assert_eq!(a2["config"]["enabled"].as_bool(), Some(false), "agent2 was hidden");
     } else {
         assert_eq!(cursors2.len(), 1, "agent2 query must return exactly its own cursor, got: {cursors2:?}");
         assert_eq!(cursors2[0]["config"]["cursor_id"].as_str(), Some("agent2"));

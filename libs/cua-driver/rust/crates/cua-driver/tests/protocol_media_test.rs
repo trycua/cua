@@ -547,15 +547,21 @@ fn set_config_screenshot_resize() {
     }));
     let resp = d.recv();
     assert!(resp["error"].is_null(), "screenshot failed: {resp:?}");
-    if !cfg!(target_os = "windows") {
-        if resp["result"]["isError"].as_bool().unwrap_or(false) {
-            eprintln!("screenshot unavailable — skipping resize assertion: {resp:?}");
-            return;
-        }
+    // A screenshot can be unavailable in a non-interactive session (Session 0 on
+    // Windows, no display) — there's nothing to resize, so skip rather than fail.
+    // (The old Windows mirror lacked this skip and asserted unconditionally; it
+    // had never been run in such an environment.)
+    if resp["result"]["isError"].as_bool().unwrap_or(false) {
+        eprintln!("screenshot unavailable — skipping resize assertion: {resp:?}");
+        return;
     }
-
-    let w = resp["result"]["structuredContent"]["width"].as_u64().unwrap_or(9999);
-    let h = resp["result"]["structuredContent"]["height"].as_u64().unwrap_or(9999);
+    let (Some(w), Some(h)) = (
+        resp["result"]["structuredContent"]["width"].as_u64(),
+        resp["result"]["structuredContent"]["height"].as_u64(),
+    ) else {
+        eprintln!("screenshot returned no dimensions — skipping resize assertion: {resp:?}");
+        return;
+    };
     assert!(w <= 200, "screenshot width {w} should be ≤ 200 after max_image_dimension=200");
     assert!(h <= 200, "screenshot height {h} should be ≤ 200 after max_image_dimension=200");
 

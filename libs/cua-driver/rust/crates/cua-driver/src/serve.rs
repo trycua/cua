@@ -664,20 +664,27 @@ pub async fn run_serve(
                                 // config override, recording) the reaper already
                                 // passed. Skip + benign ok. Live and anonymous
                                 // calls pass through unchanged.
-                                if let Some(sid) = &effective_session {
-                                    if cua_driver_core::session::is_session_ended(sid) {
-                                        let resp = DaemonResponse::ok(serde_json::json!({
-                                            "content": [{
-                                                "type": "text",
-                                                "text": "session ended; tool call ignored"
-                                            }],
-                                            "isError": false,
-                                            "sessionEnded": true
-                                        }));
-                                        let _ = writer.write_all(
-                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                        ).await;
-                                        continue;
+                                // `start_session` is the explicit recovery path
+                                // that REVIVES an idle-reaped session, so it must
+                                // be exempt from the resurrection guard. Every
+                                // other tool stays guarded so a late in-flight
+                                // call can't rebuild reaped session state.
+                                if tool_name != "start_session" {
+                                    if let Some(sid) = &effective_session {
+                                        if cua_driver_core::session::is_session_ended(sid) {
+                                            let resp = DaemonResponse::ok(serde_json::json!({
+                                                "content": [{
+                                                    "type": "text",
+                                                    "text": "session ended; tool call ignored. Call start_session with this `session` id to resume the run."
+                                                }],
+                                                "isError": false,
+                                                "sessionEnded": true
+                                            }));
+                                            let _ = writer.write_all(
+                                                (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                            ).await;
+                                            continue;
+                                        }
                                     }
                                 }
                                 if reg.get_def(&tool_name).is_none() {
@@ -1180,20 +1187,27 @@ pub async fn run_serve(
                                 let effective_session =
                                     apply_session_identity(&mut args, &req.session_id);
                                 // Resurrection guard on the effective session.
-                                if let Some(sid) = &effective_session {
-                                    if cua_driver_core::session::is_session_ended(sid) {
-                                        let resp = DaemonResponse::ok(serde_json::json!({
-                                            "content": [{
-                                                "type": "text",
-                                                "text": "session ended; tool call ignored"
-                                            }],
-                                            "isError": false,
-                                            "sessionEnded": true
-                                        }));
-                                        let _ = writer.write_all(
-                                            (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
-                                        ).await;
-                                        continue;
+                                // `start_session` is the explicit recovery path
+                                // that REVIVES an idle-reaped session, so it must
+                                // be exempt from the resurrection guard. Every
+                                // other tool stays guarded so a late in-flight
+                                // call can't rebuild reaped session state.
+                                if tool_name != "start_session" {
+                                    if let Some(sid) = &effective_session {
+                                        if cua_driver_core::session::is_session_ended(sid) {
+                                            let resp = DaemonResponse::ok(serde_json::json!({
+                                                "content": [{
+                                                    "type": "text",
+                                                    "text": "session ended; tool call ignored. Call start_session with this `session` id to resume the run."
+                                                }],
+                                                "isError": false,
+                                                "sessionEnded": true
+                                            }));
+                                            let _ = writer.write_all(
+                                                (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                            ).await;
+                                            continue;
+                                        }
                                     }
                                 }
                                 if reg.get_def(&tool_name).is_none() {

@@ -126,6 +126,31 @@ pub fn end_session(session_id: &str) {
     fire_session_end(session_id);
 }
 
+/// Revive a session that a prior `end_session` / idle-TTL sweep marked ended,
+/// so an explicit `start_session` can resume a run after an idle gap.
+///
+/// Without this, an idle-reaped session is permanently dead: `is_session_ended`
+/// stays true forever (the tombstone is never cleared), `touch_session` no-ops
+/// on an ended id, and the daemon's resurrection guard rejects every subsequent
+/// `call` with "session ended; tool call ignored" — including `start_session`
+/// itself. Clearing the tombstone and re-arming the idle-TTL clock makes the id
+/// usable again. No-op for the anonymous fallback.
+pub fn revive_session(session_id: &str) {
+    if !is_trackable(session_id) {
+        return;
+    }
+    // Clear the permanent tombstone so `is_session_ended` reads false again and
+    // the daemon's resurrection guard stops rejecting calls for this id. A
+    // later `end_session` re-fires the cleanup hooks (fire_session_end is keyed
+    // on this set), which is correct — it's a fresh lifecycle for the id.
+    ended_sessions().lock().unwrap().remove(session_id);
+    // Re-arm the idle-TTL clock so the revived session is tracked again.
+    activity()
+        .lock()
+        .unwrap()
+        .insert(session_id.to_owned(), Instant::now());
+}
+
 /// End every session whose last activity is older than `ttl`, returning the ids
 /// ended. This is the idle-TTL sweep the daemon runs periodically: a
 /// caller-declared session is no longer tied to a connection's lifetime, so a
@@ -158,6 +183,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    /// Serialize tests that invoke the process-global `evict_idle(ZERO)` sweep,
+    /// so one test's zero-TTL reap can't re-end a session another test just
+    /// (re)touched — they share `SESSION_ACTIVITY` / `ENDED_SESSIONS`.
+    static SWEEP_TEST_LOCK: Mutex<()> = Mutex::new(());
+    fn sweep_lock() -> std::sync::MutexGuard<'static, ()> {
+        SWEEP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn fire_session_end_is_idempotent_per_id() {
         // Distinct, test-local ids so we don't collide with other tests that
@@ -187,6 +220,7 @@ mod tests {
 
     #[test]
     fn touch_then_evict_by_ttl() {
+        let _sweep = sweep_lock();
         let sid = "test-ttl-session-DDEEFF";
         touch_session(sid);
         // A huge TTL leaves it alone (just touched).
@@ -199,6 +233,7 @@ mod tests {
 
     #[test]
     fn anonymous_ids_are_never_tracked() {
+        let _sweep = sweep_lock();
         touch_session("default");
         touch_session("");
         // Neither shows up under a zero-TTL sweep (they were never inserted).
@@ -208,11 +243,32 @@ mod tests {
 
     #[test]
     fn end_session_is_explicit_teardown() {
+        let _sweep = sweep_lock();
         let sid = "test-end-session-112233";
         touch_session(sid);
         end_session(sid);
         assert!(is_session_ended(sid));
         // Its TTL entry is gone, so a later sweep doesn't re-fire for it.
         assert!(!evict_idle(Duration::ZERO).iter().any(|s| s == sid));
+    }
+
+    #[test]
+    fn revive_resumes_an_ended_session() {
+        let _sweep = sweep_lock();
+        let sid = "test-revive-session-778899";
+        touch_session(sid);
+        end_session(sid);
+        assert!(is_session_ended(sid), "precondition: session is ended");
+        // Revive must clear the tombstone so the id is usable again...
+        revive_session(sid);
+        assert!(!is_session_ended(sid), "revive must un-end the session");
+        // ...and re-arm the idle-TTL so the session is tracked again: a fresh
+        // zero-TTL sweep should be able to reclaim it (proving it's live, not
+        // stuck in limbo).
+        assert!(
+            evict_idle(Duration::ZERO).iter().any(|s| s == sid),
+            "a revived session must be tracked again (re-armed TTL)"
+        );
+        assert!(is_session_ended(sid), "and can be ended again after revival");
     }
 }

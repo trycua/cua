@@ -45,9 +45,12 @@ impl Tool for StartSessionTool {
                  The cursor's color is derived from the id, so distinct runs are visually \
                  distinct. A cursor is shown only for a declared session — call this (or \
                  pass `session` on your first action) to opt in. Idempotent: re-calling \
-                 with the same id just refreshes its idle-TTL. End it with `end_session` \
-                 (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass \
-                 their own `session` to get their own cursor."
+                 with the same id refreshes its idle-TTL, and RESUMES the session if a \
+                 prior idle-TTL reclaim or `end_session` had ended it — so calling this \
+                 is also how you recover from a \"session ended; tool call ignored\" \
+                 error. End it with `end_session` (or let the idle-TTL reclaim it). \
+                 Concurrent runs/subagents each pass their own `session` to get their \
+                 own cursor."
                     .into(),
             input_schema: json!({
                 "type": "object",
@@ -73,9 +76,13 @@ impl Tool for StartSessionTool {
                 "start_session requires a non-empty `session` id.",
             );
         };
-        // Refresh (or begin) the session's idle-TTL clock. The cursor appears on
-        // the first action carrying this `session`.
-        crate::session::touch_session(&id);
+        // Begin / refresh / RESUME the session. `revive_session` is a superset
+        // of `touch_session`: for a live or brand-new id it just (re)arms the
+        // idle-TTL clock; for an id a prior idle-TTL sweep or `end_session`
+        // marked ended it also clears the tombstone so the run can continue.
+        // Without this, an idle-reaped session was permanently dead — even
+        // `start_session` got rejected by the daemon's resurrection guard.
+        crate::session::revive_session(&id);
         ToolResult::text(format!("✅ Session '{id}' is active."))
             .with_structured(json!({ "session": id, "active": true }))
     }

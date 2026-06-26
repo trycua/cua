@@ -8,7 +8,7 @@
 # The test:
 #   1. Starts a NixOS VM with X11 (Xvfb) and a window manager
 #   2. Launches a minimal Electron app with an HTML input field
-#   3. Uses cua-driver's type_text to inject CJK characters ("你好世界")
+#   3. Uses cua-driver's type_text to inject CJK characters ("你好世界こんにちは")
 #   4. Reads back the typed text via CDP to verify it landed correctly
 #
 # Key details:
@@ -25,9 +25,9 @@
 }:
 
 let
-  # The CJK test string: "你好世界" (Hello World in Chinese)
-  # Also includes Japanese hiragana to cover broader CJK range.
-  cjkText = "你好世界";
+  # The CJK test string: "你好世界こんにちは" (Chinese + Japanese hiragana)
+  # Covers both Chinese ideographs and Japanese hiragana to verify broader CJK range.
+  cjkText = "你好世界こんにちは";
 
   # Shared environment: D-Bus session bus + AT-SPI accessibility settings.
   # A fixed bus path so every shell in the test can find the same session bus.

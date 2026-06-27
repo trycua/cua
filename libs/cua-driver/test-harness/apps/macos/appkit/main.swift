@@ -53,13 +53,30 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate {
     var doubleClicks = 0
     let scrollOffsetLabel = NSTextField(labelWithString: "0")
 
+    // Pinned content size — every launch MUST produce a byte-identical window
+    // so screenshot dimensions (and the hardcoded pixel coords the harness tests
+    // rely on) never drift.
+    static let kContentSize = NSSize(width: 720, height: 800)
+
     override init() {
-        let rect = NSRect(x: 100, y: 100, width: 720, height: 800)
-        let mask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+        let rect = NSRect(origin: NSPoint(x: 100, y: 100), size: HarnessWindowController.kContentSize)
+        // No `.resizable`: a resizable window can be left at a different size,
+        // and macOS would persist/restore that drifted frame on the next launch.
+        let mask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
         window = NSWindow(contentRect: rect, styleMask: mask, backing: .buffered, defer: false)
         window.title = kWindowTitle
         window.setAccessibilityIdentifier(kWindowAID)
         window.isReleasedWhenClosed = false
+        // Deterministic geometry across launches. macOS persists and restores a
+        // window's frame by default (Cocoa state restoration + frame autosave),
+        // so a window that was nudged/resized — or laid out a hair differently on
+        // a prior run — reopens at a drifted height (observed 832 vs 858 pt),
+        // shifting screenshot dimensions and breaking tests that assume fixed
+        // pixel coords. Opt out of restoration entirely and re-pin the content
+        // size on every launch so each run is identical.
+        window.isRestorable = false
+        window.setFrameAutosaveName("")
+        window.setContentSize(HarnessWindowController.kContentSize)
         super.init()
         buildContent()
     }

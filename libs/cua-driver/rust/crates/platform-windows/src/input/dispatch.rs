@@ -131,6 +131,15 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // so flag only the pointer-class events.
         return matches!(kind, MouseClick | MouseMove | MouseScroll);
     }
+    // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
+    // here. It looks WPF-like, but its composition input-site does NOT consume
+    // the synthetic pen/touch the way WPF's stylus stack does — routing WinUI3
+    // background clicks through the coordinate injector neither lands double/
+    // right-click NOR preserves the no-foreground contract (measured: it
+    // regressed ax-bg from 0/8 to 8/8 stolen). Driving WinUI3 double/right-click
+    // in the background needs a WinUI3-specific input path (composition input-
+    // site target), tracked separately; single left-click already works via UIA
+    // Invoke and the contract holds.
     if is_gtk_target_window(hwnd) {
         // Conservative flag for GTK: button widgets ignore PostMessage
         // clicks, drawing-area widgets accept them. We cannot distinguish

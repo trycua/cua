@@ -50,7 +50,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core \
+            xvfb dbus-x11 at-spi2-core openbox \
             libgtk-3-0 gir1.2-gtk-3.0 python3-gi \
             libxtst6 libxtst-dev libx11-dev libxext-dev \
             ffmpeg
@@ -91,6 +91,12 @@ jobs:
           # registers the harness on the accessibility tree.
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -c '
+              # A window manager is required for the desktop-scope test: it raises
+              # + focuses the freshly-mapped harness window so the screen-absolute
+              # XTest click lands on it (bare Xvfb has no WM, so the window is
+              # never clickable — the capture_mode tests need no WM, the click does).
+              openbox &
+              sleep 2
               python3 /tmp/atspi_probe.py || echo "[interactive-ci] AT-SPI probe inconclusive — AX assertions will skip if the bus is unavailable"
               cargo test -p cua-driver \
                 --test modality_capture_mode_test \

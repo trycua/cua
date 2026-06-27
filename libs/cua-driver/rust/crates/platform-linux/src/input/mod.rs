@@ -1493,6 +1493,32 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Screen-absolute click via the XTest extension — the `capture_scope="desktop"`
+/// foreground click. It warps the real pointer to `(x, y)` and injects a true
+/// button press/release there, so the event lands on whatever window owns that
+/// screen pixel (the Linux peer of the Windows `WindowFromPoint` + macOS
+/// global-HID `CGEvent` desktop click).
+///
+/// XTest delivering to the focused / under-pointer window is precisely why the
+/// *background* paths above use `XSendEvent` instead (see the module header) —
+/// but it is exactly what desktop scope wants: the agent has located the target
+/// by vision on the whole screen and issues a real screen-absolute pointer
+/// click. `button` is an X button number (1=left, 2=middle, 3=right).
+pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, screen_num) = connect_x11_for_input()?;
+    let root = conn.setup().roots[screen_num].root;
+    // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the button
+    // events that follow are delivered at (x, y).
+    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    for _ in 0..count.max(1) {
+        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+    }
+    conn.flush()?;
+    Ok(())
+}
+
 /// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;

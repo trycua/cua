@@ -48,6 +48,28 @@ element action works regardless of cursor position. The visual is a function of 
 geometry (a stretched CheckBox). Most-honest fix would be the harness laying the checkbox out at
 content width (how real apps render it); a driver left-bias heuristic would be unreliable.
 
+## Cross-toolkit coverage matrix (Windows, ax-bg)
+
+Same recorder (parameterized by `-Toolkit`), same 8-action plan, one ax-bg pass each. This is the
+high-signal output: which cua-driver actions actually LAND per toolkit, and whether the no-foreground
+contract holds. (right-click + scroll are ✗ across the board here: the harnesses either lack those
+controls or they're off-screen at the 556px layout — see the off-screen guard above.)
+
+| Toolkit  | effects landed | landed actions                          | focus contract (stole) | note |
+|----------|---------------|------------------------------------------|------------------------|------|
+| WPF      | **5/7** | click, double, drag, set_value, type     | 2/8 | fullest harness |
+| WinUI3   | **2/7** | click, set_value                         | 0/8 | harness lacks click-target/context/scroll; drag/scroll/type don't land |
+| WebView2 | **4/7** | click, double, drag, set_value           | 0/8 | Chromium web AX; type didn't land |
+| Electron | **5/7** | click, double, drag, set_value, type     | **7/8** | **Electron/Chromium self-foregrounds → no-foreground contract VIOLATED** |
+
+**Headline:** the no-foreground contract holds on WPF / WinUI3 / WebView2, but **breaks on Electron**
+(7/8 actions stole focus — Chromium foregrounds itself; consistent with the #1984 dispatch note in the
+code). Effect coverage also varies: WinUI3's harness is the thinnest. The verifier reads each toolkit's
+own status labels (WPF: UIAutomation; WinUI3: same; WebView2/Electron: Chromium web-AX text via a
+substring window-title match because their titles carry a `[cdp=NNNN]` suffix).
+
+Evidence: `matrix-{winui3,webview2,electron}-ax-bg.mp4` (+ the WPF set) on the Desktop.
+
 ## Deliverables
 10 verified recordings (5 WPF + 5 GTK3) + index, published at
 `https://cuademo06261324.blob.core.windows.net/demo/modality-videos/index.html`.

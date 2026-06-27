@@ -1,4 +1,11 @@
-param([string]$Mode="ax-bg")   # ax-fg | ax-bg | vision-fg | vision-bg | vision-desktop
+param([string]$Mode="ax-bg",[string]$Toolkit="wpf")   # Mode: ax-fg|ax-bg|vision-fg|vision-bg|vision-desktop ; Toolkit: wpf|winui3|webview2|electron
+$TK=@{
+ wpf     =@{exe="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-wpf\CuaTestHarness.Wpf.exe";        title="CuaTestHarness WPF";      label="WPF"}
+ winui3  =@{exe="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-winui3\CuaTestHarness.WinUI3.exe";  title="CuaTestHarness WinUI3";   label="WinUI3"}
+ webview2=@{exe="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-webview\CuaTestHarness.WebView.exe"; title="CuaTestHarness WebView"; label="WebView2"}
+ electron=@{exe="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-electron\CuaTestHarness.Electron.exe";title="CuaTestHarness Electron";  label="Electron"}
+}
+$tk=$TK[$Toolkit]; if(-not $tk){ Write-Output "unknown toolkit $Toolkit"; exit 3 }
 $ErrorActionPreference="Continue"
 # screen is 1024x768 -> harness LEFT, dashboard panel RIGHT, both fully on-screen.
 # Harness LEFT, dashboard panel RIGHT (1024x768). At this width the WPF form reflows
@@ -17,7 +24,7 @@ $META=@{
 }
 $m=$META[$Mode]; if(-not $m){ Write-Output "unknown mode $Mode"; exit 2 }
 $vision=($m.see -like 'screenshot*'); $desktop=($m.scope -eq 'desktop')
-$dir="C:\Users\Public\cua-$Mode"; $rec="$dir\rec"
+$dir="C:\Users\Public\cua-$Toolkit-$Mode"; $rec="$dir\rec"
 Remove-Item $dir -Recurse -Force -EA SilentlyContinue; New-Item -ItemType Directory -Force $rec | Out-Null
 # ---------- dashboard (compact for 462px) ----------
 $html=@'
@@ -32,7 +39,7 @@ $html=@'
  .legend{font-size:9px;color:#6e7681;margin:2px 0 8px;line-height:1.4}
  .tally{margin-top:10px;font-size:11px;color:#8b949e}.tally b{color:#c9d1d9}
 </style></head><body><div class="wrap">
- <h1>cua-driver - single-modality run - WPF</h1><div class="run" id="run">...</div><div class="exp" id="exp"></div>
+ <h1>cua-driver - single-modality run - TKLABEL</h1><div class="run" id="run">...</div><div class="exp" id="exp"></div>
  <div id="fg" class="fg fgmode">...</div><div class="now" id="now"></div>
  <div class="legend"><b style="color:#56d364">✓ worked</b> / <b style="color:#ff7b72">✗ no-op</b> = did the action change the app · held / STOLE = focus contract</div>
  <div id="rows"></div><div class="tally" id="tally"></div>
@@ -53,6 +60,7 @@ async function tick(){try{const r=await fetch('status.json',{cache:'no-store'});
 setInterval(tick,200);tick();
 </script></body></html>
 '@
+$html=$html -replace 'TKLABEL', $tk.label
 Set-Content "$dir\dashboard.html" $html -Encoding UTF8
 # ---------- loopback server ----------
 $srv=Start-Job -ScriptBlock { param($d,$port)
@@ -76,7 +84,7 @@ public class W{[DllImport("user32.dll")]public static extern bool MoveWindow(Int
  public static string Title(IntPtr h){var sb=new StringBuilder(256);GetWindowText(h,sb,256);return sb.ToString();}}
 "@
 $drv="C:\Users\cuademo\cua\libs\cua-driver\rust\target\release\cua-driver.exe"; if(-not(Test-Path $drv)){$drv=$drv -replace 'release','debug'}
-$wpf="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-wpf\CuaTestHarness.Wpf.exe"
+$wpf=$tk.exe
 $chrome="C:\Program Files\Google\Chrome\Application\chrome.exe"
 $recfwd=$rec -replace '\\','/'
 function D($t,$j){ ($j | & $drv call $t 2>&1 | Out-String) }
@@ -86,8 +94,9 @@ Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
 $script:AE=[System.Windows.Automation.AutomationElement]; $script:UTS=[System.Windows.Automation.TreeScope]; $script:UCT=[System.Windows.Automation.ControlType]
 function ReadState(){
  try{
-  $cond=New-Object System.Windows.Automation.PropertyCondition($script:AE::NameProperty,"CuaTestHarness WPF")
-  $win=$script:AE::RootElement.FindFirst($script:UTS::Children,$cond); if(-not $win){return @{}}
+  $win=$null  # match by substring so cdp-suffixed web-harness titles ("... [cdp=9222]") resolve
+  foreach($c in $script:AE::RootElement.FindAll($script:UTS::Children,[System.Windows.Automation.Condition]::TrueCondition)){ if("$($c.Current.Name)" -like "*$($tk.title)*"){ $win=$c; break } }
+  if(-not $win){return @{}}
   $tc=New-Object System.Windows.Automation.PropertyCondition($script:AE::ControlTypeProperty,$script:UCT::Text)
   $all=(($win.FindAll($script:UTS::Descendants,$tc)|%{ $_.Current.Name }) -join " || ")
   $h=@{}
@@ -137,11 +146,11 @@ function Win0($el){ ,@([int]($el.frame.x-$w.bounds.x+$el.frame.w/2),[int]($el.fr
 Start-Process $drv -ArgumentList "serve" -WindowStyle Hidden; Start-Sleep 4
 D "set_agent_cursor_enabled" '{"enabled":true,"session":"d1"}'|Out-Null
 D "set_agent_cursor_motion" '{"session":"d1","cursor_color":"#FF2D2D","cursor_label":"cua-driver","glide_duration_ms":600,"dwell_after_click_ms":700,"idle_hide_ms":120000}'|Out-Null
-Start-Process $wpf; Start-Sleep 5
+Start-Process $wpf; Start-Sleep (if($Toolkit -in @('electron','webview2')){16}else{5})  # web harnesses are slow to start
 Start-Process $chrome -ArgumentList "--app=http://localhost:8146/","--user-data-dir=C:\Users\Public\cdp-$Mode","--no-first-run","--window-position=$PANX,$PANY","--window-size=$PANW,$PANH","--new-window"; Start-Sleep 4
 # resolve harness window
 $w=$null
-for($i=0;$i -lt 20;$i++){ $w=(D "list_windows" "{}"|ConvertFrom-Json).windows | ? { $_.title -like "*CuaTestHarness WPF*" } | Select -First 1; if($w){break}; Start-Sleep -Milliseconds 500 }
+for($i=0;$i -lt 20;$i++){ $w=(D "list_windows" "{}"|ConvertFrom-Json).windows | ? { $_.title -like "*$($tk.title)*" } | Select -First 1; if($w){break}; Start-Sleep -Milliseconds 500 }
 if(-not $w){ "FATAL: harness window never appeared" | Set-Content "$dir\metric.log"; exit 1 }
 $script:wp=$w.pid;$script:wd=$w.window_id;$hHar=[IntPtr][int64]$w.window_id
 # layout: harness LEFT (un-maximize first), panel RIGHT + topmost. retry panel handle.

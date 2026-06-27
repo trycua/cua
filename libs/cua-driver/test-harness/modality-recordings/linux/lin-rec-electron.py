@@ -81,6 +81,7 @@ def hstate():
     mm = re.search(r'last_action=(\w+)', joined);   h["last_action"] = mm.group(1) if mm else None
     mm = re.search(r'mirror=([^|]*)', joined);      h["mirror"] = (mm.group(1).strip() if mm else "")
     mm = re.search(r'counter=(\d+)', joined);       h["counter"] = int(mm.group(1)) if mm else 0
+    mm = re.search(r'scroll_offset=(\d+)', joined);  h["scroll"] = int(mm.group(1)) if mm else 0
     h["_joined"] = joined
     return h
 
@@ -89,7 +90,7 @@ def verify(t, before, after):
     if t == "double": return "ok" if after.get("last_action") == "double_click" else "fail"
     if t == "right":  return "ok" if after.get("last_action") == "right_click" else "fail"
     if t == "drag":   return "ok" if after.get("slider", 0) > before.get("slider", 0) else "fail"
-    if t == "scroll": return "na"   # web harness exposes no scroll_offset label
+    if t == "scroll": return "ok" if after.get("scroll", 0) > before.get("scroll", 0) else "fail"  # scroll_offset= now exposed by web-AX
     if t == "setval": return "ok" if "set-by-cua" in str(after.get("mirror", "")) else "fail"
     if t == "type":   return "ok" if "typed-by-cua" in str(after.get("mirror", "")) else "fail"
     return "na"  # press-key (Tab): no observable harness-state effect
@@ -180,6 +181,16 @@ def find(E, name=None, role=None, anyname=None):
         return e
     return None
 
+def find_scroll(E):
+    # scroll-tall is the CLIPPED viewport: a 'section' ~260w x ~120h (border/pad → ~270x131
+    # in web-AX), distinct from the inner lines container (h~880) and the 23px line rows.
+    for e in E:
+        if "section" not in str(e.get("role","")).lower(): continue
+        _, _, w, h = rect(e)
+        if 250 <= w <= 290 and 110 <= h <= 155:
+            return e
+    return None
+
 E = []
 resolve = {}
 for _ in range(16):
@@ -189,7 +200,7 @@ for _ in range(16):
         "btn": find(E, name="Click target") or find(E, name="click target"),
         "ctx": find(E, name="Click target") or find(E, name="click target"),
         "sld": find(E, role="slider"),
-        "scr": None,
+        "scr": find_scroll(E),
         "txt": find(E, role="text") or find(E, role="entry") or find(E, name="type here"),
     }
     if resolve["chk"] or resolve["txt"]: break
@@ -235,10 +246,13 @@ def do(t, sel):
             x,y,ww,hh = rect(el); fx=x-int(WB["x"])+8; fy=y-int(WB["y"])+hh//2
             D("drag", {"pid":WP,"window_id":WD,"from_x":fx,"from_y":fy,"to_x":fx+150,"to_y":fy,"session":"d1"})
     elif t == "scroll":
-        if DESKTOP: D("scroll", {"x":HARW//2,"y":HARH//2,"direction":"down","session":"d1"})
-        elif VISION: D("scroll", {"pid":WP,"window_id":WD,"x":HARW//2,"y":HARH//2,"direction":"down","session":"d1"})
+        # aim at the resolved scroll-tall viewport; fall back to window center if unresolved
+        sa = c or (HARW//2, HARH//2)          # screen/abs center of scroll-tall
+        sl = wl                               # window-local center of scroll-tall
+        if DESKTOP: D("scroll", {"x":sa[0],"y":sa[1],"direction":"down","session":"d1"})
+        elif VISION: D("scroll", {"pid":WP,"window_id":WD,"x":sl[0],"y":sl[1],"direction":"down","session":"d1"})
         elif use_ax: D("scroll", {"pid":WP,"window_id":WD,"element_index":eidx,"direction":"down","session":"d1"})
-        else: D("scroll", {"pid":WP,"window_id":WD,"x":HARW//2,"y":HARH//2,"direction":"down","session":"d1"})
+        else: D("scroll", {"pid":WP,"window_id":WD,"x":sl[0],"y":sl[1],"direction":"down","session":"d1"})
     elif t == "setval":
         if eidx is not None: D("set_value", {"pid":WP,"window_id":WD,"element_index":eidx,"value":"set-by-cua","session":"d1"})
     elif t == "type":

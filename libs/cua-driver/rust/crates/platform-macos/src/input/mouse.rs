@@ -37,6 +37,7 @@ pub fn click_at_xy(pid: i32, x: f64, y: f64, count: usize, modifiers: &[&str]) -
 /// (it lands on whatever is visually on top at the point) — exactly the
 /// foreground, vision-driven model that complements the background contract.
 pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
+    use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -46,21 +47,32 @@ pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow
         "middle" => (CGEventType::OtherMouseDown, CGEventType::OtherMouseUp, CGMouseButton::Center),
         _ => (CGEventType::LeftMouseDown, CGEventType::LeftMouseUp, CGMouseButton::Left),
     };
-    // Move first so apps that hit-test on the latest cursor location target the
-    // right window, then post each down/up pair at the global HID tap.
-    if let Ok(mv) = CGEvent::new_mouse_event(source.clone(), CGEventType::MouseMoved, point, btn) {
-        mv.post(CGEventTapLocation::HID);
-    }
+    // Warp the REAL cursor to the point first (the macOS peer of Linux XTest's
+    // pointer warp). A synthetic MouseMoved event does not relocate the hardware
+    // cursor, and AppKit hit-tests some clicks against the actual cursor
+    // position, so without the warp the down/up can miss the target. Desktop
+    // scope is the foreground modality, so moving the visible cursor is expected.
+    let _ = CGDisplay::warp_mouse_cursor_position(point);
+    // Re-couple cursor + mouse-delta so the synthesized click hit-tests at the
+    // warped point, not the pre-warp one.
+    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    std::thread::sleep(std::time::Duration::from_millis(40));
     for _ in 0..count.max(1) {
         let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
         down.post(CGEventTapLocation::HID);
-        std::thread::sleep(std::time::Duration::from_millis(16));
+        std::thread::sleep(std::time::Duration::from_millis(20));
         let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
         up.post(CGEventTapLocation::HID);
     }
     Ok(())
+}
+
+extern "C" {
+    /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
+    /// synthesized click hit-tests at the new location, not the pre-warp one.
+    fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
 }
 
 /// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.

@@ -161,16 +161,62 @@ impl Tool for ClickTool {
             }
             .to_string();
             let count = args.u64_or("count", 1) as usize;
-            // Glide the session's agent cursor to the screen point for visibility,
-            // then click. (Overlay is best-effort; the click is what matters.)
+            // Glide the session's agent cursor to the screen point for visibility.
             let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
             crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), sx, sy).await;
             self.state.cursor_registry.update_position(&cursor_key, sx, sy);
-            return match crate::input::mouse::click_at_xy_desktop(sx, sy, count, &button) {
-                Ok(()) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
+
+            // Resolve the frontmost on-screen window under the point (the macOS
+            // peer of Windows' WindowFromPoint). When found, click THAT pid via
+            // the proven SkyLight path (`click_at_xy`, screen coords) — reliable
+            // on AppKit/Chromium where a bare HID post can miss. Only when no
+            // app window owns the pixel (desktop background, etc.) fall back to
+            // the cursor-warp + HID post.
+            // Resolve as (pid, window_id, win_origin_x, win_origin_y) so the
+            // click can stamp the window-LOCAL point — AppKit hit-tests the
+            // stamped window-local coordinate, not the bare screen point, so a
+            // plain screen-coord post misses.
+            // Exclude our OWN windows (the agent-cursor overlay we just glided to
+            // the point sits on top of the target — never resolve the click to it).
+            let own_pid = std::process::id() as i32;
+            let target = {
+                let mut wins = crate::windows::visible_windows();
+                wins.sort_by_key(|w| w.z_index); // front-to-back
+                wins.into_iter().find(|w| {
+                    w.layer == 0
+                        && w.pid != own_pid
+                        && sx >= w.bounds.x
+                        && sx < w.bounds.x + w.bounds.width
+                        && sy >= w.bounds.y
+                        && sy < w.bounds.y + w.bounds.height
+                }).map(|w| (w.pid, w.window_id, w.bounds.x, w.bounds.y))
+            };
+            let btn = button.clone();
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<i32>> {
+                match target {
+                    Some((pid, wid, ox, oy)) => {
+                        let (wx, wy) = (sx - ox, sy - oy);
+                        crate::input::mouse::click_at_xy_with_window_local(
+                            pid, sx, sy, wx, wy, wid, count, &[],
+                        )?;
+                        Ok(Some(pid))
+                    }
+                    None => {
+                        crate::input::mouse::click_at_xy_desktop(sx, sy, count, &btn)?;
+                        Ok(None)
+                    }
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(Some(pid))) => ToolResult::text(format!(
+                    "✅ Sent click at screen ({sx},{sy}) on pid {pid} (desktop scope)."
                 )),
-                Err(e) => ToolResult::error(format!("desktop-scope click failed: {e}")),
+                Ok(Ok(None)) => ToolResult::text(format!(
+                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope, no window under point)."
+                )),
+                Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
+                Err(e) => ToolResult::error(format!("task error: {e}")),
             };
         }
 

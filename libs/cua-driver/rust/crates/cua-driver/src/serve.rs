@@ -77,6 +77,14 @@ fn apply_session_identity(
         .map(|s| s.to_owned())
 }
 
+/// Whether `tool_name` manages session lifecycle and so must be EXEMPT from the
+/// resurrection guard. `start_session` revives an ended id (the explicit,
+/// caller-intended way to reuse one) and `end_session` is idempotent — both
+/// would be wrongly rejected if the guard gated them on an already-ended id.
+fn is_session_lifecycle_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "start_session" | "end_session")
+}
+
 /// Resolve the recording idle TTL, honoring the env override.
 fn recording_idle_ttl_secs() -> u64 {
     std::env::var("CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS")
@@ -662,18 +670,25 @@ pub async fn run_serve(
                                 // TTL / control-connection EOF) must NOT run — it
                                 // would re-create session-owned state (cursor,
                                 // config override, recording) the reaper already
-                                // passed. Skip + benign ok. Live and anonymous
-                                // calls pass through unchanged.
+                                // passed. Reject it LOUDLY (isError) so a stray
+                                // late action is visibly a failure, not a phantom
+                                // success a caller silently trusts. The session-
+                                // lifecycle tools are EXEMPT: `start_session`
+                                // revives an ended id (explicit, intentional reuse)
+                                // and `end_session` stays idempotent. Live and
+                                // anonymous calls pass through unchanged.
                                 if let Some(sid) = &effective_session {
-                                    if cua_driver_core::session::is_session_ended(sid) {
-                                        let resp = DaemonResponse::ok(serde_json::json!({
-                                            "content": [{
-                                                "type": "text",
-                                                "text": "session ended; tool call ignored"
-                                            }],
-                                            "isError": false,
-                                            "sessionEnded": true
-                                        }));
+                                    if !is_session_lifecycle_tool(&tool_name)
+                                        && cua_driver_core::session::is_session_ended(sid)
+                                    {
+                                        let resp = DaemonResponse::err(
+                                            format!(
+                                                "session '{sid}' has ended; tool call '{tool_name}' was \
+                                                 rejected. Call start_session with this id to revive it \
+                                                 before issuing further actions, or use a new session id."
+                                            ),
+                                            1,
+                                        );
                                         let _ = writer.write_all(
                                             (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                         ).await;
@@ -1179,17 +1194,23 @@ pub async fn run_serve(
                                 // (see the unix branch + apply_session_identity).
                                 let effective_session =
                                     apply_session_identity(&mut args, &req.session_id);
-                                // Resurrection guard on the effective session.
+                                // Resurrection guard on the effective session
+                                // (see the unix branch for the full rationale):
+                                // reject a stray late action on a dead id LOUDLY,
+                                // but exempt the lifecycle tools so start_session
+                                // can revive and end_session stays idempotent.
                                 if let Some(sid) = &effective_session {
-                                    if cua_driver_core::session::is_session_ended(sid) {
-                                        let resp = DaemonResponse::ok(serde_json::json!({
-                                            "content": [{
-                                                "type": "text",
-                                                "text": "session ended; tool call ignored"
-                                            }],
-                                            "isError": false,
-                                            "sessionEnded": true
-                                        }));
+                                    if !is_session_lifecycle_tool(&tool_name)
+                                        && cua_driver_core::session::is_session_ended(sid)
+                                    {
+                                        let resp = DaemonResponse::err(
+                                            format!(
+                                                "session '{sid}' has ended; tool call '{tool_name}' was \
+                                                 rejected. Call start_session with this id to revive it \
+                                                 before issuing further actions, or use a new session id."
+                                            ),
+                                            1,
+                                        );
                                         let _ = writer.write_all(
                                             (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                         ).await;
@@ -1456,8 +1477,11 @@ mod gate_tests {
     //! Closes PR #1779's gap: `is_session_ended()` was dead code, so an
     //! in-flight per-call request landing AFTER `session_end` fired would
     //! re-create session-owned metadata (cursor registry / config override)
-    //! the reaper already passed. The gate skips a `call` carrying an ended
-    //! session id (benign ok); live and anonymous calls pass through.
+    //! the reaper already passed. The gate REJECTS a `call` carrying an ended
+    //! session id LOUDLY (isError) — a silent benign-ok was a trap that looked
+    //! like success while doing nothing. The session-lifecycle tools are exempt:
+    //! a `start_session` re-declare REVIVES the id so its subsequent actions run
+    //! again. Live and anonymous calls always pass through.
 
     use super::{run_serve, send_request, DaemonRequest};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1516,6 +1540,9 @@ mod gate_tests {
 
         let mut reg = ToolRegistry::new();
         reg.register(Box::new(ProbeTool::new()));
+        // The real start_session tool so we can prove an explicit re-declare
+        // REVIVES an ended id end-to-end through the daemon boundary.
+        reg.register(Box::new(cua_driver_core::session_tools::StartSessionTool));
         let registry = Arc::new(reg);
 
         // Unique temp socket — never the default socket / CuaDriver.app daemon.
@@ -1571,26 +1598,54 @@ mod gate_tests {
             .expect("session_end response");
         assert!(resp.ok, "session_end should ack ok");
 
-        // 3. ENDED session call carrying the same sid → GATED. Tool must NOT run.
+        // 3. ENDED session call carrying the same sid → REJECTED LOUDLY. The
+        //    tool must NOT run, and the caller must see a failure (not a phantom
+        //    success that silently does nothing).
         let socket3 = socket.clone();
         let s3 = sid.to_owned();
         let resp = tokio::task::spawn_blocking(move || send_request(&socket3, &call_req(Some(&s3))))
             .await
             .unwrap()
             .expect("ended call response");
-        assert!(resp.ok, "gated call returns a benign ok");
-        assert_eq!(
-            resp.result
-                .as_ref()
-                .and_then(|r| r.get("sessionEnded"))
-                .and_then(|v| v.as_bool()),
-            Some(true),
-            "gated response must carry sessionEnded:true"
+        assert!(!resp.ok, "ended-session call must be rejected loudly (not ok)");
+        assert!(
+            resp.error.as_deref().unwrap_or("").contains("has ended"),
+            "rejection must explain the session ended; got {:?}",
+            resp.error
         );
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
             1,
-            "ended-session call must be a no-op (counter unchanged) — resurrection closed"
+            "rejected ended-session call must not invoke the tool — resurrection closed"
+        );
+
+        // 3b. Explicit re-declare via start_session REVIVES the id.
+        let socket3b = socket.clone();
+        let s3b = sid.to_owned();
+        let start = DaemonRequest {
+            method: "call".into(),
+            name: Some("start_session".into()),
+            args: Some(serde_json::json!({})),
+            session_id: Some(s3b),
+        };
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket3b, &start))
+            .await
+            .unwrap()
+            .expect("start_session response");
+        assert!(resp.ok, "start_session must run even for an ended id (lifecycle-exempt)");
+
+        // 3c. A call on the revived id now RUNS again.
+        let socket3c = socket.clone();
+        let s3c = sid.to_owned();
+        let resp = tokio::task::spawn_blocking(move || send_request(&socket3c, &call_req(Some(&s3c))))
+            .await
+            .unwrap()
+            .expect("revived call response");
+        assert!(resp.ok, "call on a revived session should succeed");
+        assert_eq!(
+            PROBE_INVOCATIONS.load(Ordering::SeqCst),
+            2,
+            "revived-session call must invoke the tool again"
         );
 
         // 4. Anonymous call (no session id) still passes — no false positive.
@@ -1602,7 +1657,7 @@ mod gate_tests {
         assert!(resp.ok, "anonymous call should succeed");
         assert_eq!(
             PROBE_INVOCATIONS.load(Ordering::SeqCst),
-            2,
+            3,
             "anonymous (no session id) call must still invoke the tool"
         );
 

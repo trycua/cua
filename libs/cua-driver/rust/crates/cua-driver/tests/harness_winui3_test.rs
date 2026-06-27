@@ -70,7 +70,7 @@ fn harness_winui3_smoke() {
 
     let snap = driver.call(
         "get_window_state",
-        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"tree"}),
+        serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"ax"}),
     );
     let text = snap.text();
 

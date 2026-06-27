@@ -281,8 +281,9 @@ pub unsafe fn set_string_attr(element: AXUIElementRef, attr_name: &str, value: &
 
 /// Set an AX attribute to a CFNumber (double) value. Numeric controls — most
 /// notably `AXSlider` (NSSlider) and `AXStepper` — expose a numeric `AXValue`
-/// and reject a `CFString` write with `-25201` (illegal argument); only a
-/// `CFNumber` is accepted. Text fields, by contrast, take a `CFString`.
+/// reject a `CFString` write — `-25200` (kAXErrorFailure, observed live on a
+/// SwiftUI `AXSlider`) or `-25201` (kAXErrorIllegalArgument); only a `CFNumber`
+/// is accepted. Text fields, by contrast, take a `CFString`.
 pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f64) -> AXError {
     use core_foundation::number::CFNumber;
     let attr = CFStr::new(attr_name);

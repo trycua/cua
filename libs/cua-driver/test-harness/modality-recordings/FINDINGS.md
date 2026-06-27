@@ -167,10 +167,37 @@ native analogue of WebView2) **holds the contract** — confirming the Windows E
 WebView2 steal is specific to Windows-Chromium, not WebKit-on-macOS.
 
 **Driver fix shipped (this branch, `platform-macos`):** `set_value` now writes a
-**CFNumber** for numeric `AXValue` controls (NSSlider/NSStepper reject a CFString with
-`-25201`); falls back to CFString for text fields. Compile-verified; runtime-verify on
-the host deferred. The two macOS gotchas above (`end_session` reuse poisoning, AppKit
-window-height drift) were also filed for the driver.
+**CFNumber** for numeric `AXValue` controls (NSSlider/NSStepper reject a CFString);
+falls back to CFString for text fields.
+
+### Live host verification (SwiftUI + WKWebView, against the running driver)
+
+Run on the macOS host with the live MCP driver (the **Jun-22 daemon**, i.e. the
+*pre-fix* binary — the installed `CuaDriver.app` is Developer-ID signed by Cua AI,
+`YCK386LBJ7`, and TCC keys on that cdhash, so swapping in the ad-hoc rebuild would
+break Accessibility; live "after" verification needs a re-signed reinstall + a TCC
+re-grant, done as a deliberate step, not mid-session).
+
+- **SwiftUI harness — full control parity confirmed.** `get_window_state` exposes all
+  six WPF-parity controls as actionable AX elements (text field, click-target,
+  `AXSlider sld-value`, `AXCheckBox "I agree"`, context-menu button, scroll region) and
+  the status labels (`counter=`, `mirror=`, `last_action=`, `clicks=`, `slider_value=`,
+  `agreed=`, `menu_action=`, `scroll_offset=`) render as text nodes in `tree_markdown`
+  for the verifier. An AX checkbox press flipped `agreed=false → true` (frame-verified).
+- **set_value on the SwiftUI slider — bug reproduced (the "before").** Against the pre-fix
+  daemon, `set_value(AXSlider, "50")` fails with **`-25200`** (kAXErrorFailure) — exactly
+  the CFString-write rejection the CFNumber fix targets. (The fix tries CFNumber first, so
+  it covers both `-25200` and `-25201`.)
+- **WKWebView web-surface scroll — page works, nested overflow div is a no-op.** The
+  driver's keystroke `scroll` (PageDown on the `AXWebArea`) scrolls the whole page a full
+  page down (frame-verified). But the nested `scroll-tall` overflow div stays at
+  `scroll_offset=0`: keystroke-scroll only drives the focused/page scroller, and a CSS
+  `overflow:auto` div without `tabindex` never takes keyboard focus. Same root cause as the
+  Linux Electron inner-div no-op; a pixel-wheel scroll (not in the current `scroll` tool)
+  would be required to drive an arbitrary overflow container.
+
+The two macOS gotchas above (`end_session` reuse poisoning, AppKit window-height drift)
+were also filed for the driver.
 
 ## Deliverables
 10 verified recordings (5 WPF + 5 GTK3) + index, published at

@@ -483,7 +483,7 @@ class UIElement:
             return ""
         content_hash = self.hash_from_string("".join(all_content_hashes))
         content_structure_hash = self.hash_from_string("".join(all_hashes))
-        return self.hash_from_string(content_hash.join(content_structure_hash))
+        return self.hash_from_string(content_hash + content_structure_hash)
 
     def to_dict(self):
         """Convert the UIElement to a dictionary representation.

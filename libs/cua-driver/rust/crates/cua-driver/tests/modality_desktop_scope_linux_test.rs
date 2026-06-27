@@ -131,22 +131,40 @@ fn desktop_scope_windowless_click_lands_on_control() {
     println!("[desktop-linux] increment button screen-center=({cx},{cy}) pre-counter={pre}");
 
     set_scope(&mut driver, "desktop");
-    let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy }));
-    // Reset scope BEFORE asserting so a failure can't leave the box in desktop.
+
+    // Retry the window-less desktop click until the counter advances. A
+    // freshly-mapped harness window may not yet be raised under the pointer on
+    // the first click (X11 window-raise timing differs across WMs — XFCE/Openbox
+    // lag GNOME), so the screen-absolute XTest click can miss the first attempt.
+    // Re-issuing the SAME click is safe: extra landed clicks only increment the
+    // counter further, and `post > pre` still holds. We assert the click was
+    // *dispatched as desktop scope* on the first attempt, and that it eventually
+    // *lands* within the budget.
+    let mut post = pre;
+    let mut first_text = String::new();
+    for attempt in 0..12 {
+        let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy }));
+        if attempt == 0 {
+            first_text = clicked.text().to_string();
+            assert!(!clicked.is_error(), "desktop-scope click errored: {}", clicked.text());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        post = counter(&ax_snapshot(&mut driver, pid, wid)).unwrap_or(pre);
+        if post > pre {
+            break;
+        }
+    }
+    // Reset scope so a later failure can't leave the box in desktop scope.
     set_scope(&mut driver, "window");
 
-    assert!(!clicked.is_error(), "desktop-scope click errored: {}", clicked.text());
     assert!(
-        clicked.text().to_lowercase().contains("desktop scope"),
-        "click not reported as desktop-scope: {}",
-        clicked.text()
+        first_text.to_lowercase().contains("desktop scope"),
+        "click not reported as desktop-scope: {first_text}"
     );
-
-    std::thread::sleep(Duration::from_millis(600));
-    let post = counter(&ax_snapshot(&mut driver, pid, wid)).unwrap_or(pre);
     assert!(
         post > pre,
-        "counter did not advance after window-less desktop click: pre={pre} post={post}"
+        "counter did not advance after window-less desktop clicks: pre={pre} post={post} \
+         (the harness window never became clickable at ({cx},{cy}) within the retry budget)"
     );
     println!("✅ desktop_scope_windowless_click_lands_on_control: counter {pre} → {post}");
 }

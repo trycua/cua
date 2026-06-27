@@ -2224,14 +2224,12 @@ impl Tool for ClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
-            // Guard: an element scrolled out of view / off-screen has a center
-            // outside its own window; clicking the raw coordinate would hit the
-            // taskbar or whatever else is there. Fail clearly instead.
-            if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
-                return ToolResult::error(format!(
-                    "Element [{idx}] resolves to screen point ({cx},{cy}), outside its window — it is scrolled out of view or off-screen. Scroll it into view (or enlarge the window) before clicking; the raw coordinate would land on whatever is there (e.g. the taskbar)."
-                ));
-            }
+            // NB: the off-screen guard is applied per-delivery-path below (the
+            // foreground SendInput tap and the background coordinate injection),
+            // NOT here — a background UIA Invoke fires the element's handler
+            // regardless of whether the element is scrolled into view, so a broad
+            // guard would wrongly block legitimate actions like opening a modal
+            // from an off-screen button.
             // Step 2: pin overlay to target window, then animate to screen coords.
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
@@ -2247,6 +2245,13 @@ impl Tool for ClickTool {
             // rejected) and might fail on elements that don't support
             // InvokePattern anyway.
             if dispatch == DispatchMode::Foreground {
+                // Foreground delivery is a real SendInput tap at (cx,cy); guard it
+                // so an off-screen element's coordinate doesn't land on the taskbar.
+                if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
+                    return ToolResult::error(format!(
+                        "Element [{idx}] resolves to ({cx},{cy}), outside its window — scroll it into view before a foreground click (the raw coordinate would land on whatever is there, e.g. the taskbar)."
+                    ));
+                }
                 let btn_fg = btn.clone();
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
@@ -2371,6 +2376,12 @@ impl Tool for ClickTool {
                 if dispatch == DispatchMode::Background
                     && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
                 {
+                    // Coordinate injection lands at (cx,cy); guard against off-screen.
+                    if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
+                        anyhow::bail!(format!(
+                            "Element [{idx}] resolves to ({cx},{cy}), outside its window — scroll it into view before clicking (coordinate injection would land on the taskbar)."
+                        ));
+                    }
                     match crate::input::inject_click_screen(hwnd, cx, cy, count, &btn) {
                         Ok(()) => return Ok(format!(
                             "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."

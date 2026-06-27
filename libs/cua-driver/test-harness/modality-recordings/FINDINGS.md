@@ -70,6 +70,39 @@ substring window-title match because their titles carry a `[cdp=NNNN]` suffix).
 
 Evidence: `matrix-{winui3,webview2,electron}-ax-bg.mp4` (+ the WPF set) on the Desktop.
 
+## Legacy modal popups (WPF) — driver CAN open + list them
+
+Confirmed: a **background `click` via UIA Invoke** fires the harness's popup buttons *even when they
+are off-screen* (y≈876–1026 on the 768px display), and `list_windows` then enumerates the dialogs:
+`Open MessageBox` → **"Harness MessageBox"**, `Open Owned Window` → **"Harness Owned Popup"**,
+`Open Layered Popup` → **"Harness Layered Popup"**.
+
+This briefly regressed: the first cut of the off-screen guard (above) sat *before* the dispatch
+branch and so blocked the UIA-Invoke path too (which needs no coordinates). **Fix:** the guard now
+applies only to the coordinate-delivery paths (foreground SendInput tap + background coordinate
+injection); UIA Invoke runs unguarded, so opening a modal from an off-screen button works again.
+
+## macOS (AppKit) — 5 modes, contract HOLDS
+
+Recorded on the macOS host (AppKit harness, ScreenCaptureKit). TCC already granted. Saved locally
+only (`macos-appkit-*.mp4`) — these record a personal screen, not uploaded.
+
+| mode | effects | focus contract |
+|------|---------|----------------|
+| ax-bg | 5/7 | **0/8 stole** |
+| vision-bg | 4/6 | **0/7 stole** |
+| ax-fg / vision-fg / vision-desktop | 5/7 / 4/6 / 2/3 | foreground |
+
+Headline: in **vision-bg**, pixel left-click/double/drag landed on the harness while Chrome stayed
+frontmost — **0 focus steals**; the no-foreground contract holds on macOS for both AX and pixel
+dispatch. Honest macOS gaps surfaced: the NSView click-target isn't in the AX tree (needs pixels);
+pixel right-click never fires `rightMouseDown`; pixel scroll doesn't move `NSScrollView` (element
+scroll does); NSButton ignores synthetic pixel clicks (AX `element_index` targets it); and there's
+no true window-less screen click on macOS (`click` requires `pid`; pixel dispatch is window-anchored).
+Two driver gotchas to flag: **`end_session` poisons a reused session id** (subsequent actions
+silently no-op), and AppKit **window height drifts between launches** (store targets as window-local
+points, convert to live screenshot px).
+
 ## Deliverables
 10 verified recordings (5 WPF + 5 GTK3) + index, published at
 `https://cuademo06261324.blob.core.windows.net/demo/modality-videos/index.html`.

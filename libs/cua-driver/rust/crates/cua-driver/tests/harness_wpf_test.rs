@@ -38,164 +38,61 @@
 
 #![cfg(target_os = "windows")]
 
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
-// ── path helpers ─────────────────────────────────────────────────────────────
+use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
-fn workspace_root() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest).parent().unwrap().parent().unwrap().to_owned()
-}
-
-fn driver_binary() -> PathBuf {
-    workspace_root().join("target/debug/cua-driver.exe")
-}
+// ── harness launcher ─────────────────────────────────────────────────────────
 
 fn harness_exe() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_WPF_EXE") {
         let pb = PathBuf::from(p);
         if pb.exists() { return pb; }
     }
-    workspace_root().join("test-apps/harness-wpf/CuaTestHarness.Wpf.exe")
+    harness_app("harness-wpf", "CuaTestHarness.Wpf.exe")
 }
 
-// ── JSON-RPC helpers ─────────────────────────────────────────────────────────
-
-fn send(stdin: &mut ChildStdin, req: serde_json::Value) {
-    writeln!(stdin, "{}", serde_json::to_string(&req).unwrap()).unwrap();
-}
-
-fn recv(stdout: &mut BufReader<&mut ChildStdout>) -> serde_json::Value {
-    let mut line = String::new();
-    stdout.read_line(&mut line).expect("read response");
-    serde_json::from_str(line.trim()).expect("parse json")
-}
-
-fn init(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>) {
-    send(stdin, serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    let _ = recv(stdout);
-}
-
-fn tools_call(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-              id: u32, name: &str, args: serde_json::Value) -> serde_json::Value {
-    send(stdin, serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": "tools/call",
-        "params": { "name": name, "arguments": args }
-    }));
-    recv(stdout)
-}
-
-// ── harness fixture ──────────────────────────────────────────────────────────
-
-struct Harness {
-    _app: Child,
-    pid: u32,
-}
-
-impl Harness {
-    fn launch() -> Option<Self> {
-        let exe = harness_exe();
-        if !exe.exists() {
-            eprintln!("harness exe not found at {exe:?} — run test-harness/build/windows.ps1 first");
-            return None;
-        }
-        let app = Command::new(&exe)
-            .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().ok()?;
-        let pid = app.id();
-        // Short fixed settle for cold-start (window-creation + initial
-        // foreground hand-off after spawn) — the rest of the readiness
-        // wait happens via polling in find_harness_window. A 200ms-only
-        // wait turned out to be too short for the harness to establish
-        // foreground reliably under test-batch load, which caused
-        // SetForegroundWindow-needing tests (dispatch:foreground) to
-        // fail with a foreground-lock rejection.
-        std::thread::sleep(Duration::from_millis(800));
-        Some(Self { _app: app, pid })
+/// Launch the WPF harness app, tying its lifetime to `driver`'s reaper (the
+/// Windows kill-on-close Job Object) and returning its pid. Returns `None`
+/// (with a skip message) if the harness isn't built. We spawn via
+/// `spawn_in_job` and grab the pid before handing the child to the reaper so
+/// every subsequent `list_windows`/`find_window` filters on the exact spawned
+/// pid — defensive against the corner case where a previous test's harness
+/// hasn't been fully reaped and there are briefly two CuaTestHarness.Wpf
+/// windows on the desktop.
+fn launch_harness(driver: &mut McpDriver) -> Option<u32> {
+    let exe = harness_exe();
+    if !exe.exists() {
+        eprintln!("harness exe not found at {exe:?} — run test-harness/build/windows.ps1 first");
+        return None;
     }
-}
-
-impl Drop for Harness {
-    fn drop(&mut self) {
-        // Child::kill on Windows uses TerminateProcess, which signals exit
-        // but doesn't synchronously reap. Without wait() the next test's
-        // Harness::launch can briefly see TWO CuaTestHarness.Wpf windows —
-        // and find_harness_window may pick the dying one, returning stale
-        // element-cache coords (off-screen click failures).
-        let _ = self._app.kill();
-        let _ = self._app.wait();
-        // Extra settle for the OS-level window destruction sweep.
-        std::thread::sleep(Duration::from_millis(300));
-    }
-}
-
-// Look up the harness's main window via list_windows, filtered to the
-// exact spawned pid — defensive against the corner case where a previous
-// test's harness hasn't been fully reaped and there are briefly two
-// CuaTestHarness.Wpf windows on the desktop. Polls with a deadline rather
-// than relying on a fixed pre-sleep, so cold-start in sandbox (where the
-// WPF runtime + harness exe both pay first-launch JIT cost) doesn't time
-// out the harness with a too-short fixed sleep.
-fn find_harness_window(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-                       pid: u32, title_substr: &str) -> Option<(u64, String)> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let mut id = 10u32;
-    loop {
-        let resp = tools_call(stdin, stdout, id, "list_windows",
-            serde_json::json!({ "pid": pid as i64 }));
-        id = id.wrapping_add(1);
-        if let Some(wins) = resp["result"]["structuredContent"]["windows"].as_array() {
-            for w in wins {
-                if w["pid"].as_u64() != Some(pid as u64) { continue; }
-                let title = w["title"].as_str().unwrap_or("");
-                if title.contains(title_substr) {
-                    return Some((w["window_id"].as_u64()?, title.to_string()));
-                }
-            }
-        }
-        if std::time::Instant::now() >= deadline { return None; }
-        std::thread::sleep(Duration::from_millis(150));
-    }
+    let app = spawn_in_job(
+        Command::new(&exe).stdout(Stdio::null()).stderr(Stdio::null()),
+    ).ok()?;
+    let pid = app.id();
+    driver.reaper().push(app);
+    // Short fixed settle for cold-start (window-creation + initial
+    // foreground hand-off after spawn) — the rest of the readiness
+    // wait happens via polling in find_window. A 200ms-only
+    // wait turned out to be too short for the harness to establish
+    // foreground reliably under test-batch load, which caused
+    // SetForegroundWindow-needing tests (dispatch:foreground) to
+    // fail with a foreground-lock rejection.
+    std::thread::sleep(Duration::from_millis(800));
+    Some(pid)
 }
 
 // Get a UIA snapshot's flat element list — used to assert AutomationIds
-// exist in the tree without depending on tree-walk order.
-fn snapshot_elements(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-                     pid: u32, window_id: u64) -> serde_json::Value {
-    let resp = tools_call(stdin, stdout, 20, "get_window_state",
-        serde_json::json!({
-            "pid": pid as i64,
-            "window_id": window_id,
-            "capture_mode": "tree"
-        }));
-    resp
-}
-
-fn snapshot_text(snapshot: &serde_json::Value) -> &str {
-    snapshot["result"]["content"][0]["text"].as_str().unwrap_or("")
-}
-
-fn elements_have_aid(snapshot: &serde_json::Value, aid: &str) -> bool {
-    // UIA tree is rendered as markdown lines like:
-    //   `  - [3] Button "Increment" [id=btn-increment actions=[click]]`
-    // so the substring `id=<aid>` is a reliable presence marker.
-    snapshot_text(snapshot).contains(&format!("id={aid}"))
-}
-
-/// Parse the UIA markdown snapshot for the line matching `id=<aid>` and
-/// extract the leading `[<index>]` element_index token.
-fn find_element_index_by_aid(snapshot: &serde_json::Value, aid: &str) -> Option<u64> {
-    let needle = format!("id={aid}");
-    for line in snapshot_text(snapshot).lines() {
-        if !line.contains(&needle) { continue; }
-        let start = line.find('[')? + 1;
-        let end   = line[start..].find(']')? + start;
-        return line[start..end].trim().parse().ok();
-    }
-    None
+// exist in the tree without depending on tree-walk order, and to read the
+// harness's marker/status text.
+fn snapshot(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolResponse {
+    driver.call("get_window_state", serde_json::json!({
+        "pid": pid as i64,
+        "window_id": window_id,
+        "capture_mode": "ax"
+    }))
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
@@ -203,32 +100,16 @@ fn find_element_index_by_aid(snapshot: &serde_json::Value, aid: &str) -> Option<
 #[test]
 #[ignore]
 fn harness_wpf_smoke() {
-    let driver = driver_binary();
-    if !driver.exists() {
-        eprintln!("cua-driver.exe not built — run `cargo build` first");
-        return;
-    }
-    let harness = match Harness::launch() {
-        Some(h) => h,
-        None => { eprintln!("harness not built — skipping"); return; }
-    };
-    println!("harness pid={}", harness.pid);
+    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some(pid) = launch_harness(&mut driver) else { return };
+    println!("harness pid={}", pid);
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-
-    init(&mut stdin, &mut stdout);
-
-    let (wid, title) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WPF")
+    let (wid, title) = driver.find_window(pid as i64, "CuaTestHarness WPF")
         .expect("main window not found via list_windows");
     println!("main window: id={} title={:?}", wid, title);
 
-    let snap = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let text = snapshot_text(&snap);
+    let snap = snapshot(&mut driver, pid, wid);
+    let text = snap.text();
 
     // Buttons appear with explicit id=<aid> tags in the UIA markdown.
     for aid in [
@@ -238,7 +119,7 @@ fn harness_wpf_smoke() {
         "btn-open-owned", "btn-open-layered",
         "btn-exit",
     ] {
-        assert!(elements_have_aid(&snap, aid), "missing AutomationId {aid} in WPF UIA snapshot");
+        assert!(ax::has_id(text, aid), "missing AutomationId {aid} in WPF UIA snapshot");
     }
 
     // TextBlocks are reported as bare Text nodes (no UIA Invoke/Value pattern,
@@ -251,87 +132,61 @@ fn harness_wpf_smoke() {
     assert!(text.contains("\"Native Win32 Child\""), "native HWND child button not in snapshot");
 
     println!("✅ harness_wpf_smoke: all expected scenarios present in UIA tree");
-
-    child.kill().ok();
 }
 
 // ── shared driver session helper ─────────────────────────────────────────────
 
-/// Spin up a fresh harness + cua-driver pair, run the closure, then tear
-/// everything down. Returns whatever the closure returns. The closure
-/// receives the harness pid, the cua-driver stdin/stdout and a pre-resolved
-/// main window_id.
+/// Spin up a fresh cua-driver + harness pair, run the closure, then tear
+/// everything down (the harness app is reaped with the driver via the Job
+/// Object). Returns whatever the closure returns. The closure receives the
+/// harness pid, a pre-resolved main window_id, and the driver.
 fn with_session<F, R>(f: F) -> Option<R>
-where F: FnOnce(u32, u64, &mut ChildStdin, &mut BufReader<&mut ChildStdout>) -> R {
-    if !driver_binary().exists() { eprintln!("cua-driver.exe not built"); return None; }
-    let harness = Harness::launch()?;
-    let mut child = Command::new(&driver_binary())
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WPF")
+where F: FnOnce(u32, u64, &mut McpDriver) -> R {
+    let mut driver = McpDriver::spawn()?;
+    let pid = launch_harness(&mut driver)?;
+    let (wid, _) = driver.find_window(pid as i64, "CuaTestHarness WPF")
         .expect("main window");
-    let out = f(harness.pid, wid, &mut stdin, &mut stdout);
-    drop(stdout);
-    drop(stdin);
-    child.kill().ok();
-    drop(harness);
-    Some(out)
+    Some(f(pid, wid, &mut driver))
 }
 
 #[test]
 #[ignore]
 fn harness_wpf_counter_invoke() {
-    let driver = driver_binary();
-    if !driver.exists() { return; }
-    let harness = match Harness::launch() { Some(h) => h, None => return };
+    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some(pid) = launch_harness(&mut driver) else { return };
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-
-    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid, "CuaTestHarness WPF")
+    let (wid, _) = driver.find_window(pid as i64, "CuaTestHarness WPF")
         .expect("main window");
     // Pre-snapshot so element_cache has indices we can address.
-    let pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let idx = find_element_index_by_aid(&pre, "btn-increment")
+    let pre = snapshot(&mut driver, pid, wid);
+    let idx = ax::element_index_by_id(pre.text(), "btn-increment")
         .expect("btn-increment not in pre-snapshot");
 
-    let click = tools_call(&mut stdin, &mut stdout, 30, "click",
-        serde_json::json!({
-            "pid": harness.pid as i64,
-            "window_id": wid,
-            "element_index": idx
-        }));
-    println!("click [{idx}] btn-increment: {}", click["result"]["content"][0]["text"]);
+    let click = driver.call("click", serde_json::json!({
+        "pid": pid as i64,
+        "window_id": wid,
+        "element_index": idx
+    }));
+    println!("click [{idx}] btn-increment: {}", click.text());
 
     std::thread::sleep(Duration::from_millis(300));
 
-    let post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let text = snapshot_text(&post);
+    let post = snapshot(&mut driver, pid, wid);
+    let text = post.text();
     assert!(
         text.contains("counter=1"),
         "counter label did not advance after click — snapshot text: {}",
         text.chars().take(400).collect::<String>()
     );
     println!("✅ harness_wpf_counter_invoke: counter advanced to 1");
-
-    child.kill().ok();
 }
 
 #[test]
 #[ignore]
 fn harness_wpf_type_text() {
-    with_session(|pid, wid, stdin, stdout| {
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "txt-input")
+    with_session(|pid, wid, driver| {
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "txt-input")
             .expect("txt-input not in snapshot");
 
         // WPF's TextBox needs *keyboard focus* for WM_CHAR delivery — and
@@ -340,12 +195,12 @@ fn harness_wpf_type_text() {
         // real ones). Use dispatch:"foreground" → SendInput synthesizes
         // an OS-level click that WPF treats identically to a user mouse,
         // landing actual keyboard focus on the TextBox.
-        let _ = tools_call(stdin, stdout, 28, "bring_to_front", serde_json::json!({
+        let _ = driver.call("bring_to_front", serde_json::json!({
             "pid": pid as i64, "window_id": wid
         }));
         std::thread::sleep(Duration::from_millis(300));
 
-        let _ = tools_call(stdin, stdout, 29, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "dispatch": "foreground"
         }));
@@ -355,19 +210,19 @@ fn harness_wpf_type_text() {
         // foreground back from the harness window between click and
         // type_text. Re-assert foreground so PostMessage WM_CHAR finds
         // the TextBox with keyboard focus.
-        let _ = tools_call(stdin, stdout, 30, "bring_to_front", serde_json::json!({
+        let _ = driver.call("bring_to_front", serde_json::json!({
             "pid": pid as i64, "window_id": wid
         }));
         std::thread::sleep(Duration::from_millis(300));
 
-        let resp = tools_call(stdin, stdout, 31, "type_text", serde_json::json!({
+        let resp = driver.call("type_text", serde_json::json!({
             "pid": pid as i64, "text": "harness-typed"
         }));
-        println!("type_text: {}", resp["result"]["content"][0]["text"]);
+        println!("type_text: {}", resp.text());
         std::thread::sleep(Duration::from_millis(700));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         let mirror_lines: Vec<&str> = text.lines()
             .filter(|l| l.contains("mirror=") || l.contains("txt-input"))
             .collect();
@@ -383,18 +238,18 @@ fn harness_wpf_type_text() {
 fn harness_wpf_set_value() {
     // Companion to harness_wpf_type_text: exercises the UIA ValuePattern
     // write path via the `set_value` tool. No focus needed — purely UIA.
-    with_session(|pid, wid, stdin, stdout| {
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "txt-input")
+    with_session(|pid, wid, driver| {
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "txt-input")
             .expect("txt-input not in snapshot");
-        let _ = tools_call(stdin, stdout, 30, "set_value", serde_json::json!({
+        let _ = driver.call("set_value", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "value": "via-uia-setvalue"
         }));
         std::thread::sleep(Duration::from_millis(400));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         assert!(text.contains("mirror=via-uia-setvalue"),
             "set_value did not update TextBox. Excerpt: {}",
             text.chars().take(500).collect::<String>());
@@ -409,9 +264,8 @@ fn harness_wpf_set_value() {
 // exercises the click-event-handling path itself, not the
 // background-delivery path (which the counter_invoke test already
 // covers via UIA Invoke).
-fn focus_harness(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-                 pid: u32, wid: u64) {
-    let _ = tools_call(stdin, stdout, 28, "bring_to_front", serde_json::json!({
+fn focus_harness(driver: &mut McpDriver, pid: u32, wid: u64) {
+    let _ = driver.call("bring_to_front", serde_json::json!({
         "pid": pid as i64, "window_id": wid
     }));
     std::thread::sleep(Duration::from_millis(300));
@@ -420,23 +274,23 @@ fn focus_harness(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout
 #[test]
 #[ignore]
 fn harness_wpf_right_click() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "border-click-target")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "border-click-target")
             .expect("border-click-target not in snapshot");
         // Same dispatch:foreground rationale as type_text — PostMessage
         // WM_RBUTTONDOWN doesn't always reach WPF's MouseRightButtonDown
         // routed-event chain (intermittent in batch runs).
-        let resp = tools_call(stdin, stdout, 30, "right_click", serde_json::json!({
+        let resp = driver.call("right_click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "dispatch": "foreground"
         }));
-        println!("right_click: {}", resp["result"]["content"][0]["text"]);
+        println!("right_click: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         let action_lines: Vec<&str> = text.lines()
             .filter(|l| l.contains("last_action=") || l.contains("clicks="))
             .collect();
@@ -449,23 +303,23 @@ fn harness_wpf_right_click() {
 #[test]
 #[ignore]
 fn harness_wpf_double_click() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "border-click-target")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "border-click-target")
             .expect("border-click-target not in snapshot");
         // dispatch:foreground for the same reason as right_click —
         // PostMessage WM_LBUTTONDOWN ×2 doesn't always reach WPF's
         // MouseDoubleClick / ClickCount=2 path under test-batch load.
-        let resp = tools_call(stdin, stdout, 30, "double_click", serde_json::json!({
+        let resp = driver.call("double_click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "dispatch": "foreground"
         }));
-        println!("double_click: {}", resp["result"]["content"][0]["text"]);
+        println!("double_click: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         let action_lines: Vec<&str> = text.lines()
             .filter(|l| l.contains("last_action=") || l.contains("clicks="))
             .collect();
@@ -486,15 +340,15 @@ fn harness_wpf_press_key_accelerator() {
     // path would handle modifiers but requires the cua-driver-uia.exe
     // helper that isn't in our test config. F5 has no modifier and works
     // on the PostMessage path.
-    with_session(|pid, wid, stdin, stdout| {
-        let resp = tools_call(stdin, stdout, 30, "press_key", serde_json::json!({
+    with_session(|pid, wid, driver| {
+        let resp = driver.call("press_key", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "key": "f5"
         }));
-        println!("press_key f5: {}", resp["result"]["content"][0]["text"]);
+        println!("press_key f5: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         assert!(text.contains("accel_fired=1"),
             "F5 KeyBinding did not fire. Snapshot excerpt: {}",
             text.chars().take(500).collect::<String>());
@@ -505,33 +359,33 @@ fn harness_wpf_press_key_accelerator() {
 #[test]
 #[ignore]
 fn harness_wpf_scroll() {
-    with_session(|pid, wid, stdin, stdout| {
+    with_session(|pid, wid, driver| {
         // Pre-snapshot to populate the cache + read initial offset.
-        let pre = snapshot_elements(stdin, stdout, pid, wid);
-        let pre_text = snapshot_text(&pre);
+        let pre = snapshot(driver, pid, wid);
+        let pre_text = pre.text();
         assert!(pre_text.contains("scroll_offset=0"),
             "expected initial scroll_offset=0, got: {}",
             pre_text.lines().filter(|l| l.contains("scroll_offset")).collect::<Vec<_>>().join(" / "));
 
         // Click into the ScrollViewer so it gets focus / its descendants
         // become the WM_VSCROLL target.
-        let idx = find_element_index_by_aid(&pre, "scroll-tall")
+        let idx = ax::element_index_by_id(pre.text(), "scroll-tall")
             .expect("scroll-tall not in snapshot");
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx
         }));
         std::thread::sleep(Duration::from_millis(200));
 
         // Scroll down 5 lines.
-        let resp = tools_call(stdin, stdout, 31, "scroll", serde_json::json!({
+        let resp = driver.call("scroll", serde_json::json!({
             "pid": pid as i64, "window_id": wid,
             "direction": "down", "by": "line", "amount": 5
         }));
-        println!("scroll down: {}", resp["result"]["content"][0]["text"]);
+        println!("scroll down: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         let advanced = text.lines().any(|l|
             l.contains("scroll_offset=") && !l.contains("scroll_offset=0\""));
         assert!(advanced, "scroll offset did not advance after WM_VSCROLL. Lines: {}",
@@ -544,21 +398,21 @@ fn harness_wpf_scroll() {
 #[test]
 #[ignore]
 fn harness_wpf_modal_messagebox() {
-    with_session(|pid, wid, stdin, stdout| {
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "btn-open-msgbox")
+    with_session(|pid, wid, driver| {
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "btn-open-msgbox")
             .expect("btn-open-msgbox not in snapshot");
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx
         }));
         std::thread::sleep(Duration::from_millis(600));
 
         // List windows — the modal MessageBox should be a new top-level window
         // owned by the same pid.
-        let resp = tools_call(stdin, stdout, 31, "list_windows", serde_json::json!({
+        let resp = driver.call("list_windows", serde_json::json!({
             "pid": pid as i64
         }));
-        let windows = resp["result"]["structuredContent"]["windows"].as_array()
+        let windows = resp.structured()["windows"].as_array()
             .expect("windows array");
         let modal = windows.iter()
             .find(|w| w["title"].as_str().map(|t| t.contains("Harness MessageBox")).unwrap_or(false))
@@ -567,10 +421,10 @@ fn harness_wpf_modal_messagebox() {
         println!("modal window_id={}", modal_wid);
 
         // Walk the modal's UIA tree — expect OK and Cancel buttons.
-        let modal_snap = tools_call(stdin, stdout, 32, "get_window_state", serde_json::json!({
-            "pid": pid as i64, "window_id": modal_wid, "capture_mode": "tree"
+        let modal_snap = driver.call("get_window_state", serde_json::json!({
+            "pid": pid as i64, "window_id": modal_wid, "capture_mode": "ax"
         }));
-        let modal_text = snapshot_text(&modal_snap);
+        let modal_text = modal_snap.text();
         assert!(modal_text.contains("\"OK\""),
             "MessageBox UIA tree missing OK button. Tree: {}",
             modal_text.chars().take(800).collect::<String>());
@@ -586,7 +440,7 @@ fn harness_wpf_modal_messagebox() {
                 l[s..e].trim().parse::<u64>().ok()
             })
             .expect("Cancel button element_index not parseable");
-        let _ = tools_call(stdin, stdout, 33, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": modal_wid, "element_index": cancel_idx
         }));
         std::thread::sleep(Duration::from_millis(400));
@@ -597,28 +451,28 @@ fn harness_wpf_modal_messagebox() {
 #[test]
 #[ignore]
 fn harness_wpf_owned_popup() {
-    with_session(|pid, wid, stdin, stdout| {
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "btn-open-owned")
+    with_session(|pid, wid, driver| {
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "btn-open-owned")
             .expect("btn-open-owned not in snapshot");
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx
         }));
         std::thread::sleep(Duration::from_millis(500));
 
-        let resp = tools_call(stdin, stdout, 31, "list_windows", serde_json::json!({
+        let resp = driver.call("list_windows", serde_json::json!({
             "pid": pid as i64
         }));
-        let windows = resp["result"]["structuredContent"]["windows"].as_array().unwrap();
+        let windows = resp.structured()["windows"].as_array().unwrap();
         let owned = windows.iter()
             .find(|w| w["title"].as_str().map(|t| t.contains("Harness Owned Popup")).unwrap_or(false))
             .expect("Harness Owned Popup window not found in list_windows");
         let owned_wid = owned["window_id"].as_u64().unwrap();
 
-        let owned_snap = tools_call(stdin, stdout, 32, "get_window_state", serde_json::json!({
-            "pid": pid as i64, "window_id": owned_wid, "capture_mode": "tree"
+        let owned_snap = driver.call("get_window_state", serde_json::json!({
+            "pid": pid as i64, "window_id": owned_wid, "capture_mode": "ax"
         }));
-        let owned_text = snapshot_text(&owned_snap);
+        let owned_text = owned_snap.text();
         assert!(owned_text.contains("OWNED_POPUP_MARKER_v1"),
             "owned popup body marker missing. Tree: {}",
             owned_text.chars().take(600).collect::<String>());
@@ -629,19 +483,19 @@ fn harness_wpf_owned_popup() {
 #[test]
 #[ignore]
 fn harness_wpf_layered_popup_capture() {
-    with_session(|pid, wid, stdin, stdout| {
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "btn-open-layered")
+    with_session(|pid, wid, driver| {
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "btn-open-layered")
             .expect("btn-open-layered not in snapshot");
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx
         }));
         std::thread::sleep(Duration::from_millis(600));
 
-        let resp = tools_call(stdin, stdout, 31, "list_windows", serde_json::json!({
+        let resp = driver.call("list_windows", serde_json::json!({
             "pid": pid as i64
         }));
-        let windows = resp["result"]["structuredContent"]["windows"].as_array().unwrap();
+        let windows = resp.structured()["windows"].as_array().unwrap();
         let layered = windows.iter()
             .find(|w| w["title"].as_str().map(|t| t.contains("Harness Layered Popup")).unwrap_or(false))
             .expect("Harness Layered Popup window not found");
@@ -650,10 +504,10 @@ fn harness_wpf_layered_popup_capture() {
         // Capture-only path — assert the screenshot is not all-black, which
         // is the failure mode for PrintWindow against layered windows
         // without the WGC fallback.
-        let cap = tools_call(stdin, stdout, 32, "get_window_state", serde_json::json!({
+        let cap = driver.call("get_window_state", serde_json::json!({
             "pid": pid as i64, "window_id": layered_wid, "capture_mode": "vision"
         }));
-        let img_b64 = cap["result"]["content"].as_array()
+        let img_b64 = cap.raw["result"]["content"].as_array()
             .and_then(|arr| arr.iter().find_map(|c| {
                 if c["type"] == "image" { c["data"].as_str() } else { None }
             }))
@@ -689,35 +543,33 @@ fn harness_wpf_slider_drag() {
     // bring_to_front first to make the harness foreground (via
     // AttachThreadInput), then SendInput's own SetForegroundWindow is a
     // no-op success.
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let pre = snapshot_elements(stdin, stdout, pid, wid);
-        assert!(snapshot_text(&pre).contains("slider_value=0"),
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let pre = snapshot(driver, pid, wid);
+        assert!(pre.text().contains("slider_value=0"),
             "initial slider_value=0 missing");
 
-        let resp = tools_call(stdin, stdout, 30, "drag", serde_json::json!({
+        let resp = driver.call("drag", serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            // drag screen-coords path: send_drag_synthesized takes screen
-            // coords directly. The harness window is centered at
-            // (517, 66) with the slider track at client (50-330, 275);
-            // convert to screen via ClientToScreen approximation by
-            // offsetting by window position + non-client chrome
-            // (title bar + border ~30,8). screen coords here are
-            // re-derived in window-local form by the tool's existing
-            // ClientToScreen step.
-            "from_x": 50.0, "from_y": 275.0,
-            "to_x": 330.0,  "to_y": 275.0,
+            // Window-local coords along the slider TRACK. The track row sits at
+            // window-local y≈304 (verified on the VM: y=275 landed ~29px above
+            // it, on empty GroupBox space, so the thumb never moved); the thumb
+            // rests at the left (x≈44) at value=0. Dragging left→right advances
+            // the value. (TODO: derive these from the `sld-value` element frame
+            // in get_window_state for DPI/placement independence.)
+            "from_x": 44.0, "from_y": 304.0,
+            "to_x": 330.0, "to_y": 304.0,
             "duration_ms": 700, "steps": 40,
             "dispatch": "foreground"
         }));
-        let msg = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+        let msg = resp.text();
         println!("drag slider (foreground): {msg}");
         assert!(msg.starts_with("✅"),
             "drag tool returned non-success: {msg}");
         std::thread::sleep(Duration::from_millis(500));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         let advanced = text.lines().any(|l|
             l.contains("slider_value=") && !l.contains("slider_value=0\""));
         assert!(advanced,
@@ -734,21 +586,21 @@ fn harness_wpf_slider_increase_large() {
     // Companion to slider_drag — exercises UIA Invoke on the Slider's
     // internal IncreaseLarge "page-up" button. Doesn't depend on screen
     // coords, so it's the more robust slider integration test.
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "IncreaseLarge")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "IncreaseLarge")
             .expect("slider IncreaseLarge button not in snapshot");
         for i in 0..3 {
-            let resp = tools_call(stdin, stdout, 30 + i, "click", serde_json::json!({
+            let resp = driver.call("click", serde_json::json!({
                 "pid": pid as i64, "window_id": wid, "element_index": idx
             }));
-            println!("invoke IncreaseLarge #{i}: {}", resp["result"]["content"][0]["text"]);
+            println!("invoke IncreaseLarge #{i}: {}", resp.text());
             std::thread::sleep(Duration::from_millis(150));
         }
         std::thread::sleep(Duration::from_millis(300));
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        let text = snapshot_text(&post);
+        let post = snapshot(driver, pid, wid);
+        let text = post.text();
         let advanced = text.lines().any(|l|
             l.contains("slider_value=") && !l.contains("slider_value=0\""));
         assert!(advanced, "slider IncreaseLarge invokes did not advance value. Lines: {}",
@@ -760,26 +612,26 @@ fn harness_wpf_slider_increase_large() {
 #[test]
 #[ignore]
 fn harness_wpf_checkbox_toggle() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "chk-agreed")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "chk-agreed")
             .expect("chk-agreed missing");
         // CheckBox exposes UIA TogglePattern (actions=[toggle]), not Invoke.
         // cua-driver's click tool tries UIA Invoke first; for elements that
         // don't support it the PostMessage fallback path runs. Use
         // dispatch:"foreground" to land a SendInput click that WPF
         // recognises as a real user click and processes through Toggle.
-        let resp = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let resp = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "dispatch": "foreground"
         }));
-        println!("click chk-agreed: {}", resp["result"]["content"][0]["text"]);
+        println!("click chk-agreed: {}", resp.text());
         std::thread::sleep(Duration::from_millis(400));
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        assert!(snapshot_text(&post).contains("agreed=True"),
+        let post = snapshot(driver, pid, wid);
+        assert!(post.text().contains("agreed=True"),
             "checkbox didn't toggle: {}",
-            snapshot_text(&post).lines().filter(|l| l.contains("agreed=")).collect::<Vec<_>>().join(" / "));
+            post.text().lines().filter(|l| l.contains("agreed=")).collect::<Vec<_>>().join(" / "));
         println!("✅ harness_wpf_checkbox_toggle: agreed=True");
     });
 }
@@ -787,20 +639,20 @@ fn harness_wpf_checkbox_toggle() {
 #[test]
 #[ignore]
 fn harness_wpf_radio_select() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "rdo-high")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "rdo-high")
             .expect("rdo-high missing");
         // RadioButton exposes SelectionItem pattern (actions=[select]).
         // Same dispatch:foreground rationale as the checkbox test.
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "dispatch": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(400));
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        assert!(snapshot_text(&post).contains("prio=High"),
+        let post = snapshot(driver, pid, wid);
+        assert!(post.text().contains("prio=High"),
             "radio didn't switch to High");
         println!("✅ harness_wpf_radio_select: prio=High");
     });
@@ -809,34 +661,34 @@ fn harness_wpf_radio_select() {
 #[test]
 #[ignore]
 fn harness_wpf_combo_select() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let combo_idx = find_element_index_by_aid(&snap, "cbo-color")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let combo_idx = ax::element_index_by_id(snap.text(), "cbo-color")
             .expect("cbo-color missing");
         // WPF ComboBox UIA peer surfaces ExpandCollapsePattern (actions=[expand])
         // but not ValuePattern — set_value at the parent is a no-op. Standard
         // recipe: invoke the combo to expand the dropdown, re-snapshot so the
         // item AIDs land in the element cache, then click the target item.
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
             "dispatch": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(500));
 
-        let snap2 = snapshot_elements(stdin, stdout, pid, wid);
-        let item_idx = find_element_index_by_aid(&snap2, "cbo-item-orange")
+        let snap2 = snapshot(driver, pid, wid);
+        let item_idx = ax::element_index_by_id(snap2.text(), "cbo-item-orange")
             .expect("cbo-item-orange missing after expand");
-        let _ = tools_call(stdin, stdout, 31, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": item_idx,
             "dispatch": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(500));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        assert!(snapshot_text(&post).contains("color=orange"),
+        let post = snapshot(driver, pid, wid);
+        assert!(post.text().contains("color=orange"),
             "combo didn't switch to orange: {}",
-            snapshot_text(&post).lines().filter(|l| l.contains("color=")).collect::<Vec<_>>().join(" / "));
+            post.text().lines().filter(|l| l.contains("color=")).collect::<Vec<_>>().join(" / "));
         println!("✅ harness_wpf_combo_select: color=orange");
     });
 }
@@ -844,20 +696,20 @@ fn harness_wpf_combo_select() {
 #[test]
 #[ignore]
 fn harness_wpf_listbox_select() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let idx = find_element_index_by_aid(&snap, "lst-cherry")
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
+        let snap = snapshot(driver, pid, wid);
+        let idx = ax::element_index_by_id(snap.text(), "lst-cherry")
             .expect("lst-cherry missing");
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": idx,
             "dispatch": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(400));
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        assert!(snapshot_text(&post).contains("selected=cherry"),
+        let post = snapshot(driver, pid, wid);
+        assert!(post.text().contains("selected=cherry"),
             "list didn't select cherry: {}",
-            snapshot_text(&post).lines().filter(|l| l.contains("selected=")).collect::<Vec<_>>().join(" / "));
+            post.text().lines().filter(|l| l.contains("selected=")).collect::<Vec<_>>().join(" / "));
         println!("✅ harness_wpf_listbox_select: selected=cherry");
     });
 }
@@ -865,13 +717,13 @@ fn harness_wpf_listbox_select() {
 #[test]
 #[ignore]
 fn harness_wpf_menu_invoke() {
-    with_session(|pid, wid, stdin, stdout| {
-        focus_harness(stdin, stdout, pid, wid);
+    with_session(|pid, wid, driver| {
+        focus_harness(driver, pid, wid);
         // Expand File menu first (UIA expand pattern on MenuItem)
-        let snap = snapshot_elements(stdin, stdout, pid, wid);
-        let file_idx = find_element_index_by_aid(&snap, "menu-file")
+        let snap = snapshot(driver, pid, wid);
+        let file_idx = ax::element_index_by_id(snap.text(), "menu-file")
             .expect("menu-file missing");
-        let _ = tools_call(stdin, stdout, 30, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": file_idx,
             "dispatch": "foreground"
         }));
@@ -879,19 +731,19 @@ fn harness_wpf_menu_invoke() {
 
         // Re-snapshot so menu-file-new is in the cache (it materialized
         // when the menu expanded).
-        let snap2 = snapshot_elements(stdin, stdout, pid, wid);
-        let new_idx = find_element_index_by_aid(&snap2, "menu-file-new")
+        let snap2 = snapshot(driver, pid, wid);
+        let new_idx = ax::element_index_by_id(snap2.text(), "menu-file-new")
             .expect("menu-file-new missing after expand");
-        let _ = tools_call(stdin, stdout, 31, "click", serde_json::json!({
+        let _ = driver.call("click", serde_json::json!({
             "pid": pid as i64, "window_id": wid, "element_index": new_idx,
             "dispatch": "foreground"
         }));
         std::thread::sleep(Duration::from_millis(500));
 
-        let post = snapshot_elements(stdin, stdout, pid, wid);
-        assert!(snapshot_text(&post).contains("menu_action=file_new"),
+        let post = snapshot(driver, pid, wid);
+        assert!(post.text().contains("menu_action=file_new"),
             "File>New didn't invoke: {}",
-            snapshot_text(&post).lines().filter(|l| l.contains("menu_action=")).collect::<Vec<_>>().join(" / "));
+            post.text().lines().filter(|l| l.contains("menu_action=")).collect::<Vec<_>>().join(" / "));
         println!("✅ harness_wpf_menu_invoke: menu_action=file_new");
     });
 }

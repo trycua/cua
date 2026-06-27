@@ -1,0 +1,22 @@
+[package]
+name = "cua-driver-testkit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared harness for cua-driver integration tests: MCP/CLI transports, child reaping, path + response helpers. Dev-dependency only — never shipped."
+publish = false
+
+[dependencies]
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    # Job Object: assign every spawned test child to a KILL_ON_JOB_CLOSE job so
+    # the OS terminates the whole tree when the test process dies for ANY reason.
+    "Win32_System_JobObjects",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }

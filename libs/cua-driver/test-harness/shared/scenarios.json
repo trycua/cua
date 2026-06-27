@@ -384,5 +384,57 @@
         "controls": { "exit_button_aid": "btn-exit" }
       }
     ]
+  },
+  "gtk3": {
+    "process_name": "CuaTestHarness.Gtk3",
+    "exe_relative_path": "test-apps/harness-gtk3/CuaTestHarness.Gtk3",
+    "main_window": {
+      "title": "CuaTestHarness GTK3"
+    },
+    "id_contract": "atspi_accessible_name",
+    "id_contract_note": "Linux AT-SPI exposes element NAME (rendered as `[idx] role \"name\"`), not an AutomationId/AX-id. Each actionable control sets its accessible NAME to the aid below; marker labels carry their marker text. Tests match on name via ax::element_index_containing, not ax::has_id.",
+    "scenarios": [
+      {
+        "id": "counter",
+        "kind": "click_counter",
+        "controls": {
+          "increment_button_aid": "btn-increment",
+          "counter_label_text": "counter=",
+          "reset_button_aid": "btn-reset"
+        }
+      },
+      {
+        "id": "text_body",
+        "kind": "static_text",
+        "controls": {
+          "text_block_marker": "HARNESS_TEXT_MARKER_v1"
+        },
+        "expected_text_marker": "HARNESS_TEXT_MARKER_v1"
+      },
+      {
+        "id": "text_input",
+        "kind": "text_box_mirror",
+        "controls": {
+          "textbox_aid": "txt-input",
+          "mirror_label_prefix": "mirror="
+        }
+      },
+      {
+        "id": "popover",
+        "kind": "gtk_popover",
+        "description": "GtkPopover \u2014 GTK analogue of SwiftUI .popover() / WinUI3 CommandBarFlyout. Tests popover enumeration via AT-SPI.",
+        "controls": {
+          "open_button_aid": "btn-open-popover",
+          "expected_marker": "POPOVER_MARKER_v1"
+        }
+      },
+      {
+        "id": "exit",
+        "kind": "exit_button",
+        "controls": {
+          "exit_button_aid": "btn-exit"
+        }
+      }
+    ]
   }
 }

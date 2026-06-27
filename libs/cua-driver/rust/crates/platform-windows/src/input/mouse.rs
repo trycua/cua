@@ -10,9 +10,10 @@ use std::time::Duration;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
+    INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
+    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
+    MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
@@ -593,4 +594,104 @@ pub fn send_drag_synthesized(
     }
 
     Ok(())
+}
+
+/// Standard wheel notch delta. A `mouseData` value of `±WHEEL_DELTA` is one
+/// detent of the physical mouse wheel.
+const WHEEL_DELTA: i32 = 120;
+
+/// Compute the `MOUSEINPUT::mouseData` value for a wheel event of `ticks`
+/// detents. Positive ticks = wheel forward/up (vertical) or right (horizontal);
+/// negative = down / left. `mouseData` is a `u32` field carrying a signed
+/// 32-bit delta, so we compute as `i32` then bit-cast to `u32` (this is what
+/// the Win32 docs mean by "the value is a multiple of WHEEL_DELTA").
+///
+/// Factored out of [`send_wheel_synthesized`] so the sign/magnitude encoding is
+/// unit-testable without a live display / `SendInput`.
+fn wheel_mouse_data(ticks: i32) -> u32 {
+    (WHEEL_DELTA * ticks) as u32
+}
+
+/// Synthesize a single mouse-wheel event at screen coordinates `(sx, sy)` via
+/// `SendInput`.
+///
+/// The OS routes wheel input to the window **under the cursor**, not the
+/// foreground window, so we `SetCursorPos(sx, sy)` first to place the wheel
+/// over the intended target. `ticks` encodes both magnitude and direction:
+/// positive scrolls up (vertical) / right (horizontal), negative scrolls down /
+/// left — matching the `MOUSEEVENTF_WHEEL` / `MOUSEEVENTF_HWHEEL` convention
+/// where `mouseData = WHEEL_DELTA * ticks`.
+///
+/// Unlike [`send_click_synthesized`] this does NOT do a foreground swap: wheel
+/// delivery follows the cursor, so positioning the cursor is sufficient. The
+/// cursor is restored to its previous position afterward.
+pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) -> Result<()> {
+    let flag = if horizontal { MOUSEEVENTF_HWHEEL } else { MOUSEEVENTF_WHEEL };
+    let mouse_data = wheel_mouse_data(ticks);
+
+    let wheel_input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: mouse_data,
+                dwFlags: flag,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+
+    unsafe {
+        let mut prev_cursor = POINT::default();
+        let _ = GetCursorPos(&mut prev_cursor);
+
+        // Wheel routes to the window under the cursor — place it on the target.
+        let _ = SetCursorPos(sx, sy);
+
+        let events = [wheel_input];
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != events.len() {
+            let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+            bail!("SendInput inserted {sent}/{} wheel events", events.len());
+        }
+
+        // Brief settle, then restore the cursor.
+        sleep(Duration::from_millis(20));
+        let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod wheel_tests {
+    use super::{wheel_mouse_data, WHEEL_DELTA};
+
+    #[test]
+    fn wheel_data_up_is_positive_one_notch() {
+        // +1 tick (up / right) → +WHEEL_DELTA, bit-cast to u32.
+        assert_eq!(wheel_mouse_data(1), WHEEL_DELTA as u32);
+        assert_eq!(wheel_mouse_data(1), 120u32);
+    }
+
+    #[test]
+    fn wheel_data_down_is_negative_one_notch() {
+        // -1 tick (down / left) → -WHEEL_DELTA, bit-cast: 0xFFFFFF88.
+        assert_eq!(wheel_mouse_data(-1), (-WHEEL_DELTA) as u32);
+        assert_eq!(wheel_mouse_data(-1), 0xFFFF_FF88);
+    }
+
+    #[test]
+    fn wheel_data_scales_with_ticks() {
+        assert_eq!(wheel_mouse_data(3), (3 * WHEEL_DELTA) as u32);
+        assert_eq!(wheel_mouse_data(3), 360u32);
+        assert_eq!(wheel_mouse_data(-3) as i32, -360);
+    }
+
+    #[test]
+    fn wheel_data_zero_is_zero() {
+        assert_eq!(wheel_mouse_data(0), 0);
+    }
 }

@@ -7,19 +7,15 @@
 //! `cua-driver-core::element_token` and the per-platform tool modules —
 //! this file is only for what's visible across the JSON-RPC boundary.
 
+// element_token resolution is exercised on macOS/Linux only; gate the whole
+// file (helpers included) so Windows excludes it instead of warning about the
+// then-unused tools/list helpers.
+#![cfg(any(target_os = "macos", target_os = "linux"))]
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-fn binary_path() -> std::path::PathBuf {
-    // CARGO_MANIFEST_DIR is crates/cua-driver; workspace root is two
-    // levels up.
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR not set");
-    std::path::PathBuf::from(manifest)
-        .parent().unwrap()  // crates/
-        .parent().unwrap()  // workspace root (cua-driver-rs/)
-        .join("target/debug/cua-driver")
-}
+use cua_driver_testkit::driver_binary;
 
 fn send_request(stdin: &mut impl Write, request: &serde_json::Value) {
     let line = serde_json::to_string(request).unwrap();
@@ -36,7 +32,7 @@ fn read_response(reader: &mut impl BufRead) -> serde_json::Value {
 /// `tools/list` response. Skips the test silently if the binary hasn't
 /// been built (CI builds it separately).
 fn fetch_tools_list() -> Option<serde_json::Value> {
-    let binary = binary_path();
+    let binary = driver_binary();
     if !binary.exists() {
         eprintln!("Binary not found at {:?} — run `cargo build` first", binary);
         return None;

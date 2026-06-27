@@ -16,6 +16,7 @@ on:
           - pypi/cli
           - pypi/computer
           - pypi/computer-server
+          - pypi/cloud
           - pypi/core
           - pypi/mcp-server
           - pypi/sandbox
@@ -88,6 +89,10 @@ jobs:
               ;;
             "pypi/computer")
               echo "directory=libs/python/computer" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/cloud")
+              echo "directory=libs/python/cua-cloud" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/computer-server")
@@ -355,6 +360,15 @@ jobs:
           cd libs/python/computer
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Computer version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped cloud version
+        if: ${{ inputs.service == 'pypi/cloud' }}
+        id: cloud_version
+        run: |
+          cd libs/python/cua-cloud
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Cloud version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped computer-server version

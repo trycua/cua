@@ -26,64 +26,25 @@
 
 #![cfg(target_os = "macos")]
 
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use cua_driver_testkit::ax::{element_index_by_id, has_id, looks_empty};
+use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
+
 // ── paths ────────────────────────────────────────────────────────────────────
-
-fn workspace_root() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    // crates/cua-driver -> rust
-    PathBuf::from(manifest).parent().unwrap().parent().unwrap().to_owned()
-}
-
-fn driver_binary() -> PathBuf {
-    let root = workspace_root();
-    let release = root.join("target/release/cua-driver");
-    if release.exists() { return release; }
-    root.join("target/debug/cua-driver")
-}
 
 fn harness_app() -> PathBuf {
     if let Ok(p) = std::env::var("HARNESS_APPKIT_APP") {
         let pb = PathBuf::from(p);
         if pb.exists() { return pb; }
     }
-    workspace_root().join("test-apps/harness-appkit/CuaTestHarness.AppKit.app")
+    cua_driver_testkit::harness_app("harness-appkit", "CuaTestHarness.AppKit.app")
 }
 
 fn harness_exe() -> PathBuf {
     harness_app().join("Contents/MacOS/CuaTestHarness.AppKit")
-}
-
-// ── JSON-RPC ────────────────────────────────────────────────────────────────
-
-fn send(stdin: &mut ChildStdin, req: serde_json::Value) {
-    writeln!(stdin, "{}", serde_json::to_string(&req).unwrap()).unwrap();
-}
-
-fn recv(stdout: &mut BufReader<&mut ChildStdout>) -> serde_json::Value {
-    let mut line = String::new();
-    stdout.read_line(&mut line).expect("read response");
-    serde_json::from_str(line.trim()).expect("parse json")
-}
-
-fn init(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>) {
-    send(stdin, serde_json::json!({
-        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
-    }));
-    let _ = recv(stdout);
-}
-
-fn tools_call(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-              id: u32, name: &str, args: serde_json::Value) -> serde_json::Value {
-    send(stdin, serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": "tools/call",
-        "params": { "name": name, "arguments": args }
-    }));
-    recv(stdout)
 }
 
 // ── harness fixture ──────────────────────────────────────────────────────────
@@ -124,63 +85,13 @@ impl Drop for Harness {
 
 // ── window / element helpers ─────────────────────────────────────────────────
 
-fn find_harness_window(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-                       pid: u32, title_substr: &str) -> Option<(u64, String)> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(12);
-    let mut id = 10u32;
-    loop {
-        let resp = tools_call(stdin, stdout, id, "list_windows",
-            serde_json::json!({ "pid": pid as i64 }));
-        id = id.wrapping_add(1);
-        if let Some(wins) = resp["result"]["structuredContent"]["windows"].as_array() {
-            for w in wins {
-                if w["pid"].as_u64() != Some(pid as u64) { continue; }
-                let title = w["title"].as_str().unwrap_or("");
-                if title.contains(title_substr) {
-                    return Some((w["window_id"].as_u64()?, title.to_string()));
-                }
-            }
-        }
-        if std::time::Instant::now() >= deadline { return None; }
-        std::thread::sleep(Duration::from_millis(150));
-    }
-}
-
-fn snapshot_elements(stdin: &mut ChildStdin, stdout: &mut BufReader<&mut ChildStdout>,
-                     pid: u32, window_id: u64) -> serde_json::Value {
-    tools_call(stdin, stdout, 20, "get_window_state",
+fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolResponse {
+    driver.call("get_window_state",
         serde_json::json!({
             "pid": pid as i64,
             "window_id": window_id,
-            "capture_mode": "tree"
+            "capture_mode": "ax"
         }))
-}
-
-fn snapshot_text(snapshot: &serde_json::Value) -> &str {
-    snapshot["result"]["content"][0]["text"].as_str().unwrap_or("")
-}
-
-fn elements_have_aid(snapshot: &serde_json::Value, aid: &str) -> bool {
-    snapshot_text(snapshot).contains(&format!("id={aid}"))
-}
-
-fn find_element_index_by_aid(snapshot: &serde_json::Value, aid: &str) -> Option<u64> {
-    let needle = format!("id={aid}");
-    for line in snapshot_text(snapshot).lines() {
-        if !line.contains(&needle) { continue; }
-        let start = line.find('[')? + 1;
-        let end = line[start..].find(']')? + start;
-        return line[start..end].trim().parse().ok();
-    }
-    None
-}
-
-fn ax_tree_looks_empty(snapshot: &serde_json::Value) -> bool {
-    let txt = snapshot_text(snapshot);
-    let line_count = txt.lines().count();
-    txt.is_empty() || line_count <= 2 ||
-        txt.contains("Accessibility permission required") ||
-        txt.contains("TCC permission")
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
@@ -188,42 +99,27 @@ fn ax_tree_looks_empty(snapshot: &serde_json::Value) -> bool {
 #[test]
 #[ignore]
 fn harness_appkit_smoke() {
-    let driver = driver_binary();
-    if !driver.exists() {
-        eprintln!("cua-driver not built — run `cargo build` first");
-        return;
-    }
+    let Some(mut driver) = McpDriver::spawn() else { return };
     let harness = match Harness::launch() {
         Some(h) => h,
         None => { eprintln!("harness not built — skipping"); return; }
     };
     println!("harness pid={}", harness.pid);
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-
-    init(&mut stdin, &mut stdout);
-
-    let (wid, title) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
-                                           "CuaTestHarness AppKit")
+    let (wid, title) = driver.find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found via list_windows");
     println!("main window: id={wid} title={title:?}");
 
-    let snap = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
+    let snap = snapshot_elements(&mut driver, harness.pid, wid);
 
-    if ax_tree_looks_empty(&snap) {
+    if looks_empty(snap.text()) {
         eprintln!("AX tree empty — likely TCC Accessibility not granted to the test runner. \
                    Skipping element-assertion phase. To enable: System Settings → Privacy & \
                    Security → Accessibility → add the binary running `cargo test`.");
-        let _ = child.kill();
         return;
     }
 
-    let text = snapshot_text(&snap);
+    let text = snap.text();
     println!("snapshot:\n{text}");
 
     // AppKit AX quirk (mirrors the WPF behavior documented in
@@ -240,7 +136,7 @@ fn harness_appkit_smoke() {
         "menu-test-item",              // NSMenuItem (Mac-specific)
         "btn-exit",
     ] {
-        assert!(elements_have_aid(&snap, aid),
+        assert!(has_id(snap.text(), aid),
                 "missing AX identifier {aid} in AppKit snapshot");
     }
 
@@ -251,8 +147,6 @@ fn harness_appkit_smoke() {
     // AXStaticText nodes — assert on their starting text instead of ids.
     assert!(text.contains("L=0 R=0 D=0"), "click_count label missing");
     assert!(text.contains("(none)"),       "last_action label missing");
-
-    let _ = child.kill();
 }
 
 /// text_input: type_text into the NSTextField, verify the mirror label
@@ -261,49 +155,37 @@ fn harness_appkit_smoke() {
 #[test]
 #[ignore]
 fn harness_appkit_text_input() {
-    let driver = driver_binary();
-    if !driver.exists() { eprintln!("cua-driver not built"); return; }
+    let Some(mut driver) = McpDriver::spawn() else { return };
     let harness = match Harness::launch() {
         Some(h) => h,
         None => { eprintln!("harness not built — skipping"); return; }
     };
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-
-    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
-                                       "CuaTestHarness AppKit")
+    let (wid, _) = driver.find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    if ax_tree_looks_empty(&snap_pre) {
-        eprintln!("AX empty — TCC not granted; skipping"); let _ = child.kill(); return;
+    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
+    if looks_empty(snap_pre.text()) {
+        eprintln!("AX empty — TCC not granted; skipping"); return;
     }
-    let idx = find_element_index_by_aid(&snap_pre, "txt-input")
+    let idx = element_index_by_id(snap_pre.text(), "txt-input")
         .expect("txt-input element_index not found");
 
     // set_value via AX is the deterministic background path; type_text would
     // also work but races with cursor focus on cold-launched windows.
-    let resp = tools_call(&mut stdin, &mut stdout, 40, "set_value",
+    let resp = driver.call("set_value",
         serde_json::json!({
             "pid": harness.pid as i64,
             "window_id": wid,
             "element_index": idx,
             "value": "hello-cua"
         }));
-    println!("set_value resp: {resp}");
+    println!("set_value resp: {}", resp.text());
 
     std::thread::sleep(Duration::from_millis(250));
-    let snap_post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let post_text = snapshot_text(&snap_post).to_owned();
+    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
+    let post_text = snap_post.text().to_owned();
     assert!(post_text.contains("hello-cua"),
             "text_input value did not propagate to mirror; snapshot:\n{post_text}");
-
-    let _ = child.kill();
 }
 
 /// type_text: synthesize a keystroke into the NSTextField (CGEvent
@@ -312,37 +194,27 @@ fn harness_appkit_text_input() {
 #[test]
 #[ignore]
 fn harness_appkit_type_text_keystroke() {
-    let driver = driver_binary();
-    if !driver.exists() { eprintln!("cua-driver not built"); return; }
+    let Some(mut driver) = McpDriver::spawn() else { return };
     let harness = match Harness::launch() {
         Some(h) => h,
         None => { eprintln!("harness not built — skipping"); return; }
     };
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-
-    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
-                                       "CuaTestHarness AppKit")
+    let (wid, _) = driver.find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    if ax_tree_looks_empty(&snap_pre) {
-        eprintln!("AX empty — TCC not granted; skipping"); let _ = child.kill(); return;
+    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
+    if looks_empty(snap_pre.text()) {
+        eprintln!("AX empty — TCC not granted; skipping"); return;
     }
-    let idx: u64 = if let Some(i) = find_element_index_by_aid(&snap_pre, "txt-input") {
+    let idx: u64 = if let Some(i) = element_index_by_id(snap_pre.text(), "txt-input") {
         i
     } else {
-        eprintln!("txt-input not found; skipping"); let _ = child.kill(); return;
+        eprintln!("txt-input not found; skipping"); return;
     };
 
     // Focus the field first so the keystrokes land in it. AX press on
     // a text field has the side effect of giving it keyboard focus.
-    let _ = tools_call(&mut stdin, &mut stdout, 60, "click",
+    let _ = driver.call("click",
         serde_json::json!({
             "pid": harness.pid as i64, "window_id": wid,
             "element_index": idx, "action": "press"
@@ -351,20 +223,18 @@ fn harness_appkit_type_text_keystroke() {
 
     // CGEvent-based type_text against the focused field (does NOT use
     // set_value — exercises the keystroke synthesis chain).
-    let resp = tools_call(&mut stdin, &mut stdout, 61, "type_text",
+    let resp = driver.call("type_text",
         serde_json::json!({
             "pid": harness.pid as i64, "window_id": wid,
             "text": "kbd-cua"
         }));
-    println!("type_text resp: {resp}");
+    println!("type_text resp: {}", resp.text());
     std::thread::sleep(Duration::from_millis(250));
 
-    let snap_post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let post = snapshot_text(&snap_post).to_owned();
+    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
+    let post = snap_post.text().to_owned();
     assert!(post.contains("kbd-cua"),
             "type_text keystroke did not land in the text field; snapshot:\n{post}");
-
-    let _ = child.kill();
 }
 
 /// scroll: scroll the NSScrollView downward, verify the offset label
@@ -391,32 +261,22 @@ fn harness_appkit_type_text_keystroke() {
 #[ignore]
 #[should_panic(expected = "scroll offset label did not advance from 0")]
 fn harness_appkit_scroll_expected_fail() {
-    let driver = driver_binary();
-    if !driver.exists() { eprintln!("cua-driver not built"); return; }
+    let Some(mut driver) = McpDriver::spawn() else { return };
     let harness = match Harness::launch() {
         Some(h) => h,
         None => { eprintln!("harness not built — skipping"); return; }
     };
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-
-    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
-                                       "CuaTestHarness AppKit")
+    let (wid, _) = driver.find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    if ax_tree_looks_empty(&snap_pre) {
-        eprintln!("AX empty — TCC not granted; skipping"); let _ = child.kill(); return;
+    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
+    if looks_empty(snap_pre.text()) {
+        eprintln!("AX empty — TCC not granted; skipping"); return;
     }
     // Pre-condition: offset label should be at "0" (the controller
     // initial state). The label text appears as an AXStaticText leaf
     // immediately after the AXTextArea body in the rendered tree.
-    let pre = snapshot_text(&snap_pre).to_owned();
+    let pre = snap_pre.text().to_owned();
     let pre_has_zero_offset = pre.lines()
         .any(|l| l.trim() == "- AXStaticText = \"0\"");
     assert!(pre_has_zero_offset, "scroll offset label not at 0 pre-scroll");
@@ -424,18 +284,18 @@ fn harness_appkit_scroll_expected_fail() {
     // Scroll the scroll view down a few ticks. The scroll tool takes
     // window-local pixel coords; pick a point inside the scroller
     // (the scroll target sits roughly mid-window).
-    let resp = tools_call(&mut stdin, &mut stdout, 70, "scroll",
+    let resp = driver.call("scroll",
         serde_json::json!({
             "pid": harness.pid as i64, "window_id": wid,
             "x": 180, "y": 450,            // inside the scroll view
             "direction": "down",
             "amount": 5
         }));
-    println!("scroll resp: {resp}");
+    println!("scroll resp: {}", resp.text());
     std::thread::sleep(Duration::from_millis(250));
 
-    let snap_post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let post = snapshot_text(&snap_post).to_owned();
+    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
+    let post = snap_post.text().to_owned();
     // After scroll, the offset label should no longer be "0" — any
     // positive integer indicates the bounds-change notification fired
     // and the label updated. We don't pin a specific value (scroll
@@ -451,8 +311,6 @@ fn harness_appkit_scroll_expected_fail() {
         "scroll offset label did not advance from 0; pre: {} \"0\" leaves; post: {} \"0\" leaves",
         pre_count, unchanged_count
     );
-
-    let _ = child.kill();
 }
 
 /// counter: click the increment button via element_index, verify the
@@ -460,52 +318,38 @@ fn harness_appkit_scroll_expected_fail() {
 #[test]
 #[ignore]
 fn harness_appkit_counter() {
-    let driver = driver_binary();
-    if !driver.exists() {
-        eprintln!("cua-driver not built — skipping"); return;
-    }
+    let Some(mut driver) = McpDriver::spawn() else { return };
     let harness = match Harness::launch() {
         Some(h) => h,
         None => { eprintln!("harness not built — skipping"); return; }
     };
 
-    let mut child = Command::new(&driver)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().expect("spawn cua-driver");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut raw_stdout = child.stdout.take().unwrap();
-    let mut stdout = BufReader::new(&mut raw_stdout);
-    init(&mut stdin, &mut stdout);
-
-    let (wid, _) = find_harness_window(&mut stdin, &mut stdout, harness.pid,
-                                       "CuaTestHarness AppKit")
+    let (wid, _) = driver.find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("main window not found");
-    let snap_pre = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    if ax_tree_looks_empty(&snap_pre) {
-        eprintln!("AX empty — TCC not granted; skipping"); let _ = child.kill(); return;
+    let snap_pre = snapshot_elements(&mut driver, harness.pid, wid);
+    if looks_empty(snap_pre.text()) {
+        eprintln!("AX empty — TCC not granted; skipping"); return;
     }
-    let pre_text = snapshot_text(&snap_pre).to_owned();
+    let pre_text = snap_pre.text().to_owned();
     assert!(pre_text.contains("\"0\""), "counter not 0 pre-click; snapshot:\n{pre_text}");
 
-    let idx = find_element_index_by_aid(&snap_pre, "btn-increment")
+    let idx = element_index_by_id(snap_pre.text(), "btn-increment")
         .expect("btn-increment element_index not found");
 
-    let click_resp = tools_call(&mut stdin, &mut stdout, 30, "click",
+    let click_resp = driver.call("click",
         serde_json::json!({
             "pid": harness.pid as i64,
             "window_id": wid,
             "element_index": idx,
             "action": "press"
         }));
-    println!("click resp: {}", click_resp);
+    println!("click resp: {}", click_resp.text());
 
     // Let the AppKit run-loop process the press and refresh the label.
     std::thread::sleep(Duration::from_millis(200));
 
-    let snap_post = snapshot_elements(&mut stdin, &mut stdout, harness.pid, wid);
-    let post_text = snapshot_text(&snap_post).to_owned();
+    let snap_post = snapshot_elements(&mut driver, harness.pid, wid);
+    let post_text = snap_post.text().to_owned();
     assert!(post_text.contains("\"1\""),
             "counter did not advance to 1 after press; post snapshot:\n{post_text}");
-
-    let _ = child.kill();
 }

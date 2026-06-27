@@ -26,6 +26,15 @@ fn def() -> &'static ToolDef {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Name of a single config field to write ({key, value} shape, \
+                        matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. \
+                        Equivalent to passing the field directly."
+                },
+                "value": {
+                    "description": "New value for `key`. JSON type depends on the key."
+                },
                 "capture_mode": {
                     "type": "string",
                     "enum": ["som", "vision", "ax"],
@@ -75,20 +84,36 @@ impl Tool for SetConfigTool {
         // sessions don't clobber each other or the persisted default.
         let session_id = args.opt_str("_session_id");
 
+        // Accept BOTH shapes, matching Windows/Linux + the CLI `config set`:
+        //   - direct fields:  {"capture_scope":"desktop"}
+        //   - {key, value}:    {"key":"capture_scope","value":"desktop"}
+        // A direct field wins if both are somehow present.
+        let kv: Option<(String, Value)> = args
+            .opt_str("key")
+            .and_then(|k| args.get("value").map(|v| (k, v.clone())));
+        let kv_str = |name: &str| -> Option<String> {
+            kv.as_ref()
+                .filter(|(k, _)| k == name)
+                .and_then(|(_, v)| v.as_str().map(str::to_owned))
+        };
+        let kv_u64 = |name: &str| -> Option<u64> {
+            kv.as_ref().filter(|(k, _)| k == name).and_then(|(_, v)| v.as_u64())
+        };
+
         // Validate max_image_dimension up front so both branches share the
         // u32 check and we never half-apply.
-        let max_dim: Option<u32> = match args.opt_u64("max_image_dimension") {
+        let max_dim: Option<u32> = match args.opt_u64("max_image_dimension").or_else(|| kv_u64("max_image_dimension")) {
             Some(dim) => match u32::try_from(dim) {
                 Ok(d) => Some(d),
                 Err(_) => return ToolResult::error(format!("max_image_dimension {dim} exceeds u32::MAX")),
             },
             None => None,
         };
-        let capture_mode = args.opt_str("capture_mode");
+        let capture_mode = args.opt_str("capture_mode").or_else(|| kv_str("capture_mode"));
 
         // Validate capture_scope up front so both branches share the check and
         // we never half-apply an invalid value.
-        let capture_scope = args.opt_str("capture_scope");
+        let capture_scope = args.opt_str("capture_scope").or_else(|| kv_str("capture_scope"));
         if let Some(scope) = capture_scope.as_deref() {
             if scope != "window" && scope != "desktop" {
                 return ToolResult::error(format!(

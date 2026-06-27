@@ -39,6 +39,36 @@ steal foreground, breaking the very contract these bg runs measure).
   the contract), but **GTK ignores synthetic XSendEvent** (`send_event` flag). Documented in
   `platform-linux/src/input/mod.rs`. Real limitation; not a recorder bug.
 
+### Linux / Electron (Chromium, via AT-SPI)
+
+The cross-platform Electron harness runs on Linux straight from `node_modules` (no packaging),
+launched `electron . --no-sandbox --disable-gpu --force-renderer-accessibility` under
+Xvfb + a dbus session. `--force-renderer-accessibility` makes Chromium publish its full
+**web-AX tree on AT-SPI**, which `get_window_state(capture_mode=ax)` reads cleanly (check box
+"I agree", slider, entry "type here", the click-target section, and every
+`agreed=`/`slider_value=`/`last_action=`/`mirror=` status label — 72 elements). Same verifier as
+Windows, but reading AT-SPI text instead of UIA. Recorder: `linux/lin-rec-electron.py`
+(+ `lin-run-electron.sh`, `lin-dashboard-electron.html`, `lin-all-electron.sh`).
+
+| mode | effects landed | landed actions | focus contract (stole) |
+|------|----------------|----------------|------------------------|
+| ax-fg          | 3/6 | click, drag, type | foreground (8 actions) |
+| ax-bg          | 2/6 | click, type       | **3/8 stole** (set_value, type, press-key) |
+| vision-fg      | 1/5 | double-click      | foreground (7 actions) |
+| vision-bg      | 1/5 | double-click      | **6/7 stole** |
+| vision-desktop | 1/2 | click             | foreground (4 actions) |
+
+**Headline — Linux Electron breaks the no-foreground contract, but far less than Windows
+Electron.** Windows Electron stole **7/8** in ax-bg (Chromium self-foregrounds on nearly every
+action). Linux Electron steals **3/8 in ax-bg** — only the keyboard/focus actions (`set_value`,
+`type`, `press-key`) pull the window frontmost via the X focus path; the AX pointer actions
+(click/double/right/drag/scroll) all **held**. In **vision-bg** it steals **6/7** (pixel dispatch
+is coordinate-injection that foregrounds Chromium). Effect coverage mirrors the documented Linux
+synthetic-input limit: AX `click`/`type` land; AX `double_click`/`right_click`/`drag`/`scroll` and
+`set_value` are no-ops on the Chromium controls via AT-SPI, while **pixel** `double_click` *does*
+fire on the click-target (`last_action=double_click`, frame-verified in vision-fg/bg). All 5 modes
+frame-verified; saved as `linux-electron-{ax-fg,ax-bg,vision-fg,vision-bg,vision-desktop}.mp4`.
+
 ## Agent-cursor centering (user-reported)
 The agent cursor lands off-center on the checkbox. Root cause: the WPF checkbox's AX
 BoundingRectangle is the **full-width row** (≈803px), so its center is mid-row. Verified that

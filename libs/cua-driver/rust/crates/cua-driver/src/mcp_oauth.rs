@@ -5,9 +5,10 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io;
-use std::net::SocketAddr;
+use std::io::{self, Write};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -248,6 +249,7 @@ struct JsonStore {
     dir: PathBuf,
     token_ttl_seconds: u64,
     code_ttl_seconds: u64,
+    mutation_lock: Mutex<()>,
 }
 
 impl JsonStore {
@@ -256,7 +258,14 @@ impl JsonStore {
             dir,
             token_ttl_seconds,
             code_ttl_seconds,
+            mutation_lock: Mutex::new(()),
         }
+    }
+
+    fn lock_mutation(&self) -> io::Result<std::sync::MutexGuard<'_, ()>> {
+        self.mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("OAuth state lock poisoned"))
     }
 
     fn clients_path(&self) -> PathBuf {
@@ -292,12 +301,14 @@ impl JsonStore {
     }
 
     fn upsert_client(&self, key: &str, value: Client) -> io::Result<()> {
+        let _guard = self.lock_mutation()?;
         let mut map = self.load_clients()?;
         map.insert(key.to_owned(), value);
         write_json_map(&self.clients_path(), &map)
     }
 
     fn upsert_code(&self, key: &str, value: AuthCode) -> io::Result<()> {
+        let _guard = self.lock_mutation()?;
         let mut map = self.load_codes()?;
         map.insert(key.to_owned(), value);
         write_json_map(&self.codes_path(), &map)
@@ -305,6 +316,7 @@ impl JsonStore {
 
     #[cfg(test)]
     fn upsert_token(&self, key: &str, value: AccessToken) -> io::Result<()> {
+        let _guard = self.lock_mutation()?;
         let mut map = self.load_tokens()?;
         self.prune_tokens(&mut map);
         map.insert(key.to_owned(), value);
@@ -312,6 +324,7 @@ impl JsonStore {
     }
 
     fn upsert_consent(&self, key: &str, value: &PendingAuthorization) -> io::Result<()> {
+        let _guard = self.lock_mutation()?;
         let mut map = self.load_consents()?;
         map.insert(
             key.to_owned(),
@@ -330,6 +343,7 @@ impl JsonStore {
         value: &PendingAuthorization,
         created_at: u64,
     ) -> io::Result<()> {
+        let _guard = self.lock_mutation()?;
         let mut map = self.load_consents()?;
         map.insert(
             key.to_owned(),
@@ -342,6 +356,7 @@ impl JsonStore {
     }
 
     fn consume_consent(&self, key: &str) -> io::Result<Option<PendingAuthorization>> {
+        let _guard = self.lock_mutation()?;
         let mut map = self.load_consents()?;
         self.prune_consents(&mut map);
         let out = map.remove(key).map(|stored| stored.pending);
@@ -356,7 +371,8 @@ impl JsonStore {
 
     fn prune_consents(&self, consents: &mut HashMap<String, StoredConsent>) {
         let now = now_secs();
-        consents.retain(|_, consent| consent.created_at + self.code_ttl_seconds > now);
+        consents
+            .retain(|_, consent| consent.created_at.saturating_add(self.code_ttl_seconds) > now);
     }
 
     fn redeem_code_for_token(
@@ -367,9 +383,11 @@ impl JsonStore {
         verifier: &str,
         resource: Option<&str>,
     ) -> io::Result<TokenRedeem> {
+        let _guard = self.lock_mutation()?;
         let mut codes = self.load_codes()?;
         let mut tokens = self.load_tokens()?;
         self.prune_tokens(&mut tokens);
+        let now = now_secs();
 
         let Some(stored) = codes.get_mut(code) else {
             return Ok(TokenRedeem::InvalidGrant("unknown authorization code"));
@@ -377,7 +395,7 @@ impl JsonStore {
         if stored.used {
             return Ok(TokenRedeem::InvalidGrant("authorization code already used"));
         }
-        if now_secs() > stored.created_at + self.code_ttl_seconds {
+        if now > stored.created_at.saturating_add(self.code_ttl_seconds) {
             return Ok(TokenRedeem::InvalidGrant("authorization code expired"));
         }
         if stored.client_id != client_id {
@@ -416,8 +434,8 @@ impl JsonStore {
                 client_id: client_id.to_owned(),
                 scope: scope.clone(),
                 resource: issued_resource.clone(),
-                created_at: now_secs(),
-                expires_at: now_secs() + self.token_ttl_seconds,
+                created_at: now,
+                expires_at: now.saturating_add(self.token_ttl_seconds),
             },
         );
         write_json_map(&self.tokens_path(), &tokens)?;
@@ -590,7 +608,7 @@ fn handle_register(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
         );
     }
 
-    json_response(
+    no_store_response(json_response(
         201,
         json!({
             "client_id": client_id,
@@ -603,7 +621,7 @@ fn handle_register(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
             "response_types": ["code"],
             "scope": DEFAULT_SCOPE,
         }),
-    )
+    ))
 }
 
 fn handle_authorize_get(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
@@ -631,20 +649,21 @@ fn handle_authorize_get(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse
 fn handle_authorize_post(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
     let form = parse_form(&req.body);
     let decision = form.get("decision").map(String::as_str).unwrap_or("deny");
-    let redirect_uri = form.get("redirect_uri").cloned().unwrap_or_default();
-    let state = form.get("state").cloned().unwrap_or_default();
-    if decision != "allow" {
-        return redirect(&append_query(
-            &redirect_uri,
-            &[("error", "access_denied"), ("state", &state)],
-        ));
-    }
     let nonce = match form.get("consent_nonce").filter(|v| !v.is_empty()) {
         Some(v) => v.to_owned(),
         None => return oauth_error(400, "invalid_request", "missing consent_nonce"),
     };
     match ctx.store.consume_consent(&nonce) {
-        Ok(Some(pending)) if pending.matches_form(&form) => issue_authorization_code(pending, ctx),
+        Ok(Some(pending)) if pending.matches_form(&form) && decision == "allow" => {
+            issue_authorization_code(pending, ctx)
+        }
+        Ok(Some(pending)) if pending.matches_form(&form) => {
+            let mut pairs = vec![("error", "access_denied")];
+            if let Some(state) = pending.state.as_deref() {
+                pairs.push(("state", state));
+            }
+            redirect(&append_query(&pending.redirect_uri, &pairs))
+        }
         Ok(Some(_)) => oauth_error(400, "invalid_request", "consent transaction mismatch"),
         Ok(None) => oauth_error(
             400,
@@ -846,7 +865,7 @@ fn handle_token(req: &HttpRequest, ctx: &HandlerContext) -> HttpResponse {
     if let Some(resource) = token.resource {
         body["resource"] = Value::String(resource);
     }
-    json_response(token.status, body)
+    no_store_response(json_response(token.status, body))
 }
 
 fn authorize_bearer(req: &HttpRequest, ctx: &HandlerContext) -> Result<(), HttpResponse> {
@@ -970,9 +989,41 @@ async fn forward_mcp_request(
             }
         };
         let upstream_status = head.status;
-        let (body, rewrite) = match rewrite_tools_list_response(&upstream_body) {
+        let Some(rewrite_body) = tools_list_body_for_rewrite(&head, upstream_body) else {
+            trace_mcp_error(
+                ctx,
+                &method,
+                &path,
+                json_rpc_method,
+                "upstream_chunked_body_failed",
+            );
+            write_http(
+                client,
+                proxy_error_response("failed to decode chunked MCP upstream response"),
+                false,
+            )
+            .await?;
+            return Ok(());
+        };
+        let (body, rewrite) = match rewrite_tools_list_response(&rewrite_body) {
             Some(body) => (body, true),
-            None => (upstream_body, false),
+            None if is_chunked_response(&head) => {
+                trace_mcp_error(
+                    ctx,
+                    &method,
+                    &path,
+                    json_rpc_method,
+                    "chunked_tools_list_rewrite_failed",
+                );
+                write_http(
+                    client,
+                    proxy_error_response("failed to rewrite chunked MCP tools/list response"),
+                    false,
+                )
+                .await?;
+                return Ok(());
+            }
+            None => (rewrite_body, false),
         };
         trace_tools_list(ctx, upstream_status, rewrite, body.len());
         write_http(client, proxy_http_response(head, body), false).await?;
@@ -1091,11 +1142,21 @@ fn is_tools_list_request(req: &HttpRequest) -> bool {
 
 async fn read_upstream_body(stream: &mut TcpStream) -> anyhow::Result<Vec<u8>> {
     let mut body = Vec::new();
-    tokio::time::timeout(HTTP_BODY_TIMEOUT, stream.read_to_end(&mut body)).await??;
+    let limit = MAX_HTTP_BODY_BYTES + 1;
+    tokio::time::timeout(
+        HTTP_BODY_TIMEOUT,
+        stream.take(limit as u64).read_to_end(&mut body),
+    )
+    .await??;
+    ensure_body_within_limit(&body)?;
+    Ok(body)
+}
+
+fn ensure_body_within_limit(body: &[u8]) -> anyhow::Result<()> {
     if body.len() > MAX_HTTP_BODY_BYTES {
         anyhow::bail!("upstream response body too large");
     }
-    Ok(body)
+    Ok(())
 }
 
 fn proxy_http_response(head: UpstreamResponseHead, body: Vec<u8>) -> HttpResponse {
@@ -1123,6 +1184,72 @@ fn rewrite_tools_list_response(body: &[u8]) -> Option<Vec<u8>> {
     let rewritten: Vec<Value> = tools.iter().map(chatgpt_compat_tool_entry).collect();
     result.insert("tools".to_owned(), Value::Array(rewritten));
     serde_json::to_vec(&json).ok()
+}
+
+fn tools_list_body_for_rewrite(head: &UpstreamResponseHead, body: Vec<u8>) -> Option<Vec<u8>> {
+    if !is_chunked_response(head) {
+        return Some(body);
+    }
+    decode_chunked_body(&body).ok()
+}
+
+fn is_chunked_response(head: &UpstreamResponseHead) -> bool {
+    head.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("chunked"))
+    })
+}
+
+fn decode_chunked_body(body: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let mut decoded = Vec::new();
+    let mut cursor = 0usize;
+    loop {
+        let size_line_end = find_crlf(body, cursor)
+            .ok_or_else(|| anyhow::anyhow!("chunked upstream body missing size terminator"))?;
+        let size_line = std::str::from_utf8(&body[cursor..size_line_end])
+            .map_err(|_| anyhow::anyhow!("chunk size line is not UTF-8"))?;
+        let size_token = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_token, 16)
+            .map_err(|_| anyhow::anyhow!("invalid chunk size"))?;
+        cursor = size_line_end + 2;
+        if size == 0 {
+            if cursor + 2 <= body.len() && &body[cursor..cursor + 2] == b"\r\n" {
+                return Ok(decoded);
+            }
+            let trailer_end = find_double_crlf(body, cursor)
+                .ok_or_else(|| anyhow::anyhow!("chunked upstream body missing final CRLF"))?;
+            if trailer_end > MAX_HTTP_BODY_BYTES {
+                anyhow::bail!("upstream response body too large");
+            }
+            return Ok(decoded);
+        }
+        if cursor.checked_add(size + 2).is_none() || cursor + size + 2 > body.len() {
+            anyhow::bail!("chunked upstream body ended mid-chunk");
+        }
+        decoded.extend_from_slice(&body[cursor..cursor + size]);
+        ensure_body_within_limit(&decoded)?;
+        cursor += size;
+        if &body[cursor..cursor + 2] != b"\r\n" {
+            anyhow::bail!("chunked upstream body missing chunk terminator");
+        }
+        cursor += 2;
+    }
+}
+
+fn find_crlf(body: &[u8], start: usize) -> Option<usize> {
+    body.get(start..)?
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .map(|pos| start + pos)
+}
+
+fn find_double_crlf(body: &[u8], start: usize) -> Option<usize> {
+    body.get(start..)?
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|pos| start + pos + 4)
 }
 
 fn chatgpt_compat_tool_entry(tool: &Value) -> Value {
@@ -1391,10 +1518,10 @@ fn parse_port(port: &str) -> Result<u16, String> {
 }
 
 fn oauth_error(status: u16, error: &str, description: &str) -> HttpResponse {
-    json_response(
+    no_store_response(json_response(
         status,
         json!({"error": error, "error_description": description}),
-    )
+    ))
 }
 
 fn bearer_error(public_url: &str, description: &str) -> HttpResponse {
@@ -1419,6 +1546,16 @@ fn json_response(status: u16, body: Value) -> HttpResponse {
         "application/json",
         serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec()),
     )
+}
+
+fn no_store_response(mut response: HttpResponse) -> HttpResponse {
+    response
+        .headers
+        .push(("Cache-Control".to_owned(), "no-store".to_owned()));
+    response
+        .headers
+        .push(("Pragma".to_owned(), "no-cache".to_owned()));
+    response
 }
 
 fn html_response(status: u16, body: String) -> HttpResponse {
@@ -1583,7 +1720,8 @@ fn home_dir() -> PathBuf {
 }
 
 fn ensure_private_dir(dir: &Path) -> io::Result<()> {
-    fs::create_dir_all(dir)
+    fs::create_dir_all(dir)?;
+    set_private_dir_permissions(dir)
 }
 
 fn read_json_map<T>(path: &Path) -> io::Result<HashMap<String, T>>
@@ -1611,7 +1749,7 @@ where
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        ensure_private_dir(parent)?;
     }
     let tmp_name = format!(
         "{}.{}.tmp",
@@ -1621,8 +1759,97 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         Uuid::new_v4()
     );
     let tmp_path = path.with_file_name(tmp_name);
-    fs::write(&tmp_path, bytes)?;
+    write_private_file(&tmp_path, bytes)?;
     fs::rename(&tmp_path, path)?;
+    set_private_file_permissions(path)?;
+    Ok(())
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    set_private_file_permissions(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(windows)]
+fn set_private_dir_permissions(path: &Path) -> io::Result<()> {
+    tighten_windows_acl(path, true)
+}
+
+#[cfg(windows)]
+fn set_private_file_permissions(path: &Path) -> io::Result<()> {
+    tighten_windows_acl(path, false)
+}
+
+#[cfg(windows)]
+fn tighten_windows_acl(path: &Path, inherit_children: bool) -> io::Result<()> {
+    let current_user = windows_current_user()?;
+    let rights = if inherit_children { "(OI)(CI)F" } else { "F" };
+    let current_user_grant = format!("{current_user}:{rights}");
+    let admins_grant = format!("*S-1-5-32-544:{rights}");
+    let system_grant = format!("*S-1-5-18:{rights}");
+
+    let status = std::process::Command::new("icacls")
+        .arg(path)
+        .arg("/inheritance:r")
+        .arg("/grant:r")
+        .arg(current_user_grant)
+        .arg(admins_grant)
+        .arg(system_grant)
+        .arg("/C")
+        .arg("/Q")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("failed to tighten ACLs for {}", path.display()),
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn windows_current_user() -> io::Result<String> {
+    let user = std::env::var("USERNAME").map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "USERNAME is required to secure OAuth state files",
+        )
+    })?;
+    match std::env::var("USERDOMAIN") {
+        Ok(domain) if !domain.is_empty() => Ok(format!("{domain}\\{user}")),
+        _ => Ok(user),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn set_private_dir_permissions(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn set_private_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -1684,7 +1911,11 @@ fn is_allowed_redirect_uri(uri: &str) -> bool {
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
 }
 
 fn authorize_page(pending: &PendingAuthorization, public_url: &str, nonce: &str) -> String {
@@ -1913,6 +2144,10 @@ mod tests {
 
         assert!(!is_allowed_redirect_uri("http://evil.test/callback"));
         assert!(!is_allowed_redirect_uri(
+            "http://127.0.0.1.evil.test/callback"
+        ));
+        assert!(!is_allowed_redirect_uri("http://127.evil.test/callback"));
+        assert!(!is_allowed_redirect_uri(
             "https://client.test/callback#frag"
         ));
         assert!(!is_allowed_redirect_uri(
@@ -1932,6 +2167,20 @@ mod tests {
 
         let err = read_json_map::<Client>(&path).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn oversized_upstream_body_is_rejected_before_rewrite() {
+        let body = vec![0u8; MAX_HTTP_BODY_BYTES + 1];
+        assert!(ensure_body_within_limit(&body).is_err());
+    }
+
+    #[test]
+    fn decode_chunked_body_handles_extensions_and_trailers() {
+        let decoded =
+            decode_chunked_body(b"8;ext=value\r\n{\"ok\":1}\r\n0\r\nX-Trailer: ignored\r\n\r\n")
+                .unwrap();
+        assert_eq!(decoded, br#"{"ok":1}"#);
     }
 
     #[test]
@@ -2004,6 +2253,67 @@ mod tests {
             let body: Value = serde_json::from_slice(&register.body).unwrap();
             assert_eq!(body["error"], "invalid_redirect_uri");
         }
+    }
+
+    #[tokio::test]
+    async fn register_and_token_responses_are_not_cacheable() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path(), false);
+
+        let register = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/register".to_owned(),
+                headers: HashMap::new(),
+                body: br#"{"client_name":"ChatGPT","redirect_uris":["https://client.test/callback"],"token_endpoint_auth_method":"client_secret_post"}"#.to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(register.status, 201);
+        assert_eq!(header_value(&register, "Cache-Control"), Some("no-store"));
+        assert_eq!(header_value(&register, "Pragma"), Some("no-cache"));
+        let reg_body: Value = serde_json::from_slice(&register.body).unwrap();
+
+        let client_id = reg_body["client_id"].as_str().unwrap();
+        let client_secret = reg_body["client_secret"].as_str().unwrap();
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        let authorize_path = format!(
+            "/authorize?response_type=code&client_id={client_id}&redirect_uri=https%3A%2F%2Fclient.test%2Fcallback&scope=mcp%3Atools&resource=https%3A%2F%2Fexample.test%2Fmcp&code_challenge={challenge}&code_challenge_method=S256"
+        );
+        let authorize = handle_http(
+            HttpRequest {
+                method: "GET".to_owned(),
+                path: authorize_path,
+                headers: HashMap::new(),
+                body: Vec::new(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        let location = header_value(&authorize, "Location").unwrap();
+        let code = parse_query(location).remove("code").unwrap();
+
+        let token_body = format!(
+            "grant_type=authorization_code&code={code}&client_id={client_id}&client_secret={client_secret}&redirect_uri=https%3A%2F%2Fclient.test%2Fcallback&code_verifier={verifier}"
+        );
+        let token = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/token".to_owned(),
+                headers: HashMap::new(),
+                body: token_body.into_bytes(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(token.status, 200);
+        assert_eq!(header_value(&token, "Cache-Control"), Some("no-store"));
+        assert_eq!(header_value(&token, "Pragma"), Some("no-cache"));
     }
 
     #[tokio::test]
@@ -2080,6 +2390,56 @@ mod tests {
         )
         .await;
         assert_eq!(replay.status, 400);
+    }
+
+    #[tokio::test]
+    async fn consent_deny_validates_nonce_before_redirecting() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path(), true);
+        let pending = PendingAuthorization {
+            client_id: "client".to_owned(),
+            client_name: "test".to_owned(),
+            redirect_uri: "https://client.test/callback".to_owned(),
+            scope: DEFAULT_SCOPE.to_owned(),
+            state: Some("safe-state".to_owned()),
+            resource: Some("https://example.test/mcp".to_owned()),
+            code_challenge: "challenge".to_owned(),
+            code_challenge_method: "S256".to_owned(),
+        };
+        ctx.store.upsert_consent("deny-nonce", &pending).unwrap();
+
+        let denied = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/authorize".to_owned(),
+                headers: HashMap::new(),
+                body: b"decision=deny&client_id=client&redirect_uri=https%3A%2F%2Fclient.test%2Fcallback&scope=mcp%3Atools&state=safe-state&resource=https%3A%2F%2Fexample.test%2Fmcp&code_challenge=challenge&code_challenge_method=S256&consent_nonce=deny-nonce".to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(denied.status, 302);
+        let location = header_value(&denied, "Location").unwrap();
+        assert!(location.starts_with("https://client.test/callback?"));
+        assert!(location.contains("error=access_denied"));
+        assert!(location.contains("state=safe-state"));
+
+        ctx.store.upsert_consent("evil-nonce", &pending).unwrap();
+        let tampered = handle_http(
+            HttpRequest {
+                method: "POST".to_owned(),
+                path: "/authorize".to_owned(),
+                headers: HashMap::new(),
+                body: b"decision=deny&client_id=client&redirect_uri=https%3A%2F%2Fevil.test%2Fcallback&scope=mcp%3Atools&state=safe-state&resource=https%3A%2F%2Fexample.test%2Fmcp&code_challenge=challenge&code_challenge_method=S256&consent_nonce=evil-nonce".to_vec(),
+                keep_alive: false,
+            },
+            &ctx,
+        )
+        .await;
+        assert_eq!(tampered.status, 400);
+        assert!(header_value(&tampered, "Location").is_none());
+        assert!(ctx.store.consume_consent("evil-nonce").unwrap().is_none());
     }
 
     #[tokio::test]
@@ -2223,6 +2583,56 @@ mod tests {
         assert_eq!(replay.status, 400);
         let replay_body: Value = serde_json::from_slice(&replay.body).unwrap();
         assert_eq!(replay_body["error"], "invalid_grant");
+    }
+
+    #[test]
+    fn authorization_code_redeem_is_single_use_under_concurrency() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = std::sync::Arc::new(JsonStore::new(dir.path().to_path_buf(), 3600, 300));
+        store
+            .upsert_code(
+                "code",
+                AuthCode {
+                    client_id: "client".to_owned(),
+                    redirect_uri: "https://client.test/callback".to_owned(),
+                    code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_owned(),
+                    code_challenge_method: "S256".to_owned(),
+                    scope: DEFAULT_SCOPE.to_owned(),
+                    resource: Some("https://example.test/mcp".to_owned()),
+                    created_at: now_secs(),
+                    used: false,
+                },
+            )
+            .unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    matches!(
+                        store
+                            .redeem_code_for_token(
+                                "code",
+                                "client",
+                                "https://client.test/callback",
+                                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+                                Some("https://example.test/mcp"),
+                            )
+                            .unwrap(),
+                        TokenRedeem::Issued(_)
+                    )
+                })
+            })
+            .collect();
+
+        let issued = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|issued| *issued)
+            .count();
+        assert_eq!(issued, 1);
     }
 
     #[tokio::test]
@@ -2376,6 +2786,49 @@ mod tests {
         assert!(response_text.contains(": first\n\n"));
     }
 
+    #[tokio::test]
+    async fn tools_list_chunked_response_is_decoded_before_rewrite() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"list_windows","description":"sample","inputSchema":{"type":"object"},"capabilities":["window.list"]}],"capability_version":"1","schema_version":"1"}}"#;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = read_http_request(&mut stream).await.unwrap();
+            let head = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n";
+            stream.write_all(head).await.unwrap();
+            let split = body.len() / 2;
+            for chunk in [&body[..split], &body[split..]] {
+                stream
+                    .write_all(format!("{:X}\r\n", chunk.len()).as_bytes())
+                    .await
+                    .unwrap();
+                stream.write_all(chunk).await.unwrap();
+                stream.write_all(b"\r\n").await.unwrap();
+            }
+            stream.write_all(b"0\r\n\r\n").await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx_with_upstream(dir.path(), upstream_url);
+        upsert_valid_token(&ctx, "token", Some("https://example.test/mcp"));
+        let request_body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+        let request = format!(
+            "POST /mcp HTTP/1.1\r\nHost: example.test\r\nAuthorization: Bearer token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            request_body.len(),
+            String::from_utf8_lossy(request_body)
+        );
+        let response = send_raw_to_oauth(ctx, request.into_bytes()).await;
+        let response_text = String::from_utf8_lossy(&response);
+        assert!(response_text.starts_with("HTTP/1.1 200 OK"));
+        assert!(!response_text.contains("Transfer-Encoding: chunked"));
+        let response_json: Value = serde_json::from_slice(http_body(&response)).unwrap();
+        assert_eq!(response_json["result"]["tools"][0]["title"], "List Windows");
+        assert!(response_json["result"]["tools"][0]
+            .get("capabilities")
+            .is_none());
+    }
+
     #[test]
     fn tools_list_chatgpt_wrapper_adds_required_fields() {
         let body = br#"{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"list_windows","description":"sample","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true},"capabilities":["window.list"]}],"capability_version":"1","schema_version":"1"}}"#;
@@ -2507,10 +2960,18 @@ mod tests {
                     scope: DEFAULT_SCOPE.to_owned(),
                     resource: resource.map(str::to_owned),
                     created_at: now_secs(),
-                    expires_at: now_secs() + 3600,
+                    expires_at: now_secs().saturating_add(3600),
                 },
             )
             .unwrap();
+    }
+
+    fn header_value<'a>(response: &'a HttpResponse, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .iter()
+            .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
     }
 
     async fn spawn_json_upstream(
@@ -2543,9 +3004,13 @@ mod tests {
         });
         let mut client = TcpStream::connect(addr).await.unwrap();
         client.write_all(&request).await.unwrap();
-        client.shutdown().await.unwrap();
+        let _ = client.shutdown().await;
         let mut response = Vec::new();
-        client.read_to_end(&mut response).await.unwrap();
+        match client.read_to_end(&mut response).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::ConnectionReset => {}
+            Err(e) => panic!("failed to read OAuth response: {e}"),
+        }
         response
     }
 

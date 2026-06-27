@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_string_attr, perform_action, set_string_attr,
+    copy_children, copy_string_attr, perform_action, set_number_attr, set_string_attr,
     kAXErrorSuccess, AXUIElementRef,
 };
 use crate::focus_guard;
@@ -185,8 +185,21 @@ fn set_value_blocking(
             .unwrap_or_default();
         select_popup_option(element, element_index, pid, value, &element_title)
     } else {
-        // Default path: write AXValue directly.
-        let err = unsafe { set_string_attr(element, "AXValue", value) };
+        // Default path: write AXValue directly. Numeric controls (AXSlider /
+        // AXStepper) reject a CFString with -25201 and need a CFNumber; text
+        // fields take a CFString. Try numeric first when the value parses as a
+        // number, then fall back to a string write.
+        let err = match value.trim().parse::<f64>() {
+            Ok(n) => {
+                let e = unsafe { set_number_attr(element, "AXValue", n) };
+                if e == kAXErrorSuccess {
+                    e
+                } else {
+                    unsafe { set_string_attr(element, "AXValue", value) }
+                }
+            }
+            Err(_) => unsafe { set_string_attr(element, "AXValue", value) },
+        };
         if err == kAXErrorSuccess {
             Ok(format!("✅ Set AXValue on [{element_index}] {role}."))
         } else {

@@ -279,6 +279,17 @@ pub unsafe fn set_string_attr(element: AXUIElementRef, attr_name: &str, value: &
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_value.as_CFTypeRef())
 }
 
+/// Set an AX attribute to a CFNumber (double) value. Numeric controls — most
+/// notably `AXSlider` (NSSlider) and `AXStepper` — expose a numeric `AXValue`
+/// and reject a `CFString` write with `-25201` (illegal argument); only a
+/// `CFNumber` is accepted. Text fields, by contrast, take a `CFString`.
+pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f64) -> AXError {
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let cf_value = CFNumber::from(value);
+    AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_value.as_CFTypeRef())
+}
+
 /// Set an AX attribute to a CFBoolean true value.
 pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AXError {
     use core_foundation::boolean::CFBoolean;

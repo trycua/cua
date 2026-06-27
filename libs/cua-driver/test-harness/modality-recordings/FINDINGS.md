@@ -15,17 +15,22 @@ here as cua-driver work, to be fixed in the driver first and then re-tested.
 
 ## What the verifier surfaced (to triage as driver work)
 
-### Windows / WPF (ax-bg, representative)
+### Windows / WPF (ax-bg, representative) — after fixes: 5/7 land
 | action | effect | note |
 |--------|--------|------|
 | left-click checkbox | ✓ worked | UIA toggle |
 | double-click button | ✓ worked | last_action=double_click |
-| **right-click** | ✗ no-op | the right-click opened the **Windows taskbar** context menu, not the harness button's menu — the click landed at the wrong target. **Investigate driver right_click coordinate/target on element_index.** |
+| right-click | ✗ no-op (clean) | **Root cause: off-screen target, not a driver coordinate bug.** At 1024×768 the panel forces the harness to 556px wide, so the form reflows taller than the screen and the right-click button lands at y≈786 (below the screen). The synthetic tap previously clamped onto the **taskbar** (opened its menu). **DRIVER FIX:** `point_in_window_bounds()` now refuses a click whose resolved point is outside its window and returns a clear error — no more taskbar misfire (frame-verified). To actually *exercise* right-click needs a screen tall enough to show the control (this RDP session won't take a programmatic resize). |
 | drag slider | ✓ worked | slider_value 0→48 |
-| **scroll** | ✗ no-op | scroll_offset stayed 0 — **driver scroll on the element_index pane did not scroll.** |
+| scroll | ✗ no-op (clean) | Same off-screen root cause (scroll-tall pane is lower still); now guarded, not misfiring. |
 | set_value | ✓ worked | mirror=set-by-cua |
-| **type** | ✗ no-op | after set_value the text box was not refocused, so type_text landed nowhere (text stayed "set-by-cua"). **Driver: type_text should target the intended control / the recorder should not assume focus.** |
+| type | ✓ worked | **Fixed:** the recorder now clicks the text box (focus) before `type_text`; type targets the focused control, and `set_value` doesn't focus, so without this it was a no-op. |
 | press-key (Tab) | n/a | no asserted effect |
+
+**Driver fix shipped (this branch):** `platform-windows` — `point_in_window_bounds()` + guards in the
+click / double_click / right_click element paths. Investigated and ruled out: UIA `GetClickablePoint`
+for cursor-centering (returns the same rect center or fails), and SetFocus-to-scroll-into-view (would
+steal foreground, breaking the very contract these bg runs measure).
 
 ### Linux / GTK3
 - AT-SPI/element actions (single-click, set_value, type) **✓ work**.

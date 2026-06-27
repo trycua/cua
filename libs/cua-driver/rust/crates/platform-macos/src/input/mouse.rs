@@ -26,6 +26,43 @@ pub fn click_at_xy(pid: i32, x: f64, y: f64, count: usize, modifiers: &[&str]) -
     click_at_xy_inner(pid, x, y, None, None, count, modifiers)
 }
 
+/// Screen-absolute click posted to the GLOBAL HID tap (`CGEventTapLocation::HID`),
+/// NOT routed to any pid — the OS delivers it to whichever window owns the
+/// screen point, the macOS analogue of Windows' `WindowFromPoint` + `SendInput`
+/// desktop-scope click. This backs the `capture_scope="desktop"`, window-less
+/// (no pid/window_id) branch of the `click` tool: the agent has located the
+/// target by vision in `get_desktop_state` and clicks true screen pixels.
+///
+/// Unlike the pid-routed `click_at_xy`, this honors the real foreground/Z order
+/// (it lands on whatever is visually on top at the point) — exactly the
+/// foreground, vision-driven model that complements the background contract.
+pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
+    use core_graphics::event::CGEventTapLocation;
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let point = CGPoint::new(x, y);
+    let (down_ty, up_ty, btn) = match button {
+        "right" => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, CGMouseButton::Right),
+        "middle" => (CGEventType::OtherMouseDown, CGEventType::OtherMouseUp, CGMouseButton::Center),
+        _ => (CGEventType::LeftMouseDown, CGEventType::LeftMouseUp, CGMouseButton::Left),
+    };
+    // Move first so apps that hit-test on the latest cursor location target the
+    // right window, then post each down/up pair at the global HID tap.
+    if let Ok(mv) = CGEvent::new_mouse_event(source.clone(), CGEventType::MouseMoved, point, btn) {
+        mv.post(CGEventTapLocation::HID);
+    }
+    for _ in 0..count.max(1) {
+        let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
+        down.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(16));
+        let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
+        up.post(CGEventTapLocation::HID);
+    }
+    Ok(())
+}
+
 /// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.
 /// When `wid` is provided, additionally stamps Chromium routing fields
 /// (f51 / f58 / f91 / f92) for better backgrounded-target delivery.

@@ -115,6 +115,65 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+
+        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // x,y given with NO pid and NO window_id → the coordinates are TRUE
+        // SCREEN pixels. This is the foreground, vision-driven desktop-scope
+        // path, the macOS peer of the Windows WindowFromPoint click. Gate on the
+        // effective scope: under "window" return a structured
+        // `desktop_scope_disabled` error (same contract as Windows) rather than
+        // silently treating window-local pixels as screen pixels.
+        let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
+        let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
+        let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
+            && args.get("y").map(|v| v.is_number()).unwrap_or(false);
+        if has_xy && !has_pid && !has_window_id {
+            let session_id = args.opt_str("_session_id");
+            let scope = self
+                .state
+                .session_config
+                .effective_scope(session_id.as_deref(), &self.state.config.read().unwrap());
+            if scope != "desktop" {
+                return ToolResult::error(
+                    "click: x,y given with no pid/window_id, but capture_scope is \
+                     \"window\". Screen-absolute clicks require desktop scope. Call \
+                     set_config with capture_scope=desktop (and use get_desktop_state \
+                     to read true screen pixels) first."
+                        .to_string(),
+                )
+                .with_structured(serde_json::json!({
+                    "code": "desktop_scope_disabled",
+                    "capture_scope": scope,
+                    "suggestion": "set_config capture_scope=desktop",
+                }));
+            }
+            let sx = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64)).unwrap_or(0.0);
+            let sy = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|i| i as f64)).unwrap_or(0.0);
+            let button = match args.str_or("button", "left").to_lowercase().as_str() {
+                "right" => "right",
+                "middle" => "middle",
+                "" | "left" => "left",
+                other => {
+                    return ToolResult::error(format!(
+                        "click: unknown button \"{other}\" — expected one of left, right, middle."
+                    ))
+                }
+            }
+            .to_string();
+            let count = args.u64_or("count", 1) as usize;
+            // Glide the session's agent cursor to the screen point for visibility,
+            // then click. (Overlay is best-effort; the click is what matters.)
+            let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), sx, sy).await;
+            self.state.cursor_registry.update_position(&cursor_key, sx, sy);
+            return match crate::input::mouse::click_at_xy_desktop(sx, sy, count, &button) {
+                Ok(()) => ToolResult::text(format!(
+                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
+                )),
+                Err(e) => ToolResult::error(format!("desktop-scope click failed: {e}")),
+            };
+        }
+
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         // Resolve this action's cursor key so its click-pulse / glide land on
         // the calling session's cursor, not the shared "default" one.

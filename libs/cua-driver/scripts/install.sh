@@ -456,6 +456,9 @@ Next steps:
         • Codex (OpenAI):
             codex mcp add cua-driver -- $BIN_LINK mcp
 
+        • Droid CLI (Factory AI):
+            droid mcp add cua-driver cua-driver mcp --type stdio
+
         • OpenClaw:
             cua-driver mcp-config --client openclaw
 
@@ -472,11 +475,12 @@ Next steps:
             }
             Or inside gh copilot chat: /mcp add → type=STDIO, command=$BIN_LINK, args=mcp
 
-        • Cursor / OpenCode / Hermes / Antigravity (no add CLI — paste config):
+        • Cursor / OpenCode / Hermes / Antigravity / Qwen Code (no add CLI — paste config):
             cua-driver mcp-config --client cursor       # JSON for ~/.cursor/mcp.json
             cua-driver mcp-config --client opencode     # JSON for opencode.json
             cua-driver mcp-config --client hermes       # YAML for ~/.hermes/config.yaml
             cua-driver mcp-config --client antigravity  # JSON for ~/.gemini/config/mcp_config.json (shared with Antigravity IDE)
+            cua-driver mcp-config --client qwen         # JSON for ~/.qwen/settings.json
 
         For other clients accepting the generic mcpServers shape:
             cua-driver mcp-config

@@ -11,20 +11,20 @@ If you've encountered a bug in the project, we encourage you to report it. Pleas
    - A clear title and detailed description
    - Steps to reproduce the issue
    - Expected vs actual behavior
-   - Your environment (macOS version, lume version)
+   - Your environment (OS version and relevant Cua package or CLI version)
    - Any relevant logs or error messages
 3. **Label Your Issue**: Label your issue as a `bug` to help maintainers identify it quickly.
 
 ## Suggesting Enhancements
 
-We're always looking for suggestions to make lume better. If you have an idea:
+We're always looking for suggestions to make Cua better. If you have an idea:
 
 1. **Check Existing Issues**: See if someone else has already suggested something similar.
 2. **Create a New Issue**: If your enhancement is new, create an issue describing:
    - The problem your enhancement solves
    - How your enhancement would work
    - Any potential implementation details
-   - Why this enhancement would benefit lume users
+   - Why this enhancement would benefit Cua users
 
 ## Code Formatting
 

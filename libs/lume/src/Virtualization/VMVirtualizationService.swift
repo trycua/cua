@@ -16,6 +16,7 @@ struct VMVirtualizationServiceContext {
     let nvramPath: Path
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
+    let additionalDiskPaths: [Path]?
     let networkMode: NetworkMode
 }
 
@@ -295,6 +296,13 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
                     try createUSBMassStorageDeviceConfiguration(diskPath: usbPath, readOnly: true))
             }
         }
+        // Attach additional read-write disks as virtio-blk (USB mass storage is rejected for macOS guests).
+        if let extraDisks = config.additionalDiskPaths {
+            for diskPath in extraDisks {
+                storageDevices.append(
+                    try createStorageDeviceConfiguration(diskPath: diskPath, readOnly: false))
+            }
+        }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -455,6 +463,14 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
                 storageDevices.append(
                     try createUSBMassStorageDeviceConfiguration(
                         diskPath: usbPath, readOnly: true, cachingMode: diskCachingMode))
+            }
+        }
+        // Attach additional read-write disks as virtio-blk.
+        if let extraDisks = config.additionalDiskPaths {
+            for diskPath in extraDisks {
+                storageDevices.append(
+                    try createStorageDeviceConfiguration(
+                        diskPath: diskPath, readOnly: false, cachingMode: diskCachingMode))
             }
         }
         vzConfig.storageDevices = storageDevices

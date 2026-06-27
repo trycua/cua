@@ -524,6 +524,8 @@ Caveats:
 
 Update cua-driver-rs configuration. Changes to `capture_mode` and `max_image_dimension` take effect immediately. The `experimental_pip` keys are persisted to `~/.cua-driver/config.json` and take effect on the next daemon restart.
 
+Two equivalent argument shapes are accepted on every platform: a **direct field** (`{"capture_scope": "desktop"}`) or a **`{key, value}` pair** (`{"key": "capture_scope", "value": "desktop"}`, the same shape the CLI `config set` uses). A direct field wins if both are supplied.
+
 **Per-session isolation (daemon-proxy path).** On the daemon-proxy path, `set_config` writes an in-memory, session-scoped override that does not touch the global `DriverConfig` or persist to disk. `get_config` and capture tools resolve effective values as: call-arg > session override > global default. The override is dropped automatically when the client disconnects. Only the anonymous path (`cua-driver config set` CLI, one-shot `cua-driver call`) writes the persisted global default.
 
 | Argument | Type | Required | Description |

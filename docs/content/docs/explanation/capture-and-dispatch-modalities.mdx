@@ -27,7 +27,7 @@ Set per call on the input tools (`click`, `type_text`, `press_key`, …) with `d
 
 | `dispatch` | Behavior |
 |---|---|
-| `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/docs/explanation/the-no-foreground-contract). |
+| `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/explanation/the-no-foreground-contract). |
 | `foreground` | The target is activated first (pair with `bring_to_front`), then input lands on the now-active window. Use for apps that only accept events when foregrounded — DirectInput games, raw-input canvases. |
 | `auto` | Historical heuristic that picks per target. Prefer an explicit value. |
 
@@ -66,8 +66,8 @@ The two rejections are enforced, not advisory. A window-less click while `captur
 | Axis / value | Windows | macOS | Linux |
 |---|---|---|---|
 | `capture_mode` `ax` / `vision` / `som` | ✅ | ✅ | ✅ |
-| `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a [known gap](/docs/explanation/the-no-foreground-contract#linux)) |
+| `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a [known gap](/explanation/the-no-foreground-contract#linux)) |
 | `dispatch: foreground` + `bring_to_front` | ✅ explicit activation | activation differs (no `bring_to_front` tool) | activation differs (stubbed) |
 | `capture_scope: desktop` (full screen-absolute loop) | ✅ | rolling out | rolling out |
 
-`capture_mode` is recognized everywhere, so window-scope automation — the four window-scope rows of the matrix — works on all three platforms. The desktop-scope loop (`get_desktop_state` plus window-less screen-absolute input via hit-testing) is complete on Windows and rolling out to macOS and Linux; on those platforms a window-less action under window scope is still rejected. See the [MCP tool reference](/docs/reference/cua-driver/mcp-tools) for per-tool parameters and the [no-foreground contract](/docs/explanation/the-no-foreground-contract) for how background dispatch is implemented on each OS.
+`capture_mode` is recognized everywhere, so window-scope automation — the four window-scope rows of the matrix — works on all three platforms. The desktop-scope loop (`get_desktop_state` plus window-less screen-absolute input via hit-testing) is complete on Windows and rolling out to macOS and Linux; on those platforms a window-less action under window scope is still rejected. See the [MCP tool reference](/reference/cua-driver/mcp-tools) for per-tool parameters and the [no-foreground contract](/explanation/the-no-foreground-contract) for how background dispatch is implemented on each OS.

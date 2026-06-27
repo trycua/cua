@@ -338,20 +338,48 @@
    {
     "id": "click_target",
     "kind": "right_double_click",
-    "description": "Custom NSView records left, right, and double-click counts. Tests right_click / double_click delivered via CGEvent or AX action.",
+    "description": "Real NSButton (AX-addressable) records click / double_click / right_click. AXPress (element_index) fires the single-click path; a pixel double-click sets double_click; right-click sets right_click. last_action= + clicks= labels.",
     "controls": {
-     "target_aid": "view-click-target",
+     "target_aid": "btn-clicktarget",
      "last_action_label_aid": "lbl-last-action",
      "click_count_label_aid": "lbl-click-count"
     }
    },
    {
+    "id": "slider",
+    "kind": "range_value",
+    "description": "Horizontal NSSlider (0..100). Tests drag / set_value via AXValue. slider_value= label.",
+    "controls": {
+     "slider_aid": "sld-value",
+     "value_label_aid": "lbl-slider-value"
+    }
+   },
+   {
+    "id": "checkable_controls",
+    "kind": "toggle",
+    "description": "NSButton checkbox. Tests click toggling AXValue. agreed= label.",
+    "controls": {
+     "checkbox_aid": "chk-agree",
+     "state_label_aid": "lbl-chk-state"
+    }
+   },
+   {
+    "id": "context_menu",
+    "kind": "context_menu",
+    "description": "NSButton with an attached NSMenu (Cut/Copy/Paste). Right-click opens the native context menu; selecting an item sets menu_action=. menu_action= label.",
+    "controls": {
+     "button_aid": "btn-context",
+     "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
     "id": "scroll_target",
     "kind": "scroll_viewer",
-    "description": "NSScrollView with a tall NSTextView body and an offset label. Tests scroll tool delivery.",
+    "description": "NSScrollView with a tall NSTextView body between SCROLL_TOP/BOTTOM markers and an offset label. Tests scroll tool delivery. scroll_offset= label.",
     "controls": {
      "scroller_aid": "scroll-tall",
      "offset_label_aid": "lbl-scroll-offset",
+     "top_marker_text": "SCROLL_TOP_MARKER_v1",
      "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
     }
    },
@@ -415,6 +443,54 @@
      "open_button_aid": "btn-open-popover",
      "popover_text_aid": "txt-popover-body",
      "expected_marker": "POPOVER_MARKER_v1"
+    }
+   },
+   {
+    "id": "click_target",
+    "kind": "right_double_click",
+    "description": "SwiftUI Button (AX-addressable). Tap fires click; a pixel double-tap sets double_click. NOTE: SwiftUI/AX has no distinct right-press action, so right_click on the button coerces to a normal AXPress (records click) — right-click semantics are covered by the dedicated context_menu scenario. last_action= + clicks= labels.",
+    "controls": {
+     "target_aid": "btn-clicktarget",
+     "last_action_label_aid": "lbl-last-action",
+     "click_count_label_aid": "lbl-click-count"
+    }
+   },
+   {
+    "id": "slider",
+    "kind": "range_value",
+    "description": "SwiftUI Slider (0..100). Tests drag / set_value via AXValue. slider_value= label.",
+    "controls": {
+     "slider_aid": "sld-value",
+     "value_label_aid": "lbl-slider-value"
+    }
+   },
+   {
+    "id": "checkable_controls",
+    "kind": "toggle",
+    "description": "SwiftUI Toggle (.checkbox style). Tests click toggling AXValue. agreed= label.",
+    "controls": {
+     "checkbox_aid": "chk-agree",
+     "state_label_aid": "lbl-chk-state"
+    }
+   },
+   {
+    "id": "context_menu",
+    "kind": "context_menu",
+    "description": "SwiftUI Button with .contextMenu (Cut/Copy/Paste). Right-click opens the context menu; selecting an item sets menu_action=. menu_action= label.",
+    "controls": {
+     "button_aid": "btn-context",
+     "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
+    "id": "scroll_target",
+    "kind": "scroll_viewer",
+    "description": "SwiftUI ScrollView with a tall body between SCROLL_TOP/BOTTOM markers and a GeometryReader-tracked offset label. Tests scroll tool delivery. scroll_offset= label.",
+    "controls": {
+     "scroller_aid": "scroll-tall",
+     "offset_label_aid": "lbl-scroll-offset",
+     "top_marker_text": "SCROLL_TOP_MARKER_v1",
+     "bottom_marker_text": "SCROLL_BOTTOM_MARKER_v1"
     }
    },
    {

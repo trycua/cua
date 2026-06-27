@@ -441,6 +441,30 @@ pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button: 
     Ok(())
 }
 
+/// True when screen point `(x, y)` lies within `hwnd`'s window rectangle.
+///
+/// Guards **element_index** clicks: an element's cached center can fall outside
+/// its own window when the element is scrolled out of a ScrollViewer or pushed
+/// off-screen (e.g. a tall form on a small display). Tapping the raw coordinate
+/// then lands on whatever is actually there — the taskbar, the desktop, another
+/// window — instead of the intended element. The click tool turns a `false`
+/// here into a clear error rather than clicking the wrong target. Returns `true`
+/// (fail-open) when the rect can't be read, so legitimate clicks are never
+/// blocked by a transient query failure.
+pub fn point_in_window_bounds(hwnd: u64, x: i32, y: i32) -> bool {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    if hwnd == 0 {
+        return true;
+    }
+    let mut r = RECT::default();
+    let ok = unsafe { GetWindowRect(HWND(hwnd as *mut _), &mut r).is_ok() };
+    if !ok {
+        return true;
+    }
+    x >= r.left && x < r.right && y >= r.top && y < r.bottom
+}
+
 /// One pen press-drag-release from screen `(sx0,sy0)` to `(sx1,sy1)`, with
 /// `steps` interpolated in-contact UPDATE points between the down and the up.
 /// A single synthetic pen device is created for the whole stroke. The barrel

@@ -1,6 +1,11 @@
 param([string]$Mode="ax-bg")   # ax-fg | ax-bg | vision-fg | vision-bg | vision-desktop
 $ErrorActionPreference="Continue"
 # screen is 1024x768 -> harness LEFT, dashboard panel RIGHT, both fully on-screen.
+# Harness LEFT, dashboard panel RIGHT (1024x768). At this width the WPF form reflows
+# taller than the screen, so the right-click button + scroll area sit off-screen; the
+# cua-driver off-screen guard now reports those as a clean no-op (no taskbar misfire)
+# instead of clicking the wrong target. Full-width avoids that but makes the harness
+# the foreground window (breaks the no-foreground measurement) — so we keep this layout.
 $HARX=0;$HARY=0;$HARW=556;$HARH=742
 $PANX=560;$PANY=0;$PANW=462;$PANH=742
 $META=@{
@@ -189,7 +194,7 @@ function DoAct($t,$el){
              elseif($vision){D "scroll" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"direction":"down","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}
              else{D "scroll" ('{{"pid":{0},"window_id":{1},"element_index":{2},"direction":"down","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }
   'setval' { D "set_value" ('{{"pid":{0},"window_id":{1},"element_index":{2},"value":"set-by-cua","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null }
-  'type'   { D "type_text" ('{{"pid":{0},"text":"typed-by-cua","session":"d1"}}' -f $wp)|Out-Null }
+  'type'   { if($el){ D "click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null; Start-Sleep -Milliseconds 350 }; D "type_text" ('{{"pid":{0},"text":"typed-by-cua","session":"d1"}}' -f $wp)|Out-Null }
   'key'    { D "press_key" ('{{"pid":{0},"key":"tab","session":"d1"}}' -f $wp)|Out-Null }
  }
 }

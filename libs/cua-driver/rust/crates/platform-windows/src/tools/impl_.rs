@@ -2224,6 +2224,14 @@ impl Tool for ClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
+            // Guard: an element scrolled out of view / off-screen has a center
+            // outside its own window; clicking the raw coordinate would hit the
+            // taskbar or whatever else is there. Fail clearly instead.
+            if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
+                return ToolResult::error(format!(
+                    "Element [{idx}] resolves to screen point ({cx},{cy}), outside its window — it is scrolled out of view or off-screen. Scroll it into view (or enlarge the window) before clicking; the raw coordinate would land on whatever is there (e.g. the taskbar)."
+                ));
+            }
             // Step 2: pin overlay to target window, then animate to screen coords.
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
@@ -3846,6 +3854,11 @@ impl Tool for DoubleClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
+            if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
+                return ToolResult::error(format!(
+                    "Element [{idx}] resolves to screen point ({cx},{cy}), outside its window — it is scrolled out of view or off-screen. Scroll it into view before double-clicking."
+                ));
+            }
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
@@ -4089,6 +4102,11 @@ impl Tool for RightClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
+            if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
+                return ToolResult::error(format!(
+                    "Element [{idx}] resolves to screen point ({cx},{cy}), outside its window — it is scrolled out of view or off-screen. Scroll it into view before right-clicking; the raw coordinate would open the wrong context menu (e.g. the taskbar's)."
+                ));
+            }
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });

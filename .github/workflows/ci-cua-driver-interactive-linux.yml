@@ -1,0 +1,110 @@
+name: "CI: cua-driver interactive modality suite (Linux)"
+
+# Runs the cua-driver INTERACTIVE `#[ignore]` modality/harness tests on a real
+# (headless) Linux GUI session, so their BEHAVIOR — not just compilation — is
+# guarded on every cua-driver change. These tests need a display, the AT-SPI
+# accessibility bus, and the GTK3 harness app; the rest of CI only compiles them.
+#
+# What runs here:
+#   - modality_capture_mode_test        (ax→tree-only / vision→image-only / som→both)
+#   - modality_desktop_scope_linux_test (window-less screen-absolute click via XTest + gate)
+#
+# How the GUI session is provided: Xvfb for the display, a per-job D-Bus session
+# bus (so AT-SPI's `org.a11y.Bus` can activate), at-spi2-core for the bridge, and
+# the GTK3/PyGObject runtime for the harness. The tests skip-with-note when the
+# a11y bus is unavailable rather than false-failing, so a vacuous run is visible
+# (no green-for-nothing surprise) without breaking the build.
+#
+# Companion to nix-build.yml / nix-wayland.yml (real desktops, broad app matrix).
+# This lane is narrow + fast and runs on free GitHub runners. Trigger: PRs that
+# touch the Rust driver or the harness, push to main, and manual dispatch.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/test-harness/**"
+      - ".github/workflows/ci-cua-driver-interactive-linux.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/test-harness/**"
+      - ".github/workflows/ci-cua-driver-interactive-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  interactive-modality:
+    name: Interactive modality suite (Xvfb + AT-SPI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install GUI + accessibility + harness runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core \
+            libgtk-3-0 gir1.2-gtk-3.0 python3-gi \
+            libxtst6 libxtst-dev libx11-dev libxext-dev \
+            ffmpeg
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+
+      - name: Build cua-driver (release — the test harness prefers release)
+        working-directory: libs/cua-driver/rust
+        run: cargo build --release -p cua-driver
+
+      - name: Build the GTK3 harness app
+        run: bash libs/cua-driver/test-harness/build/linux.sh
+
+      - name: AT-SPI reachability probe (diagnostic, non-fatal)
+        run: |
+          cat > /tmp/atspi_probe.py <<'PY'
+          import gi
+          gi.require_version("Atspi", "2.0")
+          from gi.repository import Atspi
+          print("[interactive-ci] AT-SPI reachable, desktop count:", Atspi.get_desktop_count())
+          PY
+
+      - name: Run the interactive modality suite under Xvfb + a session a11y bus
+        working-directory: libs/cua-driver/rust
+        env:
+          NO_AT_BRIDGE: "0"
+          GTK_A11Y: "1"
+        run: |
+          set -euo pipefail
+          # Xvfb provides the display; dbus-run-session provides a session bus on
+          # which AT-SPI's org.a11y.Bus auto-activates; GTK3's atk-bridge then
+          # registers the harness on the accessibility tree.
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -c '
+              python3 /tmp/atspi_probe.py || echo "[interactive-ci] AT-SPI probe inconclusive — AX assertions will skip if the bus is unavailable"
+              cargo test -p cua-driver \
+                --test modality_capture_mode_test \
+                --test modality_desktop_scope_linux_test \
+                -- --ignored --nocapture --test-threads=1
+            '
+
+      - name: Upload any recordings / artifacts
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: interactive-modality-artifacts
+          path: |
+            /tmp/*.mp4
+            libs/cua-driver/rust/target/release/*.log
+          if-no-files-found: ignore
+          retention-days: 7

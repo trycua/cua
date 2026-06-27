@@ -1047,6 +1047,11 @@ impl Tool for ClickTool {
             let sx = args.f64_or("x", 0.0) as i32;
             let sy = args.f64_or("y", 0.0) as i32;
             let n = args.u64_or("count", 1) as usize;
+            // Glide the agent-cursor overlay to the click point first (the macOS
+            // / Windows desktop paths already do this). Without it the overlay
+            // sits idle elsewhere while only the real pointer warps, so a viewer
+            // sees the cursor "click somewhere else."
+            overlay_glide_to_for(&cursor_id, sx as f64, sy as f64).await;
             let r = tokio::task::spawn_blocking(move || {
                 crate::input::send_click_xtest_desktop(sx, sy, button, n)
             })

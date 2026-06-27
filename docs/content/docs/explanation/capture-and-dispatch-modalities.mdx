@@ -1,0 +1,73 @@
+---
+title: "Capture and Dispatch Modalities"
+description: "The three independent axes that define how Cua Driver observes and acts on an app — capture mode, dispatch, and capture scope — and which combinations are valid."
+---
+
+# Capture and Dispatch Modalities
+
+Every Cua Driver action is defined by three independent choices: **what the agent observes**, **how input is delivered**, and **what coordinate space the action targets**. These are the *modalities*. Most callers never set them — the defaults give background, per-window, accessibility-first automation. This page documents the full set so you can reason about the combinations that are valid and the ones the driver rejects by design.
+
+## The Three Axes
+
+### 1. Capture mode — what the agent observes
+
+Set with `set_config capture_mode=…`, or per call on `get_window_state`.
+
+| `capture_mode` | What you get | Use when |
+|---|---|---|
+| `som` (default) | Set-of-marks: accessibility tree **plus** a screenshot, every actionable element tagged `[element_index N]`. | General driving — the model sees both structure and pixels. |
+| `ax` | Accessibility tree only, no screenshot. | The target exposes good structure and you want the cheapest, most robust path. No Screen Recording grant needed. |
+| `vision` | Screenshot only, no tree. | The target has no usable accessibility tree (canvas, custom-drawn UI, pure web content). |
+
+`ax` and `som`/`vision` differ in how the agent then *acts*: an `ax` observation yields an `element_index`, which drives the semantic action path (UIA Invoke, `AXPerformAction`, AT-SPI). A `vision` observation yields pixels, so the agent grounds a target to `(x, y)` and acts by coordinate.
+
+### 2. Dispatch — how input is delivered
+
+Set per call on the input tools (`click`, `type_text`, `press_key`, …) with `dispatch`.
+
+| `dispatch` | Behavior |
+|---|---|
+| `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/explanation/the-no-foreground-contract). |
+| `foreground` | The target is activated first (pair with `bring_to_front`), then input lands on the now-active window. Use for apps that only accept events when foregrounded — DirectInput games, raw-input canvases. |
+| `auto` | Historical heuristic that picks per target. Prefer an explicit value. |
+
+`element_index` (AX) actions are inherently background — they address an element, not the focused window — so they hold the contract without any `dispatch` flag. The `dispatch` axis matters most for coordinate (vision) input, where `background` routes the event to the target and `foreground` raises the window first.
+
+### 3. Capture scope — what coordinate space the action targets
+
+Set with `set_config capture_scope=…`.
+
+| `capture_scope` | Coordinate space | Capture surface |
+|---|---|---|
+| `window` (default) | Per-window. Actions carry `pid` + `window_id`; coordinates are window-relative or addressed by `element_index`. | `get_window_state` |
+| `desktop` | Screen-absolute. Window-less actions (no `pid`/`window_id`) land at absolute screen coordinates via hit-testing (`WindowFromPoint`). | `get_desktop_state` — full display, no downscale |
+
+Desktop scope is the "Computer-Use 1.0" loop: the agent reads the whole screen and clicks absolute coordinates, the way a screenshot-only model expects. Window scope is the default because it is what makes background, concurrent automation possible.
+
+## The Validity Matrix
+
+Capture scope is the constraining axis. Window scope supports **any** combination of the other two. Desktop scope supports **only** vision capture and foreground dispatch.
+
+| `capture_scope` | `capture_mode` | `dispatch` | Valid? | Why |
+|---|---|---|---|---|
+| `window` | `ax` | `background` | ✅ | The default. Semantic actions on a backgrounded window. |
+| `window` | `ax` | `foreground` | ✅ | Activate, then act by element. |
+| `window` | `vision` | `background` | ✅ | Screenshot a window, click a coordinate in it without raising it. |
+| `window` | `vision` | `foreground` | ✅ | Activate, then click by coordinate. |
+| `desktop` | `vision` | `foreground` | ✅ | The only desktop combination. Read the whole screen, click absolute coordinates on the active desktop. |
+| `desktop` | `ax` | any | ❌ | A desktop-absolute action has no `window_id`, so there is no accessibility tree to resolve an `element_index` against. |
+| `desktop` | any | `background` | ❌ | Screen-absolute input hits whatever owns those pixels on the active desktop; there is no per-process route, so it cannot be backgrounded. |
+| `window` | any | — | ❌ | A window-less (no `pid`/`window_id`) action while scope is `window` is rejected with the structured `desktop_scope_disabled` error. |
+
+The two rejections are enforced, not advisory. A window-less click while `capture_scope=window` returns `desktop_scope_disabled`, pointing the caller at `set_config capture_scope=desktop`. Desktop scope inherently foregrounds and works on pixels, so it cannot honor the background contract or the accessibility path — which is exactly why background, per-window automation is the default.
+
+## Platform Support
+
+| Axis / value | Windows | macOS | Linux |
+|---|---|---|---|
+| `capture_mode` `ax` / `vision` / `som` | ✅ | ✅ | ✅ |
+| `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a [known gap](/explanation/the-no-foreground-contract#linux)) |
+| `dispatch: foreground` + `bring_to_front` | ✅ explicit activation | activation differs (no `bring_to_front` tool) | activation differs (stubbed) |
+| `capture_scope: desktop` (full screen-absolute loop) | ✅ | rolling out | rolling out |
+
+`capture_mode` is recognized everywhere, so window-scope automation — the four window-scope rows of the matrix — works on all three platforms. The desktop-scope loop (`get_desktop_state` plus window-less screen-absolute input via hit-testing) is complete on Windows and rolling out to macOS and Linux; on those platforms a window-less action under window scope is still rejected. See the [MCP tool reference](/reference/cua-driver/mcp-tools) for per-tool parameters and the [no-foreground contract](/explanation/the-no-foreground-contract) for how background dispatch is implemented on each OS.

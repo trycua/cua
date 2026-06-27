@@ -124,3 +124,21 @@ Windows" gap.
 
 Run an `#[ignore]` suite explicitly:
 `cargo test -p cua-driver --test <name> -- --ignored --nocapture --test-threads=1`
+
+### Run the whole matrix for the host OS
+
+`test-harness/run-suite.sh` (macOS + Linux) and `test-harness/run-suite.ps1`
+(Windows) build the host harness and run every `#[ignore]` modality/harness test
+for that OS in one shot, printing a `PASS / FAIL / SKIP` summary. Each test file
+is `#![cfg(target_os = "…")]`-gated, so the runner lists the full matrix and cfg
+selects the host's subset (non-host files compile to empty binaries).
+
+```sh
+libs/cua-driver/test-harness/run-suite.sh               # macOS / Linux
+pwsh -File libs/cua-driver/test-harness/run-suite.ps1   # Windows (Session 2)
+```
+
+Flags: `--no-build` reuse the staged harness, `--release` use the release driver.
+Headless Linux CI runs the capture_mode + gate subset
+(`.github/workflows/ci-cua-driver-interactive-linux.yml`); the desktop-scope
+landing needs a real display.

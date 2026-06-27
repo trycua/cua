@@ -80,7 +80,31 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
     return message;
   }, [message]);
 
-  return <DefaultAssistantMessage {...rest} message={processedMessage as typeof message} />;
+  const messageText = useMemo(() => {
+    if (!processedMessage) return '';
+    if (typeof processedMessage.content === 'string') return processedMessage.content;
+    if (Array.isArray(processedMessage.content)) {
+      return (processedMessage.content as unknown[]).map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object' && 'text' in part && typeof (part as { text?: unknown }).text === 'string') {
+          return (part as { text: string }).text;
+        }
+        return '';
+      }).join('');
+    }
+    return '';
+  }, [processedMessage]);
+
+  return (
+    <div className="copilotkit-assistant-message-wrapper">
+      <DefaultAssistantMessage {...rest} message={processedMessage as typeof message} />
+      {messageText && (
+        <div className="copilotkit-copy-response-container">
+          <CopyResponseButton content={messageText} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Tool display name mapping - add new tools here
@@ -180,6 +204,31 @@ function CheckIcon() {
   );
 }
 
+function CopyResponseButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard write failed
+    });
+  }, [content]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy response"
+      aria-label="Copy response"
+      className="copilotkit-copy-response-button"
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  );
+}
+
 function extractMessagesFromDOM(): string {
   const messagesContainer = document.querySelector('.copilotKitMessages');
   if (!messagesContainer) {
@@ -236,8 +285,8 @@ function CustomHeader() {
           type="button"
           onClick={handleCopy}
           className="copilotkit-copy-button"
-          title="Copy chat as markdown"
-          aria-label="Copy chat as markdown"
+          title="Copy session"
+          aria-label="Copy session"
         >
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
@@ -508,6 +557,58 @@ const customStyles = `
   .dark .copilotkit-copy-button:hover {
     background-color: rgba(255, 255, 255, 0.1);
     color: rgba(255, 255, 255, 0.9);
+  }
+
+  /* Per-message copy response button */
+  .copilotkit-assistant-message-wrapper {
+    position: relative;
+  }
+
+  .copilotkit-copy-response-container {
+    display: flex;
+    justify-content: flex-end;
+    padding: 2px 4px 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  .copilotkit-assistant-message-wrapper:hover .copilotkit-copy-response-container,
+  .copilotkit-assistant-message-wrapper:focus-within .copilotkit-copy-response-container {
+    opacity: 1;
+  }
+
+  .copilotkit-copy-response-button:focus-visible {
+    outline: 2px solid var(--copilot-kit-primary-color, #4f46e5);
+    outline-offset: 2px;
+  }
+
+  .copilotkit-copy-response-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--copilot-kit-secondary-contrast-color, #888);
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .copilotkit-copy-response-button:hover {
+    background-color: var(--copilot-kit-separator-color, rgba(0, 0, 0, 0.08));
+    color: var(--copilot-kit-secondary-contrast-color, #333);
+  }
+
+  .dark .copilotkit-copy-response-button {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .dark .copilotkit-copy-response-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
   }
 
   /* Hide regenerate button but keep copy and thumbs up/down for feedback */

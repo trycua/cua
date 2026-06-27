@@ -195,6 +195,37 @@ def parse_action(action_str):
         return None
 
 
+def parse_box_coordinates(box: str) -> Optional[List[float]]:
+    """Safely parse a UITARS coordinate box string into a list of numbers.
+
+    The model-supplied ``start_box``/``end_box`` value is data only: a numeric
+    tuple/list such as ``"[0.1, 0.2, 0.1, 0.2]"`` or ``"(x, y)"``. It must never
+    be evaluated as code. ``ast.literal_eval`` parses only Python literals, so
+    arbitrary expressions (function calls, arithmetic, names) are rejected.
+
+    Args:
+        box: The coordinate string emitted by the model.
+
+    Returns:
+        A list of floats parsed from the box string, or ``None`` if the string
+        is not a literal sequence of numbers (so the caller can skip the action
+        instead of executing model-supplied text).
+    """
+    try:
+        value = ast.literal_eval(box)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return None
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return None
+    if not all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in value):
+        return None
+
+    return [float(n) for n in value]
+
+
 def parse_uitars_response(text: str, image_width: int, image_height: int) -> List[Dict[str, Any]]:
     """Parse UITARS model response into structured actions."""
     text = text.strip()
@@ -302,8 +333,8 @@ def convert_to_computer_actions(
 
         elif action_type in ["click", "left_single"]:
             start_box = action_inputs.get("start_box")
-            if start_box:
-                coords = eval(start_box)
+            coords = parse_box_coordinates(start_box) if start_box else None
+            if coords:
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -311,8 +342,8 @@ def convert_to_computer_actions(
 
         elif action_type in ["double_click", "left_double"]:
             start_box = action_inputs.get("start_box")
-            if start_box:
-                coords = eval(start_box)
+            coords = parse_box_coordinates(start_box) if start_box else None
+            if coords:
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -320,8 +351,8 @@ def convert_to_computer_actions(
 
         elif action_type in ["right_click", "right_single"]:
             start_box = action_inputs.get("start_box")
-            if start_box:
-                coords = eval(start_box)
+            coords = parse_box_coordinates(start_box) if start_box else None
+            if coords:
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
 
@@ -344,8 +375,8 @@ def convert_to_computer_actions(
             start_box = action_inputs.get("start_box")
             direction = action_inputs.get("direction", "down")
 
-            if start_box:
-                coords = eval(start_box)
+            coords = parse_box_coordinates(start_box) if start_box else None
+            if coords:
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
             else:
@@ -358,10 +389,9 @@ def convert_to_computer_actions(
             start_box = action_inputs.get("start_box")
             end_box = action_inputs.get("end_box")
 
-            if start_box and end_box:
-                start_coords = eval(start_box)
-                end_coords = eval(end_box)
-
+            start_coords = parse_box_coordinates(start_box) if start_box else None
+            end_coords = parse_box_coordinates(end_box) if end_box else None
+            if start_coords and end_coords:
                 start_x = int((start_coords[0] + start_coords[2]) / 2 * image_width)
                 start_y = int((start_coords[1] + start_coords[3]) / 2 * image_height)
                 end_x = int((end_coords[0] + end_coords[2]) / 2 * image_width)

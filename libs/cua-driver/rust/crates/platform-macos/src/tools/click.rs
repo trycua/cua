@@ -115,6 +115,111 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+
+        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // x,y given with NO pid and NO window_id → the coordinates are TRUE
+        // SCREEN pixels. This is the foreground, vision-driven desktop-scope
+        // path, the macOS peer of the Windows WindowFromPoint click. Gate on the
+        // effective scope: under "window" return a structured
+        // `desktop_scope_disabled` error (same contract as Windows) rather than
+        // silently treating window-local pixels as screen pixels.
+        let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
+        let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
+        let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
+            && args.get("y").map(|v| v.is_number()).unwrap_or(false);
+        if has_xy && !has_pid && !has_window_id {
+            let session_id = args.opt_str("_session_id");
+            let scope = self
+                .state
+                .session_config
+                .effective_scope(session_id.as_deref(), &self.state.config.read().unwrap());
+            if scope != "desktop" {
+                return ToolResult::error(
+                    "click: x,y given with no pid/window_id, but capture_scope is \
+                     \"window\". Screen-absolute clicks require desktop scope. Call \
+                     set_config with capture_scope=desktop (and use get_desktop_state \
+                     to read true screen pixels) first."
+                        .to_string(),
+                )
+                .with_structured(serde_json::json!({
+                    "code": "desktop_scope_disabled",
+                    "capture_scope": scope,
+                    "suggestion": "set_config capture_scope=desktop",
+                }));
+            }
+            let sx = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64)).unwrap_or(0.0);
+            let sy = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|i| i as f64)).unwrap_or(0.0);
+            let button = match args.str_or("button", "left").to_lowercase().as_str() {
+                "right" => "right",
+                "middle" => "middle",
+                "" | "left" => "left",
+                other => {
+                    return ToolResult::error(format!(
+                        "click: unknown button \"{other}\" — expected one of left, right, middle."
+                    ))
+                }
+            }
+            .to_string();
+            let count = args.u64_or("count", 1) as usize;
+            // Glide the session's agent cursor to the screen point for visibility.
+            let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), sx, sy).await;
+            self.state.cursor_registry.update_position(&cursor_key, sx, sy);
+
+            // Resolve the frontmost on-screen window under the point (the macOS
+            // peer of Windows' WindowFromPoint). When found, click THAT pid via
+            // the proven SkyLight path (`click_at_xy`, screen coords) — reliable
+            // on AppKit/Chromium where a bare HID post can miss. Only when no
+            // app window owns the pixel (desktop background, etc.) fall back to
+            // the cursor-warp + HID post.
+            // Resolve as (pid, window_id, win_origin_x, win_origin_y) so the
+            // click can stamp the window-LOCAL point — AppKit hit-tests the
+            // stamped window-local coordinate, not the bare screen point, so a
+            // plain screen-coord post misses.
+            // Exclude our OWN windows (the agent-cursor overlay we just glided to
+            // the point sits on top of the target — never resolve the click to it).
+            let own_pid = std::process::id() as i32;
+            let target = {
+                let mut wins = crate::windows::visible_windows();
+                wins.sort_by_key(|w| w.z_index); // front-to-back
+                wins.into_iter().find(|w| {
+                    w.layer == 0
+                        && w.pid != own_pid
+                        && sx >= w.bounds.x
+                        && sx < w.bounds.x + w.bounds.width
+                        && sy >= w.bounds.y
+                        && sy < w.bounds.y + w.bounds.height
+                }).map(|w| (w.pid, w.window_id, w.bounds.x, w.bounds.y))
+            };
+            let btn = button.clone();
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<i32>> {
+                match target {
+                    Some((pid, wid, ox, oy)) => {
+                        let (wx, wy) = (sx - ox, sy - oy);
+                        crate::input::mouse::click_at_xy_with_window_local(
+                            pid, sx, sy, wx, wy, wid, count, &[],
+                        )?;
+                        Ok(Some(pid))
+                    }
+                    None => {
+                        crate::input::mouse::click_at_xy_desktop(sx, sy, count, &btn)?;
+                        Ok(None)
+                    }
+                }
+            })
+            .await;
+            return match result {
+                Ok(Ok(Some(pid))) => ToolResult::text(format!(
+                    "✅ Sent click at screen ({sx},{sy}) on pid {pid} (desktop scope)."
+                )),
+                Ok(Ok(None)) => ToolResult::text(format!(
+                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope, no window under point)."
+                )),
+                Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
+                Err(e) => ToolResult::error(format!("task error: {e}")),
+            };
+        }
+
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
         // Resolve this action's cursor key so its click-pulse / glide land on
         // the calling session's cursor, not the shared "default" one.

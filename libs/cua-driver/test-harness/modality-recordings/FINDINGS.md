@@ -133,6 +133,47 @@ Two driver gotchas to flag: **`end_session` poisons a reused session id** (subse
 silently no-op), and AppKit **window height drifts between launches** (store targets as window-local
 points, convert to live screenshot px).
 
+## Control-parity pass (all surfaces → WPF baseline)
+
+Brought every harness up to the WPF 6-control set (checkbox, click-target L/R/double,
+slider, scroll-target, text-input, context-menu) so the same 8-action matrix is
+exercisable everywhere; `shared/scenarios.json` + `shared/web/index.html` are the
+single source of truth. Harness DOM/UI parity landed for GTK3, WinUI3, the shared web
+(WebView2/Electron/WKWebView), and macOS AppKit/SwiftUI.
+
+**scroll_target — Linux Electron (re-recorded, frame-verified).** The shared web
+`scroll-tall` clipped region now resolves on Linux Electron in all 5 modes via the
+Chromium web-AX tree; the recorder aims the scroll at that section and checks a real
+`scroll_offset=` delta. **Result: scroll is a no-op in every mode** (`scroll_offset`
+stays 0) — the same AT-SPI synthetic-input limit as the other Linux pointer actions
+(double/right/drag), for both the element_index and the pixel/vision path. Headline
+intact: Linux Electron ax-bg still **stole 3/8** (scroll is now a counted failure, not
+`na`). 5 mp4s re-encoded + overwritten (`linux-electron-*.mp4`).
+
+**WebView2 (Windows) — harness restored, full-parity recording deferred.** The shared
+web DOM (with scroll-target) is deployed; a clean self-contained re-publish of the
+harness was needed after an in-place publish corrupted the bundle (window stopped
+resolving). With the clean bundle the window resolves again and `sld`/`txt` map, but the
+new click-target/checkbox/scroll/context controls need the WebView2 recorder's resolver
+extended (as was done for Linux Electron) before a full-parity recording is meaningful —
+deferred as low marginal value: it would only re-confirm the captured headline (Windows
+Chromium **steals 7/8**, the matrix-webview2-ax-bg.mp4 evidence).
+
+## macOS — 4 surfaces + numeric-set_value driver fix
+
+Surfaces recorded on the macOS host (local-only, personal screen — never uploaded):
+**AppKit, SwiftUI, Electron, WKWebView**, 5 modes each. WKWebView (Apple WebKit, the
+native analogue of WebView2) **holds the contract** — confirming the Windows Electron/
+WebView2 steal is specific to Windows-Chromium, not WebKit-on-macOS.
+
+**Driver fix shipped (this branch, `platform-macos`):** `set_value` now writes a
+**CFNumber** for numeric `AXValue` controls (NSSlider/NSStepper reject a CFString with
+`-25201`); falls back to CFString for text fields. Compile-verified; runtime-verify on
+the host deferred. The two macOS gotchas above (`end_session` reuse poisoning, AppKit
+window-height drift) were also filed for the driver.
+
 ## Deliverables
 10 verified recordings (5 WPF + 5 GTK3) + index, published at
 `https://cuademo06261324.blob.core.windows.net/demo/modality-videos/index.html`.
+Additional local-only sets (not uploaded): macOS AppKit/SwiftUI/Electron/WKWebView,
+Linux Electron (with scroll-target), and the Windows cross-toolkit matrix.

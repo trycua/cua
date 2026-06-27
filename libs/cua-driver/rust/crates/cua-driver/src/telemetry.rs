@@ -24,8 +24,9 @@
 //! ## Privacy posture (identical to Swift)
 //!
 //! We send: driver version, OS name, OS version, CPU arch, CI-environment
-//! flag, and a stable per-install UUID. We do **NOT** send: usernames,
-//! file paths, command arguments, tool args, or anything user-typed.
+//! flag, a stable per-install UUID (`distinct_id`), and an ephemeral
+//! per-process UUID (`session_id`). We do **NOT** send: usernames, file
+//! paths, command arguments, tool args, or anything user-typed.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -162,7 +163,8 @@ where
     // Build the payload directly (we still bypass the opt-out check here,
     // see module docs + capture_install rationale) and POST synchronously.
     let distinct_id = get_or_create_install_id();
-    let payload = build_payload(event::INSTALL, None, &distinct_id);
+    let session_id = get_or_create_session_id();
+    let payload = build_payload(event::INSTALL, None, &distinct_id, &session_id);
     let debug = debug_enabled();
     if debug {
         eprintln!("[telemetry] sending event: {} (sync)", event::INSTALL);
@@ -264,6 +266,15 @@ fn get_or_create_install_id() -> String {
         .clone()
 }
 
+/// Read the per-process session UUID, creating it on first use and then
+/// reusing it for the remainder of the process lifetime.
+fn get_or_create_session_id() -> String {
+    static SESSION_ID_CACHE: OnceLock<String> = OnceLock::new();
+    SESSION_ID_CACHE
+        .get_or_init(|| uuid::Uuid::new_v4().to_string())
+        .clone()
+}
+
 /// Disk-bound path. Read existing UUID if valid; otherwise generate and persist.
 /// Separated from the `OnceLock` wrapper so tests can exercise the path logic
 /// without contaminating process-global state.
@@ -311,6 +322,7 @@ pub(crate) fn build_payload(
     event_name: &str,
     properties: Option<&serde_json::Value>,
     distinct_id: &str,
+    session_id: &str,
 ) -> serde_json::Value {
     let version = env!("CARGO_PKG_VERSION");
 
@@ -327,6 +339,7 @@ pub(crate) fn build_payload(
     event_properties.insert("os_version".into(), os_version().into());
     event_properties.insert("arch".into(), arch().into());
     event_properties.insert("is_ci".into(), is_ci().into());
+    event_properties.insert("session_id".into(), session_id.into());
     event_properties.insert("$lib".into(), "cua-driver-rs".into());
     event_properties.insert("$lib_version".into(), version.into());
 
@@ -352,7 +365,8 @@ fn spawn_capture(
         return;
     }
     let distinct_id = get_or_create_install_id();
-    let payload = build_payload(&event_name, properties.as_ref(), &distinct_id);
+    let session_id = get_or_create_session_id();
+    let payload = build_payload(&event_name, properties.as_ref(), &distinct_id, &session_id);
     let debug = debug_enabled();
 
     let task = move || {
@@ -640,6 +654,7 @@ mod tests {
             "cua_driver_test",
             Some(&serde_json::json!({"extra_key": "extra_val"})),
             "test-distinct-id",
+            "test-session-id",
         );
         // Top-level envelope.
         assert_eq!(payload["api_key"], POSTHOG_API_KEY);
@@ -656,6 +671,7 @@ mod tests {
         assert_eq!(props["arch"], arch());
         assert!(props["is_ci"].is_boolean());
         assert!(props["os_version"].is_string());
+        assert_eq!(props["session_id"], "test-session-id");
         // Caller-provided property survives the merge.
         assert_eq!(props["extra_key"], "extra_val");
 
@@ -676,9 +692,19 @@ mod tests {
             "cua_driver_test",
             Some(&serde_json::json!({"os": "fake-os", "$lib": "fake-lib"})),
             "id",
+            "session",
         );
         assert_eq!(payload["properties"]["os"], std::env::consts::OS);
         assert_eq!(payload["properties"]["$lib"], "cua-driver-rs");
+    }
+
+    #[test]
+    fn session_id_is_stable_within_a_process() {
+        let first = get_or_create_session_id();
+        let second = get_or_create_session_id();
+
+        assert_eq!(first, second, "session id must stay stable within one process");
+        assert_eq!(first.len(), 36, "session id must be a UUID");
     }
 
     #[test]

@@ -15,8 +15,9 @@ import Foundation
 ///    separate YAML like lume's.
 ///
 /// Privacy posture matches lume: we send the driver version, OS,
-/// OS version, CPU architecture, CI-environment flag, and a stable
-/// per-install UUID. We do **not** send usernames, file paths,
+/// OS version, CPU architecture, CI-environment flag, a stable
+/// per-install UUID (`distinct_id`), and an ephemeral per-process
+/// UUID (`session_id`). We do **not** send usernames, file paths,
 /// command arguments, or anything user-typed. See `privacy` notes
 /// in the package for the audit trail.
 public final class TelemetryClient: @unchecked Sendable {
@@ -39,6 +40,7 @@ public final class TelemetryClient: @unchecked Sendable {
     // MARK: - Properties
 
     private var installationId: String?
+    private let sessionId: String
     private let urlSession: URLSession
 
     // MARK: - Initialization
@@ -48,6 +50,7 @@ public final class TelemetryClient: @unchecked Sendable {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 10
         config.timeoutIntervalForResource = 10
+        self.sessionId = UUID().uuidString
         self.urlSession = URLSession(configuration: config)
     }
 
@@ -128,6 +131,7 @@ public final class TelemetryClient: @unchecked Sendable {
         eventProperties["os_version"] = ProcessInfo.processInfo.operatingSystemVersionString
         eventProperties["arch"] = Self.architecture
         eventProperties["is_ci"] = Self.isCI
+        eventProperties["session_id"] = self.sessionId
         eventProperties["$lib"] = "cua-driver-swift"
         eventProperties["$lib_version"] = version
 

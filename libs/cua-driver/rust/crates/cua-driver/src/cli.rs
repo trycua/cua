@@ -36,6 +36,15 @@ pub enum Command {
         /// Code, where this is the documented best-practice install.
         claude_code_compat: bool,
     },
+    McpOauth {
+        public_url: String,
+        listen: Option<String>,
+        mcp_upstream: Option<String>,
+        storage_dir: Option<String>,
+        token_ttl_seconds: Option<u64>,
+        code_ttl_seconds: Option<u64>,
+        require_user_consent: bool,
+    },
     ListTools,
     Describe(String),
     Call {
@@ -140,6 +149,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--cursor-icon", "--cursor-id", "--cursor-palette", "--cursor-shape",
     "--glide-ms", "--dwell-ms", "--idle-hide-ms",
     "--screenshot-out-file", "--client", "--socket", "--pid-file", "--type",
+    "--public-url", "--listen", "--mcp-upstream", "--storage-dir",
+    "--token-ttl-seconds", "--code-ttl-seconds",
     // Experimental PiP preview — value flag for the optional geometry
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
@@ -161,7 +172,7 @@ pub fn parse_command() -> Command {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("cua-driver {} — cross-platform computer-use automation driver", env!("CARGO_PKG_VERSION"));
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
+        println!("Subcommands: mcp, mcp-oauth, list-tools, describe, call, serve, stop, status, config, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -210,6 +221,18 @@ pub fn parse_command() -> Command {
         println!("                          screenshot tool itself was removed in #1692, so the flag");
         println!("                          has no tool-surface effect today; the wiring is in place");
         println!("                          for any future compat-gated tool.");
+        println!();
+        println!("mcp-oauth options (experimental):");
+        println!("  cua-driver mcp-oauth --public-url <https-url> [--mcp-upstream <url>]");
+        println!("                          Run an OAuth + DCR HTTP front door for a local MCP HTTP endpoint.");
+        println!("                          The listener defaults to 127.0.0.1:7676; expose it through");
+        println!("                          your own trusted HTTPS tunnel when needed.");
+        println!("  --listen <addr:port>    Bind address (default: 127.0.0.1:7676).");
+        println!("  --mcp-upstream <url>    Local MCP HTTP upstream (default: http://127.0.0.1:7677/mcp).");
+        println!("  --storage-dir <path>    OAuth client/code/token JSON store.");
+        println!("  --token-ttl-seconds <n> Access-token TTL (default: 86400).");
+        println!("  --code-ttl-seconds <n>  Authorization-code TTL (default: 300).");
+        println!("  --no-consent-page       Auto-approve /authorize requests. Local testing only.");
         println!();
         println!("agent cursor overlay (serve / mcp only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -304,6 +327,21 @@ pub fn parse_command() -> Command {
             no_daemon_relaunch,
             socket: socket.clone(),
             claude_code_compat,
+        },
+        Some("mcp-oauth") => {
+            let public_url = flag_value(&args, "--public-url").unwrap_or_else(|| {
+                eprintln!("cua-driver mcp-oauth requires --public-url <https-url>");
+                std::process::exit(2);
+            });
+            Command::McpOauth {
+                public_url,
+                listen: flag_value(&args, "--listen"),
+                mcp_upstream: flag_value(&args, "--mcp-upstream"),
+                storage_dir: flag_value(&args, "--storage-dir"),
+                token_ttl_seconds: flag_u64(&args, "--token-ttl-seconds"),
+                code_ttl_seconds: flag_u64(&args, "--code-ttl-seconds"),
+                require_user_consent: !args.iter().any(|a| a == "--no-consent-page"),
+            }
         },
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
@@ -475,6 +513,23 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn flag_u64(args: &[String], flag: &str) -> Option<u64> {
+    flag_value(args, flag).and_then(|v| match parse_positive_u64(&v, flag) {
+        Ok(n) => Some(n),
+        Err(_) => {
+            eprintln!("{flag} must be a positive integer");
+            std::process::exit(2);
+        }
+    })
+}
+
+fn parse_positive_u64(raw: &str, _flag: &str) -> Result<u64, ()> {
+    match raw.parse::<u64>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(()),
+    }
 }
 
 /// Print all tools in the registry, one per line: `name: first sentence`.
@@ -845,6 +900,17 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--no-daemon-relaunch", "type": "flag", "description": "Skip the bundle-based TCC auto-relaunch and stay in-process." },
                   { "name": "--socket", "type": "string", "description": "Override the daemon proxy UDS path." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." }
+              ] },
+            { "name": "mcp-oauth",
+              "description": "Run an experimental OAuth + DCR HTTP front door for a local MCP HTTP endpoint.",
+              "args": [
+                  { "name": "--public-url", "type": "string", "description": "Externally reachable HTTPS base URL." },
+                  { "name": "--listen", "type": "string", "description": "Bind address. Defaults to 127.0.0.1:7676." },
+                  { "name": "--mcp-upstream", "type": "string", "description": "Local MCP HTTP upstream. Defaults to http://127.0.0.1:7677/mcp." },
+                  { "name": "--storage-dir", "type": "string", "description": "OAuth client/code/token JSON store." },
+                  { "name": "--token-ttl-seconds", "type": "integer", "description": "Access-token lifetime." },
+                  { "name": "--code-ttl-seconds", "type": "integer", "description": "Authorization-code lifetime." },
+                  { "name": "--no-consent-page", "type": "flag", "description": "Auto-approve /authorize requests for local testing." }
               ] },
             { "name": "serve",
               "description": "Run the long-lived daemon — backs the proxy/auto-relaunch path on macOS and the autostart Session 1+ daemon on Windows.",
@@ -2799,6 +2865,7 @@ pub fn telemetry_entry_event(cmd: &Command) -> Option<String> {
     use crate::telemetry::event;
     let name = match cmd {
         Command::Mcp { .. } => event::MCP.to_owned(),
+        Command::McpOauth { .. } => "cua_driver_mcp_oauth".to_owned(),
         Command::Serve { .. } => event::SERVE.to_owned(),
         Command::Stop { .. } => event::STOP.to_owned(),
         Command::Status { .. } => event::STATUS.to_owned(),
@@ -2922,6 +2989,13 @@ mod tests {
         assert!(sanitized.chars().all(|c| c == 'a'));
     }
 
+    #[test]
+    fn parse_positive_u64_accepts_positive_and_rejects_zero_or_invalid() {
+        assert_eq!(parse_positive_u64("1", "--token-ttl-seconds"), Ok(1));
+        assert_eq!(parse_positive_u64("0", "--token-ttl-seconds"), Err(()));
+        assert_eq!(parse_positive_u64("abc", "--token-ttl-seconds"), Err(()));
+    }
+
     // ── Surface 8: manifest shape ───────────────────────────────────────────
 
     /// The manifest must carry the four documented top-level keys so a
@@ -2956,7 +3030,7 @@ mod tests {
         let names: Vec<&str> = subs.iter()
             .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
             .collect();
-        for need in ["mcp", "list-tools", "describe", "call", "serve",
+        for need in ["mcp", "mcp-oauth", "list-tools", "describe", "call", "serve",
                      "stop", "status", "mcp-config", "manifest"] {
             assert!(names.contains(&need), "missing subcommand '{need}'");
         }

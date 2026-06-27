@@ -17,23 +17,6 @@ logger = logging.getLogger(__name__)
 
 OS_TYPE = get_current_os()
 
-if OS_TYPE == "android":
-    from .android import (
-        AndroidAccessibilityHandler,
-        AndroidAutomationHandler,
-        AndroidDesktopHandler,
-        AndroidFileHandler,
-        AndroidWindowHandler,
-    )
-elif OS_TYPE == "darwin":
-    from computer_server.diorama.macos import MacOSDioramaHandler
-
-    from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
-elif OS_TYPE == "linux":
-    from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
-elif OS_TYPE == "windows":
-    from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
-
 from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
 
@@ -81,6 +64,14 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "android":
+            from .android import (
+                AndroidAccessibilityHandler,
+                AndroidAutomationHandler,
+                AndroidDesktopHandler,
+                AndroidFileHandler,
+                AndroidWindowHandler,
+            )
+
             return (
                 AndroidAccessibilityHandler(),
                 AndroidAutomationHandler(),
@@ -90,6 +81,10 @@ class HandlerFactory:
                 AndroidWindowHandler(),
             )
         elif OS_TYPE == "darwin":
+            from computer_server.diorama.macos import MacOSDioramaHandler
+
+            from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
+
             return (
                 MacOSAccessibilityHandler(),
                 MacOSAutomationHandler(),
@@ -99,6 +94,8 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "linux":
+            from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
+
             return (
                 LinuxAccessibilityHandler(),
                 LinuxAutomationHandler(),
@@ -108,6 +105,8 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "windows":
+            from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
+
             return (
                 WindowsAccessibilityHandler(),
                 WindowsAutomationHandler(),

@@ -5,17 +5,27 @@ They verify that:
   1. _create() cleans up a provisioned VM when _connect() fails.
   2. destroy() runs every cleanup step independently — a failure in one
      does not prevent the others from executing.
+  3. A SIGTERM delivered while an ephemeral sandbox is active triggers
+     destroy() via the installed handler.
 """
 
 from __future__ import annotations
 
+import signal
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import sys
 
 import httpx
 import pytest
 from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.transport.cloud import CloudTransport
+
+# `cua_sandbox.sandbox` the module is shadowed on the package by a `sandbox`
+# factory function re-exported in __init__.py, so grab the module from
+# sys.modules directly to access its private test hooks.
+sandbox_mod = sys.modules["cua_sandbox.sandbox"]
 
 pytestmark = pytest.mark.asyncio
 
@@ -334,3 +344,130 @@ class TestEphemeralCleanup:
                     pass  # never reached
 
         transport.delete_vm.assert_awaited_once()
+
+
+# ===================================================================
+# 4. SIGTERM cleanup — ephemeral sandboxes are destroyed on kill
+# ===================================================================
+
+
+@pytest.fixture
+def _restore_sigterm():
+    """Snapshot + restore the SIGTERM handler around each test.
+
+    The ephemeral context manager installs a process-wide SIGTERM handler
+    while active; make sure we don't leak that state between tests.
+    """
+    prev = signal.getsignal(signal.SIGTERM)
+    prev_installed = sandbox_mod._SIGTERM_INSTALLED
+    prev_prev = sandbox_mod._PREV_SIGTERM_HANDLER
+    prev_count = sandbox_mod._ACTIVE_EPHEMERAL_COUNT
+    yield
+    signal.signal(signal.SIGTERM, prev)
+    sandbox_mod._SIGTERM_INSTALLED = prev_installed
+    sandbox_mod._PREV_SIGTERM_HANDLER = prev_prev
+    sandbox_mod._ACTIVE_EPHEMERAL_COUNT = prev_count
+
+
+class TestEphemeralSigtermCleanup:
+    """Ephemeral sandboxes must be destroyed when the process gets SIGTERM."""
+
+    async def test_sigterm_handler_installed_and_removed(self, _restore_sigterm):
+        """Entering ephemeral() installs a SIGTERM handler; exiting removes it."""
+        transport = _make_cloud_transport(name="eph-sig")
+        transport.connect = AsyncMock()
+        transport.disconnect = AsyncMock()
+        transport.delete_vm = AsyncMock()
+
+        before = signal.getsignal(signal.SIGTERM)
+
+        with (
+            patch.object(CloudTransport, "__init__", lambda self, **kw: None),
+            patch.object(CloudTransport, "__new__", lambda cls, **kw: transport),
+        ):
+            async with Sandbox.ephemeral(
+                Image.linux("ubuntu", "24.04"),
+                api_key="sk-fake",
+                telemetry_enabled=False,
+            ) as _sb:
+                handler = signal.getsignal(signal.SIGTERM)
+                assert handler is sandbox_mod._sigterm_raise_systemexit
+
+        # After exit, the previous handler is restored.
+        assert signal.getsignal(signal.SIGTERM) == before
+        assert sandbox_mod._ACTIVE_EPHEMERAL_COUNT == 0
+
+    async def test_sigterm_triggers_destroy(self, _restore_sigterm):
+        """Raising the installed SIGTERM handler destroys the ephemeral VM."""
+        transport = _make_cloud_transport(name="eph-killed")
+        transport.connect = AsyncMock()
+        transport.disconnect = AsyncMock()
+        transport.delete_vm = AsyncMock()
+
+        with (
+            patch.object(CloudTransport, "__init__", lambda self, **kw: None),
+            patch.object(CloudTransport, "__new__", lambda cls, **kw: transport),
+        ):
+            with pytest.raises(SystemExit):
+                async with Sandbox.ephemeral(
+                    Image.linux("ubuntu", "24.04"),
+                    api_key="sk-fake",
+                    telemetry_enabled=False,
+                ) as _sb:
+                    # Simulate the OS delivering SIGTERM: invoke the installed
+                    # handler directly. It raises SystemExit, which propagates
+                    # through the async-with's finally and calls destroy().
+                    signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+        transport.delete_vm.assert_awaited_once()
+
+    async def test_nested_ephemerals_keep_handler_until_outermost_exits(
+        self, _restore_sigterm
+    ):
+        """The handler is only uninstalled when the last ephemeral exits."""
+        t1 = _make_cloud_transport(name="outer")
+        t1.connect = AsyncMock()
+        t1.disconnect = AsyncMock()
+        t1.delete_vm = AsyncMock()
+
+        t2 = _make_cloud_transport(name="inner")
+        t2.connect = AsyncMock()
+        t2.disconnect = AsyncMock()
+        t2.delete_vm = AsyncMock()
+
+        transports = iter([t1, t2])
+
+        with (
+            patch.object(CloudTransport, "__init__", lambda self, **kw: None),
+            patch.object(
+                CloudTransport, "__new__", lambda cls, **kw: next(transports)
+            ),
+        ):
+            async with Sandbox.ephemeral(
+                Image.linux("ubuntu", "24.04"),
+                api_key="sk-fake",
+                telemetry_enabled=False,
+            ):
+                assert sandbox_mod._ACTIVE_EPHEMERAL_COUNT == 1
+                async with Sandbox.ephemeral(
+                    Image.linux("ubuntu", "24.04"),
+                    api_key="sk-fake",
+                    telemetry_enabled=False,
+                ):
+                    assert sandbox_mod._ACTIVE_EPHEMERAL_COUNT == 2
+                    assert (
+                        signal.getsignal(signal.SIGTERM)
+                        is sandbox_mod._sigterm_raise_systemexit
+                    )
+                assert sandbox_mod._ACTIVE_EPHEMERAL_COUNT == 1
+                # Handler still in place while the outer scope is active.
+                assert (
+                    signal.getsignal(signal.SIGTERM)
+                    is sandbox_mod._sigterm_raise_systemexit
+                )
+
+        assert sandbox_mod._ACTIVE_EPHEMERAL_COUNT == 0
+        assert (
+            signal.getsignal(signal.SIGTERM)
+            is not sandbox_mod._sigterm_raise_systemexit
+        )

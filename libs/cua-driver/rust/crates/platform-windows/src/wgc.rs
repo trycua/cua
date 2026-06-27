@@ -9,10 +9,9 @@
 //! Constraints:
 //! - Minimum OS: Windows 10 version 1903 (~April 2019). ~100% of users
 //!   today; we surface a structured error on older builds.
-//! - Cannot capture **minimized** windows. They have no rendered content.
-//!   For minimized targets, the caller should use UIA via
-//!   `get_window_state` `capture_mode:"ax"`. We surface this as an
-//!   error with the recommended fallback.
+//! - Minimized / cloaked windows can still fail to produce a frame on some
+//!   systems. We let WGC try them first and surface a structured timeout so
+//!   the caller can fall back cleanly.
 //! - First call per process pays ~50ms for D3D11 device creation +
 //!   COM activation factory lookup. Subsequent calls don't cache the
 //!   device — could be optimized later, but a single-shot screenshot
@@ -42,7 +41,6 @@ use windows::{
             Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
             Graphics::Capture::IGraphicsCaptureItemInterop,
         },
-        UI::WindowsAndMessaging::IsIconic,
     },
     core::Interface,
 };
@@ -55,15 +53,6 @@ pub fn screenshot_window_via_wgc(hwnd: u64) -> Result<(Vec<u8>, u32, u32)> {
 }
 
 unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
-    if IsIconic(hwnd).as_bool() {
-        bail!(
-            "WGC cannot capture a minimized window (no rendered content). \
-             Restore the window first, or use `get_window_state` with \
-             `capture_mode:\"ax\"` for UIA tree access — that works on \
-             minimized windows."
-        );
-    }
-
     // 1. D3D11 device — feature level 11.0 + BGRA support (required by WGC).
     let mut d3d_device: Option<ID3D11Device> = None;
     let mut d3d_context: Option<ID3D11DeviceContext> = None;

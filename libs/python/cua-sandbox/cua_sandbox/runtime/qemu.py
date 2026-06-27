@@ -212,9 +212,22 @@ class QEMUBaremetalRuntime(Runtime):
 
         # If image has layers or no direct disk path, use the builder to resolve
         if not opts.get("disk_path") and not image._disk_path and image.kind == "vm":
-            from cua_sandbox.builder.build import create_session_disk
+            # Registry QEMU images: pull the disk first, then boot bare-metal
+            if image._registry:
+                from cua_sandbox.registry.qemu_builder import pull_qemu_image
 
-            disk_path = str(await create_session_disk(image, name))
+                _cfg, _disk = pull_qemu_image(image._registry)
+                disk_path = str(_disk)
+                # Auto-select the right QEMU binary for the pulled image's arch
+                _qemu_to_oci = {"aarch64": "arm64", "x86_64": "amd64"}
+                _pulled_oci = _qemu_to_oci.get(_cfg.architecture, "amd64")
+                _host_oci = "arm64" if _plat.machine().lower() in ("arm64", "aarch64") else "amd64"
+                if _pulled_oci == _host_oci:
+                    self.arch = _cfg.architecture
+            else:
+                from cua_sandbox.builder.build import create_session_disk
+
+                disk_path = str(await create_session_disk(image, name))
         elif image._layers and (image._disk_path or opts.get("disk_path")):
             # Has a base disk AND user layers — build user image + session overlay
             from cua_sandbox.builder.build import create_session_disk
@@ -248,7 +261,7 @@ class QEMUBaremetalRuntime(Runtime):
         enable_kvm = opts.get("enable_kvm", True)
 
         # Detect guest server port from transport hint
-        guest_port = 5000 if image._agent_type == "osworld" else 8000
+        guest_port = 5000 if image._agent_type in ("osworld", "androidworld") else 8000
 
         # Detect disk format from extension
         disk_ext = Path(disk_path).suffix.lower()
@@ -282,6 +295,7 @@ class QEMUBaremetalRuntime(Runtime):
 
         # Build QEMU command — Android gets different machine/device config
         is_android = image.os_type == "android"
+        is_arm_guest = self.arch in ("aarch64", "arm64")
 
         if is_android:
             cmd = self._build_android_cmd(
@@ -294,6 +308,86 @@ class QEMUBaremetalRuntime(Runtime):
                 vnc_display,
                 enable_kvm,
             )
+        elif is_arm_guest:
+            # aarch64 guest — use 'virt' machine + UEFI (edk2-aarch64)
+            cmd = [
+                self._qemu_bin(),
+                "-name",
+                name,
+                "-machine",
+                "virt",
+                "-m",
+                str(memory),
+                "-smp",
+                str(cpus),
+                "-cpu",
+                (
+                    "host"
+                    if (_plat.system() == "Darwin" and _plat.machine() in ("arm64", "aarch64"))
+                    else "cortex-a72"
+                ),
+            ]
+            # UEFI firmware for aarch64
+            qemu_dir = Path(self._qemu_bin()).parent
+            aarch64_code = None
+            for candidate in [
+                qemu_dir / "share" / "edk2-aarch64-code.fd",
+                Path("/opt/homebrew/share/qemu/edk2-aarch64-code.fd"),
+                Path("/usr/share/AAVMF/AAVMF_CODE.fd"),
+                Path("/usr/share/qemu/edk2-aarch64-code.fd"),
+            ]:
+                if candidate.exists():
+                    aarch64_code = candidate
+                    break
+            if aarch64_code:
+                # aarch64 virt machine pflash1 must be exactly 64 MB.
+                # Include the code firmware path in the vars filename so that
+                # upgrading edk2 or changing the PCI device layout doesn't
+                # silently reuse stale boot entries from a prior firmware version.
+                AARCH64_VARS_SIZE = 64 * 1024 * 1024
+                import hashlib as _hl
+
+                _cfg_key = _hl.md5(str(aarch64_code).encode()).hexdigest()[:8]
+                aarch64_vars = Path(disk_path).parent / f"efivars-aarch64-{_cfg_key}.fd"
+                if not aarch64_vars.exists() or aarch64_vars.stat().st_size != AARCH64_VARS_SIZE:
+                    import shutil as _shutil
+
+                    vars_tmpl = qemu_dir / "share" / "edk2-arm-vars.fd"
+                    if vars_tmpl.exists() and vars_tmpl.stat().st_size == AARCH64_VARS_SIZE:
+                        _shutil.copy2(vars_tmpl, aarch64_vars)
+                    else:
+                        aarch64_vars.write_bytes(b"\x00" * AARCH64_VARS_SIZE)
+                cmd += [
+                    "-drive",
+                    f"if=pflash,format=raw,readonly=on,file={aarch64_code}",
+                    "-drive",
+                    f"if=pflash,format=raw,file={aarch64_vars}",
+                ]
+            cmd += [
+                "-drive",
+                f"file={disk_path},format={disk_fmt},if=virtio",
+                "-netdev",
+                f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}",
+                "-device",
+                "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
+                # virtio-gpu is required for the virt machine — without it X11
+                # has no display and pyautogui/osworld server can't start.
+                "-device",
+                "virtio-gpu-pci",
+                "-vnc",
+                f":{vnc_display}",
+            ]
+            if _plat.system() != "Windows":
+                cmd.append("-daemonize")
+            if enable_kvm:
+                if _plat.system() == "Darwin" and _plat.machine() in ("arm64", "aarch64"):
+                    # Apple Silicon: native arm64 guest → HVF acceleration
+                    cmd += ["-accel", "hvf"]
+                elif _plat.system() != "Windows":
+                    cmd.append("-enable-kvm")
+                else:
+                    cmd += ["-accel", "tcg"]
+            cmd += ["-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
         else:
             cmd = [
                 self._qemu_bin(),
@@ -376,7 +470,7 @@ class QEMUBaremetalRuntime(Runtime):
                 stderr = proc.stderr.read().decode() if proc.stderr else ""
                 raise RuntimeError(f"QEMU launch failed (exit {proc.returncode}): {stderr}")
 
-        use_qmp = is_android or self.use_qmp_transport
+        use_qmp = is_android or self.use_qmp_transport or image._agent_type == "osworld"
         info = RuntimeInfo(
             host="localhost",
             api_port=hostfwd_port,
@@ -392,8 +486,11 @@ class QEMUBaremetalRuntime(Runtime):
         if self._iso_path and use_qmp:
             await self._send_boot_key(info)
 
-        # Windows and Android need much longer to boot (3–10 min)
-        boot_timeout = 600 if image.os_type in ("windows", "android") else 120
+        # Windows, Android, and OSWorld (large Ubuntu disk) need longer boot times
+        if image.os_type in ("windows", "android") or image._agent_type == "osworld":
+            boot_timeout = 600
+        else:
+            boot_timeout = 120
         await self.is_ready(info, timeout=boot_timeout)
 
         if not ephemeral:
@@ -571,8 +668,13 @@ class QEMUBaremetalRuntime(Runtime):
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         if info.qmp_port and not info.agent_type:
             return await self._is_ready_qmp(info, timeout)
-        # For OSWorld, check the Flask server; for computer-server, check /status
-        endpoint = "/screenshot" if info.agent_type == "osworld" else "/status"
+        # For OSWorld/AndroidWorld, check the server health; for computer-server, check /status
+        if info.agent_type == "osworld":
+            endpoint = "/screenshot"
+        elif info.agent_type == "androidworld":
+            endpoint = "/health"
+        else:
+            endpoint = "/status"
         url = f"http://{info.host}:{info.api_port}{endpoint}"
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=10) as client:

@@ -738,6 +738,61 @@ fn parse_mouse_button(name: &str) -> u8 {
     }
 }
 
+/// Screen-absolute center of a window (top-left from translate_coordinates plus
+/// half its geometry). Used to position the no-focus-steal scroll over the
+/// window's content. Blocking — call inside spawn_blocking.
+fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    let geom = conn.get_geometry(xid as u32)?.reply()?;
+    let trans = conn.translate_coordinates(xid as u32, root, 0, 0)?.reply()?;
+    Ok((
+        trans.dst_x as i32 + geom.width as i32 / 2,
+        trans.dst_y as i32 + geom.height as i32 / 2,
+    ))
+}
+
+/// X11 no-focus-steal pixel click with graceful fallback. On a real Xorg host
+/// the MPX uinput pointer + XI2 shield grab lands a *true* button event on
+/// XInput2 toolkits (GTK3/4) that silently drop synthetic `XSendEvent` pointers
+/// — so right / middle / double clicks actually register. On Xvfb / Xtigervnc /
+/// unsupported servers (`real_pointer_input_available()` returns false) or if
+/// the MPX attempt fails, it falls back to the legacy `XSendEvent` path so
+/// headless tests and core-only toolkits keep working. `lx`,`ly` are
+/// window-local; screen-absolute coords for the warp are derived here. Blocking
+/// — call inside spawn_blocking.
+fn x11_pixel_click_no_focus_steal(
+    cursor_id: &str,
+    xid: u64,
+    lx: i32,
+    ly: i32,
+    button: u8,
+    count: usize,
+) -> anyhow::Result<()> {
+    if crate::input::real_pointer_input_available() {
+        if let Ok((sx, sy)) = window_local_to_screen(xid, lx as f64, ly as f64) {
+            match crate::input::send_virtual_pointer_click(
+                cursor_id,
+                &crate::input::VirtualPointerClick {
+                    target_window: xid,
+                    x: sx.round() as i32,
+                    y: sy.round() as i32,
+                    button,
+                    count,
+                },
+            ) {
+                Ok(()) => return Ok(()),
+                Err(e) => tracing::warn!("MPX click fell back to XSendEvent: {e}"),
+            }
+        }
+    }
+    crate::input::send_click(xid, lx, ly, count, button)
+}
+
 fn mouse_button_name(button: u8) -> &'static str {
     match button {
         3 => "right",
@@ -997,7 +1052,7 @@ impl Tool for ClickTool {
                     "window_id":{"type":"integer"},
                     "x":{"type":"number"},
                     "y":{"type":"number"},
-                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
@@ -1181,6 +1236,7 @@ impl Tool for ClickTool {
         }
 
         let (xi, yi) = (x as i32, y as i32);
+        let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             if crate::wayland::is_wayland() {
                 if crate::wayland::is_inject_mode() {
@@ -1194,7 +1250,24 @@ impl Tool for ClickTool {
                 // "click the activated window's centre" behaviour.
                 return crate::wayland::click(xid, xi, yi, count as u32, button);
             }
-            crate::input::send_click(xid, xi, yi, count, button)
+            // X11: a synthetic XSendEvent pointer event (send_event=True) is
+            // dropped by XInput2 toolkits — a GTK button never sees it, so a
+            // pixel click is a silent no-op. Tiered no-focus-steal delivery:
+            //   1. Plain left single-click → AT-SPI doAction at that point
+            //      (lands the click without activating/raising the window, and
+            //      works on headless Xvfb too).
+            //   2. Right / middle / double click (and left clicks with no
+            //      actionable element) → real MPX uinput pointer + XI2 shield
+            //      grab, which delivers a true button event to GTK without the
+            //      WM stealing focus. Real Xorg only; skipped on Xvfb/Wayland.
+            //   3. Fallback → synthetic XSendEvent (a no-op on GTK but preserves
+            //      behaviour on core-only toolkits and headless servers).
+            if button == 1 && count == 1 {
+                if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
+                    return Ok(());
+                }
+            }
+            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, button, count)
         }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("✅ Clicked at ({x:.1}, {y:.1}) × {count}.")),
@@ -1220,7 +1293,7 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity)."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity). REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
                 },"additionalProperties":false
             }),
@@ -1671,7 +1744,7 @@ impl Tool for SetValueTool {
                 "type":"object","required":["pid","value"],"properties":{
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer","description":"Required when element_index is used; optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state. Must be supplied unless element_token is provided."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "value":{"type":"string"}
                 },"additionalProperties":false
@@ -1760,6 +1833,7 @@ impl Tool for ScrollTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        let cursor_id = resolve_cursor_key(&args);
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
@@ -1803,9 +1877,39 @@ impl Tool for ScrollTool {
         };
         let direction_for_wayland = direction.clone();
         let amount_u32 = amount as u32;
+        let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             if crate::wayland::is_wayland() {
                 return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
+            }
+            // X11: synthetic Button4-7 XSendEvents are dropped by XInput2
+            // toolkits (GTK never scrolls). On a real Xorg host, drive a real
+            // wheel detent through the MPX uinput pointer over the window's
+            // center — libinput turns it into the XI2 smooth-scroll GTK reads —
+            // without stealing focus. Falls back to the legacy XSendEvent
+            // Button4-7 path on Xvfb / unsupported servers.
+            // Button → axis/sign: 4=up(+v) 5=down(-v) 6=left(-h) 7=right(+h).
+            if crate::input::real_pointer_input_available() {
+                if let Ok((cx, cy)) = window_screen_center(xid) {
+                    let horizontal = matches!(button, 6 | 7);
+                    let ticks = match button {
+                        4 | 7 => amount as i32,
+                        _ => -(amount as i32), // 5 (down) and 6 (left)
+                    };
+                    match crate::input::send_virtual_pointer_scroll(
+                        &cursor_id_for_task,
+                        &crate::input::VirtualPointerScroll {
+                            target_window: xid,
+                            x: cx,
+                            y: cy,
+                            horizontal,
+                            ticks,
+                        },
+                    ) {
+                        Ok(()) => return Ok(()),
+                        Err(e) => tracing::warn!("MPX scroll fell back to XSendEvent: {e}"),
+                    }
+                }
             }
             crate::input::send_click(xid, 0, 0, amount, button)
         }).await;
@@ -1845,7 +1949,7 @@ impl Tool for DoubleClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                 "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
@@ -1897,11 +2001,12 @@ impl Tool for DoubleClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
+                    let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_wayland() {
                             return crate::wayland::click(xid, lxi, lyi, 2, 1);
                         }
-                        crate::input::send_click(xid, lxi, lyi, 2, 1)
+                        x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
                     }).await;
                     match click_result {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked element [{idx}].")),
@@ -1944,11 +2049,12 @@ impl Tool for DoubleClickTool {
             );
         }
         let (xi, yi) = (x as i32, y as i32);
+        let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             if crate::wayland::is_wayland() {
                 return crate::wayland::click(xid, xi, yi, 2, 1);
             }
-            crate::input::send_click(xid, xi, yi, 2, 1)
+            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
         }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({x:.1}, {y:.1}).")),
@@ -1980,7 +2086,7 @@ impl Tool for RightClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                 "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys to hold."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
@@ -2033,11 +2139,12 @@ impl Tool for RightClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
+                    let cursor_id_for_task = cursor_id.clone();
                     let click_result = tokio::task::spawn_blocking(move || {
                         if crate::wayland::is_wayland() {
                             return crate::wayland::click(xid, lxi, lyi, 1, 3);
                         }
-                        crate::input::send_click(xid, lxi, lyi, 1, 3)
+                        x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
                     }).await;
                     match click_result {
                         Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked element [{idx}].")),
@@ -2080,11 +2187,12 @@ impl Tool for RightClickTool {
             );
         }
         let (xi, yi) = (x as i32, y as i32);
+        let cursor_id_for_task = cursor_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             if crate::wayland::is_wayland() {
                 return crate::wayland::click(xid, xi, yi, 1, 3);
             }
-            crate::input::send_click(xid, xi, yi, 1, 3)
+            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
         }).await;
         match result {
             Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked at ({x:.1}, {y:.1}).")),

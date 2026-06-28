@@ -7,8 +7,8 @@
 //! from `tokio::task::spawn_blocking`, so blocking here is safe).
 //!
 //! Element indices match the markdown produced by [`walk_tree`]: a depth-first,
-//! pre-order traversal of the target application's windows, numbering only the
-//! nodes that advertise AT-SPI actions. `perform_action`, `set_value`, and
+//! pre-order traversal of the target application's windows, numbering the
+//! nodes that advertise AT-SPI actions OR a Value interface (see is_indexable). `perform_action`, `set_value`, and
 //! `get_element_bounds` index into that same ordered set.
 
 use std::sync::OnceLock;
@@ -456,7 +456,7 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
             (0..v.depth).rev().find_map(|d| parent_at_depth.get(d).copied().flatten())
         };
 
-        if !v.actions.is_empty() {
+        if is_indexable(v) {
             let act_str = v.actions.join(",");
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
@@ -504,6 +504,25 @@ fn render(visited: &[Visited<'_>]) -> (String, Vec<AtspiNode>) {
 /// (e.g. `1.0`), so `value="..."` fields stay byte-compatible.
 fn format_value(v: f64) -> String {
     format!("{v:?}")
+}
+
+/// Whether a walked node is exposed as an indexed, usable element.
+///
+/// Historically this was "the node advertises AT-SPI Actions" (buttons, menu
+/// items, links). That silently dropped every **Value**-only widget — GTK
+/// `GtkScale` sliders, scroll bars, spin buttons, progress bars expose the
+/// `Value` interface but NO `Action`, so they never got an `element_index` and
+/// were invisible to `get_window_state`/`set_value` even though the driver can
+/// drive them (`set_value` already handles `has_value`). We now also index any
+/// node carrying the Value interface so sliders and scroll regions surface as
+/// usable elements.
+///
+/// This predicate is the single source of truth for the element-index space and
+/// MUST be applied identically in `render` and in every `action_nodes` filter
+/// (`perform_action`, `set_value`, `get_element_bounds`, `get_all_element_bounds`);
+/// any divergence would desync indices between the snapshot and the operations.
+fn is_indexable(v: &Visited) -> bool {
+    !v.actions.is_empty() || v.has_value
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -772,7 +791,7 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         let target = action_nodes
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found (total: {})", action_nodes.len()))?;
@@ -792,6 +811,75 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
     }, || Err(anyhow!("perform_action timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 
+/// Resolve a window-local pixel `(win_x, win_y)` to the deepest actionable
+/// AT-SPI element covering it and perform its primary action.
+///
+/// This is the no-focus-steal way to land a *pixel* click on toolkits that drop
+/// synthetic X11 pointer events. GTK3/4 take input via XInput2, so neither the
+/// background `XSendEvent` path (synthetic, `send_event=True` — toolkits ignore
+/// it) nor XTEST (its core events don't reach an XI2-only client; on a headless
+/// Xvfb it also can't move a real device) actually clicks a GTK button. AT-SPI
+/// `doAction` does, without activating or raising the window — the same path the
+/// `element_index` click already uses, here driven by coordinates instead.
+///
+/// Hit-testing uses `Component.GetExtents(CoordType::Window)` so the caller's
+/// window-local coordinates are compared directly against window-local widget
+/// bounds — no screen-origin guessing. The smallest-area containing node wins so
+/// a click lands on the button, not its enclosing panel. Returns `Ok(Some(action))`
+/// when an element was actuated, `Ok(None)` when no actionable element covers the
+/// point (the caller then falls back to the synthetic X11 path).
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        // Find the smallest-area actionable node whose window-local bounds
+        // contain the point. Pre-order means a container is visited before its
+        // children, so comparing area picks the innermost actuator (button)
+        // over its parents (panel/scroll pane).
+        let mut best: Option<(i64, usize)> = None;
+        for (i, v) in visited.iter().enumerate() {
+            if v.actions.is_empty() || !v.has_component {
+                continue;
+            }
+            let Some(Ok(proxies)) = call(v.acc.proxies()).await else { continue };
+            let Some(Ok(comp)) = call(proxies.component()).await else { continue };
+            let Some(Ok((x, y, w, h))) = call(comp.get_extents(CoordType::Window)).await else {
+                continue;
+            };
+            if w <= 0 || h <= 0 {
+                continue;
+            }
+            if win_x >= x && win_x < x + w && win_y >= y && win_y < y + h {
+                let area = (w as i64) * (h as i64);
+                if best.map(|(a, _)| area < a).unwrap_or(true) {
+                    best = Some((area, i));
+                }
+            }
+        }
+
+        let Some((_, idx)) = best else { return Ok(None) };
+        let target = &visited[idx];
+        let ap = target
+            .acc
+            .proxies()
+            .await
+            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?
+            .action()
+            .await
+            .map_err(|e| anyhow!("Action unavailable: {e}"))?;
+        ap.do_action(0)
+            .await
+            .map_err(|e| anyhow!("doAction failed: {e}"))?;
+        Ok(Some(target.actions.first().cloned().unwrap_or_default()))
+    }, || Ok(None))
+}
+
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
     bounded(async {
         let conn = AccessibilityConnection::new()
@@ -800,7 +888,7 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         let target = action_nodes
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found (total: {})", action_nodes.len()))?;
@@ -867,7 +955,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
         let visited = collect_visited(&conn, pid)
             .await?
             .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         let target = action_nodes
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found"))?;
@@ -1007,7 +1095,7 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
             dlog!("GTK4 screen-coord correction: shifting elements by ({offset_x},{offset_y})");
         }
 
-        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| !v.actions.is_empty()).collect();
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
         // Each element costs ~3 D-Bus round-trips (proxies + component +
         // GetExtents). Big trees (geany exposes ~787 nodes) would grind for
         // minutes and time out callers, so cap the walk; pre-order means the

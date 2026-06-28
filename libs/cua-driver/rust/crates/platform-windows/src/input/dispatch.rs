@@ -131,6 +131,15 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // so flag only the pointer-class events.
         return matches!(kind, MouseClick | MouseMove | MouseScroll);
     }
+    // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
+    // here. It looks WPF-like, but its composition input-site does NOT consume
+    // the synthetic pen/touch the way WPF's stylus stack does — routing WinUI3
+    // background clicks through the coordinate injector neither lands double/
+    // right-click NOR preserves the no-foreground contract (measured: it
+    // regressed ax-bg from 0/8 to 8/8 stolen). Driving WinUI3 double/right-click
+    // in the background needs a WinUI3-specific input path (composition input-
+    // site target), tracked separately; single left-click already works via UIA
+    // Invoke and the contract holds.
     if is_gtk_target_window(hwnd) {
         // Conservative flag for GTK: button widgets ignore PostMessage
         // clicks, drawing-area widgets accept them. We cannot distinguish
@@ -185,6 +194,23 @@ pub fn is_vcl_target_window(hwnd: u64) -> bool {
 /// deliver genuine SendInput keystrokes (see `inject_text_cloaked`).
 pub fn is_wpf_target_window(hwnd: u64) -> bool {
     read_class_name(hwnd).starts_with("HwndWrapper")
+}
+
+/// Detect WinUI3 / Windows-App-SDK desktop top-level windows. The frame is a
+/// Win32 HWND of class `WinUIDesktopWin32WindowClass`, but — unlike WPF — that
+/// frame does NOT host the visual tree or consume pointer input. The XAML
+/// content renders into a child *content island* (DirectComposition / a
+/// `Microsoft.UI.Content.DesktopChildSiteBridge` HWND) whose input stack only
+/// processes real pointer input off the system input queue — it ignores both
+/// posted `WM_*BUTTON` messages AND the synthetic pen/touch injector (the
+/// latter additionally click-activates the frame: measured 8/8 foreground
+/// steals). The only background-safe actuator that lands on a WinUI3 element is
+/// a UIA pattern call (see `winui3_uia_multi_invoke` in the tools layer), and
+/// that has no right-click / drag analogue — so those gestures cannot both land
+/// and hold the no-foreground contract and surface a structured
+/// `background_unavailable` error instead.
+pub fn is_winui3_target_window(hwnd: u64) -> bool {
+    read_class_name(hwnd) == "WinUIDesktopWin32WindowClass"
 }
 
 /// Detect GTK/GDK top-level windows.

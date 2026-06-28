@@ -75,7 +75,7 @@ fn def() -> &'static ToolDef {
                 },
                 "element_index": {
                     "type": "integer",
-                    "description": "Element index from last get_window_state. Directs the write to a specific field. Requires window_id."
+                    "description": "Element index from last get_window_state. Directs the write to a specific field. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."
                 },
                 "element_token": {
                     "type": "string",

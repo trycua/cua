@@ -43,7 +43,7 @@ fn def() -> &'static ToolDef {
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "element_index": {
                     "type": "integer",
-                    "description": "Element index from last get_window_state. Routes through AXShowMenu. Requires window_id."
+                    "description": "Element index from last get_window_state. Routes through AXShowMenu. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."
                 },
                 "element_token": {
                     "type": "string",
@@ -141,12 +141,12 @@ impl Tool for RightClickTool {
             let element_ptr = element_guard.as_ptr();
 
             let result = tokio::task::spawn_blocking(move || {
-                ax_show_menu(element_ptr, idx)
+                ax_show_menu(element_ptr, idx, pid, wid)
             }).await;
 
             return match result {
                 Ok(Ok(msg))  => ToolResult::text(msg),
-                Ok(Err(e))   => ToolResult::error(format!("AXShowMenu failed: {e}")),
+                Ok(Err(e))   => ToolResult::error(format!("Right-click failed: {e}")),
                 Err(e)       => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -208,9 +208,9 @@ impl Tool for RightClickTool {
 
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            if window_id.is_some() {
+            if let Some(wid) = window_id {
                 crate::input::mouse::right_click_at_xy_with_window_local(
-                    pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                    pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
                 )
             } else {
                 crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
@@ -226,31 +226,45 @@ impl Tool for RightClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_show_menu(element_ptr: usize, idx: usize) -> anyhow::Result<String> {
+fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
     let advertised = unsafe { copy_action_names(element) };
-    let err = unsafe { perform_action(element, "AXShowMenu") };
 
-    if err != kAXErrorSuccess {
-        anyhow::bail!("AXUIElementPerformAction(AXShowMenu) returned {err}");
+    // Only attempt the pure-AX AXShowMenu when the element actually advertises
+    // it. Plain controls (NSButton, custom NSView click targets, most web
+    // nodes) DON'T — calling AXShowMenu on them returns kAXErrorActionUnsupported
+    // (-25206), which used to surface as a hard "AXShowMenu failed" error and
+    // forced the agent onto raw pixels. Instead, resolve the element's on-screen
+    // center and synthesize a REAL pixel right-click there — the same actuation
+    // a user performs, delivered to backgrounded windows via the window-local
+    // primitive. This makes "right-click element N" land on any element, not
+    // just ones with a native context-menu AX action.
+    if advertised.iter().any(|a| a == "AXShowMenu") {
+        let err = unsafe { perform_action(element, "AXShowMenu") };
+        if err == kAXErrorSuccess {
+            return Ok(format!("Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."));
+        }
+        // Advertised but the action failed — fall through to the pixel path
+        // rather than erroring out.
+        tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
     }
 
-    let mut summary = format!("Shown menu for [{idx}] {role} \"{title}\".");
-    if !advertised.iter().any(|a| a == "AXShowMenu") {
-        let list = if advertised.is_empty() {
-            "none".to_owned()
-        } else {
-            advertised.join(", ")
-        };
-        summary.push_str(&format!(
-            "\n⚠️ Element does not advertise AXShowMenu (actions: {list}). \
-             Action may have been a no-op. Retry with a pixel right-click \
-             (right_click(pid, x, y)) if no menu appeared."
-        ));
-    }
-    Ok(summary)
+    // Pixel right-click at the element's screen-space center.
+    let (cx, cy) = unsafe { crate::ax::bindings::element_screen_center(element) }
+        .ok_or_else(|| anyhow::anyhow!(
+            "[{idx}] {role} \"{title}\" advertises no AXShowMenu and has no resolvable \
+             on-screen center for a pixel right-click. Pass x, y directly."
+        ))?;
+    let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+        .map(|b| (cx - b.x, cy - b.y))
+        .unwrap_or((cx, cy));
+    crate::input::mouse::right_click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, &[])?;
+    Ok(format!(
+        "Right-clicked [{idx}] {role} \"{title}\" at element center ({cx:.0}, {cy:.0}) \
+         (pixel right-click; element advertises no AXShowMenu)."
+    ))
 }

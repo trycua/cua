@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><title>cua-driver-panel</title><style>
+ html,body{margin:0;height:100%;font-family:Segoe UI,Ubuntu,-apple-system,sans-serif;background:#0d1117;color:#e6edf3}.wrap{padding:12px}
+ h1{font-size:11px;margin:0 0 1px;color:#8b949e}.run{font-size:17px;font-weight:800;color:#58a6ff;margin:0 0 5px}.exp{font-size:10.5px;color:#8b949e;margin:0 0 9px;line-height:1.35}
+ .fg{padding:9px 11px;border-radius:9px;font-weight:800;font-size:12.5px;margin-bottom:6px;line-height:1.25}.fg.ok{background:#0f2e1a;color:#3fb950;border:1px solid #2ea043}.fg.bad{background:#3d1418;color:#ff6a5f;border:1px solid #da3633}.fg.fgmode{background:#16202e;color:#58a6ff;border:1px solid #2f4664}
+ .sub{font-weight:500;font-size:9.5px;color:#c9d1d9;opacity:.85;margin-top:2px}.now{font-size:9.5px;font-family:Consolas,monospace;color:#6e7681;margin:5px 0 9px;word-break:break-all}
+ .row{padding:6px 8px;border-radius:7px;margin:4px 0;font-size:11.5px;display:flex;align-items:center;gap:7px}.row.done{background:#11161d}.row.active{background:#161b22;border:1px solid #d29922}.row.pending{opacity:.5}
+ .ic{width:14px;text-align:center}.lbl{flex:1}.res{font-size:9px;font-weight:700;padding:2px 5px;border-radius:5px;white-space:nowrap;margin-left:4px}.res.held{background:#0f2e1a;color:#3fb950}.res.stole{background:#3d1418;color:#ff6a5f}.res.front{background:#16202e;color:#58a6ff}
+ .res.did{background:#10301c;color:#56d364;border:1px solid #238636}.res.nope{background:#3d1418;color:#ff7b72;border:1px solid #da3633}
+ .legend{font-size:9px;color:#6e7681;margin:2px 0 8px;line-height:1.4}
+ .tally{margin-top:10px;font-size:11px;color:#8b949e}.tally b{color:#c9d1d9}
+</style></head><body><div class="wrap">
+ <h1>cua-driver - single-modality run - GTK3</h1><div class="run" id="run">...</div><div class="exp" id="exp"></div>
+ <div id="fg" class="fg fgmode">...</div><div class="now" id="now"></div>
+ <div class="legend"><b style="color:#56d364">✓ worked</b> / <b style="color:#ff7b72">✗ no-op</b> = did the action change the app · held / STOLE = focus contract</div>
+ <div id="rows"></div><div class="tally" id="tally"></div>
+</div><script>
+async function tick(){try{const r=await fetch('status.json',{cache:'no-store'});const s=await r.json();
+ run.textContent=s.run||'';exp.textContent=s.expect||'';now.textContent='foreground now: '+(s.foreground||'?');
+ if(s.fgmode){fg.className='fg fgmode';fg.innerHTML='FOREGROUND MODE - app intentionally in front<div class="sub">'+(s.appFront?'app is foreground':'...')+'</div>';}
+ else if(s.appFront){fg.className='fg bad';fg.innerHTML='APP IS FOREGROUND<div class="sub">'+(s.foreground||'')+' - current action stole focus</div>';}
+ else{fg.className='fg ok';fg.innerHTML='APP IN BACKGROUND<div class="sub">no-foreground contract holding - '+(s.foreground||'')+' stays frontmost</div>';}
+ rows.innerHTML='';(s.steps||[]).forEach(st=>{const d=document.createElement('div');d.className='row '+st.state;
+  const ic=st.state==='done'?'✓':st.state==='active'?'▶':'·';let res='';if(st.result==='held')res='<span class="res held">held</span>';else if(st.result==='stole')res='<span class="res stole">STOLE FOCUS</span>';else if(st.result==='front')res='<span class="res front">foreground</span>';
+  let ver='';if(st.verified==='ok')ver='<span class="res did">✓ worked</span>';else if(st.verified==='fail')ver='<span class="res nope">✗ no-op</span>';
+  d.innerHTML='<span class="ic">'+ic+'</span><span class="lbl">'+st.label+'</span>'+ver+res;rows.appendChild(d);});
+ const worked=(s.steps||[]).filter(x=>x.verified==='ok').length;const ver=(s.steps||[]).filter(x=>x.verified==='ok'||x.verified==='fail').length;
+ const eff='effects: <b>'+worked+'/'+ver+'</b> actions changed the app';
+ if(!s.fgmode){tally.innerHTML=eff+'<br>focus contract: <b>'+(s.steals||0)+'/'+(s.actions||0)+'</b> stole focus';}else{tally.innerHTML=eff+'<br><b>'+(s.actions||0)+'</b> actions performed (foreground mode)';}
+}catch(e){}}
+setInterval(tick,200);tick();
+</script></body></html>

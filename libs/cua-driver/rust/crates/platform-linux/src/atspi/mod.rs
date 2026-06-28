@@ -90,6 +90,15 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
     native::perform_action(pid, idx)
 }
 
+/// Resolve a window-local pixel to the actionable AT-SPI element at that point
+/// and perform its primary action — the no-focus-steal way to land a *pixel*
+/// click on toolkits (GTK) that drop synthetic X11 pointer events. Returns
+/// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
+/// actionable element covers the point (caller falls back to the X11 path).
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    native::perform_action_at_point(pid, win_x, win_y)
+}
+
 /// Try to type text into any editable field in the window via AT-SPI EditableText.
 /// This works for unfocused windows if the toolkit exposes EditableText (Qt6, some GTK).
 /// For Qt5, which doesn't expose widgets when unfocused, this will return Err.

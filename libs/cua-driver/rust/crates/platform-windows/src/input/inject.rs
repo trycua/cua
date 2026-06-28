@@ -430,15 +430,60 @@ pub fn inject_click_screen(target: u64, sx: i32, sy: i32, count: usize, button: 
         other => bail!("background injection supports left/right buttons only (got {other:?})"),
     };
 
-    // Make the target categorically non-activatable for the click (so neither
-    // click-activation nor a self-SetForegroundWindow can steal foreground),
-    // and hide/restore any residual z-order via the cloak/SWP guard.
-    let _noact = NoActivateGuard::arm(target_h);
-    let _guard = unsafe { ZorderGuard::arm(target_h) };
-    // One synthetic device does all `count` taps (single/double/triple click).
-    pen_taps(sx, sy, barrel, count)?;
-    // _guard drops here: restore the user's foreground + uncloak target.
-    Ok(())
+    // Remember who the user actually had in front, so we can reclaim it below.
+    let prev_fg = unsafe { GetForegroundWindow() };
+    // Make the target non-activatable for the click (so click-activation can't
+    // steal foreground) and raise/restore z-order via the SWP guard.
+    let result = {
+        let _noact = NoActivateGuard::arm(target_h);
+        let _guard = unsafe { ZorderGuard::arm(target_h) };
+        // One synthetic device does all `count` taps (single/double/triple click).
+        pen_taps(sx, sy, barrel, count)
+    };
+    // Guards dropped: target demoted out of the topmost band, user's window
+    // restacked. But `WS_EX_NOACTIVATE` is NOT categorical against a
+    // Chromium/Electron content window that calls `SetForegroundWindow(self)`
+    // from its (async) click handler — measured: it still raised. The promoted
+    // click is processed slightly AFTER `pen_taps` returns, so a single
+    // z-restore loses the race. Reclaim the user's foreground explicitly with a
+    // short settle + repeat — the exact race-win pattern already used by
+    // `inject_drag_screen` (force_foreground_attached) and `touch_drag` (double
+    // SetCursorPos). The action already LANDED (`pen_taps` succeeded); this only
+    // puts focus back where the user left it. UIA-Invoke single clicks take the
+    // categorical `EnableWindow` shield instead (see `uia::fg_bypass`); this is
+    // the fallback for the injection-only actions (double/right/vision clicks).
+    unsafe {
+        if result.is_ok() && !prev_fg.0.is_null() && prev_fg != target_h {
+            force_foreground_attached(prev_fg);
+            sleep(Duration::from_millis(12));
+            force_foreground_attached(prev_fg);
+        }
+    }
+    result
+}
+
+/// True when screen point `(x, y)` lies within `hwnd`'s window rectangle.
+///
+/// Guards **element_index** clicks: an element's cached center can fall outside
+/// its own window when the element is scrolled out of a ScrollViewer or pushed
+/// off-screen (e.g. a tall form on a small display). Tapping the raw coordinate
+/// then lands on whatever is actually there — the taskbar, the desktop, another
+/// window — instead of the intended element. The click tool turns a `false`
+/// here into a clear error rather than clicking the wrong target. Returns `true`
+/// (fail-open) when the rect can't be read, so legitimate clicks are never
+/// blocked by a transient query failure.
+pub fn point_in_window_bounds(hwnd: u64, x: i32, y: i32) -> bool {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    if hwnd == 0 {
+        return true;
+    }
+    let mut r = RECT::default();
+    let ok = unsafe { GetWindowRect(HWND(hwnd as *mut _), &mut r).is_ok() };
+    if !ok {
+        return true;
+    }
+    x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }
 
 /// One pen press-drag-release from screen `(sx0,sy0)` to `(sx1,sy1)`, with

@@ -25,6 +25,30 @@
                        Text="counter=0"/>
         </StackPanel>
 
+        <!-- Click target — records left / right / double clicks. Mirrors the
+             WPF harness (same AutomationIds + label format) so the shared
+             modality recorder resolves it identically. WinUI3 Button raises
+             Click on each tap (so a double-click fires Click twice — caught by
+             the timing check), RightTapped on a secondary/barrel tap, and
+             DoubleTapped as a backup signal. -->
+        <StackPanel Spacing="4">
+            <Button x:Name="BtnClickTarget"
+                    auto:AutomationProperties.AutomationId="border-click-target"
+                    Content="Click target (left / right / double)"
+                    Width="260" Height="40" HorizontalAlignment="Left"
+                    Click="OnTargetClick"
+                    DoubleTapped="OnTargetDoubleTapped"
+                    RightTapped="OnTargetRightTapped"/>
+            <TextBlock x:Name="LblLastAction"
+                       auto:AutomationProperties.AutomationId="lbl-last-action"
+                       FontFamily="Consolas"
+                       Text="last_action=none"/>
+            <TextBlock x:Name="LblClickCount"
+                       auto:AutomationProperties.AutomationId="lbl-click-count"
+                       FontFamily="Consolas"
+                       Text="clicks=0"/>
+        </StackPanel>
+
         <TextBlock auto:AutomationProperties.AutomationId="txt-body"
                    FontFamily="Consolas" TextWrapping="Wrap"
                    Text="HARNESS_TEXT_MARKER_v1 — WinUI3 text body for get_window_state."/>
@@ -52,6 +76,49 @@
                        auto:AutomationProperties.AutomationId="lbl-slider-value"
                        FontFamily="Consolas"
                        Text="slider_value=0"/>
+        </StackPanel>
+
+        <!-- Scroll target — a ScrollViewer with tall content and an offset
+             label bound to VerticalOffset. Mirrors the WPF harness. WinUI3's
+             ScrollViewer does NOT consume the WM_VSCROLL the driver posts to
+             the top-level HWND (composition-routed input), so MainWindow
+             subclasses the HWND and translates WM_VSCROLL → ChangeView (same
+             rationale as WPF's HwndSource hook). -->
+        <StackPanel Spacing="4">
+            <TextBlock x:Name="LblScrollOffset"
+                       auto:AutomationProperties.AutomationId="lbl-scroll-offset"
+                       FontFamily="Consolas"
+                       Text="scroll_offset=0"/>
+            <ScrollViewer x:Name="ScrollTall"
+                          auto:AutomationProperties.AutomationId="scroll-tall"
+                          Height="120" Width="400" HorizontalAlignment="Left"
+                          VerticalScrollBarVisibility="Auto"
+                          VerticalScrollMode="Enabled"
+                          ViewChanged="OnScrollViewChanged">
+                <StackPanel>
+                    <TextBlock Text="SCROLL_TOP_MARKER_v1"/>
+                    <TextBlock Text="line 02"/><TextBlock Text="line 03"/>
+                    <TextBlock Text="line 04"/><TextBlock Text="line 05"/>
+                    <TextBlock Text="line 06"/><TextBlock Text="line 07"/>
+                    <TextBlock Text="line 08"/><TextBlock Text="line 09"/>
+                    <TextBlock Text="line 10"/><TextBlock Text="line 11"/>
+                    <TextBlock Text="line 12"/><TextBlock Text="line 13"/>
+                    <TextBlock Text="line 14"/><TextBlock Text="line 15"/>
+                    <TextBlock Text="line 16"/><TextBlock Text="line 17"/>
+                    <TextBlock Text="line 18"/><TextBlock Text="line 19"/>
+                    <TextBlock Text="line 20"/><TextBlock Text="line 21"/>
+                    <TextBlock Text="line 22"/><TextBlock Text="line 23"/>
+                    <TextBlock Text="line 24"/><TextBlock Text="line 25"/>
+                    <TextBlock Text="line 26"/><TextBlock Text="line 27"/>
+                    <TextBlock Text="line 28"/><TextBlock Text="line 29"/>
+                    <TextBlock Text="line 30"/><TextBlock Text="line 31"/>
+                    <TextBlock Text="line 32"/><TextBlock Text="line 33"/>
+                    <TextBlock Text="line 34"/><TextBlock Text="line 35"/>
+                    <TextBlock Text="line 36"/><TextBlock Text="line 37"/>
+                    <TextBlock Text="line 38"/><TextBlock Text="line 39"/>
+                    <TextBlock Text="SCROLL_BOTTOM_MARKER_v1"/>
+                </StackPanel>
+            </ScrollViewer>
         </StackPanel>
 
         <!-- CheckBox + RadioButton group -->

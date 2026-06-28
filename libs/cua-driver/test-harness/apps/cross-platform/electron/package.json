@@ -6,7 +6,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win portable --x64"
+    "start:linux": "electron . --no-sandbox --disable-gpu --force-renderer-accessibility",
+    "start:macos": "electron . --force-renderer-accessibility",
+    "build": "electron-builder --win portable --x64",
+    "build:linux": "electron-builder --linux dir --x64",
+    "build:macos": "electron-builder --mac dir --universal"
   },
   "devDependencies": {
     "electron": "39.8.5",
@@ -29,6 +33,13 @@
         "target": "portable",
         "arch": ["x64"]
       }]
+    },
+    "linux": {
+      "target": [{
+        "target": "dir",
+        "arch": ["x64"]
+      }],
+      "category": "Development"
     },
     "portable": {
       "artifactName": "CuaTestHarness.Electron.exe"

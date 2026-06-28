@@ -6,4 +6,4 @@ pub mod windows;
 
 pub use apps::{list_descendants, list_processes, related_processes, ProcessInfo};
 pub use installed_apps::{list_installed_apps, InstalledApp};
-pub use windows::{list_windows, WindowInfo};
+pub use windows::{list_windows, resolve_uwp_host_window, WindowInfo};

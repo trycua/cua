@@ -39,7 +39,7 @@ fn def() -> &'static ToolDef {
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
                 "window_id":     { "type": "integer", "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)." },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Uses AX path." },
+                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Uses AX path. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
                 "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." }
             },
             "additionalProperties": false
@@ -97,7 +97,7 @@ impl Tool for DoubleClickTool {
             // so its ClickPulse lands on THIS session's cursor, not "default".
             let ck = cursor_key.clone();
             let result = tokio::task::spawn_blocking(move || {
-                ax_double_click(pid, element_ptr, idx, &ck)
+                ax_double_click(pid, wid, element_ptr, idx, &ck)
             }).await;
 
             return match result {
@@ -186,7 +186,7 @@ impl Tool for DoubleClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_double_click(pid: i32, element_ptr: usize, idx: usize, cursor_key: &str) -> anyhow::Result<String> {
+fn ax_double_click(pid: i32, wid: u32, element_ptr: usize, idx: usize, cursor_key: &str) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
@@ -208,6 +208,14 @@ fn ax_double_click(pid: i32, element_ptr: usize, idx: usize, cursor_key: &str) -
         cursor_key.to_owned(),
         cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
     );
-    crate::input::mouse::click_at_xy(pid, cx, cy, 2, &[])?;
+    // Use the window-local primitive (not bare click_at_xy): a plain
+    // click_at_xy does NOT reliably reach a backgrounded / non-key window — it
+    // no-ops on AppKit controls that hit-test the window-local stamp. Mirror the
+    // delivering path the `click` pixel branch uses so the double-click actually
+    // lands without foregrounding the app.
+    let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+        .map(|b| (cx - b.x, cy - b.y))
+        .unwrap_or((cx, cy));
+    crate::input::mouse::click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, 2, &[])?;
     Ok(format!("✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."))
 }

@@ -60,6 +60,19 @@
   </fieldset>
 
   <fieldset>
+    <legend>scroll_target</legend>
+    <div class="row">
+      <div id="scroll-tall" data-cua-id="scroll-tall"
+           style="height:120px;width:260px;overflow-y:auto;border:1px solid #ccc;padding:4px;">
+        <div id="scroll-top" data-cua-id="scroll-top">SCROLL_TOP_MARKER_v1</div>
+        <div id="scroll-lines"></div>
+        <div id="scroll-bottom" data-cua-id="scroll-bottom">SCROLL_BOTTOM_MARKER_v1</div>
+      </div>
+      <span class="mirror" id="lbl-scroll-offset" data-cua-id="lbl-scroll-offset">scroll_offset=0</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
     <legend>click_target</legend>
     <div class="row">
       <span id="click-target" data-cua-id="border-click-target">Click target (left / right / double)</span>
@@ -136,6 +149,19 @@
   $('sld-value').addEventListener('input', e => {
     $('lbl-slider-value').textContent = `slider_value=${e.target.value}`;
   });
+
+  // scroll_target — tall scrollable region; scroll_offset= updates on scroll.
+  (function () {
+    const lines = $('scroll-lines');
+    for (let i = 2; i <= 41; i++) {
+      const d = document.createElement('div');
+      d.textContent = 'line ' + String(i).padStart(2, '0');
+      lines.appendChild(d);
+    }
+    $('scroll-tall').addEventListener('scroll', e => {
+      $('lbl-scroll-offset').textContent = `scroll_offset=${Math.round(e.target.scrollTop)}`;
+    });
+  })();
 
   const target = $('click-target');
   target.addEventListener('mousedown', e => {

@@ -88,17 +88,46 @@ controls or they're off-screen at the 556px layout — see the off-screen guard 
 | Toolkit  | effects landed | landed actions                          | focus contract (stole) | note |
 |----------|---------------|------------------------------------------|------------------------|------|
 | WPF      | **5/7** | click, double, drag, set_value, type     | 2/8 | fullest harness |
-| WinUI3   | **2/7** | click, set_value                         | 0/8 | harness lacks click-target/context/scroll; drag/scroll/type don't land |
-| WebView2 | **4/7** | click, double, drag, set_value           | 0/8 | Chromium web AX; type didn't land |
+| WinUI3   | **3/7** | left-click(checkbox), scroll, set_value  | 0/7 | re-recorded with parity controls; double/right/drag don't land (see WinUI3 dispatch below) |
+| WebView2 | **4/7** | double, right, drag, set_value           | 0/7 | re-recorded; left-click(checkbox) + scroll are honest no-ops (checkbox below the fold, web won't scroll in ax mode) |
 | Electron | **5/7** | click, double, drag, set_value, type     | **7/8** | **Electron/Chromium self-foregrounds → no-foreground contract VIOLATED** |
 
 **Headline:** the no-foreground contract holds on WPF / WinUI3 / WebView2, but **breaks on Electron**
 (7/8 actions stole focus — Chromium foregrounds itself; consistent with the #1984 dispatch note in the
-code). Effect coverage also varies: WinUI3's harness is the thinnest. The verifier reads each toolkit's
-own status labels (WPF: UIAutomation; WinUI3: same; WebView2/Electron: Chromium web-AX text via a
-substring window-title match because their titles carry a `[cdp=NNNN]` suffix).
+code). The verifier reads each toolkit's own status labels (WPF/WinUI3: UIAutomation; WebView2/Electron:
+Chromium web-AX text via a substring window-title match because their titles carry a `[cdp=NNNN]` suffix).
+
+WinUI3 + WebView2 were **re-recorded** after the parity controls landed (frame-verified). Recorder fixes
+that made WebView2 work at all: the web DOM only surfaces when `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=
+--force-renderer-accessibility` is set (otherwise `get_window_state` returns only the chrome frame →
+every web action resolves to nothing → the prior SIZE=0/empty-MP4 run); and the daemon's ffmpeg probe
+missed the binary because the recorder runs as a different user than the one WinGet installed it under, so
+ffmpeg must be on PATH before `serve`. Recording on the VM also requires Session 2 attached/active
+(`tscon … /dest:console`) — a disconnected session blanks GPU content and fails `gdigrab`.
+
+**WinUI3 double/right-click — confirmed not driver-fixable via the WPF path.** AX `double_click`/
+`right_click` on the WinUI3 click-target produce `last_action=none, clicks=0` (no Click/DoubleTapped/
+RightTapped), while the *identical* actions land on WebView2 — so the harness wiring is correct; the gap
+is WinUI3-specific dispatch. Matches the `platform-windows/src/input/dispatch.rs` note: routing WinUI3
+through the WPF synthetic-pen/coordinate path neither lands double/right NOR holds the contract (measured:
+regressed ax-bg 0/8→8/8 stolen). Single left-click works via UIA Invoke. A real fix needs a WinUI3-specific
+input path targeting the composition input-site (DirectComposition/ContentIsland InputSite), not
+PostMessage-to-top-HWND; the same gap explains WinUI3 drag-slider being a no-op.
 
 Evidence: `matrix-{winui3,webview2,electron}-ax-bg.mp4` (+ the WPF set) on the Desktop.
+
+## Driver fixes shipped this round (cross-platform)
+
+- **Windows — cached UIA element use-after-free** (`platform-windows`): the element cache handed out a bare
+  COM pointer; under concurrent sessions a `get_window_state` snapshot-replace could `Release` it mid-action
+  (click/type/set_value) → daemon crash. Now a `RetainedElement` guard `AddRef`s under the cache lock and
+  `Release`s on drop — the Windows port of the macOS #1796 retain-under-lock fix. Compile-verified.
+- **Linux — GTK left-click + value-only widgets** (`platform-linux`): pixel left-clicks now land via AT-SPI
+  hit-test + `doAction` (GTK drops synthetic X11 events; XTEST core events don't reach its XInput2 path) —
+  without stealing focus. Sliders/scroll bars (Value interface, no Action) now surface in `get_window_state`
+  (`is_indexable = actions || has_value`), so `set_value` drives them. Verified on the Linux VM.
+- **macOS — numeric `set_value`** (`platform-macos`): CFNumber write for NSSlider, AXIncrement/AXDecrement
+  stepping fallback for SwiftUI sliders. Verified live (AppKit 0→50, SwiftUI 0→50).
 
 ## Legacy modal popups (WPF) — driver CAN open + list them
 

@@ -1735,7 +1735,48 @@ impl Tool for LaunchAppTool {
         // so callers can target it with subsequent calls. See #1615.
         let mut windows_json: Vec<serde_json::Value> = Vec::new();
         let mut resolved_pid: u32 = pid;
+
+        // UWP / packaged-app host-window resolution. `launch_uwp` returns the
+        // real packaged-app pid (e.g. CalculatorApp.exe), but a UWP app's
+        // top-level window — the HWND a caller must actually drive — is owned
+        // by `ApplicationFrameHost.exe`, not by that process. The app process
+        // only owns a `CoreWindow` reparented as a child of the AFH frame, so
+        // `list_windows(Some(app_pid))` is empty and the generic retry loop
+        // below would either spin out to a stub-fallback miss or return no
+        // windows at all (the original "launch_app of a UWP app returns empty
+        // windows[] / a pid you can't drive" bug). Map app_pid → its AFH host
+        // frame and report `(frame_hwnd, afh_pid)` so the returned handles
+        // resolve in `get_window_state` and element actions land. Retry: the
+        // frame can lag the activation by a few hundred ms.
+        if aumid_for_uwp.is_some() {
+            for _ in 0..10 {
+                let host = tokio::task::spawn_blocking(move || {
+                    crate::win32::resolve_uwp_host_window(pid)
+                })
+                .await
+                .unwrap_or(None);
+                if let Some(w) = host {
+                    windows_json = vec![json!({
+                        "window_id": w.hwnd, "title": w.title,
+                        "bounds": { "x": w.x, "y": w.y, "width": w.width, "height": w.height },
+                        "layer": 0,
+                        "z_index": 0,
+                        "is_on_screen": true,
+                    })];
+                    // Report the AFH pid: that's the pid that owns the frame
+                    // HWND, so `get_window_state(resolved_pid, window_id)`
+                    // validates and `list_windows(Some(resolved_pid))` lists it.
+                    resolved_pid = w.pid;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+
         for _ in 0..5 {
+            if !windows_json.is_empty() {
+                break;
+            }
             let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                 .await.unwrap_or_default();
             if !wins.is_empty() {

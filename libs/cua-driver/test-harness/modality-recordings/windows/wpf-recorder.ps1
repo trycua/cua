@@ -315,11 +315,12 @@ for($i=0;$i -lt $plan.Count;$i++){
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
   "step $i '$($p.t)': anchor-baseline foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$anchorHeld"|Add-Content "$dir\baseline.log"
  }
- elseif($m.fg -and $hHar -ne [IntPtr]::Zero){
-  # fg mode: GENUINELY foreground the harness before the action. Element-path steps don't
-  # need it, but coordinate dispatch does — drag's SendInput path SetForegroundWindow's the
-  # target and BAILS if the swap is rejected, so if the harness isn't already foreground the
-  # slider drag silently no-ops. Asserting it here also makes the panel show "app is foreground".
+ elseif($m.fg -and $hHar -ne [IntPtr]::Zero -and ($vision -or $desktop -or $p.t -eq 'drag')){
+  # fg mode, COORDINATE-dispatch steps only (vision/desktop, or the ax-mode slider drag):
+  # GENUINELY foreground the harness first. The drag's SendInput path SetForegroundWindow's
+  # the target and BAILS if the swap is rejected, so without this the slider drag silently
+  # no-ops. Gated to coordinate steps because [W]::Front taps ALT (foreground-unlock) which
+  # would drop element-path double/right-click into WPF menu-accelerator mode and break them.
   $harFront=$false
   for($a=0;$a -lt 8;$a++){ [W]::Front($hHar)|Out-Null; Start-Sleep -Milliseconds 150; if([W]::Title([W]::GetForegroundWindow()) -like '*CuaTestHarness*'){ $harFront=$true; break } }
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }

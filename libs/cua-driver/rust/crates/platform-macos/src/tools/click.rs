@@ -77,8 +77,8 @@ fn def() -> &'static ToolDef {
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state." },
                 "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
-                "x":             { "type": "number",  "description": "Window-local screenshot X coordinate." },
-                "y":             { "type": "number",  "description": "Window-local screenshot Y coordinate." },
+                "x":             { "type": "number",  "description": "X in screenshot pixels, read straight off the image you were handed — no scaling math needed. With pid+window_id (capture_scope=window): window-local pixels from the get_window_state PNG (top-left origin). Windowless (no pid/window_id, capture_scope=desktop): pixels from the get_desktop_state PNG (the native full-display image). Either way, the pixel you read IS the pixel that gets clicked; the driver undoes the Retina backing scale + any downscale internally." },
+                "y":             { "type": "number",  "description": "Y in screenshot pixels (see x). Window-local from get_window_state, or full-display from get_desktop_state under capture_scope=desktop." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
                 "button":        {
                     "type": "string",
@@ -147,8 +147,38 @@ impl Tool for ClickTool {
                     "suggestion": "set_config capture_scope=desktop",
                 }));
             }
-            let sx = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64)).unwrap_or(0.0);
-            let sy = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|i| i as f64)).unwrap_or(0.0);
+            let sx_shot = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64)).unwrap_or(0.0);
+            let sy_shot = args.opt_f64("y").or_else(|| args.opt_i64("y").map(|i| i as f64)).unwrap_or(0.0);
+            // ── Desktop-screenshot pixels → logical screen points ──────────────
+            // The vision invariant: the pixel an agent reads off the screenshot it
+            // was handed is the pixel that gets clicked. `get_desktop_state`
+            // returns the display at NATIVE pixels (e.g. 3024×1964 on a 2× Retina
+            // display whose logical size is 1512×982), but everything below — the
+            // window-under-point hit test (logical CGWindow bounds), the cursor
+            // warp, and the CGEvent post — operates in LOGICAL screen points. So
+            // x,y arrive in desktop-SCREENSHOT space (what the agent reads off the
+            // PNG) and must be divided by the screenshot↔logical ratio, or a
+            // center-pixel pick warps to the corner (off by the backing scale).
+            //
+            // Derive the ratio the same way `get_desktop_state` reports it: native
+            // screenshot width / logical screen width. This is robust even when
+            // CGDisplayPixelsWide under-reports the backing scale (it returns the
+            // scaled-mode point width on some Retina configs → a bogus 1.0).
+            let desktop_ratio = tokio::task::spawn_blocking(|| {
+                let logical_w = super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
+                let shot_w = crate::capture::screenshot_display_bytes()
+                    .ok()
+                    .and_then(|png| crate::capture::png_dimensions(&png).ok())
+                    .map(|(w, _)| w as f64);
+                match (shot_w, logical_w) {
+                    (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
+                    _ => 1.0,
+                }
+            })
+            .await
+            .unwrap_or(1.0);
+            let sx = sx_shot / desktop_ratio;
+            let sy = sy_shot / desktop_ratio;
             let button = match args.str_or("button", "left").to_lowercase().as_str() {
                 "right" => "right",
                 "middle" => "middle",
@@ -181,7 +211,13 @@ impl Tool for ClickTool {
             let own_pid = std::process::id() as i32;
             let target = {
                 let mut wins = crate::windows::visible_windows();
-                wins.sort_by_key(|w| w.z_index); // front-to-back
+                // visible_windows() assigns HIGHER z_index = MORE FRONT
+                // (z_index = total - idx over CGWindowList's front-to-back order).
+                // Sort DESCENDING so the first match is the FRONTMOST window under
+                // the point — the one the agent actually sees in the screenshot.
+                // (Ascending picked the BACKMOST occluded window — a real miss when
+                // windows overlap, e.g. resolving a click to a buried app.)
+                wins.sort_by(|a, b| b.z_index.cmp(&a.z_index)); // front-to-back
                 wins.into_iter().find(|w| {
                     w.layer == 0
                         && w.pid != own_pid
@@ -228,10 +264,13 @@ impl Tool for ClickTool {
             };
             return match result {
                 Ok(Ok(Some(pid))) => ToolResult::text(format!(
-                    "✅ Sent {button_label} at screen ({sx},{sy}) on pid {pid} (desktop scope)."
+                    "✅ Sent {button_label} at desktop-pixel ({sx_shot:.0},{sy_shot:.0}) \
+                     → screen-point ({sx:.0},{sy:.0}) on pid {pid} (desktop scope)."
                 )),
                 Ok(Ok(None)) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute {button_label} at ({sx},{sy}) (desktop scope, no window under point)."
+                    "✅ Sent screen-absolute {button_label} at desktop-pixel \
+                     ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
+                     (desktop scope, no window under point)."
                 )),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),

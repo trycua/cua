@@ -315,7 +315,7 @@ launches** (store targets as window-local points, convert to live screenshot px)
 | GTK3 | `ax` (AT-SPI) | ✓ left-click via hit-test→`doAction` (`7d358283`) | ✗ no `doAction` equiv | ✗ no `doAction` equiv | ⚠ value-only (no Action) — driven via `set_value` | ⚠ surfaced now (`is_indexable = actions \|\| has_value`); driven via `set_value` | ✓ slider/scroll value widgets now surface | ✓ | n/a | ax-bg **1/8 stole** (only `set_value`; corrected via genuine-anchor baseline `5c0a1d3c` — was 3/8) | left/set_value/type land |
 | GTK3 | `vision` (Xvfb) | ✗ | ✗ | ✗ | ✗ | ✗ | n/a | ✗ | n/a | **0/7 stole** | **GTK drops synthetic XSendEvent**; XTEST core events don't reach its XInput2 path |
 | GTK3 | `vision` (**real Xorg**) | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | n/a | holds focus | right/double/middle-click + scroll **land via uinput/XInput2-MPX + shield-grab** (`79e546ca`); capability auto-detected via `real_pointer_input_available()` — **runtime-verified on a real Xorg server (dummy-driver): the probe flips TRUE, all four actions LAND and HOLD focus (`_NET_ACTIVE_WINDOW` unchanged), confirmed by the harness oracle + a middle-click PRIMARY paste. Xvfb can't bind uinput as an X slave, so the path auto-skips there.** |
-| Electron (Linux) | `ax` | ✓ click | ✗ | ✗ | ✓ drag | ✗ scroll resolves but no-op (AT-SPI synthetic) | ✗ | ✓ type | n/a | ax-bg **1/8 stole** (only `set_value`; was 3/8 — recorder baseline artifact, `5c0a1d3c`) | holds the contract far better than Windows Electron's reported 7/8 (also an artifact) |
+| Electron (Linux) | `ax` | ✓ click | ✗ | ✗ | ✓ drag | ✗ scroll resolves but no-op (AT-SPI synthetic) | ✗ | ✓ type | n/a | ax-bg **2/8 stole** (`set_value` + `drag`; was 3/8 — recorder baseline artifact, `5c0a1d3c`) | drag lands a value-change but its synthetic window-coord activates Chromium (never reaches the slider thumb); still holds far better than Windows Electron's reported 7/8 (also an artifact) |
 | Electron (Linux) | `vision` | ✗ | ✓ pixel double-click fires on click-target | ✗ | ✗ | ✗ | n/a | ✗ | n/a | vision-bg **6/7 stole** (pixel dispatch foregrounds Chromium) | |
 
 ### Windows
@@ -431,6 +431,61 @@ the same flaw — also fixed (`5c0a1d3c`): GTK3 + Linux-Electron `ax-bg` correct
 > own assumptions can hide bugs in exactly the path a real agent uses. The
 > deterministic, oracle-checked vision-agent test and the re-baselined contract
 > measurement are the two structural fixes.
+
+---
+
+## 9. Edge cases — real closed-source apps
+
+The synthetic harnesses pin down the heuristics; real apps surface behaviours a
+single-process test window never can. These were found driving live closed-source
+apps (Finder, System Settings, Calculator, Safari on macOS; Calculator/Notepad UWP,
+Edge, Explorer on Windows) and are why the suite is a floor, not the ceiling.
+
+### macOS (Finder, System Settings, Calculator, Safari)
+
+1. **Pixel click hits the right pixel but the wrong window.** With ~8 overlapping
+   same-pid Finder windows, a crosshair dead-centre on the target file still posts to
+   *screen* coordinates, so an occluding sibling intercepts it → no-op. A per-window
+   screenshot masks it. Strong argument for the `ax`/element path, which is z-order
+   independent.
+2. **`set_value` and `type_text` both falsely succeed on a background search field**
+   (System Settings, SwiftUI). `set_value` writes `AXValue` (text appears, the search
+   action never fires); `type_text` posts keys that a non-first-responder window drops.
+   Neither drives the field; **both report success.**
+3. **Finder column filenames don't advertise `AXPress`** → a default click is an honest
+   no-op; the driver surfaces `AXOpen`/`AXShowMenu`/`AXConfirm`, so an agent must pick
+   `action:"open"`/`"pick"`.
+4. **The Calculator result is AX-invisible** (no AX node for the display) → an AX-only
+   agent can't read the answer; the keypad itself is labelled. A `vision` readout is
+   required.
+5. **AppKit AX-tree duplication** (System Settings ~half duplicated, Safari a duplicated
+   toolbar) plus whole-menu-bar walking inflates real-app context versus synthetic.
+
+### Windows (Calculator/Notepad UWP, Edge, Explorer)
+
+A. **UWP window-identity split.** `launch_app("Calculator")` returns the package backing
+   PID and a `window_id` that's stale by the next call; the real top-level HWND belongs to
+   `ApplicationFrameHost.exe`. Driving by the returned pid+window_id errors `No window with
+   window_id … exists`. The driver should resolve UWP windows to their `ApplicationFrameHost`
+   host / relink the churned HWND.
+B. **Real UWP is drivable via the element path without the uiAccess worker.** Calculator's
+   `num5Button` drove the display 0→5 via UIA Invoke from the Medium-IL daemon with no
+   `cua-driver-uia.exe` running. This refines the `#1602`/`serve.rs` assumption: only the
+   **pixel/SendInput** path needs the uiAccess worker for AppContainer apps — the
+   **`element_index` UIA Invoke/ValuePattern path works on real UWP as-is.**
+C. **Real Edge (Chromium) holds the foreground contract.** With Notepad pinned top, 3×
+   click + double-click + right-click on background Edge left the z-order unchanged
+   (`(background, no foreground swap)`). The shield validated on synthetic Electron (0/8)
+   **generalises to a real closed-source Chromium** — and the double/right-click that needed
+   the WinUI3 composition fix synthetically just work on real Chromium in the background.
+D. **`element_index` requires `pid` (+`window_id`).** Element actions with `element_index`
+   alone fail-fast with `Missing required integer field: pid`. Correct, but the MCP tool
+   descriptions under-emphasise it — an agent that omits `pid` and filters stderr perceives a
+   silent no-op. The `element_index` tool schemas should state `pid`'s necessity explicitly.
+E. **`get_screen_size` under-reports desktop width** (1024 reported vs 1824 actual span,
+   likely an RDP dynamic-resolution artifact). The element path is unaffected (window-local
+   frames stay consistent); a pixel/`vision` agent computing against 1024 width misplaces
+   clicks in the right ~800 px band.
 
 ---
 

@@ -196,9 +196,22 @@ impl Tool for ClickTool {
                 match target {
                     Some((pid, wid, ox, oy)) => {
                         let (wx, wy) = (sx - ox, sy - oy);
-                        crate::input::mouse::click_at_xy_with_window_local(
-                            pid, sx, sy, wx, wy, wid, count, &[],
-                        )?;
+                        // Honor `btn` on the window-resolved path too: a windowless
+                        // right/middle click over an app window must stay a
+                        // right/middle click, not silently degrade to left. Route to
+                        // the window-local right/middle primitives (single-pair, same
+                        // as the pixel path); `count` only repeats on the left path.
+                        match btn.as_str() {
+                            "right" => crate::input::mouse::right_click_at_xy_with_window_local(
+                                pid, sx, sy, wx, wy, wid, &[],
+                            )?,
+                            "middle" => crate::input::mouse::middle_click_at_xy_with_window_local(
+                                pid, sx, sy, wx, wy, &[],
+                            )?,
+                            _ => crate::input::mouse::click_at_xy_with_window_local(
+                                pid, sx, sy, wx, wy, wid, count, &[],
+                            )?,
+                        }
                         Ok(Some(pid))
                     }
                     None => {
@@ -208,12 +221,17 @@ impl Tool for ClickTool {
                 }
             })
             .await;
+            let button_label = match button.as_str() {
+                "right" => "right-click",
+                "middle" => "middle-click",
+                _ => "click",
+            };
             return match result {
                 Ok(Ok(Some(pid))) => ToolResult::text(format!(
-                    "✅ Sent click at screen ({sx},{sy}) on pid {pid} (desktop scope)."
+                    "✅ Sent {button_label} at screen ({sx},{sy}) on pid {pid} (desktop scope)."
                 )),
                 Ok(Ok(None)) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope, no window under point)."
+                    "✅ Sent screen-absolute {button_label} at ({sx},{sy}) (desktop scope, no window under point)."
                 )),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
@@ -539,9 +557,9 @@ impl Tool for ClickTool {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         match button_kind.as_str() {
                             "right" => {
-                                if let Some(_wid) = window_id {
+                                if let Some(wid) = window_id {
                                     return crate::input::mouse::right_click_at_xy_with_window_local(
-                                        pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                                        pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
                                     );
                                 }
                                 crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)

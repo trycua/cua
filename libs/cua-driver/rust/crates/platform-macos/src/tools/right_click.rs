@@ -208,9 +208,9 @@ impl Tool for RightClickTool {
 
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            if window_id.is_some() {
+            if let Some(wid) = window_id {
                 crate::input::mouse::right_click_at_xy_with_window_local(
-                    pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                    pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
                 )
             } else {
                 crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)

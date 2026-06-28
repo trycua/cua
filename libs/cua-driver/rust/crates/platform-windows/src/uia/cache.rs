@@ -18,6 +18,59 @@ use cua_driver_core::element_cache::ElementCacheCore;
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 
+/// A cached element pointer borrowed out of the cache with an extra COM
+/// `AddRef`, so it stays alive for the duration of a UIA/MSAA action even if a
+/// concurrent `get_window_state` (→ [`ElementCache::update`]) replaces and
+/// drops the snapshot it came from. Without this, the snapshot's `Drop` could
+/// `Release` the element to zero while an in-flight click / SetValue was still
+/// dereferencing the raw COM vtable pointer — a use-after-free. This is the
+/// Windows analogue of the macOS AX-element crash fixed in #1796
+/// (`EXC_BREAKPOINT` in `AXUIElementCopyActionNames`); here the same shape
+/// would fault inside `IUIAutomation*::Invoke` / `ValuePattern::SetValue`.
+///
+/// The `AddRef` is taken **under the cache lock** (see
+/// [`ElementCache::get_element_retained`]); the matching `Release` fires on
+/// drop, via the `kind`-appropriate interface — mirroring `CachedSnapshot::drop`.
+pub struct RetainedElement {
+    ptr: usize,
+    kind: SnapshotKind,
+}
+
+impl RetainedElement {
+    /// The raw COM vtable pointer, valid for as long as this guard is held.
+    pub fn as_ptr(&self) -> usize {
+        self.ptr
+    }
+}
+
+// `ptr` is a `usize` and `kind` is a plain `Copy` enum, so this is already
+// `Send`; it's moved into / created inside `spawn_blocking` closures exactly
+// like the bare `usize` it replaces. COM refcounting (`AddRef`/`Release`) is
+// `InterlockedIncrement`-based and thread-safe, so the guard is safe to carry.
+
+impl Drop for RetainedElement {
+    fn drop(&mut self) {
+        if self.ptr == 0 {
+            return;
+        }
+        // Balance the AddRef taken in `get_element_retained`, releasing via the
+        // same kind-appropriate vtable that `CachedSnapshot::drop` uses.
+        unsafe {
+            match self.kind {
+                SnapshotKind::Uia => {
+                    let iface: IUIAutomationElement =
+                        IUIAutomationElement::from_raw(self.ptr as *mut _);
+                    drop(iface);
+                }
+                SnapshotKind::Msaa => {
+                    let iface: IAccessible = IAccessible::from_raw(self.ptr as *mut _);
+                    drop(iface);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     pub pid: u32,
@@ -112,9 +165,51 @@ impl ElementCache {
         );
     }
 
-    pub fn get_element_ptr(&self, pid: u32, hwnd: u64, element_index: usize) -> Option<usize> {
+    /// Look up + COM-`AddRef` the element for `element_index` in (pid, hwnd),
+    /// returning a guard that `Release`s on drop. The `AddRef` happens **under
+    /// the cache lock**, so a concurrent [`update`](Self::update) (which
+    /// replaces the snapshot and `Release`s its pointers in
+    /// `CachedSnapshot::drop`) cannot free the element between the lookup and
+    /// the `AddRef`. Hold the returned guard for the entire UIA/MSAA action —
+    /// this is what makes element actions safe when two sessions drive the same
+    /// `(pid, hwnd)`. Returns `None` if the index isn't cached.
+    pub fn get_element_retained(
+        &self,
+        pid: u32,
+        hwnd: u64,
+        element_index: usize,
+    ) -> Option<RetainedElement> {
         self.core
-            .with_snapshot(&CacheKey { pid, hwnd }, |s| s.elements.get(element_index).copied())
+            .with_snapshot(&CacheKey { pid, hwnd }, |s| {
+                let ptr = s.elements.get(element_index).copied()?;
+                if ptr != 0 {
+                    // Safety: still inside `with_snapshot`'s lock — the same
+                    // `Mutex` that `insert` (the snapshot replace) takes — so
+                    // the snapshot and thus this COM object is alive right now.
+                    // Bump the refcount with the kind-appropriate vtable, using
+                    // the walker's clone()+forget() idiom: `dup` is the extra
+                    // ref the guard owns; the borrowed `iface` is forgotten so
+                    // it doesn't Release the cache's own ref.
+                    unsafe {
+                        match s.kind {
+                            SnapshotKind::Uia => {
+                                let iface: IUIAutomationElement =
+                                    IUIAutomationElement::from_raw(ptr as *mut _);
+                                let dup = iface.clone(); // AddRef → +1
+                                std::mem::forget(iface); // don't Release cache's ref
+                                std::mem::forget(dup); // guard owns the +1
+                            }
+                            SnapshotKind::Msaa => {
+                                let iface: IAccessible = IAccessible::from_raw(ptr as *mut _);
+                                let dup = iface.clone();
+                                std::mem::forget(iface);
+                                std::mem::forget(dup);
+                            }
+                        }
+                    }
+                }
+                Some(RetainedElement { ptr, kind: s.kind })
+            })
             .flatten()
     }
 

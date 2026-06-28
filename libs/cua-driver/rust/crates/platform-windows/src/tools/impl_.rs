@@ -2282,7 +2282,14 @@ impl Tool for ClickTool {
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
                 if use_uia_invoke {
-                    if let Some(ptr) = state_clone.element_cache.get_element_ptr(pid, hwnd, idx) {
+                    // Retain the element out of the cache (AddRef under the
+                    // cache lock) so it can't be freed by a concurrent
+                    // get_window_state on the same (pid, hwnd) while this click
+                    // is mid-flight (use-after-free → daemon crash). The guard
+                    // lives to the end of this `if let` block, past every UIA
+                    // pattern dispatch below; its Release fires when it drops.
+                    if let Some(element_guard) = state_clone.element_cache.get_element_retained(pid, hwnd, idx) {
+                        let ptr = element_guard.as_ptr();
                         use windows::Win32::UI::Accessibility::{
                             IUIAutomationElement, IUIAutomationInvokePattern,
                             IUIAutomationTogglePattern, IUIAutomationSelectionItemPattern,
@@ -2827,7 +2834,12 @@ impl Tool for TypeTextTool {
             let state = self.state.clone();
             let text_for_uia = text.clone();
             let set_ok = tokio::task::spawn_blocking(move || -> bool {
-                let Some(ptr) = state.element_cache.get_element_ptr(pid, hwnd, idx) else { return false; };
+                // Retain the element under the cache lock so a concurrent
+                // get_window_state snapshot-replace on the same (pid, hwnd)
+                // can't Release it to zero while this SetValue is in flight.
+                // The guard is held for the whole closure.
+                let Some(element_guard) = state.element_cache.get_element_retained(pid, hwnd, idx) else { return false; };
+                let ptr = element_guard.as_ptr();
                 use windows::Win32::UI::Accessibility::{
                     IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId,
                 };
@@ -3385,8 +3397,13 @@ impl Tool for SetValueTool {
 
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-            let ptr = state.element_cache.get_element_ptr(pid, hwnd, idx)
+            // Retain the element under the cache lock so a concurrent
+            // get_window_state snapshot-replace on the same (pid, hwnd) can't
+            // Release it to zero while this Value/RangeValue SetValue is in
+            // flight. The guard is held for the whole closure.
+            let element_guard = state.element_cache.get_element_retained(pid, hwnd, idx)
                 .ok_or_else(|| anyhow::anyhow!("Element {idx} not in cache."))?;
+            let ptr = element_guard.as_ptr();
             use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationValuePattern, UIA_ValuePatternId};
             use windows::core::{Interface, BSTR};
             let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };

@@ -290,10 +290,10 @@ launches** (store targets as window-local points, convert to live screenshot px)
 
 | Harness | mode | click | double | right | drag | scroll | set_value | type | press-key | Contract | Notes |
 |---------|------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
-| GTK3 | `ax` (AT-SPI) | ✓ left-click via hit-test→`doAction` (`7d358283`) | ✗ no `doAction` equiv | ✗ no `doAction` equiv | ⚠ value-only (no Action) — driven via `set_value` | ⚠ surfaced now (`is_indexable = actions \|\| has_value`); driven via `set_value` | ✓ slider/scroll value widgets now surface | ✓ | n/a | ax-bg **3/8 stole** (the keyboard/focus actions) | left/set_value/type land |
+| GTK3 | `ax` (AT-SPI) | ✓ left-click via hit-test→`doAction` (`7d358283`) | ✗ no `doAction` equiv | ✗ no `doAction` equiv | ⚠ value-only (no Action) — driven via `set_value` | ⚠ surfaced now (`is_indexable = actions \|\| has_value`); driven via `set_value` | ✓ slider/scroll value widgets now surface | ✓ | n/a | ax-bg **1/8 stole** (only `set_value`; corrected via genuine-anchor baseline `5c0a1d3c` — was 3/8) | left/set_value/type land |
 | GTK3 | `vision` (Xvfb) | ✗ | ✗ | ✗ | ✗ | ✗ | n/a | ✗ | n/a | **0/7 stole** | **GTK drops synthetic XSendEvent**; XTEST core events don't reach its XInput2 path |
 | GTK3 | `vision` (**real Xorg**) | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | n/a | holds focus | right/double/middle-click + scroll **land via uinput/XInput2-MPX + shield-grab** (`79e546ca`); capability auto-detected via `real_pointer_input_available()` — **runtime-verified on a real Xorg server (dummy-driver): the probe flips TRUE, all four actions LAND and HOLD focus (`_NET_ACTIVE_WINDOW` unchanged), confirmed by the harness oracle + a middle-click PRIMARY paste. Xvfb can't bind uinput as an X slave, so the path auto-skips there.** |
-| Electron (Linux) | `ax` | ✓ click | ✗ | ✗ | ✓ drag | ✗ scroll resolves but no-op (AT-SPI synthetic) | ✗ | ✓ type | n/a | ax-bg **3/8 stole** (`set_value`/`type`/`press-key` pull focus via X focus path; pointer actions held) | far less steal than Windows Electron |
+| Electron (Linux) | `ax` | ✓ click | ✗ | ✗ | ✓ drag | ✗ scroll resolves but no-op (AT-SPI synthetic) | ✗ | ✓ type | n/a | ax-bg **1/8 stole** (only `set_value`; was 3/8 — recorder baseline artifact, `5c0a1d3c`) | holds the contract far better than Windows Electron's reported 7/8 (also an artifact) |
 | Electron (Linux) | `vision` | ✗ | ✓ pixel double-click fires on click-target | ✗ | ✗ | ✗ | n/a | ✗ | n/a | vision-bg **6/7 stole** (pixel dispatch foregrounds Chromium) | |
 
 ### Windows
@@ -401,8 +401,9 @@ distinct foreground window to begin with — so Windows Electron read as stealin
 contract (matching macOS/Linux Electron). De-risk: the **recorder-contract fix**
 (`49bdb41b`) now genuinely `SetForegroundWindow`s a real anchor before each step;
 **re-measured Electron `ax-bg` = 0/8 (held)**, so the claim is now verified and the
-legacy FINDINGS "7/8" is a confirmed measurement artifact. (Same flaw exists in the
-Linux recorders — `lin-rec.py`, `lin-rec-electron.py` — follow-up; macOS is fine.)
+legacy FINDINGS "7/8" is a confirmed measurement artifact. The Linux recorders had
+the same flaw — also fixed (`5c0a1d3c`): GTK3 + Linux-Electron `ax-bg` corrected
+3/8 → 1/8 (only `set_value` genuinely steals); macOS was already fine.
 
 > Both caveats reflect the same lesson: a recorder that hand-feeds the driver its
 > own assumptions can hide bugs in exactly the path a real agent uses. The

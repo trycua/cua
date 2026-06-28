@@ -160,7 +160,7 @@ Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; `taskkill
 
 ### `bring_to_front`
 
-Activate a window so subsequent input tools with `dispatch:"foreground"` land on it without a per-call `SetForegroundWindow` flash. Windows-only. On macOS this tool returns an error. On Linux this tool stubs out.
+Persistently activate an app so it genuinely holds the foreground, then leave it there. Most input does **not** need this: on Windows it removes the per-call `SetForegroundWindow` flash before a `dispatch:"foreground"` run, and on macOS every dispatch already reaches backgrounded windows. Reach for it only for a focus-proxy surface that re-arms its own input channel on activation and must stay frontmost across the interaction — chiefly a remote-desktop client (Microsoft Windows App / RDP), where the brief foreground flash drops keystrokes. On macOS it activates the owning app by pid via `NSRunningApplication.activate` (`window_id` accepted for parity, activation is app-level). On Linux this tool stubs out (use `wmctrl -a` / `xdotool windowactivate`).
 
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |

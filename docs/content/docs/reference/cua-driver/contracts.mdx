@@ -93,7 +93,7 @@ A window-less action is **never silently reinterpreted**. Under window scope it 
 |---|---|---|---|
 | `capture_mode` `ax` / `vision` / `som` | ✅ | ✅ | ✅ |
 | `dispatch: background` (the [no-foreground contract](/explanation/the-no-foreground-contract)) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a gap) |
-| `dispatch: foreground` + `bring_to_front` | ✅ | not needed (post-to-pid is background-safe) | stubbed |
+| `dispatch: foreground` + `bring_to_front` | ✅ | ✅ explicit activation (input is already background-safe; activation is for focus-proxy surfaces like RDP) | stubbed |
 | `get_desktop_state` (desktop capture) | ✅ | ✅ | ✅ |
 | Window-less desktop click (`click{x,y}`, no `pid`) | ✅ | rolling out | rolling out |
 

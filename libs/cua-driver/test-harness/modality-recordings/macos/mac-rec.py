@@ -373,34 +373,80 @@ def glide(sel):
         D("move_cursor", {"pid":PID,"window_id":WID,"x":px,"y":py,"session":SESS})
     time.sleep(0.5)
 
+def web_snapshot():
+    d = DJ("get_window_state", {"pid":PID,"window_id":WID,"capture_mode":"ax"})
+    return d.get("elements", []) or []
+
+def web_el(els, sel):
+    # Resolve a web control to (element_index, screenshot_px_x, screenshot_px_y) from its
+    # ACTUAL live frame — never the per-surface COORDS_PT, which drifted ~185px off WKWebView's
+    # real web layout so every pixel action missed. WebKit duplicates the web subtree; the
+    # lower-index copy is the live/hittable one, so pick the smallest matching element_index.
+    def first(pred):
+        cand = [e for e in els if pred(e)]
+        return min(cand, key=lambda e: e.get("element_index", 9999)) if cand else None
+    role = lambda e: str(e.get("role", ""))
+    lbl  = lambda e: str(e.get("label") or e.get("name") or "")
+    if   sel == "click_target": e = first(lambda e: "Click target" in lbl(e))
+    elif sel == "slider":       e = first(lambda e: "AXSlider" in role(e))
+    elif sel == "txt":          e = first(lambda e: "AXTextField" in role(e))
+    elif sel == "scroll":       e = first(lambda e: "scroll_target" in lbl(e)) or first(lambda e: "AXTextArea" in role(e))
+    else:                       e = None
+    if not e: return (None, None, None)
+    f = e["frame"]; cx = f["x"] + f["w"]/2.0; cy = f["y"] + f["h"]/2.0
+    px = (cx - WIN_ORIGIN[0]) * SHOT_W / WIN_W
+    py = (cy - WIN_ORIGIN[1]) * SHOT_H / WIN_H
+    return (e.get("element_index"), px, py)
+
+def glide_to(px, py):
+    if px is None: return
+    if DESKTOP:
+        sx, sy = to_screen(px, py); D("move_cursor", {"x":sx,"y":sy,"session":SESS})
+    else:
+        D("move_cursor", {"pid":PID,"window_id":WID,"x":px,"y":py,"session":SESS})
+    time.sleep(0.5)
+
 def do_electron(t, sel):
-    # rich web harness: click-target span (pixel; no AX press) distinguishes
-    # left/right/double; slider for drag; txt-input + status labels for verify.
-    IDX = axidx() if AXMODE else {}
-    txt = IDX.get("txt-input")
-    cpx, cpy = coord("click_target"); spx, spy = coord("slider")
+    # Web harness (WKWebView / Electron). AX mode dispatches by element_index — AXPress works on
+    # the web spans (verified live: click/double/right/type all land). Vision mode uses pixel
+    # coords derived from the live element frame. Both replace the stale hardcoded COORDS_PT that
+    # made every WKWebView pixel action miss. set_value on a web input sets AXValue but doesn't
+    # fire the DOM input event (mirror stays empty) — an honest web limitation; type_text works.
+    els = web_snapshot()
+    ct_idx, cpx, cpy = web_el(els, "click_target")
+    sl_idx, spx, spy = web_el(els, "slider")
+    tx_idx, tpx, tpy = web_el(els, "txt")
+    sc_idx, rpx, rpy = web_el(els, "scroll")
     if t == "click":
-        glide("click_target"); D("click", {"pid":PID,"window_id":WID,"x":cpx,"y":cpy,"session":SESS})
+        glide_to(cpx, cpy)
+        if AXMODE and ct_idx is not None: D("click", {"pid":PID,"window_id":WID,"element_index":ct_idx,"session":SESS})
+        else: D("click", {"pid":PID,"window_id":WID,"x":cpx,"y":cpy,"session":SESS})
     elif t == "double":
-        glide("click_target"); D("double_click", {"pid":PID,"window_id":WID,"x":cpx,"y":cpy,"count":2,"session":SESS})
+        glide_to(cpx, cpy)
+        if AXMODE and ct_idx is not None: D("double_click", {"pid":PID,"window_id":WID,"element_index":ct_idx,"session":SESS})
+        else: D("double_click", {"pid":PID,"window_id":WID,"x":cpx,"y":cpy,"count":2,"session":SESS})
     elif t == "right":
-        glide("click_target"); D("right_click", {"pid":PID,"window_id":WID,"x":cpx,"y":cpy,"session":SESS})
+        glide_to(cpx, cpy)
+        if AXMODE and ct_idx is not None: D("right_click", {"pid":PID,"window_id":WID,"element_index":ct_idx,"session":SESS})
+        else: D("right_click", {"pid":PID,"window_id":WID,"x":cpx,"y":cpy,"session":SESS})
     elif t == "drag":
-        glide("slider"); D("drag", {"pid":PID,"window_id":WID,"from_x":spx,"from_y":spy,"to_x":spx+220,"to_y":spy,"session":SESS})
+        # slider thumb: a real synthetic pixel drag fires the range input's event (AXValue-set
+        # does not). Correct coords come from the live slider frame.
+        glide_to(spx, spy)
+        if spx is not None: D("drag", {"pid":PID,"window_id":WID,"from_x":spx,"from_y":spy,"to_x":spx+220,"to_y":spy,"session":SESS})
     elif t == "scroll":
-        glide("scroll"); rpx, rpy = coord("scroll")
-        D("scroll", {"pid":PID,"window_id":WID,"x":rpx,"y":rpy,"direction":"down","amount":5,"session":SESS})
+        glide_to(rpx, rpy)
+        if rpx is not None: D("scroll", {"pid":PID,"window_id":WID,"x":rpx,"y":rpy,"direction":"down","amount":5,"session":SESS})
     elif t == "setval":
-        glide("txt")
-        if txt is not None: D("set_value", {"pid":PID,"window_id":WID,"element_index":txt,"value":"set-by-cua","session":SESS})
+        if tx_idx is not None: D("set_value", {"pid":PID,"window_id":WID,"element_index":tx_idx,"value":"set-by-cua","session":SESS})
     elif t == "type":
-        glide("txt"); tpx, tpy = coord("txt")
-        if AXMODE and txt is not None:
-            D("set_value", {"pid":PID,"window_id":WID,"element_index":txt,"value":"","session":SESS}); time.sleep(0.4)
-            D("click", {"pid":PID,"window_id":WID,"element_index":txt,"session":SESS}); time.sleep(0.3)
-            D("type_text", {"pid":PID,"window_id":WID,"element_index":txt,"text":"typed-by-cua","session":SESS})
+        if AXMODE and tx_idx is not None:
+            glide_to(tpx, tpy)
+            D("set_value", {"pid":PID,"window_id":WID,"element_index":tx_idx,"value":"","session":SESS}); time.sleep(0.4)
+            D("click", {"pid":PID,"window_id":WID,"element_index":tx_idx,"session":SESS}); time.sleep(0.3)
+            D("type_text", {"pid":PID,"window_id":WID,"element_index":tx_idx,"text":"typed-by-cua","session":SESS})
         else:
-            D("click", {"pid":PID,"window_id":WID,"x":tpx,"y":tpy,"session":SESS}); time.sleep(0.3)
+            glide_to(tpx, tpy); D("click", {"pid":PID,"window_id":WID,"x":tpx,"y":tpy,"session":SESS}); time.sleep(0.3)
             D("type_text", {"pid":PID,"text":"typed-by-cua","session":SESS})
     elif t == "key":
         D("press_key", {"pid":PID,"key":"tab","session":SESS})

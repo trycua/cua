@@ -79,8 +79,13 @@ public class W{[DllImport("user32.dll")]public static extern bool MoveWindow(Int
  [DllImport("user32.dll")]public static extern int GetWindowText(IntPtr h,StringBuilder s,int n);
  [DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int cx,int cy,uint flags);
  [DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int cmd);
+ [DllImport("user32.dll")]static extern void keybd_event(byte vk,byte scan,uint flags,UIntPtr extra);
  public static void Restore(IntPtr h){ ShowWindow(h,9); }
  public static void Topmost(IntPtr h,int x,int y,int cx,int cy){ SetWindowPos(h,(IntPtr)(-1),x,y,cx,cy,0x40); }
+ // Genuinely ACTIVATE (not just z-order) a real anchor window so each action is measured
+ // against a true foreground baseline. The synthetic ALT tap clears the foreground lock so
+ // SetForegroundWindow is honoured even when our thread is not already the foreground one.
+ public static bool Front(IntPtr h){ keybd_event(0x12,0,0,UIntPtr.Zero); keybd_event(0x12,0,2,UIntPtr.Zero); ShowWindow(h,9); return SetForegroundWindow(h); }
  public static string Title(IntPtr h){var sb=new StringBuilder(256);GetWindowText(h,sb,256);return sb.ToString();}}
 "@
 $drv="C:\Users\cuademo\cua\libs\cua-driver\rust\target\release\cua-driver.exe"; if(-not(Test-Path $drv)){$drv=$drv -replace 'release','debug'}
@@ -175,7 +180,22 @@ $script:wp=$w.pid;$script:wd=$w.window_id;$hHar=[IntPtr][int64]$w.window_id
 $hPanel=[IntPtr]::Zero
 for($i=0;$i -lt 16;$i++){ $hPanel=(Get-Process chrome -EA SilentlyContinue|?{$_.MainWindowTitle -like "*cua-driver-panel*"}|Select -First 1).MainWindowHandle; if($hPanel -and $hPanel -ne [IntPtr]::Zero){break}; Start-Sleep -Milliseconds 400 }
 if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::MoveWindow($hPanel,$PANX,$PANY,$PANW,$PANH,$true)|Out-Null; [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
-"HANDLES hHar=$hHar hPanel=$hPanel screen=1024x768"|Set-Content "$dir\handles.log"
+# ---------- foreground-baseline ANCHOR (background modes only) ----------
+# The no-foreground contract is "did this action steal foreground". To measure that we must
+# hold a GENUINE foreground baseline before each action: a real, ACTIVATED, non-harness window.
+# Re-asserting the dashboard panel with SetWindowPos is z-order only (no activation), so it never
+# defines a true foreground holder — after the first inject-based action click-activates the
+# target, the harness silently stays frontmost and every later step false-positives as a "steal".
+# Anchor on mspaint (Win11 Notepad exposes no MainWindowHandle, so it can never take foreground
+# and would fabricate an all-steal). Park it under the topmost panel rect so it is invisible in
+# the recording but still a valid activatable foreground window off to the side of the harness.
+$hAnchor=[IntPtr]::Zero;$anchorPid=0
+if(-not $m.fg){
+ Start-Process mspaint | Out-Null
+ for($i=0;$i -lt 20;$i++){ $ap=(Get-Process -EA SilentlyContinue|?{ $_.MainWindowTitle -like '*Paint*' -and $_.MainWindowHandle -ne [IntPtr]::Zero }|Select -First 1); if($ap){ $hAnchor=$ap.MainWindowHandle;$anchorPid=$ap.Id; break }; Start-Sleep -Milliseconds 500 }
+ if($hAnchor -ne [IntPtr]::Zero){ [W]::Restore($hAnchor)|Out-Null; [W]::MoveWindow($hAnchor,$PANX,$PANY,$PANW,$PANH,$true)|Out-Null; [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH); Start-Sleep -Milliseconds 300 }
+}
+"HANDLES hHar=$hHar hPanel=$hPanel hAnchor=$hAnchor anchorPid=$anchorPid screen=1024x768"|Set-Content "$dir\handles.log"
 Start-Sleep 1
 # re-read window bounds after the move (window-local coords need post-move origin)
 $w2=(D "list_windows" "{}"|ConvertFrom-Json).windows | ? { $_.window_id -eq $script:wd } | Select -First 1; if($w2){ $w=$w2 }
@@ -246,9 +266,19 @@ function DoAct($t,$el){
 for($i=0;$i -lt $plan.Count;$i++){
  $p=$plan[$i]; $el=$resolve[$p.sel]
  $script:steps[$i].state='active'; $script:cur=$p.label; Flush
+ # establish the genuine foreground baseline: ACTIVATE the anchor and confirm it actually took
+ # foreground BEFORE the action runs. A "steal" is then foreground moving OFF the anchor TO the
+ # harness; "held" is the anchor staying frontmost. (fg modes keep the harness in front by design.)
+ if((-not $m.fg) -and $hAnchor -ne [IntPtr]::Zero){
+  $anchorHeld=$false
+  for($a=0;$a -lt 8;$a++){ [W]::Front($hAnchor)|Out-Null; Start-Sleep -Milliseconds 180; if([W]::Title([W]::GetForegroundWindow()) -like '*Paint*'){ $anchorHeld=$true; break } }
+  if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
+  "step $i '$($p.t)': anchor-baseline foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$anchorHeld"|Add-Content "$dir\baseline.log"
+ }
  $before=ReadState
  DoAct $p.t $el
- # measure: sample foreground ~1.5s while the dashboard updates live
+ # measure: sample foreground ~1.5s while the dashboard updates live. steal = foreground moved
+ # off the anchor onto the harness after the action (with a real activated baseline now held).
  $stole=$false; $e=(Get-Date).AddSeconds(1.5); while((Get-Date)-lt $e){ Flush; if([W]::Title([W]::GetForegroundWindow()) -like '*CuaTestHarness*'){$stole=$true}; Start-Sleep -Milliseconds 110 }
  $script:steps[$i].verified=(Verify $p.t $before (ReadState))
  $script:actions++
@@ -260,7 +290,9 @@ $script:cur="done"; Pulse 2.5
 if($desktop){ D "set_config" '{"key":"capture_scope","value":"window"}'|Out-Null }
 D "stop_recording" "{}"|Out-Null; Start-Sleep 3
 Stop-Job $srv -EA SilentlyContinue; Remove-Job $srv -Force -EA SilentlyContinue
-Get-Process cua-driver,CuaTestHarness.Wpf,chrome -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+if($anchorPid){ Stop-Process -Id $anchorPid -Force -EA SilentlyContinue }
+Get-Process cua-driver,CuaTestHarness.Wpf,chrome,mspaint -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+Get-Process -EA SilentlyContinue | ?{ $_.MainWindowTitle -like '*Paint*' } | Stop-Process -Force -EA SilentlyContinue
 $mp4=Get-ChildItem $rec -Recurse -Filter *.mp4 -EA SilentlyContinue | Select -First 1
 $verdict= if($m.fg){"foreground-mode, $($script:actions) actions"}else{"$($script:steals)/$($script:actions) actions stole focus"}
 $worked=@($script:steps|?{$_.verified -eq 'ok'}).Count; $ver=@($script:steps|?{$_.verified -in @('ok','fail')}).Count

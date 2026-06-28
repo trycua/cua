@@ -309,6 +309,13 @@ fn cgevent_type_verified(
     clear_first: bool,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
 ) -> anyhow::Result<bool> {
+    // Focus the target element first so the keystrokes land in IT. Critical in
+    // foreground mode: a freshly-fronted window's keyboard focus may be on the
+    // search box or nowhere, so without this the text goes into the void (or the
+    // wrong field). AXFocused is best-effort — harmless when unsupported.
+    if let Some((ptr, _)) = element_ptr_and_idx {
+        let _ = crate::input::ax_actions::focus_element(ptr);
+    }
     if clear_first {
         let _ = crate::input::keyboard::press_key(pid, "a", &["cmd"]);
         let _ = crate::input::keyboard::press_key(pid, "delete", &[]);

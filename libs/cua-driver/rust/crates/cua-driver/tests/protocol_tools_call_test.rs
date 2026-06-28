@@ -84,10 +84,13 @@ fn get_config_and_check_permissions() {
         assert!(resp["result"]["structuredContent"]["accessibility"].is_boolean());
     }
 
-    // set_config — change capture_mode to "ax" and verify get_config reflects the new value.
+    // set_config — change max_image_dimension and verify get_config reflects it.
+    // capture_mode / capture_scope are no longer settings on macOS (per-call
+    // params now — modality-ladder refactor); max_image_dimension is the
+    // cross-platform persisted field this exercises.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
-        "params":{"name":"set_config","arguments":{"capture_mode": "ax", "max_image_dimension": 1920}}
+        "params":{"name":"set_config","arguments":{"max_image_dimension": 1920}}
     }));
     let resp = d.recv();
     assert!(resp["error"].is_null(), "Protocol error from set_config: {resp:?}");
@@ -96,14 +99,12 @@ fn get_config_and_check_permissions() {
         assert!(!content.is_empty(), "set_config returned empty content");
     }
 
-    // get_config should now reflect the updated values.
+    // get_config should now reflect the updated value.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
         "params":{"name":"get_config","arguments":{}}
     }));
     let resp = d.recv();
-    assert_eq!(resp["result"]["structuredContent"]["capture_mode"], "ax",
-        "get_config should reflect set_config change");
     assert_eq!(resp["result"]["structuredContent"]["max_image_dimension"], 1920,
         "get_config should reflect max_image_dimension change");
 }
@@ -471,8 +472,12 @@ fn type_text_chars_tool() {
     assert!(!resp["result"]["isError"].as_bool().unwrap_or(false),
         "type_text_chars returned error: {resp:?}");
     let msg = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
+    // type_text reports "Inserted" when an AX read-back verified the text, and
+    // "Sent (unverified)" when it dispatched but couldn't confirm (e.g. the field
+    // wasn't focused/frontmost) — both are accepted invocations. "Typed" covers
+    // the standalone type_text_chars wording.
     assert!(
-        msg.contains("Typed") || msg.contains("Inserted"),
+        msg.contains("Typed") || msg.contains("Inserted") || msg.contains("Sent"),
         "Unexpected message: {msg}"
     );
 }

@@ -51,4 +51,30 @@ impl ToolResponse {
     pub fn is_error(&self) -> bool {
         self.is_error
     }
+
+    // ── Best-effort-background ladder accessors ──────────────────────────────
+    // Action tools (type_text / click / drag / scroll) report which rung
+    // delivered (`path`) and whether the driver could confirm the effect
+    // (`verified`). These let the modality matrix assert per (surface, rung)
+    // outcomes instead of scraping result text.
+
+    /// The delivery rung that ran: `"ax" | "cgevent" | "cgevent_fg" |
+    /// "key_events" | "key_events_fg"`. `None` when the tool reports no `path`.
+    pub fn path(&self) -> Option<&str> {
+        self.structured.get("path").and_then(Value::as_str)
+    }
+
+    /// Whether the driver confirmed the effect via read-back. `Some(true)` only
+    /// when verified; `Some(false)` = dispatched-but-unconfirmed (the caller
+    /// must confirm via screenshot — e.g. a click, or a Catalyst type); `None`
+    /// when the tool doesn't carry the field.
+    pub fn verified(&self) -> Option<bool> {
+        self.structured.get("verified").and_then(Value::as_bool)
+    }
+
+    /// `get_window_state` degraded flag: an AX walk that ran but returned zero
+    /// actionable elements (non-AX surface / tree not ready). `false` when absent.
+    pub fn degraded(&self) -> bool {
+        self.structured.get("degraded").and_then(Value::as_bool).unwrap_or(false)
+    }
 }

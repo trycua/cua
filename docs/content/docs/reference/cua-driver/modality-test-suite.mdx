@@ -112,6 +112,28 @@ changed; `drag` → `slider` increased; `scroll` → `scroll_offset` increased;
 > driver gaps are documented as driver work, fixed in the driver first, then
 > re-recorded. The recorder does not paper over a no-op.
 
+### Session lifecycle & disposal
+
+Each recorder declares a **session** (the agent-cursor identity, e.g. `d1` /
+`macd-…`) via `start_session`, drives every action under it, and must
+`end_session` it on teardown so the cursor + per-session state are disposed —
+not leaked.
+
+- **Disposal is double-guarded.** `end_session` and the **idle-TTL sweep**
+  (`evict_idle`, default **300 s**, overridable via
+  `CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS`, swept every 30 s) both dispose through
+  the same `fire_session_end` hook fan-out: agent cursor removed, recording
+  stopped, per-session config cleared. A reused id starts **fresh, not poisoned**.
+- **Test:** `cua-driver-core/tests/session_lifecycle.rs` asserts start → use →
+  `end_session` disposes (and a reused id starts fresh), and that idle-TTL
+  eviction disposes the **same** way — verified via the disposal-hook contract
+  both paths fan out to (the concrete cursor/config registries are a daemon-layer
+  assertion). It passes a short TTL straight to `evict_idle`; the **300 s
+  production default is never lowered** for tests.
+- **The recorders dispose explicitly** — `end_session` in a `try/finally` before
+  they kill the daemon (`mac-rec.py` via an `atexit` net, since it leaves the
+  daemon running) — so a session can't leak even if a run errors.
+
 ---
 
 ## 3. Test-app harnesses

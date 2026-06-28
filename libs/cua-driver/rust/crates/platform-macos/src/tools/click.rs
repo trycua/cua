@@ -98,6 +98,11 @@ fn def() -> &'static ToolDef {
                 "debug_image_out": {
                     "type": "string",
                     "description": "Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom."
+                },
+                "delivery_mode": {
+                    "type": "string",
+                    "enum": ["background", "foreground"],
+                    "description": "Best-effort-background ladder rung for a PIXEL click (default \"background\"). \"background\": post the CGEvent to the pid without fronting. \"foreground\": briefly front the window, click, restore the prior frontmost — the explicit last resort for surfaces that drop background synthetic clicks. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
                 }
             },
             "additionalProperties": false
@@ -265,13 +270,16 @@ impl Tool for ClickTool {
             return match result {
                 Ok(Ok(Some(pid))) => ToolResult::text(format!(
                     "✅ Sent {button_label} at desktop-pixel ({sx_shot:.0},{sy_shot:.0}) \
-                     → screen-point ({sx:.0},{sy:.0}) on pid {pid} (desktop scope)."
-                )),
+                     → screen-point ({sx:.0},{sy:.0}) on pid {pid} (desktop scope; \
+                     not driver-verified — confirm via screenshot)."
+                ))
+                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
                 Ok(Ok(None)) => ToolResult::text(format!(
                     "✅ Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
-                     (desktop scope, no window under point)."
-                )),
+                     (desktop scope, no window under point; not driver-verified)."
+                ))
+                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
@@ -314,6 +322,10 @@ impl Tool for ClickTool {
         // "middle" has no AX equivalent and falls back to a pixel middle-click
         // at the element's screen-space center.
         let button_str    = args.str_or("button", "left").to_lowercase();
+        // delivery_mode: per-call ladder rung. foreground only applies to the
+        // pixel path and needs a window_id to front (else it degrades to
+        // background). A click is never driver-verifiable either way.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         // Reject unknown buttons explicitly so silent left-click fall-through can't
         // mask a typo. Keep "" → default left for old clients that never sent the field.
         if !matches!(button_str.as_str(), "" | "left" | "right" | "middle") {
@@ -385,8 +397,10 @@ impl Tool for ClickTool {
                 }).await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted middle-click to pid {pid} at element [{idx}] center."
-                    )),
+                        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
+                         (background CGEvent; not driver-verified — confirm via screenshot)."
+                    ))
+                    .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -446,7 +460,13 @@ impl Tool for ClickTool {
                         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                     }
                     msg.push_str(&changes.result_suffix());
-                    ToolResult::text(msg)
+                    // AX dispatch went through, but AXPerformAction returning
+                    // success does not confirm the on-screen effect (many
+                    // elements no-op silently). The driver can't read that back
+                    // for a click → verified:false; the caller confirms visually.
+                    ToolResult::text(msg).with_structured(
+                        serde_json::json!({ "path": "ax", "verified": false })
+                    )
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -587,45 +607,59 @@ impl Tool for ClickTool {
             // button != left. Left-button path stays on the existing Chromium-
             // routed `click_at_xy_with_window_local` for back-compat.
             let button_kind = button_str.clone();
+            // delivery_mode:foreground briefly fronts the window before clicking —
+            // the explicit last resort for surfaces that drop background synthetic
+            // clicks. Needs window_id to front; without one it degrades to
+            // background (and is labelled as such).
+            let fg = delivery_mode.is_foreground() && window_id.is_some();
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
                 prior_front,
                 "click.pixel",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                        match button_kind.as_str() {
-                            "right" => {
-                                if let Some(wid) = window_id {
-                                    return crate::input::mouse::right_click_at_xy_with_window_local(
-                                        pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
-                                    );
+                        let do_click = move || -> anyhow::Result<()> {
+                            let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                            match button_kind.as_str() {
+                                "right" => {
+                                    if let Some(wid) = window_id {
+                                        return crate::input::mouse::right_click_at_xy_with_window_local(
+                                            pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
+                                        );
+                                    }
+                                    crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
                                 }
-                                crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
-                            }
-                            "middle" => {
-                                if let Some(_wid) = window_id {
-                                    return crate::input::mouse::middle_click_at_xy_with_window_local(
-                                        pid, screen_x, screen_y, win_local_x, win_local_y, &m,
-                                    );
+                                "middle" => {
+                                    if let Some(_wid) = window_id {
+                                        return crate::input::mouse::middle_click_at_xy_with_window_local(
+                                            pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                                        );
+                                    }
+                                    crate::input::mouse::middle_click_at_xy(pid, screen_x, screen_y, &m)
                                 }
-                                crate::input::mouse::middle_click_at_xy(pid, screen_x, screen_y, &m)
-                            }
-                            // "left" (default) or anything else — preserve legacy left-click path.
-                            _ => {
-                                // When we know the window_id, pass the window-local coordinates so
-                                // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
-                                // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
-                                // for better backgrounded-target delivery.
-                                if let Some(wid) = window_id {
-                                    return crate::input::mouse::click_at_xy_with_window_local(
-                                        pid, screen_x, screen_y,
-                                        win_local_x, win_local_y,
-                                        wid, count, &m,
-                                    );
+                                // "left" (default) or anything else — preserve legacy left-click path.
+                                _ => {
+                                    // When we know the window_id, pass the window-local coordinates so
+                                    // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
+                                    // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
+                                    // for better backgrounded-target delivery.
+                                    if let Some(wid) = window_id {
+                                        return crate::input::mouse::click_at_xy_with_window_local(
+                                            pid, screen_x, screen_y,
+                                            win_local_x, win_local_y,
+                                            wid, count, &m,
+                                        );
+                                    }
+                                    crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
                                 }
-                                crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
                             }
+                        };
+                        // Foreground rung: brief front → click → restore.
+                        match (fg, window_id) {
+                            (true, Some(wid)) => crate::input::skylight::with_foreground_assist(
+                                pid as libc::pid_t, wid, do_click,
+                            ).map(|_| ()),
+                            _ => do_click(),
                         }
                     })
                     .await
@@ -640,11 +674,18 @@ impl Tool for ClickTool {
                 "middle" => "middle-click",
                 _        => "click",
             };
+            let (path, mode_label) = if fg {
+                ("cgevent_fg", "foreground CGEvent")
+            } else {
+                ("cgevent", "background CGEvent")
+            };
             match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Posted {button_label} to pid {pid}.{}",
+                    "✅ Posted {button_label} to pid {pid} ({mode_label}; \
+                     not driver-verified — confirm via screenshot).{}",
                     changes.result_suffix()
-                )),
+                ))
+                .with_structured(serde_json::json!({ "path": path, "verified": false })),
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             }

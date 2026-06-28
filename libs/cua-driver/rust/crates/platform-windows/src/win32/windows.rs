@@ -25,8 +25,8 @@ use windows::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    EnumChildWindows, EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
 };
 
 #[derive(Debug, Clone)]
@@ -149,4 +149,157 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
         }
         (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
     }
+}
+
+fn window_class_name(hwnd: HWND) -> String {
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if n <= 0 {
+        String::new()
+    } else {
+        String::from_utf16_lossy(&buf[..n as usize])
+    }
+}
+
+/// Resolve a packaged-app (UWP) process id to the `ApplicationFrameWindow`
+/// that actually hosts it.
+///
+/// ## Why this exists
+///
+/// `IApplicationActivationManager::ActivateApplication` (see `launch_uwp`)
+/// returns the **real** packaged-app pid — e.g. `CalculatorApp.exe`,
+/// `SystemSettings.exe`. But a modern UWP app's *top-level* window is not
+/// owned by that process. `ApplicationFrameHost.exe` owns the top-level
+/// `ApplicationFrameWindow` (title bar, caption, the HWND a user drags); the
+/// app's own process only owns a `Windows.UI.Core.CoreWindow` reparented
+/// *inside* that frame as a child. Consequences:
+///
+/// - `list_windows(Some(app_pid))` is **empty** — the app process owns no
+///   top-level window, and the frame's `GetWindowThreadProcessId` reports the
+///   AFH pid, not `app_pid`.
+/// - One `ApplicationFrameHost.exe` pid hosts **many** unrelated UWP apps, so
+///   the AFH pid alone is not an app identity — only the specific frame HWND
+///   disambiguates.
+///
+/// So after a UWP launch, the handles a caller must actually drive are
+/// `(frame_hwnd, afh_pid)` — NOT the `(app_pid, …)` pair `launch_app` would
+/// otherwise report, which resolves to no window at all.
+///
+/// ## How the mapping is made
+///
+/// The stable identity link is process ownership of the hosted child: AFH
+/// reparents the app's `CoreWindow` under the frame, and that child window's
+/// `GetWindowThreadProcessId` reports the **app** pid (the child stays owned
+/// by the app process even though it lives under the AFH frame). We therefore
+/// walk every visible top-level `ApplicationFrameWindow`, scan its child
+/// windows, and return the first frame that owns a child whose process id
+/// equals `app_pid`. This keys off OS-level window parentage rather than a raw
+/// HWND/pid the caller cached, so it stays correct across the HWND churn UWP
+/// activations exhibit in the first moments after launch.
+///
+/// Returns `None` if no hosting frame is found yet (the frame can lag the
+/// process by a few hundred ms — callers should retry) or if `app_pid` is 0
+/// (brokered activations that report no pid; not resolvable by this path).
+pub fn resolve_uwp_host_window(app_pid: u32) -> Option<WindowInfo> {
+    if app_pid == 0 {
+        return None;
+    }
+
+    struct FrameScan {
+        /// pid we're hunting for among each frame's child windows.
+        target_app_pid: u32,
+        /// Set to the hosting frame's HWND once a child match is found.
+        matched_frame: Option<HWND>,
+    }
+
+    // Outer pass: every top-level ApplicationFrameWindow. For each, an inner
+    // EnumChildWindows pass looks for a child owned by `target_app_pid`.
+    unsafe extern "system" fn frame_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut FrameScan);
+
+        if IsWindowVisible(hwnd).0 == 0 || IsIconic(hwnd).0 != 0 {
+            return TRUE;
+        }
+        // Only ApplicationFrameHost frames host UWP CoreWindows; skip the rest
+        // cheaply before paying for a child enumeration.
+        if window_class_name(hwnd) != "ApplicationFrameWindow" {
+            return TRUE;
+        }
+
+        // Inner pass: does this frame own a child window belonging to the
+        // launched app process?
+        struct ChildScan {
+            target_app_pid: u32,
+            found: bool,
+        }
+        unsafe extern "system" fn child_cb(child: HWND, lparam: LPARAM) -> BOOL {
+            let cs = &mut *(lparam.0 as *mut ChildScan);
+            let mut child_pid: u32 = 0;
+            GetWindowThreadProcessId(child, Some(&mut child_pid));
+            if child_pid == cs.target_app_pid {
+                cs.found = true;
+                return windows::Win32::Foundation::FALSE; // stop enumerating children
+            }
+            TRUE
+        }
+
+        let mut child_scan = ChildScan {
+            target_app_pid: scan.target_app_pid,
+            found: false,
+        };
+        let _ = EnumChildWindows(
+            hwnd,
+            Some(child_cb),
+            LPARAM(&mut child_scan as *mut ChildScan as isize),
+        );
+
+        if child_scan.found {
+            scan.matched_frame = Some(hwnd);
+            return windows::Win32::Foundation::FALSE; // stop enumerating frames
+        }
+        TRUE
+    }
+
+    let mut scan = FrameScan {
+        target_app_pid: app_pid,
+        matched_frame: None,
+    };
+    unsafe {
+        let _ = EnumWindows(
+            Some(frame_cb),
+            LPARAM(&mut scan as *mut FrameScan as isize),
+        );
+    }
+
+    let frame = scan.matched_frame?;
+
+    // Build the WindowInfo for the frame itself: its HWND is what the caller
+    // drives, and its owning pid is the AFH pid (what get_window_state will
+    // validate `window_id` against and what list_windows reports for it).
+    let mut afh_pid: u32 = 0;
+    unsafe { GetWindowThreadProcessId(frame, Some(&mut afh_pid)) };
+
+    let title = unsafe {
+        let len = GetWindowTextLengthW(frame);
+        if len == 0 {
+            String::new()
+        } else {
+            let mut buf = vec![0u16; (len + 1) as usize];
+            GetWindowTextW(frame, &mut buf);
+            let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            String::from_utf16_lossy(&buf[..n])
+        }
+    };
+
+    let (x, y, w, h) = get_window_bounds(frame);
+
+    Some(WindowInfo {
+        hwnd: frame.0 as u64,
+        pid: afh_pid,
+        title,
+        x,
+        y,
+        width: w,
+        height: h,
+    })
 }

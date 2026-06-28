@@ -1576,9 +1576,19 @@ impl Tool for LaunchAppTool {
             let target_for_shell = target_file_opt.clone();
             let extra_for_shell = extra_joined.clone();
             let n_show_for_shell = n_show;
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+            // Bound the shell launch with a timeout. An unregistered protocol
+            // or file association makes `ShellExecuteExW` block on a modal shell
+            // dialog ("you'll need a new app to open this …") on the *session*
+            // desktop — which a Session-0/headless daemon can neither see nor
+            // dismiss — wedging the launch (and that request) indefinitely.
+            // `SEE_MASK_FLAG_NO_UI` (below) suppresses the no-association error
+            // UI so that case fails fast with an error code; the timeout is the
+            // backstop for any *other* blocking broker dialog (SmartScreen, an
+            // elevation/consent surface) so a bad target can't hang the daemon.
+            let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
                 use windows::Win32::UI::Shell::{
                     ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS,
+                    SEE_MASK_FLAG_NO_UI,
                 };
                 use windows::Win32::System::Threading::GetProcessId;
                 use windows::Win32::Foundation::CloseHandle;
@@ -1597,7 +1607,7 @@ impl Tool for LaunchAppTool {
 
                 let mut info = SHELLEXECUTEINFOW {
                     cbSize:       std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-                    fMask:        SEE_MASK_NOCLOSEPROCESS,
+                    fMask:        SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI,
                     lpVerb:       PCWSTR(op_w.as_ptr()),
                     lpFile:       PCWSTR(file_w.as_ptr()),
                     lpParameters: if extra_for_shell.is_empty() {
@@ -1622,6 +1632,7 @@ impl Tool for LaunchAppTool {
                     let file = to_wide(url);
                     let mut url_info = SHELLEXECUTEINFOW {
                         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                        fMask:  SEE_MASK_FLAG_NO_UI,
                         lpVerb: PCWSTR(op_w.as_ptr()),
                         lpFile: PCWSTR(file.as_ptr()),
                         nShow:  n_show_for_shell,
@@ -1631,12 +1642,30 @@ impl Tool for LaunchAppTool {
                 }
 
                 Ok(pid)
-            }).await;
+            });
+            // 15s is generous: ShellExecuteExW returns once activation starts
+            // (process created), not when the window appears, so a healthy
+            // launch resolves in well under a second. On timeout we abandon the
+            // blocking task (a spawn_blocking thread can't be cancelled — it
+            // unblocks if/when the modal is dismissed) and return an error so
+            // the daemon stays responsive instead of wedging on the request.
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                launch,
+            ).await;
 
             match result {
-                Ok(Ok(p))  => p,
-                Ok(Err(e)) => return ToolResult::error(format!("Failed to launch: {e}")),
-                Err(e)     => return ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(Ok(p)))  => p,
+                Ok(Ok(Err(e))) => return ToolResult::error(format!("Failed to launch: {e}")),
+                Ok(Err(e))     => return ToolResult::error(format!("Task error: {e}")),
+                Err(_elapsed)  => return ToolResult::error(format!(
+                    "Launch of {:?} timed out after 15s — the target likely has no \
+                     registered handler and a blocking shell dialog appeared on the \
+                     session desktop; aborted to keep the daemon responsive.",
+                    target_file_opt.as_deref()
+                        .or_else(|| urls.first().map(|s| s.as_str()))
+                        .unwrap_or("")
+                )),
             }
         };
 

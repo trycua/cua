@@ -2,7 +2,7 @@
 # macOS AppKit modality recorder — parity with the Linux GTK3 / Windows WPF golden recorders.
 # Harness LEFT (CuaTestHarness.AppKit), Chrome --app dashboard RIGHT.
 # Per-action: no-foreground contract (held / STOLE) + effect verifier (worked / no-op).
-import json, os, subprocess, sys, time, re, glob, signal
+import json, os, subprocess, sys, time, re, glob, signal, atexit
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "ax-bg"
 SURFACE = sys.argv[2] if len(sys.argv) > 2 else "appkit"
@@ -75,6 +75,13 @@ def D(tool, payload, t=25):
 def DJ(tool, payload, t=25):
     try: return json.loads(D(tool, payload, t) or "{}")
     except Exception: return {}
+
+# Safety net: dispose the agent-cursor session (remove its overlay cursor) even if
+# the run raises before the explicit end_session below. This script does NOT kill
+# the daemon on exit, so the daemon is still alive at interpreter shutdown and the
+# atexit call reaches it. end_session is idempotent, so the happy-path call is a
+# no-op here.
+atexit.register(lambda: D("end_session", {"session": SESS}))
 
 def osa(script, t=6):
     try: return subprocess.run(["osascript","-e",script], capture_output=True, text=True, timeout=t).stdout.strip()

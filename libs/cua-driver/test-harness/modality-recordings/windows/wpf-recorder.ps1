@@ -263,6 +263,7 @@ function DoAct($t,$el){
  }
 }
 # ---------- run ----------
+try {
 for($i=0;$i -lt $plan.Count;$i++){
  $p=$plan[$i]; $el=$resolve[$p.sel]
  $script:steps[$i].state='active'; $script:cur=$p.label; Flush
@@ -289,6 +290,13 @@ for($i=0;$i -lt $plan.Count;$i++){
 $script:cur="done"; Pulse 2.5
 if($desktop){ D "set_config" '{"key":"capture_scope","value":"window"}'|Out-Null }
 D "stop_recording" "{}"|Out-Null; Start-Sleep 3
+}
+finally {
+  # Dispose the agent-cursor session (remove its overlay cursor) BEFORE cua-driver is
+  # killed below. Runs even if the action loop threw, so the session is never leaked to
+  # the idle-TTL reaper. end_session is idempotent.
+  D "end_session" '{"session":"d1"}' | Out-Null
+}
 Stop-Job $srv -EA SilentlyContinue; Remove-Job $srv -Force -EA SilentlyContinue
 if($anchorPid){ Stop-Process -Id $anchorPid -Force -EA SilentlyContinue }
 Get-Process cua-driver,CuaTestHarness.Wpf,chrome,mspaint -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue

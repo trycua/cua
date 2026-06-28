@@ -306,35 +306,41 @@ def do(t, sel):
         D("press_key", {"pid":WP,"key":"tab","session":"d1"})
 
 # ---------- run ----------
-for i,(t,sel,label) in enumerate(PLAN):
-    steps[i]["state"]="active"; flush()
-    # establish the genuine foreground baseline: ACTIVATE the anchor and confirm it actually took
-    # the active window BEFORE the action runs. A "steal" is then the active window moving OFF the
-    # anchor ONTO the harness; "held" is the anchor staying active. (fg modes keep the harness in
-    # front by design, so no baseline anchor there.)
-    if not m["fg"] and ANCHOR_ID:
-        held = anchor_front()
-        open(f"{WORK}/baseline.log","a").write(
-            "step %d '%s': baseline active='%s' anchor_held=%s\n" % (i, t, active_name(), held))
-    before = hstate()
-    do(t, sel)
-    # measure: steal = active window moved OFF the anchor baseline onto the harness after the action.
-    stole=False; end=time.time()+1.5
-    while time.time()<end:
-        flush()
-        if WIN_TITLE in active_name(): stole=True
-        time.sleep(0.11)
-    steps[i]["verified"] = verify(t, before, hstate())
-    state["actions"]+=1
-    if m["fg"]: steps[i]["result"]="front"
-    elif stole: state["steals"]+=1; steps[i]["result"]="stole"
-    else: steps[i]["result"]="held"
-    steps[i]["state"]="done"; flush()
-    sh(["wmctrl","-r","cua-driver-panel","-b","add,above"])
+try:
+    for i,(t,sel,label) in enumerate(PLAN):
+        steps[i]["state"]="active"; flush()
+        # establish the genuine foreground baseline: ACTIVATE the anchor and confirm it actually took
+        # the active window BEFORE the action runs. A "steal" is then the active window moving OFF the
+        # anchor ONTO the harness; "held" is the anchor staying active. (fg modes keep the harness in
+        # front by design, so no baseline anchor there.)
+        if not m["fg"] and ANCHOR_ID:
+            held = anchor_front()
+            open(f"{WORK}/baseline.log","a").write(
+                "step %d '%s': baseline active='%s' anchor_held=%s\n" % (i, t, active_name(), held))
+        before = hstate()
+        do(t, sel)
+        # measure: steal = active window moved OFF the anchor baseline onto the harness after the action.
+        stole=False; end=time.time()+1.5
+        while time.time()<end:
+            flush()
+            if WIN_TITLE in active_name(): stole=True
+            time.sleep(0.11)
+        steps[i]["verified"] = verify(t, before, hstate())
+        state["actions"]+=1
+        if m["fg"]: steps[i]["result"]="front"
+        elif stole: state["steals"]+=1; steps[i]["result"]="stole"
+        else: steps[i]["result"]="held"
+        steps[i]["state"]="done"; flush()
+        sh(["wmctrl","-r","cua-driver-panel","-b","add,above"])
 
-pulse(2.5)
-if DESKTOP: D("set_config", {"key":"capture_scope","value":"window"})
-D("stop_recording", {}); time.sleep(3)
+    pulse(2.5)
+    if DESKTOP: D("set_config", {"key":"capture_scope","value":"window"})
+    D("stop_recording", {}); time.sleep(3)
+finally:
+    # Dispose the agent-cursor session (remove its overlay cursor) BEFORE the daemon
+    # is pkill'd below. Runs even if the action loop raised, so the session is never
+    # leaked to the idle-TTL reaper. end_session is idempotent.
+    D("end_session", {"session":"d1"})
 if ANCHOR_PROC is not None:
     try: ANCHOR_PROC.terminate()
     except Exception: pass

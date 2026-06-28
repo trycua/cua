@@ -54,6 +54,9 @@ def DJ(tool, payload):
 def active_name():
     return sh(["xdotool", "getactivewindow", "getwindowname"]).strip()
 
+def active_id():
+    return sh(["xdotool", "getactivewindow"]).strip()
+
 # ---------- plan ----------
 PLAN = [
  ("click","chk","left-click a checkbox"),
@@ -146,6 +149,44 @@ sh(["wmctrl","-r",WIN_TITLE,"-e","0,0,0,%d,%d"%(HARW,HARH)])
 sh(["wmctrl","-r","cua-driver-panel","-e","0,%d,0,%d,%d"%(PANX,PANW,PANH)])
 sh(["wmctrl","-r","cua-driver-panel","-b","add,above"])
 time.sleep(1)
+
+# ---------- foreground-baseline ANCHOR (background modes only) ----------
+# The no-foreground contract is "did this action steal foreground". Measuring that needs a
+# GENUINE foreground baseline before each action: a real, ACTIVATED, non-harness window.
+# Re-asserting the dashboard panel with `wmctrl -b add,above` is z-order / _NET_WM_STATE_ABOVE
+# ONLY (no activation), so it never holds a true active-window baseline — once the first inject
+# action click-activates the target, the harness silently stays the active window and every later
+# step false-positives as a "steal". Anchor on a real xterm: park it under the (above) panel rect
+# so it stays invisible in the recording but remains a valid activatable non-harness foreground
+# window. (macOS mac-rec.py already does a real `activate` — no flaw; Windows fix was 49bdb41b.)
+ANCHOR_ID = None
+ANCHOR_PROC = None
+if not m["fg"]:
+    ANCHOR_PROC = subprocess.Popen(
+        ["xterm","-class","cua-anchor","-T","cua-anchor","-geometry","18x3",
+         "-e","bash","-c","while true; do sleep 3600; done"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(20):
+        ids = sh(["xdotool","search","--class","cua-anchor"]).split()
+        if ids: ANCHOR_ID = ids[0]; break
+        time.sleep(0.4)
+    if ANCHOR_ID:
+        sh(["wmctrl","-i","-r",ANCHOR_ID,"-e","0,%d,0,%d,%d"%(PANX,PANW,PANH)])
+        sh(["wmctrl","-r","cua-driver-panel","-b","add,above"])
+    open(f"{WORK}/baseline.log","w").write("ANCHOR_ID=%s launched=%s\n" % (ANCHOR_ID, ANCHOR_PROC is not None))
+
+def anchor_front():
+    # GENUINELY activate (not z-order) the anchor and confirm it actually became the active window,
+    # so each action is measured against a true non-harness foreground baseline. Then re-assert the
+    # dashboard panel ABOVE for the recording (z-order only — does not change the active window).
+    if not ANCHOR_ID: return False
+    held = False
+    for _ in range(8):
+        sh(["xdotool","windowactivate","--sync",ANCHOR_ID])
+        time.sleep(0.18)
+        if active_id() == ANCHOR_ID: held = True; break
+    sh(["wmctrl","-r","cua-driver-panel","-b","add,above"])
+    return held
 
 # resolve harness window
 w = None
@@ -267,8 +308,17 @@ def do(t, sel):
 # ---------- run ----------
 for i,(t,sel,label) in enumerate(PLAN):
     steps[i]["state"]="active"; flush()
+    # establish the genuine foreground baseline: ACTIVATE the anchor and confirm it actually took
+    # the active window BEFORE the action runs. A "steal" is then the active window moving OFF the
+    # anchor ONTO the harness; "held" is the anchor staying active. (fg modes keep the harness in
+    # front by design, so no baseline anchor there.)
+    if not m["fg"] and ANCHOR_ID:
+        held = anchor_front()
+        open(f"{WORK}/baseline.log","a").write(
+            "step %d '%s': baseline active='%s' anchor_held=%s\n" % (i, t, active_name(), held))
     before = hstate()
     do(t, sel)
+    # measure: steal = active window moved OFF the anchor baseline onto the harness after the action.
     stole=False; end=time.time()+1.5
     while time.time()<end:
         flush()
@@ -285,7 +335,10 @@ for i,(t,sel,label) in enumerate(PLAN):
 pulse(2.5)
 if DESKTOP: D("set_config", {"key":"capture_scope","value":"window"})
 D("stop_recording", {}); time.sleep(3)
-subprocess.run("pkill -x electron; pkill -f lin-dash.py; pkill -f 'http.server 8146'; pkill cua-driver; pkill openbox", shell=True)
+if ANCHOR_PROC is not None:
+    try: ANCHOR_PROC.terminate()
+    except Exception: pass
+subprocess.run("pkill -f cua-anchor; pkill -x electron; pkill -f lin-dash.py; pkill -f 'http.server 8146'; pkill cua-driver; pkill openbox", shell=True)
 mp4 = (glob.glob(f"{REC}/**/*.mp4", recursive=True) or [None])[0]
 size = os.path.getsize(mp4) if mp4 else 0
 worked = sum(1 for s in steps if s.get("verified")=="ok"); ver = sum(1 for s in steps if s.get("verified") in ("ok","fail"))

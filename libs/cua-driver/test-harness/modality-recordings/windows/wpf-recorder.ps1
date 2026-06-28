@@ -315,6 +315,16 @@ for($i=0;$i -lt $plan.Count;$i++){
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
   "step $i '$($p.t)': anchor-baseline foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$anchorHeld"|Add-Content "$dir\baseline.log"
  }
+ elseif($m.fg -and $hHar -ne [IntPtr]::Zero){
+  # fg mode: GENUINELY foreground the harness before the action. Element-path steps don't
+  # need it, but coordinate dispatch does — drag's SendInput path SetForegroundWindow's the
+  # target and BAILS if the swap is rejected, so if the harness isn't already foreground the
+  # slider drag silently no-ops. Asserting it here also makes the panel show "app is foreground".
+  $harFront=$false
+  for($a=0;$a -lt 8;$a++){ [W]::Front($hHar)|Out-Null; Start-Sleep -Milliseconds 150; if([W]::Title([W]::GetForegroundWindow()) -like '*CuaTestHarness*'){ $harFront=$true; break } }
+  if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
+  "step $i '$($p.t)': fg-mode harness foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$harFront"|Add-Content "$dir\baseline.log"
+ }
  $before=ReadState
  DoAct $p.t $el
  # measure: sample foreground ~1.5s while the dashboard updates live. steal = foreground moved

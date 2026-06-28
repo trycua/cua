@@ -185,7 +185,7 @@ Two addressing modes:
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
-| `element_index` | integer | No | Element index from last `get_window_state`. |
+| `element_index` | integer | No | Element index from last `get_window_state`. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). |
 | `window_id` | integer | No | Target window ID. Required for `element_index`. |
 | `x` | number | No | Window-local screenshot X coordinate. |
 | `y` | number | No | Window-local screenshot Y coordinate. |
@@ -212,7 +212,7 @@ Pixel path: two down/up pairs ~80 ms apart.
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
-| `element_index` | integer | No | Element index from last `get_window_state`. Uses AX path. |
+| `element_index` | integer | No | Element index from last `get_window_state`. Uses AX path. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). |
 | `window_id` | integer | No | CGWindowID. Required when `element_index` is used. |
 | `x` | number | No | Screen X coordinate (pixel path). |
 | `y` | number | No | Screen Y coordinate (pixel path). |
@@ -237,7 +237,7 @@ Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always r
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
-| `element_index` | integer | No | Element index from last `get_window_state`. Routes through `AXShowMenu`. Requires `window_id`. |
+| `element_index` | integer | No | Element index from last `get_window_state`. Routes through `AXShowMenu`. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). |
 | `window_id` | integer | No | CGWindowID. Required when `element_index` is used. |
 | `x` | number | No | X in window-local screenshot pixels. |
 | `y` | number | No | Y in window-local screenshot pixels. |
@@ -281,7 +281,7 @@ Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
 | `text` | string | Yes | Text to insert at the target's cursor. |
-| `element_index` | integer | No | Element index from last `get_window_state`. Directs the write to a specific field. Requires `window_id`. |
+| `element_index` | integer | No | Element index from last `get_window_state`. Directs the write to a specific field. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). |
 | `window_id` | integer | No | CGWindowID. Required when `element_index` is used. |
 | `delay_ms` | integer | No | Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds. |
 
@@ -350,7 +350,7 @@ Two modes:
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
-| `element_index` | integer | Yes | Element index from last `get_window_state`. |
+| `element_index` | integer | Yes | Element index from last `get_window_state`. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). |
 | `window_id` | integer | Yes | CGWindowID for the window whose `get_window_state` produced the element index. |
 | `value` | string | Yes | New value. AX will coerce to the element's native type. |
 

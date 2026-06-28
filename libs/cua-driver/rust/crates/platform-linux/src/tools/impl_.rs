@@ -997,7 +997,7 @@ impl Tool for ClickTool {
                     "window_id":{"type":"integer"},
                     "x":{"type":"number"},
                     "y":{"type":"number"},
-                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
@@ -1220,7 +1220,7 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity)."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity). REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
                 },"additionalProperties":false
             }),
@@ -1671,7 +1671,7 @@ impl Tool for SetValueTool {
                 "type":"object","required":["pid","value"],"properties":{
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer","description":"Required when element_index is used; optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state. Must be supplied unless element_token is provided."},
+                    "element_index":{"type":"integer","description":"Element index from get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "value":{"type":"string"}
                 },"additionalProperties":false
@@ -1845,7 +1845,7 @@ impl Tool for DoubleClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                 "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
@@ -1980,7 +1980,7 @@ impl Tool for RightClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state."},
+                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                 "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys to hold."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}

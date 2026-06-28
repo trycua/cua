@@ -75,7 +75,7 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state." },
+                "element_index": { "type": "integer", "description": "Element index from last get_window_state. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
                 "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token` of the last get_window_state. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded — re-snapshot in that case." },
                 "x":             { "type": "number",  "description": "Window-local screenshot X coordinate." },
                 "y":             { "type": "number",  "description": "Window-local screenshot Y coordinate." },

@@ -39,7 +39,7 @@ fn def() -> &'static ToolDef {
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
                 "window_id":     { "type": "integer", "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)." },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Uses AX path." },
+                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Uses AX path. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
                 "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." }
             },
             "additionalProperties": false

@@ -41,6 +41,14 @@ impl RetainedElement {
     pub fn as_ptr(&self) -> usize {
         self.ptr
     }
+
+    /// True when the retained pointer is an `IUIAutomationElement` (the UIA
+    /// path), not an MSAA `IAccessible`. `ScrollItemPattern::ScrollIntoView`
+    /// only applies to UIA elements, so the scroll-into-view recovery gates on
+    /// this before casting the pointer as a UIA interface.
+    pub fn is_uia(&self) -> bool {
+        matches!(self.kind, SnapshotKind::Uia)
+    }
 }
 
 // `ptr` is a `usize` and `kind` is a plain `Copy` enum, so this is already
@@ -257,3 +265,8 @@ impl Default for ElementCache {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "cache_uaf_repro.rs"]
+mod cache_uaf_repro;
+

@@ -21,6 +21,60 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
     crate::overlay::send_command(key.to_owned(), cursor_overlay::OverlayCommand::PinAbove(wid));
 }
 
+/// Resolve the screen point a coordinate action should actuate at, scrolling
+/// the target element into view first when its cached center lands off-screen.
+///
+/// The element cache captures each element's center at walk time. On a short
+/// display a tall window reflows so some controls sit below the visible area;
+/// their cached center then falls outside the window rect and a raw tap would
+/// land on the taskbar / another window instead of the control. Before failing,
+/// we ask the control to scroll itself visible via UIA
+/// `ScrollItemPattern::ScrollIntoView` (the control drives its own
+/// ScrollViewer), then re-read its *live* bounding-rect center.
+///
+/// Returns:
+/// - `Ok((cx,cy))` unchanged when already in bounds — fast path, no COM call;
+/// - `Ok((nx,ny))` with the post-scroll center when scrolling brought it in;
+/// - `Err(message)` when it is still off-screen — preserving the existing clean
+///   failure (a clear error beats a misfire onto the taskbar).
+///
+/// Background-safe: ScrollIntoView is delivered over the accessibility channel
+/// (wrapped in the UWP fg-steal bypass) and does not raise or activate the
+/// window. MSAA-walked elements are skipped (no ScrollItemPattern) and keep the
+/// existing failure.
+fn resolve_onscreen_point_with_scroll(
+    element_cache: &crate::uia::cache::ElementCache,
+    pid: u32,
+    hwnd: u64,
+    idx: usize,
+    cx: i32,
+    cy: i32,
+    action_verb: &str,
+) -> Result<(i32, i32), String> {
+    if crate::input::point_in_window_bounds(hwnd, cx, cy) {
+        return Ok((cx, cy));
+    }
+    // Off-screen: ask the control to scroll itself into view, then re-resolve.
+    if let Some(retained) = element_cache.get_element_retained(pid, hwnd, idx) {
+        if retained.is_uia() {
+            if let Some((nx, ny)) = unsafe {
+                crate::uia::scroll::scroll_into_view_and_recenter(hwnd, retained.as_ptr())
+            } {
+                if crate::input::point_in_window_bounds(hwnd, nx, ny) {
+                    return Ok((nx, ny));
+                }
+            }
+        }
+        // `retained` drops here → COM Release.
+    }
+    Err(format!(
+        "Element [{idx}] resolves to ({cx},{cy}), outside its window — tried UIA \
+         ScrollIntoView but it is still off-screen, so {action_verb} would land on \
+         whatever is there (e.g. the taskbar). Make the window taller or scroll \
+         the region into view, then retry."
+    ))
+}
+
 /// Convert (px, py) — "window-local screenshot pixels, top-left origin
 /// of the PNG returned by `get_window_state`" — to screen coordinates.
 ///
@@ -2245,13 +2299,15 @@ impl Tool for ClickTool {
             // rejected) and might fail on elements that don't support
             // InvokePattern anyway.
             if dispatch == DispatchMode::Foreground {
-                // Foreground delivery is a real SendInput tap at (cx,cy); guard it
-                // so an off-screen element's coordinate doesn't land on the taskbar.
-                if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
-                    return ToolResult::error(format!(
-                        "Element [{idx}] resolves to ({cx},{cy}), outside its window — scroll it into view before a foreground click (the raw coordinate would land on whatever is there, e.g. the taskbar)."
-                    ));
-                }
+                // Foreground delivery is a real SendInput tap at (cx,cy); if the
+                // element is off-screen, scroll it into view and re-resolve so the
+                // tap doesn't land on the taskbar, else keep the clean failure.
+                let (cx, cy) = match resolve_onscreen_point_with_scroll(
+                    &self.state.element_cache, pid, hwnd, idx, cx, cy, "a foreground click",
+                ) {
+                    Ok(p) => p,
+                    Err(msg) => return ToolResult::error(msg),
+                };
                 let btn_fg = btn.clone();
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
@@ -2267,6 +2323,15 @@ impl Tool for ClickTool {
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
+            }
+            // dispatch:"background" on WinUI3 for double / right / middle: single
+            // left falls through to the UIA Invoke path below (already drives
+            // WinUI3). Double-left lands via a double UIA Invoke; right/middle
+            // can't both land and hold the contract → structured error.
+            if dispatch == DispatchMode::Background && (count > 1 || btn == "right" || btn == "middle") {
+                if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), count, &btn).await {
+                    return r;
+                }
             }
             // Try UIA Invoke first (it works for UWP / modern XAML / web
             // content where PostMessage(WM_LBUTTONDOWN) hits the outer
@@ -2383,12 +2448,13 @@ impl Tool for ClickTool {
                 if dispatch == DispatchMode::Background
                     && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
                 {
-                    // Coordinate injection lands at (cx,cy); guard against off-screen.
-                    if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
-                        anyhow::bail!(format!(
-                            "Element [{idx}] resolves to ({cx},{cy}), outside its window — scroll it into view before clicking (coordinate injection would land on the taskbar)."
-                        ));
-                    }
+                    // Coordinate injection lands at (cx,cy); scroll the element
+                    // into view if it's off-screen, else preserve the clean
+                    // off-screen failure.
+                    let (cx, cy) = resolve_onscreen_point_with_scroll(
+                        &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
+                    )
+                    .map_err(|m| anyhow::anyhow!(m))?;
                     match crate::input::inject_click_screen(hwnd, cx, cy, count, &btn) {
                         Ok(()) => return Ok(format!(
                             "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
@@ -2486,6 +2552,15 @@ impl Tool for ClickTool {
                 };
             }
 
+            // dispatch:"background" on WinUI3 for double / right / middle (pixel
+            // path, no element_index → no cached element to UIA-Invoke): these
+            // can't both land and hold the contract on WinUI3 (posted input is
+            // ignored, the pen injector steals foreground) → structured error.
+            if dispatch == DispatchMode::Background && (count > 1 || btn == "right" || btn == "middle") {
+                if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, count, &btn).await {
+                    return r;
+                }
+            }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
                 let invoked = tokio::task::spawn_blocking(move || {
@@ -2848,7 +2923,16 @@ impl Tool for TypeTextTool {
                 let ok = (|| -> anyhow::Result<()> {
                     let pattern = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) }?;
                     let vp: IUIAutomationValuePattern = pattern.cast()?;
-                    unsafe { vp.SetValue(&BSTR::from(text_for_uia.as_str())) }?;
+                    // Shield the SetValue against host self-foreground. A
+                    // Chromium/Electron (or XAML) ValuePattern.SetValue handler
+                    // calls SetForegroundWindow(self), which WS_EX_NOACTIVATE
+                    // does NOT stop; the EnableWindow shield does (disabled
+                    // top-level can't be foregrounded) while the a11y-channel
+                    // SetValue still lands. Same fix as the UIA Invoke path.
+                    crate::uia::fg_bypass::run_with_uwp_bypass(
+                        hwnd as isize,
+                        || unsafe { vp.SetValue(&BSTR::from(text_for_uia.as_str())) },
+                    )?;
                     Ok(())
                 })().is_ok();
                 std::mem::forget(elem);
@@ -3408,9 +3492,18 @@ impl Tool for SetValueTool {
             use windows::core::{Interface, BSTR};
             let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
             // Try ValuePattern first (text inputs, editable combos, etc).
+            // The SetValue is shielded by the EnableWindow bypass: a
+            // Chromium/Electron (or XAML) SetValue handler self-foregrounds via
+            // SetForegroundWindow, which WS_EX_NOACTIVATE alone does not stop;
+            // disabling the host for the duration does, while the a11y-channel
+            // write still lands. (No-op shield for non-XAML/non-Chromium hosts.)
             if let Ok(pattern) = unsafe { elem.GetCurrentPattern(UIA_ValuePatternId) } {
                 if let Ok(vp) = pattern.cast::<IUIAutomationValuePattern>() {
-                    if unsafe { vp.SetValue(&BSTR::from(value.as_str())) }.is_ok() {
+                    let set = crate::uia::fg_bypass::run_with_uwp_bypass(
+                        hwnd as isize,
+                        || unsafe { vp.SetValue(&BSTR::from(value.as_str())) },
+                    );
+                    if set.is_ok() {
                         std::mem::forget(elem);
                         return Ok("ValuePattern".to_string());
                     }
@@ -3429,7 +3522,10 @@ impl Tool for SetValueTool {
                          ProgressBar / numeric range). `value` must be a parseable f64; \
                          got {value:?}."
                     ))?;
-                    unsafe { rv.SetValue(parsed)? };
+                    crate::uia::fg_bypass::run_with_uwp_bypass(
+                        hwnd as isize,
+                        || unsafe { rv.SetValue(parsed) },
+                    )?;
                     std::mem::forget(elem);
                     return Ok("RangeValuePattern".to_string());
                 }
@@ -3768,6 +3864,126 @@ async fn chromium_click_short_circuit(
     })
 }
 
+/// Fire UIA `InvokePattern.Invoke()` `count` times (min 2) in rapid succession
+/// on a cached WinUI3 element. Two rapid Invokes land within the system
+/// double-click time, so a Button's Click handler folds them into a
+/// double-click (the harness records `last_action=double_click`).
+///
+/// This is the **only** background actuator that lands on a WinUI3 element: the
+/// content island ignores posted `WM_*BUTTON` messages (measured: a posted
+/// secondary click never fires `RightTapped`), and the synthetic pen/touch
+/// injector click-activates the frame (8/8 foreground steals). UIA delivery
+/// goes through the accessibility channel, not the input queue.
+///
+/// Contract: a XAML `Invoke` handler calls `SetFocus()` → `SetForegroundWindow(self)`,
+/// which the `EnableWindow` UWP bypass does NOT gate (measured: a bare double
+/// Invoke stole foreground). We therefore hold the frame **non-activatable**
+/// (`WS_EX_NOACTIVATE`, via `NoActivateGuard`) for the whole burst, which is
+/// what makes Windows refuse the self-activation — the same guard ClickTool
+/// already relies on for single-click. Runs blocking COM, so call inside
+/// `spawn_blocking`. Returns `Some(Ok)` on success, `Some(Err)` if Invoke
+/// failed, `None` if the element isn't cached or has no InvokePattern.
+fn winui3_uia_multi_invoke(
+    state: &Arc<ToolState>,
+    pid: u32,
+    hwnd: u64,
+    idx: usize,
+    count: usize,
+) -> Option<anyhow::Result<()>> {
+    let guard = state.element_cache.get_element_retained(pid, hwnd, idx)?;
+    let ptr = guard.as_ptr();
+    use windows::core::Interface;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationElement, IUIAutomationInvokePattern, UIA_InvokePatternId,
+    };
+    // Hold the frame non-activatable so the XAML Invoke handler's
+    // SetFocus()→SetForegroundWindow(self) is refused for the whole burst.
+    let _noact = crate::input::NoActivateGuard::arm(
+        windows::Win32::Foundation::HWND(hwnd as *mut _),
+    );
+    let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+    let outcome: Option<anyhow::Result<()>> = (|| {
+        let pattern = unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) }.ok()?;
+        let inv = pattern.cast::<IUIAutomationInvokePattern>().ok()?;
+        let n = count.max(2);
+        let mut res = Ok(());
+        for i in 0..n {
+            let r = crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
+                inv.Invoke()
+            });
+            if let Err(e) = r {
+                res = Err(anyhow::anyhow!("UIA Invoke #{i}: {e}"));
+                break;
+            }
+            if i + 1 < n {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+        }
+        Some(res)
+    })();
+    // The cache owns this element's ref (AddRef'd under the cache lock by
+    // get_element_retained); `from_raw` took ownership without AddRef, so forget
+    // it to avoid double-releasing the cache's ref.
+    std::mem::forget(elem);
+    outcome
+}
+
+/// WinUI3 background gesture resolution, shared by click / double_click /
+/// right_click / drag. For a WinUI3 (`WinUIDesktopWin32WindowClass`) target:
+///
+///  - **double-click (left)** on a cached InvokePattern element → a double UIA
+///    Invoke (lands + holds the no-foreground contract; see
+///    [`winui3_uia_multi_invoke`]).
+///  - **everything else** — right/middle click, double-click without an
+///    invokable cached element, any drag — cannot both land AND hold the
+///    contract on WinUI3: UIA has no right-click/drag analogue, the content
+///    island ignores posted `WM_*BUTTON`, and the pointer injector
+///    click-activates the frame. So we return the structured
+///    `background_unavailable` error (the honest result — the caller can retry
+///    with `dispatch:"foreground"` or `bring_to_front`) instead of a silent
+///    no-op that reports false success.
+///
+/// Returns `None` for non-WinUI3 targets (caller falls through to its normal
+/// routing).
+async fn winui3_background_gesture(
+    state: &Arc<ToolState>,
+    pid: u32,
+    hwnd: u64,
+    idx: Option<usize>,
+    count: usize,
+    button: &str,
+) -> Option<ToolResult> {
+    let is_w = tokio::task::spawn_blocking(move || {
+        crate::input::dispatch::is_winui3_target_window(hwnd)
+    })
+    .await
+    .unwrap_or(false);
+    if !is_w {
+        return None;
+    }
+    if count >= 2 && button == "left" {
+        if let Some(idx) = idx {
+            let st = state.clone();
+            let uia = tokio::task::spawn_blocking(move || {
+                winui3_uia_multi_invoke(&st, pid, hwnd, idx, count)
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(Ok(())) = uia {
+                return Some(ToolResult::text(format!(
+                    "✅ Double-invoked WinUI3 element [{idx}] x{count} via UIA \
+                     (pid {pid}, background, no foreground swap)."
+                )));
+            }
+        }
+    }
+    Some(crate::input::dispatch::background_unavailable_error(
+        hwnd,
+        crate::input::dispatch::EventKind::MouseClick,
+    ))
+}
+
 // ── double_click ──────────────────────────────────────────────────────────────
 
 pub struct DoubleClickTool {
@@ -3882,14 +4098,28 @@ impl Tool for DoubleClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
-            if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
-                return ToolResult::error(format!(
-                    "Element [{idx}] resolves to screen point ({cx},{cy}), outside its window — it is scrolled out of view or off-screen. Scroll it into view before double-clicking."
-                ));
-            }
+            let (cx, cy) = match resolve_onscreen_point_with_scroll(
+                &self.state.element_cache, pid, hwnd, idx, cx, cy, "double-clicking",
+            ) {
+                Ok(p) => p,
+                Err(msg) => return ToolResult::error(msg),
+            };
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            // dispatch:"background" (default) on WinUI3: the pen/touch injector
+            // click-activates the content island (8/8 foreground steals) and
+            // posted WM_*BUTTON to the frame/island no-ops (measured). A double
+            // UIA Invoke on the cached element is the only contract-holding way
+            // to land the double-click — it fires the XAML Click handler twice
+            // → last_action=double_click, held non-activatable so no foreground
+            // swap. If the element has no InvokePattern, a background double-
+            // click isn't expressible → structured error.
+            if dispatch == DispatchMode::Background {
+                if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), 2, "left").await {
+                    return r;
+                }
+            }
             // dispatch:"background" (default): Chromium/Electron & GTK targets
             // silently drop posted clicks (#1984) — inject via the coordinate
             // actuator (system input queue, NO foreground swap), exactly like
@@ -3961,6 +4191,15 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            // dispatch:"background" on WinUI3 (pixel path, no element_index): a
+            // background double-click on WinUI3 only lands via UIA Invoke on a
+            // cached element, which the pixel path doesn't have → structured
+            // error (caller retries with dispatch:foreground or uses element_index).
+            if dispatch == DispatchMode::Background {
+                if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 2, "left").await {
+                    return r;
+                }
+            }
             // dispatch:"background" (default): inject via the coordinate actuator
             // (no foreground swap) for targets that drop posted clicks (#1984).
             if dispatch == DispatchMode::Background
@@ -4130,14 +4369,25 @@ impl Tool for RightClickTool {
                 Some(v) => v,
                 None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
             };
-            if !crate::input::point_in_window_bounds(hwnd, cx, cy) {
-                return ToolResult::error(format!(
-                    "Element [{idx}] resolves to screen point ({cx},{cy}), outside its window — it is scrolled out of view or off-screen. Scroll it into view before right-clicking; the raw coordinate would open the wrong context menu (e.g. the taskbar's)."
-                ));
-            }
+            let (cx, cy) = match resolve_onscreen_point_with_scroll(
+                &self.state.element_cache, pid, hwnd, idx, cx, cy, "right-clicking",
+            ) {
+                Ok(p) => p,
+                Err(msg) => return ToolResult::error(msg),
+            };
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
+            // dispatch:"background" on WinUI3: a right-click can't both land and
+            // hold the contract — UIA has no right-click pattern, the content
+            // island ignores posted WM_RBUTTON (measured: RightTapped never
+            // fired), and the pen-barrel injector click-activates the frame.
+            // Return the structured error (retry with dispatch:foreground).
+            if dispatch == DispatchMode::Background {
+                if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), 1, "right").await {
+                    return r;
+                }
+            }
             // dispatch:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984); a right-click
             // injection that the actuator can't express falls back to the error.
@@ -4207,6 +4457,14 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
+            // dispatch:"background" on WinUI3: right-click can't land while
+            // holding the contract (no UIA right-click, posted WM_RBUTTON
+            // ignored, pen-barrel injector steals foreground) → structured error.
+            if dispatch == DispatchMode::Background {
+                if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 1, "right").await {
+                    return r;
+                }
+            }
             // dispatch:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984).
             if dispatch == DispatchMode::Background
@@ -4357,6 +4615,20 @@ impl Tool for DragTool {
         // not the client area top-left (see `bitmap_to_screen` doc).
         let (sx_from, sy_from) = bitmap_to_screen(hwnd, from_x as i32, from_y as i32);
         let (sx_to,   sy_to)   = bitmap_to_screen(hwnd, to_x   as i32, to_y   as i32);
+
+        // dispatch:"background" on WinUI3: a pointer drag can't both land and
+        // hold the contract — the content island only consumes real
+        // system-queue pointer input (which the pen/touch injector delivers but
+        // at the cost of click-activating the frame: 8/8 foreground steals) and
+        // ignores posted WM_* drag messages; UIA has no drag analogue. Return
+        // the structured error so the caller retries with dispatch:foreground
+        // (a WinUI3 Slider can also be set with the set_value tool, which uses
+        // UIA RangeValuePattern and holds the contract).
+        if dispatch == DispatchMode::Background {
+            if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 1, &button).await {
+                return r;
+            }
+        }
 
         // dispatch:"background" — if a PostMessage drag would silently drop
         // (Chromium/WPF/GTK canvas content reads mouse from the system input

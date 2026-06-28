@@ -196,6 +196,23 @@ pub fn is_wpf_target_window(hwnd: u64) -> bool {
     read_class_name(hwnd).starts_with("HwndWrapper")
 }
 
+/// Detect WinUI3 / Windows-App-SDK desktop top-level windows. The frame is a
+/// Win32 HWND of class `WinUIDesktopWin32WindowClass`, but — unlike WPF — that
+/// frame does NOT host the visual tree or consume pointer input. The XAML
+/// content renders into a child *content island* (DirectComposition / a
+/// `Microsoft.UI.Content.DesktopChildSiteBridge` HWND) whose input stack only
+/// processes real pointer input off the system input queue — it ignores both
+/// posted `WM_*BUTTON` messages AND the synthetic pen/touch injector (the
+/// latter additionally click-activates the frame: measured 8/8 foreground
+/// steals). The only background-safe actuator that lands on a WinUI3 element is
+/// a UIA pattern call (see `winui3_uia_multi_invoke` in the tools layer), and
+/// that has no right-click / drag analogue — so those gestures cannot both land
+/// and hold the no-foreground contract and surface a structured
+/// `background_unavailable` error instead.
+pub fn is_winui3_target_window(hwnd: u64) -> bool {
+    read_class_name(hwnd) == "WinUIDesktopWin32WindowClass"
+}
+
 /// Detect GTK/GDK top-level windows.
 ///
 /// GTK 3 on Windows uses class `gdkWindowToplevel`; GTK 4 uses

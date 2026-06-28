@@ -232,10 +232,13 @@ pub fn default_socket_path() -> String {
 }
 
 /// On Windows, returns the named-pipe path of the uiAccess-elevated worker
-/// (`cua-driver-uia.exe`). The main CLI/MCP binary prefers this pipe over the
-/// regular daemon pipe so UIPI-blocked Windows tools (SendInput / UI Automation
-/// against UWP apps) run in a UIAccess-integrity process. See #1602 / the
-/// `cua-driver-uia` crate for the worker side.
+/// (`cua-driver-uia.exe`). The main CLI/MCP binary can prefer this pipe over the
+/// regular daemon pipe for the one path that genuinely needs UIAccess integrity:
+/// **synthetic input (SendInput / pixel clicks) into AppContainer (UWP) windows**,
+/// which UIPI blocks from a Medium-IL process. The element-action path (UIA
+/// Invoke / ValuePattern driven by `element_index`) does NOT need the worker — it
+/// drives real UWP apps (verified: Calculator num5Button 0→5) as-is from the
+/// Medium-IL daemon. See #1602 / the `cua-driver-uia` crate for the worker side.
 #[cfg(target_os = "windows")]
 pub fn default_uia_pipe_path() -> String {
     r"\\.\pipe\cua-driver-uia".to_owned()
@@ -850,13 +853,22 @@ pub async fn run_serve(
 /// (`cua-driver-uia.exe`) via ShellExecute if it lives next to the main binary
 /// AND we're at Medium IL AND the binary is opt-in via env var.
 ///
-/// History: the uia worker was the original answer to "drive UWP / AppContainer
-/// apps from a Medium-IL daemon" — it carries `uiAccess="true"` in its manifest
-/// and was meant to be Authenticode-signed (EV cert per #1602) so Windows AIS
-/// would elevate it to UIAccess integrity at launch. With #1630 the canonical
-/// answer became "register the autostart task at RunLevel=Highest so the main
-/// daemon is already at High IL", which obviates the worker entirely for the
-/// vast majority of users.
+/// History: the uia worker was the original answer to "send synthetic input
+/// (SendInput / pixel clicks) into UWP / AppContainer windows from a Medium-IL
+/// daemon" — UIPI blocks that cross-integrity input, so the worker carries
+/// `uiAccess="true"` in its manifest and was meant to be Authenticode-signed
+/// (EV cert per #1602) so Windows AIS would elevate it to UIAccess integrity at
+/// launch.
+///
+/// IMPORTANT (verified): the worker is NOT required to automate real UWP apps in
+/// general. The element-action path — UIA Invoke / ValuePattern driven by
+/// `element_index` — drives AppContainer apps as-is from the Medium-IL daemon
+/// (Calculator num5Button 0→5, no worker). Only the pixel / SendInput path needs
+/// the worker, and only against AppContainer (UWP) targets.
+///
+/// With #1630 the canonical answer for that input path became "register the
+/// autostart task at RunLevel=Highest so the main daemon is already at High IL",
+/// which obviates the worker entirely for the vast majority of users.
 ///
 /// Current behavior:
 ///
@@ -872,9 +884,11 @@ pub async fn run_serve(
 ///    AND a uiAccess'd worker is installed, spawn it. This path is kept for
 ///    the future EV-cert flow where the worker IS properly signed.
 ///
-/// 3. Otherwise: skip silently. The main daemon still serves requests; UWP
-///    automation will require either re-running with the Highest autostart
-///    task or (when shipped) the signed uia worker. See #1602.
+/// 3. Otherwise: skip silently. The main daemon still serves requests, and
+///    element_index UWP automation (UIA Invoke / ValuePattern) works without the
+///    worker. Only pixel / SendInput into AppContainer (UWP) windows needs the
+///    elevated path — re-run with the Highest autostart task or (when shipped)
+///    the signed uia worker. See #1602.
 #[cfg(target_os = "windows")]
 fn maybe_spawn_uia_worker() {
     // Skip when at High IL — main daemon already has the privileges the

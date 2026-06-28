@@ -18,11 +18,13 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
-        description: "Update cua-driver-rs configuration. Changes to capture_mode \
-            and max_image_dimension take effect immediately. The experimental_pip \
+        description: "Update cua-driver-rs configuration. Changes to \
+            max_image_dimension take effect immediately. The experimental_pip \
             keys are persisted to ~/.cua-driver/config.json and take effect on \
             the next daemon restart (the PiP backend is initialised once at \
-            startup).".into(),
+            startup).\n\nNote: capture_mode and capture_scope are NO LONGER \
+            settings — they are per-call params on get_window_state / click / \
+            get_desktop_state (capture_mode, scope). Pass them per call.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -34,17 +36,6 @@ fn def() -> &'static ToolDef {
                 },
                 "value": {
                     "description": "New value for `key`. JSON type depends on the key."
-                },
-                "capture_mode": {
-                    "type": "string",
-                    "enum": ["som", "vision", "ax"],
-                    "description": "Default capture mode for get_window_state."
-                },
-                "capture_scope": {
-                    "type": "string",
-                    "enum": ["window", "desktop"],
-                    "description": "Capture scope for get_window_state: 'window' crops to the \
-                        target window; 'desktop' captures the full display."
                 },
                 "max_image_dimension": {
                     "type": "integer",
@@ -91,11 +82,6 @@ impl Tool for SetConfigTool {
         let kv: Option<(String, Value)> = args
             .opt_str("key")
             .and_then(|k| args.get("value").map(|v| (k, v.clone())));
-        let kv_str = |name: &str| -> Option<String> {
-            kv.as_ref()
-                .filter(|(k, _)| k == name)
-                .and_then(|(_, v)| v.as_str().map(str::to_owned))
-        };
         let kv_u64 = |name: &str| -> Option<u64> {
             kv.as_ref().filter(|(k, _)| k == name).and_then(|(_, v)| v.as_u64())
         };
@@ -109,58 +95,24 @@ impl Tool for SetConfigTool {
             },
             None => None,
         };
-        let capture_mode = args.opt_str("capture_mode").or_else(|| kv_str("capture_mode"));
 
-        // Validate capture_scope up front so both branches share the check and
-        // we never half-apply an invalid value.
-        let capture_scope = args.opt_str("capture_scope").or_else(|| kv_str("capture_scope"));
-        if let Some(scope) = capture_scope.as_deref() {
-            if scope != "window" && scope != "desktop" {
-                return ToolResult::error(format!(
-                    "capture_scope `{scope}` is invalid; expected `window` or `desktop`"
-                ));
-            }
-        }
-
-        let (effective_mode, effective_dim) = if let Some(sid) = session_id.as_deref() {
+        let effective_dim = if let Some(sid) = session_id.as_deref() {
             // Session-scoped override: in-memory only, no global write, no disk.
             self.state.session_config.set(sid, ConfigOverrides {
-                capture_mode: capture_mode.clone(),
-                capture_scope: capture_scope.clone(),
                 max_image_dimension: max_dim,
             });
-            self.state.session_config.effective(Some(sid), &self.state.config.read().unwrap())
+            self.state.session_config.effective_max_image_dimension(Some(sid), &self.state.config.read().unwrap())
         } else {
-            // Anonymous/global session: write the shared global + persist,
-            // exactly as before this change.
+            // Anonymous/global session: write the shared global + persist.
             let mut cfg = self.state.config.write().unwrap();
-            if let Some(mode) = capture_mode.clone() {
-                cfg.capture_mode = mode.clone();
-                if let Err(e) = write_driver_config_key("capture_mode", &Value::String(mode)) {
-                    tracing::warn!("set_config: failed to persist capture_mode: {e}");
-                }
-            }
-            if let Some(scope) = capture_scope.clone() {
-                cfg.capture_scope = scope.clone();
-                if let Err(e) = write_driver_config_key("capture_scope", &Value::String(scope)) {
-                    tracing::warn!("set_config: failed to persist capture_scope: {e}");
-                }
-            }
             if let Some(dim32) = max_dim {
                 cfg.max_image_dimension = dim32;
                 if let Err(e) = write_driver_config_key("max_image_dimension", &Value::Number(u64::from(dim32).into())) {
                     tracing::warn!("set_config: failed to persist max_image_dimension: {e}");
                 }
             }
-            (cfg.capture_mode.clone(), cfg.max_image_dimension)
+            cfg.max_image_dimension
         };
-        // Resolve the effective capture_scope for the echo via the same
-        // session/global precedence (kept separate from `effective()` so its
-        // `(String, u32)` signature stays unchanged for other call sites).
-        let effective_scope = self
-            .state
-            .session_config
-            .effective_scope(session_id.as_deref(), &self.state.config.read().unwrap());
         // PiP keys persist to the same config.json but take effect only on
         // next daemon restart — the backend is initialised once at startup.
         let mut pip_note = String::new();
@@ -190,8 +142,8 @@ impl Tool for SetConfigTool {
             ""
         };
         ToolResult::text(format!(
-            "Config updated: capture_mode={}, capture_scope={}, max_image_dimension={}{}{}",
-            effective_mode, effective_scope, effective_dim, scope_note, pip_note
+            "Config updated: max_image_dimension={}{}{}",
+            effective_dim, scope_note, pip_note
         ))
     }
 }

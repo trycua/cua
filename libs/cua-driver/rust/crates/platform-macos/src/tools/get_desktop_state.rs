@@ -25,8 +25,8 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_desktop_state".into(),
         description: "Capture a full-display vision screenshot in true screen pixels \
-            (no downscale), for capture_scope=\"desktop\" GUI loops where the agent then \
-            drives click(x,y)/scroll(x,y) with no pid/window_id. Returns the PNG at native \
+            (no downscale), for scope=\"desktop\" GUI loops where the agent then \
+            drives click(x,y, scope=\"desktop\") with no pid/window_id. Returns the PNG at native \
             display resolution plus the true screen size and backing scale factor so \
             screen-absolute pixel picks land exactly. Vision-only: no AX tree walk."
             .into(),

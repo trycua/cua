@@ -97,11 +97,12 @@ impl Tool for GetWindowStateTool {
         // Effective config resolves call-arg > session-override > global. The
         // daemon injects `_session_id` for named MCP sessions; absent => global.
         let session_id = args.opt_str("_session_id");
-        let (default_mode, effective_max_dim) = {
+        let effective_max_dim = {
             let cfg = self.state.config.read().unwrap();
-            self.state.session_config.effective(session_id.as_deref(), &cfg)
+            self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
-        let capture_mode = args.opt_str("capture_mode").unwrap_or(default_mode);
+        // capture_mode is a per-call param now (no longer a setting); default "som".
+        let capture_mode = args.opt_str("capture_mode").unwrap_or_else(|| "som".to_owned());
         // Optional caps — when omitted, fall back to the defaults baked into
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
@@ -282,6 +283,23 @@ impl Tool for GetWindowStateTool {
                 Issue #22865: use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
+        // Best-effort-background ladder, rung (2): an AX walk that ran but found
+        // zero actionable elements is NOT a clean snapshot — the window may be a
+        // non-AX surface (canvas/WebGL) or its tree wasn't ready (Chromium needs
+        // an enable+settle). Mark it degraded so callers don't read `elements: []`
+        // as "this window has no controls". Only applies when a walk was actually
+        // attempted (tree_result is None in capture_mode=vision, where empty is
+        // expected, not degraded).
+        if tree_result.is_some() && element_count == 0 {
+            structured["degraded"] = serde_json::json!(true);
+            structured["degraded_reason"] = serde_json::json!(
+                "ax_tree_empty: the AX walk returned no actionable elements. The \
+                 window may be a non-AX surface (canvas/WebGL/custom-drawn) or its \
+                 accessibility tree was not ready (Chromium/Electron require an \
+                 AX-enable + settle). Do not treat element data as authoritative — \
+                 verify via the screenshot, and re-snapshot if the app just launched."
+            );
+        }
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);

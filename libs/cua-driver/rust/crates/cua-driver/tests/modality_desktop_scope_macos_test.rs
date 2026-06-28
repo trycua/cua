@@ -125,15 +125,8 @@ fn activate_pid(pid: u32) {
     std::thread::sleep(Duration::from_millis(500));
 }
 
-fn set_scope(driver: &mut McpDriver, scope: &str) {
-    // macOS set_config reads the direct `capture_scope` field (not {key,value}).
-    // `session` makes the override session-scoped (in-memory, no disk write).
-    let r = driver.call(
-        "set_config",
-        serde_json::json!({ "capture_scope": scope, "session": SESSION }),
-    );
-    assert!(!r.is_error(), "set_config capture_scope={scope} failed: {}", r.text());
-}
+// scope is a per-call param on `click` now (was a config setting) — passed
+// directly on each click below, no set_config step.
 
 // ── tests ───────────────────────────────────────────────────────────────────────
 
@@ -161,12 +154,11 @@ fn desktop_scope_windowless_click_lands_on_control() {
     let pre = counter(&snap).unwrap_or(0);
     println!("[desktop-mac] increment button screen-center=({cx},{cy}) pre-counter={pre}");
 
-    set_scope(&mut driver, "desktop");
     // Desktop scope clicks the frontmost window at the point — put the harness there.
     activate_pid(pid);
 
-    // Window-less screen-absolute click — no pid, no window_id.
-    let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy, "session": SESSION }));
+    // Window-less screen-absolute click — no pid, no window_id; scope per-call.
+    let clicked = driver.call("click", serde_json::json!({ "x": cx, "y": cy, "scope": "desktop", "session": SESSION }));
     assert!(!clicked.is_error(), "desktop-scope click errored: {}", clicked.text());
     assert!(
         clicked.text().to_lowercase().contains("desktop scope"),
@@ -202,8 +194,8 @@ fn desktop_scope_windowless_click_lands_on_control() {
 #[ignore]
 fn window_scope_rejects_windowless_click() {
     let Some(mut driver) = McpDriver::spawn() else { return };
-    set_scope(&mut driver, "window");
-    let r = driver.call("click", serde_json::json!({ "x": 100, "y": 100, "session": SESSION }));
+    // Default scope is "window" — a window-less click must be rejected.
+    let r = driver.call("click", serde_json::json!({ "x": 100, "y": 100, "scope": "window", "session": SESSION }));
     let txt = r.text().to_lowercase();
     assert!(
         r.is_error() || txt.contains("desktop scope") || txt.contains("desktop_scope_disabled"),

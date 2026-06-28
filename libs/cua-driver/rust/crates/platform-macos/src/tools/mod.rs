@@ -142,12 +142,12 @@ impl ResizeRegistry {
 }
 
 /// Runtime-mutable driver configuration persisted across calls within a session.
+///
+/// `capture_mode` and `capture_scope` were removed here: behavior knobs are now
+/// declared per call (the `capture_mode` / `scope` / `delivery_mode` params), not
+/// stored as hidden mutable session/global state — matching the session-as-identity
+/// model. Only the rendering knob `max_image_dimension` remains a setting.
 pub struct DriverConfig {
-    /// Default capture_mode for get_window_state when not specified per-call.
-    pub capture_mode: String,
-    /// Capture scope for get_window_state: "window" (default) crops to the
-    /// target window; "desktop" captures the full display.
-    pub capture_scope: String,
     /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
     /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
     /// the long edge is downscaled to this before encoding.
@@ -157,8 +157,6 @@ pub struct DriverConfig {
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
-            capture_mode: "som".to_owned(),
-            capture_scope: "window".to_string(),
             max_image_dimension: 1568,
         }
     }
@@ -185,12 +183,9 @@ pub fn load_driver_config() -> DriverConfig {
         Ok(v) => v,
         Err(_) => return cfg,  // malformed file — use defaults
     };
-    if let Some(v) = json.get("capture_mode").and_then(|v| v.as_str()) {
-        cfg.capture_mode = v.to_owned();
-    }
-    if let Some(v) = json.get("capture_scope").and_then(|v| v.as_str()) {
-        cfg.capture_scope = v.to_owned();
-    }
+    // `capture_mode` / `capture_scope` are no longer settings — they're per-call
+    // params now. Any such keys left in an old on-disk config.json are silently
+    // ignored (back-compat: no error, just dropped).
     if let Some(v) = json.get("max_image_dimension").and_then(|v| v.as_u64()) {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
@@ -231,8 +226,6 @@ pub fn write_driver_config_key(key: &str, value: &serde_json::Value) -> Result<(
 /// disk. `None` fields mean "fall through to the global layer".
 #[derive(Clone, Default)]
 pub struct ConfigOverrides {
-    pub capture_mode: Option<String>,
-    pub capture_scope: Option<String>,
     pub max_image_dimension: Option<u32>,
 }
 
@@ -259,40 +252,19 @@ impl SessionConfigRegistry {
         }
         let mut map = self.inner.lock().unwrap();
         let entry = map.entry(session.to_owned()).or_default();
-        if delta.capture_mode.is_some() {
-            entry.capture_mode = delta.capture_mode;
-        }
-        if delta.capture_scope.is_some() {
-            entry.capture_scope = delta.capture_scope;
-        }
         if delta.max_image_dimension.is_some() {
             entry.max_image_dimension = delta.max_image_dimension;
         }
     }
 
-    /// Resolve the effective config for `session`, layering its overrides over
-    /// the global `DriverConfig`. `session = None` (anonymous) returns the
-    /// global values verbatim — today's behavior.
-    pub fn effective(&self, session: Option<&str>, global: &DriverConfig) -> (String, u32) {
+    /// Resolve the effective `max_image_dimension` for `session`, layering its
+    /// override over the global `DriverConfig`. `session = None` (anonymous)
+    /// returns the global value verbatim.
+    pub fn effective_max_image_dimension(&self, session: Option<&str>, global: &DriverConfig) -> u32 {
         let ov = session.and_then(|s| self.inner.lock().unwrap().get(s).cloned());
         match ov {
-            Some(ov) => (
-                ov.capture_mode.unwrap_or_else(|| global.capture_mode.clone()),
-                ov.max_image_dimension.unwrap_or(global.max_image_dimension),
-            ),
-            None => (global.capture_mode.clone(), global.max_image_dimension),
-        }
-    }
-
-    /// Resolve the effective `capture_scope` for `session`, layering its
-    /// override over the global `DriverConfig`. Kept separate from `effective()`
-    /// so existing `(String, u32)` call sites stay unchanged. `session = None`
-    /// (anonymous) returns the global scope verbatim.
-    pub fn effective_scope(&self, session_id: Option<&str>, global: &DriverConfig) -> String {
-        let ov = session_id.and_then(|s| self.inner.lock().unwrap().get(s).cloned());
-        match ov {
-            Some(ov) => ov.capture_scope.unwrap_or_else(|| global.capture_scope.clone()),
-            None => global.capture_scope.clone(),
+            Some(ov) => ov.max_image_dimension.unwrap_or(global.max_image_dimension),
+            None => global.max_image_dimension,
         }
     }
 
@@ -428,52 +400,24 @@ mod session_config_guard_tests {
     use super::*;
     use cua_driver_core::session::fire_session_end;
 
-    fn overrides(mode: &str) -> ConfigOverrides {
-        ConfigOverrides { capture_mode: Some(mode.to_owned()), capture_scope: None, max_image_dimension: None }
-    }
-
-    #[test]
-    fn default_capture_scope_is_window() {
-        assert_eq!(DriverConfig::default().capture_scope, "window");
-    }
-
-    #[test]
-    fn effective_scope_uses_session_override_then_global() {
-        let reg = SessionConfigRegistry::new();
-        let global = DriverConfig::default();
-        let sid = "wb-scope-live-C1D2E3";
-        assert!(!cua_driver_core::session::is_session_ended(sid));
-
-        // No override yet → falls back to global ("window").
-        assert_eq!(reg.effective_scope(Some(sid), &global), "window");
-        // Anonymous → global.
-        assert_eq!(reg.effective_scope(None, &global), "window");
-
-        // Live session override applies.
-        reg.set(sid, ConfigOverrides {
-            capture_mode: None,
-            capture_scope: Some("desktop".to_owned()),
-            max_image_dimension: None,
-        });
-        assert_eq!(reg.effective_scope(Some(sid), &global), "desktop");
-        // Other sessions / anonymous still see global.
-        assert_eq!(reg.effective_scope(None, &global), "window");
+    fn overrides(max_dim: u32) -> ConfigOverrides {
+        ConfigOverrides { max_image_dimension: Some(max_dim) }
     }
 
     #[test]
     fn ended_session_config_set_is_noop() {
         // THE FIX (config side): an ended session id keys the overrides map, so
         // an in-flight set_config after session_end must not re-create the entry
-        // the reaper's clear hook removed. effective() then falls back to global.
+        // the reaper's clear hook removed. effective then falls back to global.
         let reg = SessionConfigRegistry::new();
         let global = DriverConfig::default();
         let sid = "wb-config-ended-Q9R8S7";
         fire_session_end(sid);
         assert!(cua_driver_core::session::is_session_ended(sid));
 
-        reg.set(sid, overrides("raw"));
-        let (mode, _) = reg.effective(Some(sid), &global);
-        assert_eq!(mode, global.capture_mode, "ended session must not get an override entry");
+        reg.set(sid, overrides(800));
+        let dim = reg.effective_max_image_dimension(Some(sid), &global);
+        assert_eq!(dim, global.max_image_dimension, "ended session must not get an override entry");
     }
 
     #[test]
@@ -482,9 +426,9 @@ mod session_config_guard_tests {
         let global = DriverConfig::default();
         let sid = "wb-config-live-T1U2V3";
         assert!(!cua_driver_core::session::is_session_ended(sid));
-        reg.set(sid, overrides("raw"));
-        let (mode, _) = reg.effective(Some(sid), &global);
-        assert_eq!(mode, "raw", "live session override must apply");
+        reg.set(sid, overrides(800));
+        let dim = reg.effective_max_image_dimension(Some(sid), &global);
+        assert_eq!(dim, 800, "live session override must apply");
     }
 }
 

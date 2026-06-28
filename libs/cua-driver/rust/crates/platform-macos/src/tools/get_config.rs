@@ -37,11 +37,9 @@ impl Tool for GetConfigTool {
         // sees its own override layered over the global; the anonymous session
         // (absent `_session_id`) sees the raw global — today's behavior.
         let session_id = args.opt_str("_session_id");
-        let (capture_mode, max_image_dimension, capture_scope) = {
+        let max_image_dimension = {
             let cfg = self.state.config.read().unwrap();
-            let (mode, dim) = self.state.session_config.effective(session_id.as_deref(), &cfg);
-            let scope = self.state.session_config.effective_scope(session_id.as_deref(), &cfg);
-            (mode, dim, scope)
+            self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
         // Report the CALLING session's own cursor enabled-state, not a
         // nondeterministic HashMap.first(). Resolve the same key the click /
@@ -62,8 +60,7 @@ impl Tool for GetConfigTool {
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "macos",
-                "capture_mode": capture_mode,
-                "capture_scope": capture_scope,
+                // capture_mode / scope are per-call params now, not settings.
                 "max_image_dimension": max_image_dimension,
                 "agent_cursor": {
                     "enabled": cursor_enabled,

@@ -103,6 +103,11 @@ fn def() -> &'static ToolDef {
                     "type": "string",
                     "enum": ["background", "foreground"],
                     "description": "Best-effort-background ladder rung for a PIXEL click (default \"background\"). \"background\": post the CGEvent to the pid without fronting. \"foreground\": briefly front the window, click, restore the prior frontmost — the explicit last resort for surfaces that drop background synthetic clicks. Requires window_id. A click is never driver-verifiable (no read-back), so both report verified:false — confirm the effect via screenshot. Use the agent loop: background AX (element_index) → screenshot → background pixel (x/y) → screenshot → delivery_mode:\"foreground\"."
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["window", "desktop"],
+                    "description": "Coordinate frame for a windowless screen-absolute click (default \"window\"). Pass \"desktop\" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope=\"desktop\"). Per-call; not a setting."
                 }
             },
             "additionalProperties": false
@@ -121,7 +126,7 @@ impl Tool for ClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
 
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (scope="desktop") ──────
         // x,y given with NO pid and NO window_id → the coordinates are TRUE
         // SCREEN pixels. This is the foreground, vision-driven desktop-scope
         // path, the macOS peer of the Windows WindowFromPoint click. Gate on the
@@ -133,23 +138,21 @@ impl Tool for ClickTool {
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
         if has_xy && !has_pid && !has_window_id {
-            let session_id = args.opt_str("_session_id");
-            let scope = self
-                .state
-                .session_config
-                .effective_scope(session_id.as_deref(), &self.state.config.read().unwrap());
+            // `scope` is a per-call param now (default "window"); pass
+            // scope="desktop" to enable screen-absolute clicks.
+            let scope = args.str_or("scope", "window");
             if scope != "desktop" {
                 return ToolResult::error(
-                    "click: x,y given with no pid/window_id, but capture_scope is \
-                     \"window\". Screen-absolute clicks require desktop scope. Call \
-                     set_config with capture_scope=desktop (and use get_desktop_state \
-                     to read true screen pixels) first."
+                    "click: x,y given with no pid/window_id, but scope is \"window\". \
+                     Screen-absolute clicks require desktop scope. Pass scope=\"desktop\" \
+                     (and use get_desktop_state with scope=\"desktop\" to read true \
+                     screen pixels) first."
                         .to_string(),
                 )
                 .with_structured(serde_json::json!({
                     "code": "desktop_scope_disabled",
-                    "capture_scope": scope,
-                    "suggestion": "set_config capture_scope=desktop",
+                    "scope": scope,
+                    "suggestion": "pass scope=\"desktop\"",
                 }));
             }
             let sx_shot = args.opt_f64("x").or_else(|| args.opt_i64("x").map(|i| i as f64)).unwrap_or(0.0);
@@ -493,11 +496,10 @@ impl Tool for ClickTool {
                         // matches the resize the calling session sees in
                         // get_window_state (precedence: session override > global).
                         let max_dim = self.state.session_config
-                            .effective(
+                            .effective_max_image_dimension(
                                 args.opt_str("_session_id").as_deref(),
                                 &self.state.config.read().unwrap(),
-                            )
-                            .1;
+                            );
                         let dbg_path_c = dbg_path.clone();
                         let dbg_result = tokio::task::spawn_blocking(move || {
                             let png = crate::capture::screenshot_window_bytes(wid)?;

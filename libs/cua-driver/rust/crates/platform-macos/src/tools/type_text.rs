@@ -365,9 +365,14 @@ fn type_text_blocking(
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
-        // 60ms settle between front+focus and the first keystroke — see the
+        // Settle between front+focus and the first keystroke — see the
         // "i love u" -> "love u" first-char-drop note in cgevent_type_verified.
-        const FOREGROUND_SETTLE_MS: u64 = 60;
+        // 60ms covers native Cocoa/Catalyst surfaces, but focus-proxy clients
+        // that re-establish their own input channel on activation need longer:
+        // an RDP client (Microsoft Windows App) re-arms its keyboard grab with
+        // the remote host over hundreds of ms, so at 60ms every keystroke was
+        // dropped. 200ms covers that re-grab without being perceptible.
+        const FOREGROUND_SETTLE_MS: u64 = 200;
         let do_type = || cgevent_type_verified(
             pid, text, delay_ms, before.as_deref(), clear_first, element_ptr_and_idx,
             FOREGROUND_SETTLE_MS,

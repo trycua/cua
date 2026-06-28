@@ -1194,6 +1194,19 @@ impl Tool for ClickTool {
                 // "click the activated window's centre" behaviour.
                 return crate::wayland::click(xid, xi, yi, count as u32, button);
             }
+            // X11: a synthetic XSendEvent pointer event (send_event=True) is
+            // dropped by XInput2 toolkits — a GTK button never sees it, so a
+            // pixel click is a silent no-op. Route a plain left single-click to
+            // the AT-SPI element at that point first (doAction lands the click
+            // without activating/raising the window — same no-focus-steal path
+            // as an element_index click, here driven by coordinates). Right /
+            // double / middle clicks (no AT-SPI doAction equivalent) and points
+            // with no actionable element fall through to the XSendEvent path.
+            if button == 1 && count == 1 {
+                if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
+                    return Ok(());
+                }
+            }
             crate::input::send_click(xid, xi, yi, count, button)
         }).await;
         match result {

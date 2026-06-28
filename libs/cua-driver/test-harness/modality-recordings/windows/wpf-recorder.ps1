@@ -283,7 +283,8 @@ function DoAct($t,$el){
                D "press_key" ('{{"pid":{0},"key":"down","session":"d1"}}' -f $wp)|Out-Null; Start-Sleep -Milliseconds 350
                D "press_key" ('{{"pid":{0},"key":"enter","session":"d1"}}' -f $wp)|Out-Null }
              else{ Start-Sleep -Milliseconds 500; D "press_key" ('{{"pid":{0},"key":"escape","session":"d1"}}' -f $wp)|Out-Null } }
-  'drag'   { $fx=[int]($el.frame.x-$w.bounds.x+8);$fy=[int]($el.frame.y-$w.bounds.y+$el.frame.h/2);$tx=$fx+150; D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy)|Out-Null }
+  'drag'   { $disp=if($m.fg){'foreground'}else{'background'}   # a WPF Slider thumb only tracks a real SendInput drag (dispatch:foreground); a PostMessage drag leaves per-thread input state button-up so the thumb never starts tracking
+             $fx=[int]($el.frame.x-$w.bounds.x+8);$fy=[int]($el.frame.y-$w.bounds.y+$el.frame.h/2);$tx=$fx+150; D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"dispatch":"{5}","session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy,$disp)|Out-Null }
   'scroll' { if($desktop){D "scroll" ('{{"x":{0},"y":{1},"direction":"down","session":"d1"}}' -f $c[0],$c[1])|Out-Null}
              elseif($vision){D "scroll" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"direction":"down","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}
              else{D "scroll" ('{{"pid":{0},"window_id":{1},"element_index":{2},"direction":"down","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }

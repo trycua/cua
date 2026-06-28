@@ -170,24 +170,29 @@ WebView2 steal is specific to Windows-Chromium, not WebKit-on-macOS.
 **CFNumber** for numeric `AXValue` controls (NSSlider/NSStepper reject a CFString);
 falls back to CFString for text fields.
 
-### Live host verification (SwiftUI + WKWebView, against the running driver)
+### Live host verification (AppKit + SwiftUI + WKWebView, against the running driver)
 
-Run on the macOS host with the live MCP driver (the **Jun-22 daemon**, i.e. the
-*pre-fix* binary — the installed `CuaDriver.app` is Developer-ID signed by Cua AI,
-`YCK386LBJ7`, and TCC keys on that cdhash, so swapping in the ad-hoc rebuild would
-break Accessibility; live "after" verification needs a re-signed reinstall + a TCC
-re-grant, done as a deliberate step, not mid-session).
+The CFNumber fix was verified live after a `install-local` reinstall (the new daemon is
+the **Jun-27 post-fix** binary; the installer re-signed the `CuaDriver.app` bundle
+ad-hoc and re-granted TCC — `permissions status` reports Accessibility + Screen
+Recording both ✅). The daemon was driven directly via the `cua-driver call` CLI.
 
+- **set_value CFNumber fix — VERIFIED on AppKit NSSlider.** `set_value(AXSlider, "50")`
+  on the AppKit harness now **succeeds** (`✅ Set AXValue on [5] AXSlider`) and
+  `slider_value` goes **0 → 50** (frame-verified — thumb at midpoint). This is the control
+  the fix targets; the CFNumber write lands where a CFString write was rejected.
+- **SwiftUI slider — NOT a value-type problem; `AXValue` is unsettable there.** The
+  SwiftUI `AXSlider` exposes only `actions=[increment,decrement]` and rejects *any*
+  `AXValue` write (CFNumber and the CFString fallback both return `-25200`). So the
+  CFNumber fix cannot help SwiftUI sliders — driving them needs repeated AXIncrement/
+  AXDecrement (future driver work), not a value write. (Comment in `set_number_attr`
+  notes `-25200` as well as `-25201`.)
 - **SwiftUI harness — full control parity confirmed.** `get_window_state` exposes all
   six WPF-parity controls as actionable AX elements (text field, click-target,
   `AXSlider sld-value`, `AXCheckBox "I agree"`, context-menu button, scroll region) and
   the status labels (`counter=`, `mirror=`, `last_action=`, `clicks=`, `slider_value=`,
   `agreed=`, `menu_action=`, `scroll_offset=`) render as text nodes in `tree_markdown`
   for the verifier. An AX checkbox press flipped `agreed=false → true` (frame-verified).
-- **set_value on the SwiftUI slider — bug reproduced (the "before").** Against the pre-fix
-  daemon, `set_value(AXSlider, "50")` fails with **`-25200`** (kAXErrorFailure) — exactly
-  the CFString-write rejection the CFNumber fix targets. (The fix tries CFNumber first, so
-  it covers both `-25200` and `-25201`.)
 - **WKWebView web-surface scroll — page works, nested overflow div is a no-op.** The
   driver's keystroke `scroll` (PageDown on the `AXWebArea`) scrolls the whole page a full
   page down (frame-verified). But the nested `scroll-tall` overflow div stays at

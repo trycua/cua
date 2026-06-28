@@ -308,6 +308,7 @@ fn cgevent_type_verified(
     before: Option<&str>,
     clear_first: bool,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    settle_ms: u64,
 ) -> anyhow::Result<bool> {
     // Focus the target element first so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
@@ -315,6 +316,16 @@ fn cgevent_type_verified(
     // wrong field). AXFocused is best-effort — harmless when unsupported.
     if let Some((ptr, _)) = element_ptr_and_idx {
         let _ = crate::input::ax_actions::focus_element(ptr);
+    }
+    // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
+    // After a window is fronted (with_foreground_assist) and the element focused,
+    // the surface isn't ready to accept input for a few tens of ms, so the FIRST
+    // synthesized character gets eaten: typing "i love u" rendered "love u" (the
+    // leading "i " was dropped). A short sleep here lets focus settle before the
+    // first key event. Background/terminal call sites pass 0 — they have no front
+    // transition and must not pay this latency.
+    if settle_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     if clear_first {
         let _ = crate::input::keyboard::press_key(pid, "a", &["cmd"]);
@@ -354,8 +365,12 @@ fn type_text_blocking(
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
     if delivery_mode.is_foreground() {
+        // 60ms settle between front+focus and the first keystroke — see the
+        // "i love u" -> "love u" first-char-drop note in cgevent_type_verified.
+        const FOREGROUND_SETTLE_MS: u64 = 60;
         let do_type = || cgevent_type_verified(
             pid, text, delay_ms, before.as_deref(), clear_first, element_ptr_and_idx,
+            FOREGROUND_SETTLE_MS,
         );
         let verified = match window_id {
             Some(wid) => {
@@ -386,6 +401,7 @@ fn type_text_blocking(
         );
         let verified = cgevent_type_verified(
             pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
+            /*settle_ms=*/ 0,
         )?;
         return Ok((
             format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -429,6 +445,7 @@ fn type_text_blocking(
     // foreground rung owns the idempotent clear-then-type.
     let verified = cgevent_type_verified(
         pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
+        /*settle_ms=*/ 0,
     )?;
     Ok((
         format!(" via CGEvent ({delay_ms}ms delay)"),

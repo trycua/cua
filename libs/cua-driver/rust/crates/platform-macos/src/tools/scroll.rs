@@ -252,10 +252,12 @@ impl Tool for ScrollTool {
             let changes = snapshot.detect_async().await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "Scrolled {direction} by {by} × {amount} via pixel wheel at \
-                     ({screen_x:.0}, {screen_y:.0}).{}",
+                    "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
+                     ({screen_x:.0}, {screen_y:.0}) (background CGEvent; not \
+                     driver-verified — confirm via screenshot).{}",
                     changes.result_suffix()
-                )),
+                ))
+                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
                 Ok(Err(e)) => ToolResult::error(format!("Wheel scroll failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
@@ -315,9 +317,11 @@ impl Tool for ScrollTool {
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "Scrolled {direction} by {by} × {amount}.{}",
+                "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
+                 (background; not driver-verified — confirm via screenshot).{}",
                 changes.result_suffix()
-            )),
+            ))
+            .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

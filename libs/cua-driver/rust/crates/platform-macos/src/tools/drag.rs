@@ -259,13 +259,15 @@ impl Tool for DragTool {
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps.{}",
+                 in {duration_ms}ms / {steps} steps \
+                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
                 from_x as i64, from_y as i64,
                 to_x   as i64, to_y   as i64,
                 from_sx as i64, from_sy as i64,
                 to_sx   as i64, to_sy   as i64,
                 changes.result_suffix(),
-            )),
+            ))
+            .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

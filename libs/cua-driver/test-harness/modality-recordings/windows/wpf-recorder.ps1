@@ -85,6 +85,12 @@ public class W{[DllImport("user32.dll")]public static extern bool MoveWindow(Int
 "@
 $drv="C:\Users\cuademo\cua\libs\cua-driver\rust\target\release\cua-driver.exe"; if(-not(Test-Path $drv)){$drv=$drv -replace 'release','debug'}
 $wpf=$tk.exe
+# WebView2 renderer builds its UIA tree only when an AT requests it. Force it so the
+# web DOM (click-target/checkbox/scroll-tall/etc.) surfaces in get_window_state — the
+# Windows analog of the Electron recorder's --force-renderer-accessibility. Without this
+# get_window_state returns only the chrome frame (TitleBar/Min/Max/Close) and every
+# web action resolves to nothing (the prior empty-MP4 / SIZE=0 run).
+if($Toolkit -eq 'webview2'){ $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--force-renderer-accessibility" }
 $chrome="C:\Program Files\Google\Chrome\Application\chrome.exe"
 $recfwd=$rec -replace '\\','/'
 function D($t,$j){ ($j | & $drv call $t 2>&1 | Out-String) }
@@ -113,7 +119,9 @@ function Verify($t,$b,$a){
  switch($t){
   'click'  { if("$($a.agreed)" -ne "$($b.agreed)"){'ok'}else{'fail'} }
   'double' { if("$($a.last_action)" -eq 'double_click'){'ok'}else{'fail'} }
-  'right'  { if("$($a.menu)" -ne "$($b.menu)" -and "$($a.menu)" -ne 'none' -and "$($a.menu)" -ne ''){'ok'}else{'fail'} }
+  'right'  { if("$($a.last_action)" -eq 'right_click'){'ok'}                                                       # WinUI3/web: click-target records last_action=right_click
+             elseif("$($a.menu)" -ne "$($b.menu)" -and "$($a.menu)" -ne 'none' -and "$($a.menu)" -ne ''){'ok'}     # WPF: dedicated context-menu sets menu_action=
+             else{'fail'} }
   'drag'   { if([int]$a.slider -gt [int]$b.slider){'ok'}else{'fail'} }
   'scroll' { if([int]$a.scroll -gt [int]$b.scroll){'ok'}else{'fail'} }
   'setval' { if("$($a.mirror)" -match 'set-by-cua'){'ok'}else{'fail'} }
@@ -143,10 +151,19 @@ function Ctr($el){ ,@([int]($el.frame.x+$el.frame.w/2),[int]($el.frame.y+$el.fra
 function Win0($el){ ,@([int]($el.frame.x-$w.bounds.x+$el.frame.w/2),[int]($el.frame.y-$w.bounds.y+$el.frame.h/2)) } # window-local center
 '{"run":"","expect":"","fgmode":true,"foreground":"","appFront":false,"steals":0,"actions":0,"steps":[]}' | Set-Content "$dir\status.json" -Encoding UTF8
 # ---------- launch ----------
+# Put ffmpeg on PATH for the daemon BEFORE serve. The video backend's find_ffmpeg()
+# checks `ffmpeg` on PATH first, then %LOCALAPPDATA%\Microsoft\WinGet\Packages — but this
+# task runs as fbonacci (schtasks /ru fbonacci) while ffmpeg is installed under cuademo's
+# WinGet, so the daemon's LOCALAPPDATA probe misses it and video silently degrades to
+# present:false (the empty-MP4 / SIZE=0 failures). Find the Gyan.FFmpeg bin under any user
+# profile and prepend it so the PATH check succeeds for whichever account serves.
+$ffbin=Get-ChildItem "C:\Users\*\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg*\*\bin\ffmpeg.exe" -EA SilentlyContinue | Select -First 1
+if($ffbin){ $env:PATH=$ffbin.DirectoryName+";"+$env:PATH; "FFMPEG on PATH: $($ffbin.FullName)"|Set-Content "$dir\ffmpeg.log" } else { "FFMPEG NOT FOUND"|Set-Content "$dir\ffmpeg.log" }
 Start-Process $drv -ArgumentList "serve" -WindowStyle Hidden; Start-Sleep 4
 D "set_agent_cursor_enabled" '{"enabled":true,"session":"d1"}'|Out-Null
 D "set_agent_cursor_motion" '{"session":"d1","cursor_color":"#FF2D2D","cursor_label":"cua-driver","glide_duration_ms":600,"dwell_after_click_ms":700,"idle_hide_ms":120000}'|Out-Null
-Start-Process $wpf; Start-Sleep (if($Toolkit -in @('electron','webview2')){16}else{5})  # web harnesses are slow to start
+$startWait = if($Toolkit -in @('electron','webview2')){18}else{5}  # web harnesses are slow to start; WebView2 a11y tree needs extra settle
+Start-Process $wpf; Start-Sleep $startWait
 Start-Process $chrome -ArgumentList "--app=http://localhost:8146/","--user-data-dir=C:\Users\Public\cdp-$Mode","--no-first-run","--window-position=$PANX,$PANY","--window-size=$PANW,$PANH","--new-window"; Start-Sleep 4
 # resolve harness window
 $w=$null
@@ -162,23 +179,41 @@ if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::MoveWindow($hPanel,$PANX,$PANY
 Start-Sleep 1
 # re-read window bounds after the move (window-local coords need post-move origin)
 $w2=(D "list_windows" "{}"|ConvertFrom-Json).windows | ? { $_.window_id -eq $script:wd } | Select -First 1; if($w2){ $w=$w2 }
-# resolve control targets (post-move snapshot) with settle-retry
+# resolve control targets (post-move snapshot) with settle-retry.
+# Resolver is shared across WPF / WinUI3 / WebView2: roles differ per toolkit
+#   click-target : label "Click target (left / right / double)"  (button on WPF/WinUI3, span on web)
+#   scroll-tall  : role Pane (WinUI3 ScrollViewer) | Group (WebView2 div) , label "scroll-tall"
+#   checkbox     : role Check* | label "I agree"
+#   context-menu : WPF has a dedicated control (label "context menu"); WinUI3/web have none,
+#                  so right-click targets the click-target and records last_action=right_click.
 $E=$null;$resolve=$null
-for($i=0;$i -lt 14;$i++){
+$web=($Toolkit -in @('webview2','electron'))
+for($i=0;$i -lt 16;$i++){
   $E=Els
   $resolve=@{
-   chk=($E|?{ "$($_.role)" -match 'Check' }|Select -First 1)
-   btn=($E|?{ "$($_.label)" -match 'lick target' }|Select -First 1)
-   ctx=($E|?{ "$($_.label)" -match 'context menu' }|Select -First 1)
+   chk=($E|?{ "$($_.role)" -match 'Check' -or "$($_.label)" -match 'agree' }|Select -First 1)
+   btn=($E|?{ "$($_.label)" -match 'lick target' -or "$($_.name)" -match 'lick target' }|Select -First 1)
    sld=($E|?{ "$($_.role)" -match 'Slider' }|Select -First 1)
-   scr=($E|?{ "$($_.role)" -match 'Pane' -and "$($_.label)" -match 'scroll' }|Select -First 1)
+   scr=($E|?{ "$($_.role)" -match 'Pane|Group' -and "$($_.label)" -match 'scroll' }|Select -First 1)
    txt=($E|?{ "$($_.role)" -match 'Edit' }|Select -First 1)
   }
-  if(-not $resolve.scr){ $resolve.scr=($E|?{ "$($_.role)" -match 'Pane' }|Select -Last 1) }
-  if($resolve.chk){break}
+  if(-not $resolve.scr){ $resolve.scr=($E|?{ "$($_.role)" -match 'Pane|Group' }|Select -Last 1) }
+  $resolve.ctx=($E|?{ "$($_.label)" -match 'context menu' }|Select -First 1)   # WPF dedicated control
+  if(-not $resolve.ctx){ $resolve.ctx=$resolve.btn }                            # WinUI3/web: right-click the click-target
+  # WinUI3 realizes the checkbox once the window is sized (break on chk). On the WebView2 web
+  # surface the click-target IS in the viewport but the checkbox sits below the fold, and the
+  # web content cannot be scrolled by the driver in ax mode (verified: AX-scroll on the
+  # Document/scroll-tall Group, coordinate WM_MOUSEWHEEL, and keyboard PageDown are all no-ops
+  # — the WebView2 host HWND does not route scroll to the Chromium renderer). So we can't bring
+  # the checkbox into the tree; break as soon as the click-target resolves and leave chk unset
+  # (its click step then honestly reports a no-op).
+  if($resolve.chk -or ($web -and $resolve.btn)){break}
   Start-Sleep -Milliseconds 700
 }
 "RESOLVE "+(($resolve.GetEnumerator()|%{"$($_.Key)=$([bool]$_.Value)"}) -join ' ')+" count=$(@($E).Count)"|Set-Content "$dir\resolve.log"
+("picked: "+(($resolve.GetEnumerator()|%{"$($_.Key)=[idx $($_.Value.element_index) role '$($_.Value.role)' lbl '$($_.Value.label)']"}) -join ' '))|Add-Content "$dir\resolve.log"
+"--- elements ---"|Add-Content "$dir\resolve.log"
+$E|%{ "[$($_.element_index)] role='$($_.role)' name='$($_.name)' label='$($_.label)' frame=$($_.frame.x),$($_.frame.y),$($_.frame.w),$($_.frame.h)" }|Add-Content "$dir\resolve.log"
 # seed the agent-cursor overlay BEFORE recording (off the controls)
 D "move_cursor" ('{{"x":{0},"y":{1},"session":"d1"}}' -f ($HARW-30),($HARH-30))|Out-Null; Start-Sleep -Milliseconds 400
 if($desktop){ D "set_config" '{"key":"capture_scope","value":"desktop"}'|Out-Null }

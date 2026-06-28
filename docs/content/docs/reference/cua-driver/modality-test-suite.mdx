@@ -471,6 +471,32 @@ E. **`get_screen_size` under-reports desktop width** (1024 reported vs 1824 actu
    frames stay consistent); a pixel/`vision` agent computing against 1024 width misplaces
    clicks in the right ~800 px band.
 
+F. **⚠ Unhandled-protocol `launch_app` deadlocks the whole daemon (DoS-class).** Launching an
+   app whose protocol has no registered handler (e.g. `bingmaps:` with Maps uninstalled) spawns
+   Windows' "you'll need a new app" modal **on the daemon's session desktop** and blocks the
+   worker thread inside the shell-launch call. The client wedges indefinitely and a subsequent
+   `stop` reports "daemon is not running" because the wedged daemon can't service the pipe;
+   recovery needs the modal dismissed from inside that session (Session-0 SSH can't see it —
+   per-session window stations). **Any bad app name/protocol is a full-daemon DoS.** The driver
+   should launch via a non-blocking path with a timeout and/or validate handler registration
+   before `ShellExecute`. (Needs a fix + a tracking issue.)
+G. **One `ApplicationFrameHost` pid multiplexes N unrelated UWP apps** (Settings, Calculator,
+   and Store were all hosted under the same pid). Anything keying state/cursor/element-cache by
+   `pid` alone is ambiguous across apps — only `window_id` is a real identity. (Generalises A.)
+H. **`launch_app`'s return contract is effectively per-app-architecture** — three topologies
+   seen across five apps: brokered/`pid:0` (Settings, Store), real-pid-but-empty-`windows` race
+   (Photos exposes its pid a beat before its HWND), and clean pid+window (Snipping Tool, the
+   well-behaved baseline). Store is a three-way split: launch-pid `0` ≠ window-pid (AFH) ≠
+   content-pid (`WinStore.App`), yet UIA still walks fully into the content provider.
+I. **The AFH UIA root is a caption-only ~188×32 strip** for Settings and Store while the content
+   frames are full and correct — the AppFrame chrome and the XAML content are different UIA
+   providers stitched at the window. A single-provider synthetic WinUI harness won't reproduce
+   this dual-provider root.
+
+> Methodology note: on a disconnected-RDP console session, `GetForegroundWindow` returns `0`
+> (no foreground window), so focus-steal can't be measured by that probe there — verify "landed"
+> by content-state change instead. A single-process harness never hits this.
+
 ---
 
 ## Appendix — file map

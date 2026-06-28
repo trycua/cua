@@ -66,6 +66,36 @@ impl ZoomContext {
     }
 }
 
+/// Input delivery modality — the agent-selected rung of the best-effort-background
+/// ladder, passed per call (never a stored/config setting).
+///
+/// - `Background` (default): post synthetic input to the pid without fronting.
+/// - `Foreground`: briefly front the target window, act, then restore the prior
+///   frontmost (see [`crate::input::skylight::with_foreground_assist`]). The
+///   agent's vision-driven last resort — and the only way `click` reaches a
+///   foreground rung. Orthogonal to addressing (`element_index` vs `x/y`, which
+///   selects AX vs pixel).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DeliveryMode {
+    #[default]
+    Background,
+    Foreground,
+}
+
+impl DeliveryMode {
+    /// Parse the per-call `delivery_mode` argument. Anything other than an
+    /// explicit case-insensitive `"foreground"` resolves to `Background` — the
+    /// correct default, so an omitted/garbage value never silently fronts.
+    pub fn parse(arg: Option<&str>) -> Self {
+        match arg {
+            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
+            _ => Self::Background,
+        }
+    }
+
+    pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
+}
+
 /// Thread-safe per-pid zoom context registry.
 pub struct ZoomRegistry {
     inner: std::sync::Mutex<HashMap<i32, ZoomContext>>,

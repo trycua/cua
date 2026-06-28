@@ -86,6 +86,11 @@ fn def() -> &'static ToolDef {
                     "minimum": 0,
                     "maximum": 200,
                     "description": "Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds."
+                },
+                "delivery_mode": {
+                    "type": "string",
+                    "enum": ["background", "foreground"],
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": AX insert, then CGEvent keystrokes if needed — no focus steal; the driver verifies via an AXValue read-back and reports `verified`. \"foreground\": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with \"foreground\" when a background attempt returns `verified:false` and a screenshot shows the text didn't appear."
                 }
             },
             "additionalProperties": false
@@ -130,6 +135,7 @@ impl Tool for TypeTextTool {
             } => (Some(idx), wid),
         };
         let delay_ms      = args.u64_or("delay_ms", 30);
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
 
         // Validate element_index requires window_id (still applies for
         // the legacy integer path; token path already resolved window_id).
@@ -185,6 +191,8 @@ impl Tool for TypeTextTool {
                         element_ptr,
                         delay_ms,
                         is_terminal_target,
+                        delivery_mode,
+                        window_id,
                     )
                 })
                 .await
@@ -195,14 +203,31 @@ impl Tool for TypeTextTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok((detail, path))) => ToolResult::text(format!(
-                "✅ Inserted {char_count} char(s){detail}.{}",
-                changes.result_suffix()
-            ))
-            .with_structured(serde_json::json!({
-                "path": path,
-                "characters": char_count,
-            })),
+            Ok(Ok((detail, path, verified))) => {
+                // `verified:false` means the driver could not confirm the text
+                // landed (unreadable AXValue on Catalyst, or a CGEvent rung the
+                // app may have dropped). Don't dress that as a confirmed insert —
+                // tell the agent to look, and point at the next rung.
+                let (mark, note) = if verified {
+                    ("✅ Inserted", String::new())
+                } else if path == PATH_KEY_EVENTS_FG {
+                    ("📨 Sent (unverified)",
+                     " — driver could not confirm; verify via screenshot.".to_string())
+                } else {
+                    ("📨 Sent (unverified)",
+                     " — driver could not confirm the text landed; verify via screenshot, \
+                      and re-call with delivery_mode:\"foreground\" if it didn't.".to_string())
+                };
+                ToolResult::text(format!(
+                    "{mark} {char_count} char(s){detail}.{note}{}",
+                    changes.result_suffix()
+                ))
+                .with_structured(serde_json::json!({
+                    "path": path,
+                    "characters": char_count,
+                    "verified": verified,
+                }))
+            }
             Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
@@ -215,125 +240,194 @@ impl Tool for TypeTextTool {
 /// on success.
 const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
+const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
-/// `element_ptr_and_idx` — `Some((ptr, idx))` if element_index was provided.
+/// Read-back verification for a keystroke rung: did the typed text actually land?
 ///
-/// When `is_terminal_target` is true, the AX value-set path is skipped
-/// entirely and the result is delivered through CGEvent key-event
-/// synthesis. See `crate::terminal` for the detection contract.
+/// `before`/`after` are `AXValue` read from the target field before and after
+/// the keystrokes. Returns whether we can *positively confirm* the text landed:
+/// - unreadable `after` (`None`) → unverifiable → `false` (Catalyst case; the
+///   agent must confirm via screenshot).
+/// - `after` contains the text, or grew vs `before` → `true`.
+/// - empty input text → trivially `true`.
 ///
-/// Returns `(detail_string, path)`. `path` is one of the `PATH_*`
-/// constants above; consumers read it from the structured response.
+/// Apps that normalize input (smart quotes, autocomplete) may fail the
+/// substring/length test even though something landed — we report `false`
+/// (unverified) rather than erroring, so the agent can still confirm.
+fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
+    if text.is_empty() { return true; }
+    let Some(after) = after else { return false };
+    after.contains(text)
+        || before.map_or(false, |b| after.chars().count() > b.chars().count())
+}
+
+/// Decide whether an `AXSelectedText` write that returned `kAXErrorSuccess`
+/// should be treated as a silent no-op — i.e. the success code lied and we must
+/// fall back to CGEvent keystrokes.
+///
+/// `axvalue` is the read-back of `AXValue` *after* the write:
+/// - `Some(non-empty)` → the text landed; trust the AX path (`false`).
+/// - `Some("")` → readable but empty: the write was dropped, e.g. a Chromium /
+///   Electron web input that accepts the call but never updates its DOM value.
+/// - `None` → **unreadable**: unverifiable, so we must NOT report success. Mac
+///   Catalyst apps (WhatsApp, Messages) accept the write, return success, and
+///   expose no readable `AXValue`, yet the text never appears. Treat as dropped.
+///
+/// Empty input text is never a silent-accept (nothing to verify).
+fn is_silent_accept(text: &str, axvalue: Option<&str>) -> bool {
+    !text.is_empty() && axvalue.map(|v| v.is_empty()).unwrap_or(true)
+}
+
+/// Read the focused/target field's `AXValue`, for before/after read-back.
+/// Re-fetches the focused element each call when no explicit element is given
+/// (cheap, and focus is stable across our own keystrokes).
+fn read_axvalue(pid: i32, element_ptr_and_idx: Option<(usize, Option<usize>)>) -> Option<String> {
+    if let Some((ptr, _)) = element_ptr_and_idx {
+        unsafe { copy_string_attr(ptr as AXUIElementRef, "AXValue") }
+    } else if let Some(el) = unsafe { focused_element_of_pid(pid) } {
+        let v = unsafe { copy_string_attr(el, "AXValue") };
+        unsafe { CFRelease(el as _); }
+        v
+    } else {
+        None
+    }
+}
+
+/// Type via CGEvent keystrokes, optionally clearing the field first (idempotent
+/// retype), then verify by read-back.
+///
+/// `clear_first` is the idempotency guard for escalation: when the field was
+/// empty/unreadable at capture, `Cmd+A`+`Delete` makes the retype land exactly
+/// `text` regardless of what a prior unverified rung may have done — avoiding
+/// double-type. It is NOT used when the field had readable pre-existing content
+/// (that would clobber it).
+fn cgevent_type_verified(
+    pid: i32,
+    text: &str,
+    delay_ms: u64,
+    before: Option<&str>,
+    clear_first: bool,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+) -> anyhow::Result<bool> {
+    if clear_first {
+        let _ = crate::input::keyboard::press_key(pid, "a", &["cmd"]);
+        let _ = crate::input::keyboard::press_key(pid, "delete", &[]);
+    }
+    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    let after = read_axvalue(pid, element_ptr_and_idx);
+    Ok(verify_typed(before, after.as_deref(), text))
+}
+
+/// Best-effort-background ladder for `type_text`.
+///
+/// - `delivery_mode == Background` (default): AX insert → read-back; on a
+///   silent/unreadable accept, CGEvent keystrokes → read-back. Never fronts.
+/// - `delivery_mode == Foreground`: the agent's explicit last resort — briefly
+///   front `window_id`, type (clear-first when the field was empty/unreadable so
+///   the retype is idempotent), restore, then read-back.
+///
+/// Returns `(detail, path, verified)`. `verified` is `true` only when a
+/// read-back positively confirmed the text; `false` means the agent must
+/// confirm via screenshot (and, for background, can escalate to foreground).
 fn type_text_blocking(
     pid: i32,
     text: &str,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     delay_ms: u64,
     is_terminal_target: bool,
-) -> anyhow::Result<(String, &'static str)> {
-    // --- Path 0: target is a terminal emulator — go straight to CGEvent. ---
+    delivery_mode: super::DeliveryMode,
+    window_id: Option<u32>,
+) -> anyhow::Result<(String, &'static str, bool)> {
+    // Original field value before ANY rung — drives both the read-back delta and
+    // the clear-then-type idempotency decision.
+    let before = read_axvalue(pid, element_ptr_and_idx);
+    // Clear-then-type only when we can't see existing content to preserve
+    // (empty or unreadable). A readable non-empty value is left intact.
+    let clear_first = !matches!(before.as_deref(), Some(b) if !b.is_empty());
+
+    // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
+    if delivery_mode.is_foreground() {
+        let do_type = || cgevent_type_verified(
+            pid, text, delay_ms, before.as_deref(), clear_first, element_ptr_and_idx,
+        );
+        let verified = match window_id {
+            Some(wid) => {
+                // Front → type → restore. The closure returns the read-back
+                // result; with_foreground_assist returns whether it fronted.
+                let mut typed_verified = false;
+                crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, || {
+                    typed_verified = do_type()?;
+                    Ok(())
+                })?;
+                typed_verified
+            }
+            // No window to front — best-effort background keystrokes instead.
+            None => do_type()?,
+        };
+        return Ok((
+            format!(" via foreground keystrokes ({delay_ms}ms delay)"),
+            PATH_KEY_EVENTS_FG,
+            verified,
+        ));
+    }
+
+    // --- Background rung 0: terminal emulator → CGEvent only (AX is dropped). ---
     if is_terminal_target {
         tracing::debug!(
-            "type_text: pid {pid} is a terminal emulator (bundle id in \
-             crate::terminal::TERMINAL_BUNDLE_IDS); skipping AX value-set \
-             and using CGEvent key-event synthesis"
+            "type_text: pid {pid} is a terminal emulator; skipping AX value-set, \
+             using CGEvent key-event synthesis"
         );
-        return crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
-            .map(|_| (
-                format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
-                PATH_KEY_EVENTS,
-            ));
-    }
-
-    // --- Path 1: caller provided an explicit element index ---
-    if let Some((ptr, idx_opt)) = element_ptr_and_idx {
-        let element = ptr as AXUIElementRef;
-        let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
-        let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-
-        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
-        if err == kAXErrorSuccess {
-            // Verify the write was actually applied — Chromium web inputs silently
-            // accept the call but never update their DOM value. Read AXValue back;
-            // if it's still empty when we just wrote non-empty text the write was a
-            // no-op and we must use CGEvent instead.
-            let silent_accept = !text.is_empty() && unsafe {
-                copy_string_attr(element, "AXValue")
-                    .map(|v| v.is_empty())
-                    .unwrap_or(false)
-            };
-            if !silent_accept {
-                let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
-                return Ok((format!(" into{idx_str} {role} \"{title}\""), PATH_AX));
-            }
-            tracing::debug!(
-                "AXSelectedText silent-accept detected for {role} \"{title}\" \
-                 (AXValue still empty), falling back to CGEvent keystrokes"
-            );
-        } else {
-            // AXSelectedText not supported (Chromium/Electron) — fall through to CGEvent.
-            tracing::debug!(
-                "AXSelectedText write failed ({err}) for {role} \"{title}\", \
-                 falling back to CGEvent keystrokes"
-            );
-        }
-        return crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
-            .map(|_| (
-                format!(" via CGEvent (AXSelectedText unsupported/silent-accept, {delay_ms}ms delay)"),
-                PATH_KEY_EVENTS,
-            ));
-    }
-
-    // --- Path 2: no element_index — target the pid's focused element ---
-    let focused = unsafe { focused_element_of_pid(pid) };
-    if let Some(element) = focused {
-        let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
-        let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-
-        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
-
-        let did_succeed = if err == kAXErrorSuccess {
-            // Same silent-accept check: Chromium web inputs return success but
-            // leave AXValue empty, meaning the write never reached the DOM.
-            let silent_accept = !text.is_empty() && unsafe {
-                copy_string_attr(element, "AXValue")
-                    .map(|v| v.is_empty())
-                    .unwrap_or(false)
-            };
-            if silent_accept {
-                tracing::debug!(
-                    "AXSelectedText silent-accept detected for focused {role} \"{title}\" \
-                     (AXValue still empty), falling back to CGEvent keystrokes"
-                );
-            }
-            !silent_accept
-        } else {
-            false
-        };
-
-        unsafe { CFRelease(element as _); }
-
-        if did_succeed {
-            return Ok((format!(" into focused {role} \"{title}\""), PATH_AX));
-        }
-        if err != kAXErrorSuccess {
-            // Fall through to CGEvent.
-            tracing::debug!(
-                "AXSelectedText write failed ({err}) for focused {role}, \
-                 falling back to CGEvent keystrokes"
-            );
-        }
-    } else {
-        tracing::debug!(
-            "No focused element found for pid {pid}, falling back to CGEvent keystrokes"
-        );
-    }
-
-    crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)
-        .map(|_| (
-            format!(" via CGEvent (no focused element / AXSelectedText unsupported, {delay_ms}ms delay)"),
+        let verified = cgevent_type_verified(
+            pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
+        )?;
+        return Ok((
+            format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
             PATH_KEY_EVENTS,
-        ))
+            verified,
+        ));
+    }
+
+    // --- Background rung 1: AX SelectedText write (element or focused). ---
+    let ax_target: Option<(AXUIElementRef, bool, Option<usize>)> = match element_ptr_and_idx {
+        Some((ptr, idx)) => Some((ptr as AXUIElementRef, /*owns=*/ false, idx)),
+        None => unsafe { focused_element_of_pid(pid) }.map(|el| (el, /*owns=*/ true, None)),
+    };
+    if let Some((element, owns, idx_opt)) = ax_target {
+        let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
+        // Landed iff the API succeeded AND a read-back confirms it (not a
+        // silent/unreadable accept). See `is_silent_accept`.
+        let ax_landed = err == kAXErrorSuccess
+            && !is_silent_accept(
+                text,
+                unsafe { copy_string_attr(element, "AXValue") }.as_deref(),
+            );
+        if owns { unsafe { CFRelease(element as _); } }
+        if ax_landed {
+            let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+            return Ok((format!(" into{idx_str} {role} \"{title}\""), PATH_AX, true));
+        }
+        tracing::debug!(
+            "AX write did not land for {role} \"{title}\" (err={err}); \
+             falling back to CGEvent keystrokes"
+        );
+    } else {
+        tracing::debug!("No focused element for pid {pid}; using CGEvent keystrokes");
+    }
+
+    // --- Background rung 2: CGEvent keystrokes with read-back. ---
+    // No clear-first here: a partial AX write is rare and clearing on every
+    // background fallback would change insert-at-cursor semantics. The
+    // foreground rung owns the idempotent clear-then-type.
+    let verified = cgevent_type_verified(
+        pid, text, delay_ms, before.as_deref(), /*clear_first=*/ false, element_ptr_and_idx,
+    )?;
+    Ok((
+        format!(" via CGEvent ({delay_ms}ms delay)"),
+        PATH_KEY_EVENTS,
+        verified,
+    ))
 }
 
 #[cfg(test)]
@@ -358,11 +452,66 @@ mod tests {
         // focused_element_of_pid which is safe but it would never reach
         // CGEvent. The fact that this returns an Err (without crashing)
         // proves we routed through CGEvent-only and never touched AX.
-        let r = type_text_blocking(-1, "x", None, 0, /*is_terminal_target=*/ true);
+        let r = type_text_blocking(
+            -1, "x", None, 0, /*is_terminal_target=*/ true,
+            super::super::DeliveryMode::Background, None,
+        );
         // We don't care whether r is Ok or Err — what matters is that
         // calling it with is_terminal_target=true is safe and never
         // dereferences null AX pointers.
         let _ = r;
+    }
+
+    #[test]
+    fn silent_accept_unreadable_axvalue_falls_back() {
+        // The WhatsApp/Catalyst bug: AXSelectedText returns success but AXValue
+        // is unreadable (None). Must be treated as silent-accept ⇒ fall back.
+        assert!(is_silent_accept("i love u", None));
+    }
+
+    #[test]
+    fn silent_accept_readable_empty_falls_back() {
+        // Chromium/Electron: readable but empty after a non-empty write ⇒ dropped.
+        assert!(is_silent_accept("hello", Some("")));
+    }
+
+    #[test]
+    fn silent_accept_readable_nonempty_is_trusted() {
+        // Standard Cocoa field: AXValue reflects the inserted text ⇒ AX path ok.
+        assert!(!is_silent_accept("hello", Some("hello")));
+        assert!(!is_silent_accept("world", Some("prefix world")));
+    }
+
+    #[test]
+    fn silent_accept_empty_text_is_never_silent() {
+        // Nothing to verify when inserting empty text.
+        assert!(!is_silent_accept("", None));
+        assert!(!is_silent_accept("", Some("")));
+    }
+
+    #[test]
+    fn verify_typed_unreadable_after_is_unverified() {
+        // Catalyst: can't read AXValue back → cannot confirm → false.
+        assert!(!verify_typed(None, None, "hi"));
+        assert!(!verify_typed(Some(""), None, "hi"));
+    }
+
+    #[test]
+    fn verify_typed_contains_or_grew_is_verified() {
+        assert!(verify_typed(Some(""), Some("hi"), "hi"));          // contains
+        assert!(verify_typed(Some("ab"), Some("ab hi"), "hi"));     // contains, appended
+        assert!(verify_typed(Some("ab"), Some("abXY"), "??"));      // grew vs before
+    }
+
+    #[test]
+    fn verify_typed_unchanged_is_unverified() {
+        // Readable but the field didn't change and doesn't contain the text.
+        assert!(!verify_typed(Some("ab"), Some("ab"), "hi"));
+    }
+
+    #[test]
+    fn verify_typed_empty_text_is_trivially_verified() {
+        assert!(verify_typed(None, None, ""));
     }
 
     #[test]
@@ -371,5 +520,6 @@ mod tests {
         // contract; freezing them here makes the contract a unit test.
         assert_eq!(PATH_AX, "ax");
         assert_eq!(PATH_KEY_EVENTS, "key_events");
+        assert_eq!(PATH_KEY_EVENTS_FG, "key_events_fg");
     }
 }

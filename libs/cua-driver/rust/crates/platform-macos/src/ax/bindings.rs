@@ -112,6 +112,27 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     Some(s.to_string())
 }
 
+/// Copy a numeric attribute from an AX element as an `f64`. Returns `None` on
+/// any error or if the attribute is not a `CFNumber`. SwiftUI sliders expose a
+/// readable numeric `AXValue` even when that value is not settable — this lets
+/// the stepping fallback read the control's current position for feedback.
+pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Option<f64> {
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let cf_number_type_id = CFNumber::type_id();
+    if core_foundation::base::CFGetTypeID(value) != cf_number_type_id {
+        CFRelease(value);
+        return None;
+    }
+    let n = CFNumber::wrap_under_create_rule(value as _);
+    n.to_f64()
+}
+
 /// Get the action names for an AX element.
 pub unsafe fn copy_action_names(element: AXUIElementRef) -> Vec<String> {
     let mut names: CFArrayRef = std::ptr::null_mut();

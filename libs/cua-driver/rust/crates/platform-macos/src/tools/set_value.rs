@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_string_attr, perform_action, set_number_attr, set_string_attr,
-    kAXErrorSuccess, AXUIElementRef,
+    copy_children, copy_number_attr, copy_string_attr, perform_action, set_number_attr,
+    set_string_attr, kAXErrorSuccess, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -189,8 +189,13 @@ fn set_value_blocking(
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
         // fields take a CFString. Try numeric first when the value parses as a
         // number, then fall back to a string write.
-        let err = match value.trim().parse::<f64>() {
-            Ok(n) => {
+        // Numeric target carried through so we can step toward it if the
+        // direct writes are rejected (SwiftUI AXSlider rejects every AXValue
+        // write with -25200 yet exposes a readable AXValue + increment/decrement
+        // actions).
+        let numeric_target = value.trim().parse::<f64>().ok();
+        let err = match numeric_target {
+            Some(n) => {
                 let e = unsafe { set_number_attr(element, "AXValue", n) };
                 if e == kAXErrorSuccess {
                     e
@@ -198,14 +203,76 @@ fn set_value_blocking(
                     unsafe { set_string_attr(element, "AXValue", value) }
                 }
             }
-            Err(_) => unsafe { set_string_attr(element, "AXValue", value) },
+            None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
             Ok(format!("✅ Set AXValue on [{element_index}] {role}."))
+        } else if let Some(target) = numeric_target {
+            // Both direct writes failed for a numeric target — fall back to
+            // stepping the control via AXIncrement / AXDecrement actions.
+            if step_to_value(element, target) {
+                Ok(format!(
+                    "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
+                ))
+            } else {
+                anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
+            }
         } else {
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+// ── AXIncrement / AXDecrement stepping fallback ──────────────────────────────
+
+/// Step a numeric control toward `target` using its `AXIncrement` /
+/// `AXDecrement` actions. Used only when direct `AXValue` writes are rejected
+/// (notably SwiftUI's `AXSlider`, which exposes a readable-but-unsettable
+/// `AXValue` plus increment/decrement actions).
+///
+/// Returns `true` once the control's value lands within half of the last
+/// observed step of `target`, `false` if it can't be read or can't be moved.
+fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
+    // Can't target precisely without feedback — bail if AXValue is unreadable.
+    let mut current = match unsafe { copy_number_attr(element, "AXValue") } {
+        Some(v) => v,
+        None => return false,
+    };
+
+    // Half of the last observed step; before any step is observed, treat 1.0 as
+    // the "close enough" radius (covers integer-stepped controls).
+    let mut step_radius = 1.0_f64;
+
+    // Hard cap to prevent runaway on a control that never quite converges.
+    for _ in 0..500 {
+        if (current - target).abs() <= step_radius {
+            return true;
+        }
+
+        let action = if current < target { "AXIncrement" } else { "AXDecrement" };
+        let _ = unsafe { perform_action(element, action) };
+
+        let next = match unsafe { copy_number_attr(element, "AXValue") } {
+            Some(v) => v,
+            None => return false,
+        };
+
+        // The action didn't move the value — the control can't be stepped (or
+        // has hit a min/max bound short of target). Stop to avoid looping.
+        if next == current {
+            return false;
+        }
+
+        // Refine the stop threshold to half of the actual step the control took.
+        let step = (next - current).abs();
+        if step > 0.0 {
+            step_radius = step / 2.0;
+        }
+        current = next;
+    }
+
+    // Exhausted the iteration cap without converging.
+    (current - target).abs() <= step_radius
 }
 
 // ── AXPopUpButton path ───────────────────────────────────────────────────────

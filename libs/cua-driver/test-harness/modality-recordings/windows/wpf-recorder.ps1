@@ -41,7 +41,7 @@ $html=@'
 </style></head><body><div class="wrap">
  <h1>cua-driver - single-modality run - TKLABEL</h1><div class="run" id="run">...</div><div class="exp" id="exp"></div>
  <div id="fg" class="fg fgmode">...</div><div class="now" id="now"></div>
- <div class="legend"><b style="color:#56d364">✓ worked</b> / <b style="color:#ff7b72">✗ no-op</b> = did the action change the app · held / STOLE = focus contract</div>
+ <div class="legend"><b style="color:#56d364">&#10003; worked</b> / <b style="color:#ff7b72">&#10007; no-op</b> = did the action change the app &#183; held / STOLE = focus contract</div>
  <div id="rows"></div><div class="tally" id="tally"></div>
 </div><script>
 async function tick(){try{const r=await fetch('status.json',{cache:'no-store'});const s=await r.json();
@@ -50,8 +50,8 @@ async function tick(){try{const r=await fetch('status.json',{cache:'no-store'});
  else if(s.appFront){fg.className='fg bad';fg.innerHTML='APP IS FOREGROUND<div class="sub">'+(s.foreground||'')+' - current action stole focus</div>';}
  else{fg.className='fg ok';fg.innerHTML='APP IN BACKGROUND<div class="sub">no-foreground contract holding - '+(s.foreground||'')+' stays frontmost</div>';}
  rows.innerHTML='';(s.steps||[]).forEach(st=>{const d=document.createElement('div');d.className='row '+st.state;
-  const ic=st.state==='done'?'✓':st.state==='active'?'▶':'·';let res='';if(st.result==='held')res='<span class="res held">held</span>';else if(st.result==='stole')res='<span class="res stole">STOLE FOCUS</span>';else if(st.result==='front')res='<span class="res front">foreground</span>';
-  let ver='';if(st.verified==='ok')ver='<span class="res did">✓ worked</span>';else if(st.verified==='fail')ver='<span class="res nope">✗ no-op</span>';
+  const ic=st.state==='done'?'\u2713':st.state==='active'?'\u25B6':'\u00B7';let res='';if(st.result==='held')res='<span class="res held">held</span>';else if(st.result==='stole')res='<span class="res stole">STOLE FOCUS</span>';else if(st.result==='front')res='<span class="res front">foreground</span>';
+  let ver='';if(st.verified==='ok')ver='<span class="res did">\u2713 worked</span>';else if(st.verified==='fail')ver='<span class="res nope">\u2717 no-op</span>';
   d.innerHTML='<span class="ic">'+ic+'</span><span class="lbl">'+st.label+'</span>'+ver+res;rows.appendChild(d);});
  const worked=(s.steps||[]).filter(x=>x.verified==='ok').length;const ve=(s.steps||[]).filter(x=>x.verified==='ok'||x.verified==='fail').length;
  const eff='effects: <b>'+worked+'/'+ve+'</b> actions changed the app';
@@ -67,7 +67,7 @@ $srv=Start-Job -ScriptBlock { param($d,$port)
  $l=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,$port);$l.Start()
  while($true){try{$c=$l.AcceptTcpClient();$st=$c.GetStream();$rd=[IO.StreamReader]::new($st);$ln=$rd.ReadLine()
   if($ln -match 'GET\s+(\S+)'){$pp=($matches[1].TrimStart('/') -split '\?')[0];if($pp -eq ''){$pp='dashboard.html'}
-   $fp=Join-Path $d $pp; if(Test-Path $fp){$b=[IO.File]::ReadAllBytes($fp);$ct=if($fp -like '*.html'){'text/html'}else{'application/json'}
+   $fp=Join-Path $d $pp; if(Test-Path $fp){$b=[IO.File]::ReadAllBytes($fp);$ct=if($fp -like '*.html'){'text/html; charset=utf-8'}else{'application/json; charset=utf-8'}
     $h="HTTP/1.1 200 OK`r`nContent-Type: $ct`r`nContent-Length: $($b.Length)`r`nCache-Control: no-store`r`nConnection: close`r`n`r`n";$hb=[Text.Encoding]::ASCII.GetBytes($h);$st.Write($hb,0,$hb.Length);$st.Write($b,0,$b.Length)}}
   $st.Flush();$c.Close()}catch{}}
 } -ArgumentList $dir,8146
@@ -117,6 +117,7 @@ function ReadState(){
   if($all -match 'mirror=([^|]*)'){$h.mirror=$matches[1].Trim()}
   if($all -match 'menu_action=(\w+)'){$h.menu=$matches[1]}
   if($all -match 'scroll_offset=(\d+)'){$h.scroll=[int]$matches[1]}
+  if($all -match 'counter=(\d+)'){$h.counter=[int]$matches[1]}
   return $h
  }catch{ return @{} }
 }
@@ -131,7 +132,33 @@ function Verify($t,$b,$a){
   'scroll' { if([int]$a.scroll -gt [int]$b.scroll){'ok'}else{'fail'} }
   'setval' { if("$($a.mirror)" -match 'set-by-cua'){'ok'}else{'fail'} }
   'type'   { if("$($a.mirror)" -match 'typed-by-cua'){'ok'}else{'fail'} }
+  'key'    { if("$($a.mirror)" -ne "$($b.mirror)"){'ok'}else{'fail'} }   # Backspace edits the focused textbox -> mirror changes
   default  { 'na' }
+ }
+}
+# bring an off-screen control into the viewport (UIA ScrollItemPattern) so coordinate actions
+# land and the control is actually visible in the recording. $ctype is a UIA ControlType.
+function ScrollIntoView($ctype){
+ try{
+  $win=$null
+  foreach($c in $script:AE::RootElement.FindAll($script:UTS::Children,[System.Windows.Automation.Condition]::TrueCondition)){ if("$($c.Current.Name)" -like "*$($tk.title)*"){ $win=$c; break } }
+  if(-not $win){return}
+  $cond=New-Object System.Windows.Automation.PropertyCondition($script:AE::ControlTypeProperty,$ctype)
+  $el=$win.FindFirst($script:UTS::Descendants,$cond)
+  if($el){ $pat=$null; if($el.TryGetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern,[ref]$pat)){ $pat.ScrollIntoView() } }
+ }catch{}
+}
+# re-resolve a single plan selector against a FRESH ax snapshot (frames change after a scroll).
+function Pick($sel){
+ $EE=Els
+ switch($sel){
+  'chk'{ $EE|?{ "$($_.role)" -match 'Check' -or "$($_.label)" -match 'agree' }|Select -First 1 }
+  'btn'{ $EE|?{ "$($_.label)" -match 'lick target' -or "$($_.name)" -match 'lick target' }|Select -First 1 }
+  'sld'{ $EE|?{ "$($_.role)" -match 'Slider' }|Select -First 1 }
+  'txt'{ $EE|?{ "$($_.role)" -match 'Edit' }|Select -First 1 }
+  'ctx'{ $cc=$EE|?{ "$($_.label)" -match 'context menu' }|Select -First 1; if(-not $cc){ $cc=$EE|?{ "$($_.label)" -match 'lick target' -or "$($_.name)" -match 'lick target' }|Select -First 1 }; $cc }
+  'scr'{ $ss=$EE|?{ "$($_.role)" -match 'Pane|Group' -and "$($_.label)" -match 'scroll' }|Select -First 1; if(-not $ss){ $ss=$EE|?{ "$($_.role)" -match 'Pane|Group' }|Select -Last 1 }; $ss }
+  default{ $null }
  }
 }
 # ---------- action plan (filtered per mode) ----------
@@ -143,7 +170,7 @@ $plan=@(
  @{t='scroll'; sel='scr'; label='scroll the panel'}
  @{t='setval'; sel='txt'; label='set_value on the text box'}
  @{t='type';   sel='txt'; label='type into the text box'}
- @{t='key';    sel='txt'; label='press a key (Tab)'}
+ @{t='key';    sel='txt'; label='press a key (Backspace)'}
 )
 if($vision){ $plan=@($plan | ? { $_.t -ne 'setval' }) }                        # set_value is AX-only
 if($desktop){ $plan=@($plan | ? { $_.t -in @('click','scroll','type','key') }) } # window-less supports click+scroll+global
@@ -252,20 +279,31 @@ function DoAct($t,$el){
              else{D "double_click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }
   'right'  { if($vision){D "right_click" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}
              else{D "right_click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null}
-             Start-Sleep -Milliseconds 500; D "press_key" ('{{"pid":{0},"key":"escape","session":"d1"}}' -f $wp)|Out-Null }
+             if($Toolkit -eq 'wpf' -and $m.fg){ Start-Sleep -Milliseconds 800   # let the context menu render (visible in the recording), then pick the first item so menu_action=ctx_* -> the right-click is scored as landed instead of a false no-op
+               D "press_key" ('{{"pid":{0},"key":"down","session":"d1"}}' -f $wp)|Out-Null; Start-Sleep -Milliseconds 350
+               D "press_key" ('{{"pid":{0},"key":"enter","session":"d1"}}' -f $wp)|Out-Null }
+             else{ Start-Sleep -Milliseconds 500; D "press_key" ('{{"pid":{0},"key":"escape","session":"d1"}}' -f $wp)|Out-Null } }
   'drag'   { $fx=[int]($el.frame.x-$w.bounds.x+8);$fy=[int]($el.frame.y-$w.bounds.y+$el.frame.h/2);$tx=$fx+150; D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy)|Out-Null }
   'scroll' { if($desktop){D "scroll" ('{{"x":{0},"y":{1},"direction":"down","session":"d1"}}' -f $c[0],$c[1])|Out-Null}
              elseif($vision){D "scroll" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"direction":"down","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}
              else{D "scroll" ('{{"pid":{0},"window_id":{1},"element_index":{2},"direction":"down","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }
   'setval' { D "set_value" ('{{"pid":{0},"window_id":{1},"element_index":{2},"value":"set-by-cua","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null }
   'type'   { if($el){ D "click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null; Start-Sleep -Milliseconds 350 }; D "type_text" ('{{"pid":{0},"text":"typed-by-cua","session":"d1"}}' -f $wp)|Out-Null }
-  'key'    { D "press_key" ('{{"pid":{0},"key":"tab","session":"d1"}}' -f $wp)|Out-Null }
+  'key'    { if($el){ D "click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null; Start-Sleep -Milliseconds 300 }
+             D "press_key" ('{{"pid":{0},"key":"backspace","session":"d1"}}' -f $wp)|Out-Null }
  }
 }
 # ---------- run ----------
 try {
 for($i=0;$i -lt $plan.Count;$i++){
  $p=$plan[$i]; $el=$resolve[$p.sel]
+ # the 556px reflow pushes the slider / textbox / context-menu button below the fold; bring the
+ # target into view (so coordinate dispatch lands and the step is visible) then re-read its frame.
+ if($p.sel -in @('sld','txt','ctx')){
+   $ct=switch($p.sel){ 'sld'{$script:UCT::Slider} 'txt'{$script:UCT::Edit} 'ctx'{$script:UCT::Button} }
+   ScrollIntoView $ct; Start-Sleep -Milliseconds 450
+   $re=Pick $p.sel; if($re){ $el=$re }
+ }
  $script:steps[$i].state='active'; $script:cur=$p.label; Flush
  # establish the genuine foreground baseline: ACTIVATE the anchor and confirm it actually took
  # foreground BEFORE the action runs. A "steal" is then foreground moving OFF the anchor TO the

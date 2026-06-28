@@ -817,14 +817,12 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
     }
 }
 
-/// Order the overlay NSWindow exactly one step above `target_wid` in the global
-/// window-server z-order.  Called from the render thread; dispatches to the main
-/// queue (AppKit must be used on the main thread).
+/// Order the overlay NSWindow just above `target_wid` in the global window
+/// server list.  Called from the render thread; dispatches to the main queue
+/// (AppKit must be used on the main thread).
 ///
-/// Uses SkyLight's `SLSOrderWindow` (cross-process reliable). AppKit's
-/// `orderWindow:relativeTo:` does NOT sandwich above another process's window —
-/// it leaves the overlay frontmost (the always-on-top-cursor symptom). We fall
-/// back to the AppKit call only when the SkyLight SPI can't be resolved.
+/// `NSWindowAbove = 1`; `orderWindow:relativeTo:` accepts any CGWindowID as
+/// the `relativeTo` argument — it works cross-application via CGS.
 fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     use std::ffi::c_void;
 
@@ -841,21 +839,8 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     unsafe extern "C" fn reorder_cb(ctx: *mut c_void) {
         let (win_ptr, target_wid): (usize, u64) = *Box::from_raw(ctx as *mut (usize, u64));
         let win = win_ptr as *mut objc2::runtime::AnyObject;
-        // The overlay's own CGWindowID — valid (>0) once the window is on-screen.
-        let overlay_wid: i64 = objc2::msg_send![win, windowNumber];
-        // Sandwich the overlay directly above the target window via SkyLight, which
-        // works across processes. AppKit's orderWindow:relativeTo: does not reliably
-        // order above another app's window (it floats the cursor frontmost), so it's
-        // only the fallback when the SLSOrderWindow SPI is unavailable.
-        let sandwiched = overlay_wid > 0
-            && crate::input::skylight::order_overlay_above_window(
-                overlay_wid as u32,
-                target_wid as u32,
-            );
-        if !sandwiched {
-            // NSWindowAbove = 1; relativeTo: takes NSInteger (i64 on 64-bit)
-            let _: () = objc2::msg_send![win, orderWindow: 1i64 relativeTo: target_wid as i64];
-        }
+        // NSWindowAbove = 1; relativeTo: takes NSInteger (i64 on 64-bit)
+        let _: () = objc2::msg_send![win, orderWindow: 1i64 relativeTo: target_wid as i64];
     }
 
     let payload = Box::new((win_ptr, target_wid));

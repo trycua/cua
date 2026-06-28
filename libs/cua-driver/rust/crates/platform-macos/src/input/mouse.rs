@@ -26,6 +26,55 @@ pub fn click_at_xy(pid: i32, x: f64, y: f64, count: usize, modifiers: &[&str]) -
     click_at_xy_inner(pid, x, y, None, None, count, modifiers)
 }
 
+/// Screen-absolute click posted to the GLOBAL HID tap (`CGEventTapLocation::HID`),
+/// NOT routed to any pid — the OS delivers it to whichever window owns the
+/// screen point, the macOS analogue of Windows' `WindowFromPoint` + `SendInput`
+/// desktop-scope click. This backs the `capture_scope="desktop"`, window-less
+/// (no pid/window_id) branch of the `click` tool: the agent has located the
+/// target by vision in `get_desktop_state` and clicks true screen pixels.
+///
+/// Unlike the pid-routed `click_at_xy`, this honors the real foreground/Z order
+/// (it lands on whatever is visually on top at the point) — exactly the
+/// foreground, vision-driven model that complements the background contract.
+pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
+    use core_graphics::display::CGDisplay;
+    use core_graphics::event::CGEventTapLocation;
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let point = CGPoint::new(x, y);
+    let (down_ty, up_ty, btn) = match button {
+        "right" => (CGEventType::RightMouseDown, CGEventType::RightMouseUp, CGMouseButton::Right),
+        "middle" => (CGEventType::OtherMouseDown, CGEventType::OtherMouseUp, CGMouseButton::Center),
+        _ => (CGEventType::LeftMouseDown, CGEventType::LeftMouseUp, CGMouseButton::Left),
+    };
+    // Warp the REAL cursor to the point first (the macOS peer of Linux XTest's
+    // pointer warp). A synthetic MouseMoved event does not relocate the hardware
+    // cursor, and AppKit hit-tests some clicks against the actual cursor
+    // position, so without the warp the down/up can miss the target. Desktop
+    // scope is the foreground modality, so moving the visible cursor is expected.
+    let _ = CGDisplay::warp_mouse_cursor_position(point);
+    // Re-couple cursor + mouse-delta so the synthesized click hit-tests at the
+    // warped point, not the pre-warp one.
+    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    for _ in 0..count.max(1) {
+        let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
+        down.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
+        up.post(CGEventTapLocation::HID);
+    }
+    Ok(())
+}
+
+extern "C" {
+    /// Reconnect the mouse-delta stream to the (just-warped) cursor position so a
+    /// synthesized click hit-tests at the new location, not the pre-warp one.
+    fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
+}
+
 /// Like `click_at_xy` but also stamps window-local `(wx, wy)` onto the event.
 /// When `wid` is provided, additionally stamps Chromium routing fields
 /// (f51 / f58 / f91 / f92) for better backgrounded-target delivery.

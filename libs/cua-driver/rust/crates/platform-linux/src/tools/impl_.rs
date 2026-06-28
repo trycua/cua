@@ -1010,6 +1010,61 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+
+        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // x,y with NO pid and NO window_id → TRUE SCREEN pixels. Foreground,
+        // vision-driven desktop-scope click (the Linux peer of the Windows
+        // WindowFromPoint / macOS global-HID path). Gate on the effective scope:
+        // under "window" return the same `desktop_scope_disabled` contract.
+        let has_pid = args.get("pid").map(|v| !v.is_null()).unwrap_or(false);
+        let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
+        let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
+            && args.get("y").map(|v| v.is_number()).unwrap_or(false);
+        if has_xy && !has_pid && !has_window_id {
+            // Linux config is global-only (no per-session override layer).
+            let scope = self.state.config.read().unwrap().capture_scope.clone();
+            if scope != "desktop" {
+                return ToolResult::error(
+                    "click: x,y given with no pid/window_id, but capture_scope is \
+                     \"window\". Screen-absolute clicks require desktop scope. Call \
+                     set_config with capture_scope=desktop (and use get_desktop_state \
+                     to read true screen pixels) first."
+                        .to_string(),
+                )
+                .with_structured(json!({
+                    "code": "desktop_scope_disabled",
+                    "capture_scope": scope,
+                    "suggestion": "set_config capture_scope=desktop",
+                }));
+            }
+            let button_raw = args.str_or("button", "left").to_lowercase();
+            if !matches!(button_raw.as_str(), "" | "left" | "right" | "middle") {
+                return ToolResult::error(format!(
+                    "click: unknown button \"{button_raw}\" — expected one of left, right, middle."
+                ));
+            }
+            let button = parse_mouse_button(if button_raw.is_empty() { "left" } else { &button_raw });
+            let sx = args.f64_or("x", 0.0) as i32;
+            let sy = args.f64_or("y", 0.0) as i32;
+            let n = args.u64_or("count", 1) as usize;
+            // Glide the agent-cursor overlay to the click point first (the macOS
+            // / Windows desktop paths already do this). Without it the overlay
+            // sits idle elsewhere while only the real pointer warps, so a viewer
+            // sees the cursor "click somewhere else."
+            overlay_glide_to_for(&cursor_id, sx as f64, sy as f64).await;
+            let r = tokio::task::spawn_blocking(move || {
+                crate::input::send_click_xtest_desktop(sx, sy, button, n)
+            })
+            .await;
+            return match r {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
+                )),
+                Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
+                Err(e) => ToolResult::error(format!("task error: {e}")),
+            };
+        }
+
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let count = args.u64_or("count", 1) as usize;
         // Surface 5: reject unknown buttons so a typo can't silently fall through

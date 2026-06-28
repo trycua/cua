@@ -205,7 +205,7 @@ The two macOS gotchas above (`end_session` reuse poisoning, AppKit window-height
 were also filed for the driver.
 
 ## Deliverables
-10 verified recordings (5 WPF + 5 GTK3) + index, published at
-`https://cuademo06261324.blob.core.windows.net/demo/modality-videos/index.html`.
+10 verified recordings (5 WPF + 5 GTK3) + index, published to the team demo blob
+(URL tracked internally — not linked here to keep it out of the public repo).
 Additional local-only sets (not uploaded): macOS AppKit/SwiftUI/Electron/WKWebView,
 Linux Electron (with scroll-target), and the Windows cross-toolkit matrix.

@@ -283,8 +283,16 @@ function DoAct($t,$el){
                D "press_key" ('{{"pid":{0},"key":"down","session":"d1"}}' -f $wp)|Out-Null; Start-Sleep -Milliseconds 350
                D "press_key" ('{{"pid":{0},"key":"enter","session":"d1"}}' -f $wp)|Out-Null }
              else{ Start-Sleep -Milliseconds 500; D "press_key" ('{{"pid":{0},"key":"escape","session":"d1"}}' -f $wp)|Out-Null } }
-  'drag'   { $disp=if($m.fg){'foreground'}else{'background'}   # a WPF Slider thumb only tracks a real SendInput drag (dispatch:foreground); a PostMessage drag leaves per-thread input state button-up so the thumb never starts tracking
-             $fx=[int]($el.frame.x-$w.bounds.x+8);$fy=[int]($el.frame.y-$w.bounds.y+$el.frame.h/2);$tx=$fx+150; D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"dispatch":"{5}","session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy,$disp)|Out-Null }
+  'drag'   { if(-not $vision -and -not $desktop){
+               # AX mode: drive the slider through its RangeValue pattern (set_value) — the ax-path
+               # way to move a slider, reliable and FOREGROUND-INDEPENDENT. A coordinate thumb-drag
+               # only tracks under forced harness-foreground, which re-activates the window and eats
+               # the element-path double/right-click. Vision mode below does the real pixel drag.
+               D "set_value" ('{{"pid":{0},"window_id":{1},"element_index":{2},"value":"48","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null
+             } else {
+               $fx=[int]($el.frame.x-$w.bounds.x+8);$fy=[int]($el.frame.y-$w.bounds.y+$el.frame.h/2);$tx=$fx+150
+               D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"dispatch":"foreground","session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy)|Out-Null
+             } }
   'scroll' { if($desktop){D "scroll" ('{{"x":{0},"y":{1},"direction":"down","session":"d1"}}' -f $c[0],$c[1])|Out-Null}
              elseif($vision){D "scroll" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"direction":"down","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}
              else{D "scroll" ('{{"pid":{0},"window_id":{1},"element_index":{2},"direction":"down","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }
@@ -315,16 +323,14 @@ for($i=0;$i -lt $plan.Count;$i++){
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
   "step $i '$($p.t)': anchor-baseline foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$anchorHeld"|Add-Content "$dir\baseline.log"
  }
- elseif($m.fg -and $hHar -ne [IntPtr]::Zero){
-  # fg mode: GENUINELY foreground the harness before EVERY step. The drag's SendInput path
-  # (and any coordinate dispatch) needs the harness to be the real foreground window — and it
-  # must be kept primed across steps, since gating the assert to the drag step alone still let
-  # the drag no-op (foreground drifted before the daemon's own SetForegroundWindow ran).
-  # [W]::Front taps ALT (the foreground-unlock), which drops WPF into menu-accelerator mode, so
-  # clear it with an ESC afterwards — otherwise the element-path double/right-click mis-fire.
+ elseif(($vision -or $desktop) -and $hHar -ne [IntPtr]::Zero){
+  # VISION/DESKTOP fg modes only: every step dispatches by pixel coordinate, which needs the
+  # harness to be the real foreground window. Assert it before each step. (Not done in AX-fg:
+  # ax steps use element_index — foreground-independent — and forcing foreground there re-
+  # activates the window and eats the element double/right-click. The ax slider 'drag' is
+  # element-driven via set_value, so no ax step needs a forced foreground.)
   $harFront=$false
   for($a=0;$a -lt 8;$a++){ [W]::Front($hHar)|Out-Null; Start-Sleep -Milliseconds 150; if([W]::Title([W]::GetForegroundWindow()) -like '*CuaTestHarness*'){ $harFront=$true; break } }
-  D "press_key" ('{{"pid":{0},"key":"escape","session":"d1"}}' -f $wp)|Out-Null   # exit ALT menu-accelerator mode so element double/right aren't tainted
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
   "step $i '$($p.t)': fg-mode harness foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$harFront"|Add-Content "$dir\baseline.log"
  }

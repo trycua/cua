@@ -5103,7 +5103,7 @@ impl Tool for SetAgentCursorMotionTool {
             description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
                 Appearance:\n\
                 - cursor_id: instance name (default='default')\n\
-                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default arrow\n\
+                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n\
                 - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
                 - cursor_label: short text shown near the cursor\n\
                 - cursor_size: dot radius in points (default=16)\n\
@@ -5155,7 +5155,7 @@ impl Tool for SetAgentCursorMotionTool {
             match tokio::task::spawn_blocking(move || {
                 cursor_overlay::resolve_cursor_icon(&icon_owned)
             }).await {
-                Ok(Ok(shape)) => shape_cmd = Some(cursor_overlay::OverlayCommand::SetShape(shape)),
+                Ok(Ok(resolution)) => shape_cmd = Some(cursor_overlay::OverlayCommand::from_cursor_icon(resolution)),
                 Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
@@ -5296,8 +5296,8 @@ impl Tool for SetAgentCursorStyleTool {
                  - bloom_color: hex string for the radial halo/bloom behind the cursor \
                    (e.g. \"#00FFFF\"). Empty string reverts to the default.\n\
                  - image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor \
-                   icon instead of the default gradient arrow. Empty string reverts to the \
-                   procedural arrow.\n\
+                   icon instead of the default silhouette. Empty string reverts to the \
+                   default cursor.\n\
                  All parameters are optional; omit any you do not want to change."
                 .into(),
             input_schema: json!({
@@ -5318,7 +5318,7 @@ impl Tool for SetAgentCursorStyleTool {
                     },
                     "image_path": {
                         "type": "string",
-                        "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to arrow."
+                        "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor."
                     }
                 },
                 "additionalProperties": false

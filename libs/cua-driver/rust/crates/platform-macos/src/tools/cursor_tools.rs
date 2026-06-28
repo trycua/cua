@@ -118,7 +118,7 @@ fn motion_def() -> &'static ToolDef {
         description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
             Appearance (multi-cursor customization):\n\
             - cursor_id: instance name (default='default')\n\
-            - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default arrow\n\
+            - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default cursor\n\
             - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
             - cursor_label: short text shown near the cursor\n\
             - cursor_size: dot radius in points (default=16)\n\
@@ -137,7 +137,7 @@ fn motion_def() -> &'static ToolDef {
             "type": "object",
             "properties": {
                 "cursor_id":    { "type": "string", "description": "Cursor instance name. Default: 'default'." },
-                "cursor_icon":  { "type": "string", "description": format!("Built-in shape ({}) or a path to a PNG/JPEG/SVG/ICO file. '' reverts to the default arrow.", cursor_overlay::BuiltinShape::names_help()) },
+                "cursor_icon":  { "type": "string", "description": format!("Built-in shape ({}) or a path to a PNG/JPEG/SVG/ICO file. '' reverts to the default cursor.", cursor_overlay::BuiltinShape::names_help()) },
                 "cursor_color": { "type": "string", "description": "Hex color (e.g. '#00FFFF') or CSS color name." },
                 "cursor_label": { "type": "string", "description": "Short label near the cursor dot." },
                 "cursor_size":  { "type": "number", "description": "Dot radius in points. Default: 16." },
@@ -220,9 +220,9 @@ impl Tool for SetAgentCursorMotionTool {
             match tokio::task::spawn_blocking(move || {
                 cursor_overlay::resolve_cursor_icon(&icon_owned)
             }).await {
-                Ok(Ok(shape)) => {
+                Ok(Ok(resolution)) => {
                     config.cursor_icon = Some(icon);
-                    shape_cmd = Some(cursor_overlay::OverlayCommand::SetShape(shape));
+                    shape_cmd = Some(cursor_overlay::OverlayCommand::from_cursor_icon(resolution));
                 }
                 Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
@@ -323,8 +323,8 @@ fn style_def() -> &'static ToolDef {
              - bloom_color: hex string for the radial halo/bloom behind the cursor \
                (e.g. \"#00FFFF\"). Empty string reverts to the default.\n\
              - image_path: path to a PNG, JPEG, SVG, or ICO file to use as the cursor \
-               icon instead of the default gradient arrow. Empty string reverts to the \
-               procedural arrow.\n\
+               icon instead of the default silhouette. Empty string reverts to the \
+               default cursor.\n\
              All parameters are optional; omit any you do not want to change."
             .into(),
         input_schema: serde_json::json!({
@@ -345,7 +345,7 @@ fn style_def() -> &'static ToolDef {
                 },
                 "image_path": {
                     "type": "string",
-                    "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to arrow."
+                    "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to the default cursor."
                 }
             },
             "additionalProperties": false
@@ -368,7 +368,7 @@ impl Tool for SetAgentCursorStyleTool {
         let image_path = args.get("image_path").and_then(|v| v.as_str());
         let shape_cmd: Option<cursor_overlay::OverlayCommand> = if let Some(path) = image_path {
             if path.is_empty() {
-                // Revert to procedural arrow.
+                // Revert to the configured default silhouette.
                 Some(cursor_overlay::OverlayCommand::SetShape(None))
             } else {
                 let path_owned = path.to_owned();
@@ -455,7 +455,7 @@ impl Tool for SetAgentCursorStyleTool {
             .unwrap_or_else(|| "(unchanged)".into());
 
         let img_str = image_path
-            .map(|s| if s.is_empty() { "(reverted to arrow)".to_owned() } else { s.to_owned() })
+            .map(|s| if s.is_empty() { "(reverted to default)".to_owned() } else { s.to_owned() })
             .unwrap_or_else(|| "(unchanged)".into());
 
         ToolResult::text(format!(

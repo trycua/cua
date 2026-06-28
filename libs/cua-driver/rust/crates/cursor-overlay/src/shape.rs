@@ -6,11 +6,12 @@
 
 use anyhow::{bail, Result};
 
-/// Built-in cursor silhouette selectable via `--cursor-shape <name>`.
-/// Used when no `--cursor-icon` custom file overrides the choice.
+/// Built-in cursor silhouette selectable via `--cursor-shape <name>` or the
+/// MCP `cursor_icon` field. Used when no `--cursor-icon` custom file overrides
+/// the choice.
 ///
-/// `Arrow` is the default until the teardrop's retina rasterisation is
-/// fully sorted; users can opt into the SVG via `--cursor-shape teardrop`.
+/// `Teardrop` is the default; opt back into the procedural arrow with
+/// `--cursor-shape arrow` (CLI) or `cursor_icon: "arrow"` (MCP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinShape {
     /// Procedural gradient diamond drawn from vector primitives — the
@@ -56,43 +57,44 @@ impl BuiltinShape {
             .join(" | ")
     }
 
-    /// The overlay shape override this built-in renders as: `Arrow` → `None`
-    /// (the procedural gradient arrow — nothing rasterised), `Teardrop` → the
-    /// embedded `cursor-up` SVG. Matches `OverlayCommand::SetShape`'s
-    /// "`None` is the arrow" contract.
-    pub fn shape(self) -> Option<CursorShape> {
-        match self {
-            Self::Arrow => None,
-            Self::Teardrop => Some(CursorShape::teardrop().clone()),
-        }
-    }
-}
-
-/// Resolve an MCP `cursor_icon` (or CLI) value to an overlay shape override,
-/// ready to drop into `OverlayCommand::SetShape`.
-///
-/// - empty string → `Ok(None)` — revert to the procedural gradient arrow
-/// - a built-in name (`arrow` / `teardrop`, case-insensitive) → that built-in's
-///   shape via [`BuiltinShape::shape`]
-/// - anything else → treated as a file path and loaded (`.svg` / `.png` / `.ico`)
-///
-/// This is the single resolver shared by the CLI flags and every platform's MCP
-/// `set_agent_cursor_motion` handler, so the accepted vocabulary stays identical
-/// across all of them.
-pub fn resolve_cursor_icon(value: &str) -> Result<Option<CursorShape>> {
-    if value.is_empty() {
-        return Ok(None);
-    }
-    if let Some(builtin) = BuiltinShape::parse(value) {
-        return Ok(builtin.shape());
-    }
-    CursorShape::load(value).map(Some)
 }
 
 impl Default for BuiltinShape {
     fn default() -> Self {
-        Self::Arrow
+        Self::Teardrop
     }
+}
+
+/// What an MCP `cursor_icon` value resolves to. Built-in names drive the
+/// overlay's `builtin_shape` (so either built-in is reachable regardless of
+/// which is the default); a file path becomes a one-off shape override.
+#[derive(Debug, Clone)]
+pub enum CursorIconResolution {
+    /// A built-in silhouette — apply via `OverlayCommand::SetBuiltinShape`,
+    /// which sets `builtin_shape` and clears any custom override.
+    Builtin(BuiltinShape),
+    /// A custom image loaded from disk — apply via
+    /// `OverlayCommand::SetShape(Some(_))`.
+    Image(CursorShape),
+}
+
+/// Resolve an MCP `cursor_icon` (or CLI) value into a [`CursorIconResolution`].
+///
+/// - empty string → the configured default built-in ([`BuiltinShape::default`])
+/// - a built-in name (`arrow` / `teardrop`, case-insensitive) → that built-in
+/// - anything else → treated as a file path and loaded (`.svg` / `.png` / `.ico`)
+///
+/// This is the single resolver shared by the CLI flags and every platform's MCP
+/// `set_agent_cursor_motion` handler, so the accepted vocabulary — and which
+/// rendering path each value takes — stays identical across all of them.
+pub fn resolve_cursor_icon(value: &str) -> Result<CursorIconResolution> {
+    if value.is_empty() {
+        return Ok(CursorIconResolution::Builtin(BuiltinShape::default()));
+    }
+    if let Some(builtin) = BuiltinShape::parse(value) {
+        return Ok(CursorIconResolution::Builtin(builtin));
+    }
+    CursorShape::load(value).map(CursorIconResolution::Image)
 }
 
 /// Rasterised cursor shape at 64×64 RGBA.
@@ -143,8 +145,7 @@ impl CursorShape {
 
     /// The built-in teardrop cursor — embedded `cursor-up` silhouette
     /// rasterised once via `OnceLock` so callers can ask for it cheaply.
-    /// Selected at runtime by `BuiltinShape::Teardrop`; opt-in via
-    /// `--cursor-shape teardrop`.
+    /// Selected by `BuiltinShape::Teardrop`, which is the default silhouette.
     pub fn teardrop() -> &'static Self {
         static CACHE: std::sync::OnceLock<CursorShape> = std::sync::OnceLock::new();
         CACHE.get_or_init(|| {
@@ -244,29 +245,24 @@ mod tests {
     }
 
     #[test]
-    fn builtin_shape_maps_to_overlay_shape() {
-        // Arrow is the procedural renderer (None); teardrop rasterises a buffer.
-        assert!(BuiltinShape::Arrow.shape().is_none());
-        assert!(BuiltinShape::Teardrop.shape().is_some());
-    }
-
-    #[test]
     fn resolve_cursor_icon_matches_builtins_and_revert() {
-        // Empty reverts to the procedural arrow.
-        assert!(resolve_cursor_icon("").unwrap().is_none());
-        // Built-in names resolve the same way `--cursor-shape` does.
-        assert!(resolve_cursor_icon("arrow").unwrap().is_none());
-        assert!(resolve_cursor_icon("TEARDROP").unwrap().is_some());
+        use CursorIconResolution::*;
+        // Empty reverts to the configured default built-in (now teardrop).
+        assert!(matches!(resolve_cursor_icon("").unwrap(), Builtin(BuiltinShape::Teardrop)));
+        // Built-in names resolve to that built-in, case-insensitively —
+        // crucially `arrow` stays reachable even though teardrop is the default.
+        assert!(matches!(resolve_cursor_icon("arrow").unwrap(), Builtin(BuiltinShape::Arrow)));
+        assert!(matches!(resolve_cursor_icon("TEARDROP").unwrap(), Builtin(BuiltinShape::Teardrop)));
         // A non-name, non-existent path is treated as a file and fails to load.
         assert!(resolve_cursor_icon("/no/such/cursor.png").is_err());
     }
 
-    /// The default is `Arrow` while the teardrop's retina rasterisation
-    /// is still being tightened. If this assertion changes, the
-    /// `personalize-cursor.mdx` doc must change to match — the doc
-    /// explicitly tells users which built-in they get when no flag is set.
+    /// `Teardrop` is the default silhouette. If this assertion changes, the
+    /// `personalize-cursor.mdx` doc and the CLI `--cursor-shape` help must
+    /// change to match — both tell users which built-in they get when no flag
+    /// is set.
     #[test]
-    fn default_builtin_shape_is_arrow() {
-        assert_eq!(BuiltinShape::default(), BuiltinShape::Arrow);
+    fn default_builtin_shape_is_teardrop() {
+        assert_eq!(BuiltinShape::default(), BuiltinShape::Teardrop);
     }
 }

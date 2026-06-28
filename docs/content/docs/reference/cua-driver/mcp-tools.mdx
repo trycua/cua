@@ -586,7 +586,7 @@ Configure the visual appearance and motion curve of an agent cursor instance.
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `cursor_id` | string | No | Instance name. Default: `"default"`. |
-| `cursor_icon` | string | No | Built-in silhouette (`arrow`, `teardrop`) or a path to a PNG/JPEG/SVG/ICO file. `""` reverts to the default arrow. Same vocabulary as the CLI `--cursor-shape` / `--cursor-icon` flags. |
+| `cursor_icon` | string | No | Built-in silhouette (`arrow`, `teardrop`) or a path to a PNG/JPEG/SVG/ICO file. `""` reverts to the default (`teardrop`). Same vocabulary as the CLI `--cursor-shape` / `--cursor-icon` flags. |
 | `cursor_color` | string | No | Hex color (e.g. `"#00FFFF"`) or CSS name. |
 | `cursor_label` | string | No | Short text shown near the cursor. |
 | `cursor_size` | number | No | Dot radius in points. Default 16. |
@@ -617,7 +617,7 @@ Update the visual style of the agent cursor overlay.
 | `cursor_id` | string | No | Cursor instance. Default: `"default"`. |
 | `gradient_colors` | array of string | No | CSS hex gradient stops tip→tail. Empty array reverts to default palette colours. |
 | `bloom_color` | string | No | Hex bloom/halo colour (e.g. `"#00FFFF"`). Empty string reverts to default. |
-| `image_path` | string | No | Path to PNG/JPEG/SVG/ICO cursor image. Empty string reverts to procedural arrow. |
+| `image_path` | string | No | Path to PNG/JPEG/SVG/ICO cursor image. Empty string clears the override, reverting to the default silhouette (`teardrop`). |
 
 ---
 

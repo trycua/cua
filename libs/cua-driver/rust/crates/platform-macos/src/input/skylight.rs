@@ -41,6 +41,13 @@ type SetIntFieldFn = unsafe extern "C" fn(*mut c_void, u32, i64);
 /// `uint32_t CGSMainConnectionID(void)`
 type ConnectionIDFn = unsafe extern "C" fn() -> u32;
 
+/// `CGError SLSOrderWindow(int cid, uint32_t wid, int order, uint32_t relativeTo)`
+/// `order`: 1 = above, -1 = below, 0 = remove. Orders `wid` (which must be owned
+/// by connection `cid`) relative to `relativeTo` in the global WindowServer
+/// z-order. Works cross-PROCESS — unlike AppKit's `orderWindow:relativeTo:`,
+/// which does not reliably sandwich above another app's window.
+type OrderWindowFn = unsafe extern "C" fn(u32, u32, c_int, u32) -> c_int;
+
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
 
 /// `OSStatus SLPSSetFrontProcessWithOptions(const void *psn, uint32_t windowID, uint32_t options)`
@@ -133,6 +140,30 @@ fn set_int_field_fn() -> Option<SetIntFieldFn> {
 fn connection_id_fn() -> Option<ConnectionIDFn> {
     static SYM: OnceLock<Option<ConnectionIDFn>> = OnceLock::new();
     *SYM.get_or_init(|| find_sym(b"CGSMainConnectionID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn order_window_fn() -> Option<OrderWindowFn> {
+    static SYM: OnceLock<Option<OrderWindowFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLSOrderWindow\0").map(|p| unsafe { as_fn(p) }))
+}
+
+/// Order the overlay window (`overlay_wid`, owned by our WindowServer connection)
+/// exactly one step above `target_wid` in the global z-order, via the private
+/// SkyLight `SLSOrderWindow`. Returns `false` if the SPIs don't resolve, so the
+/// caller can fall back to AppKit `orderWindow:relativeTo:`. This is the reliable
+/// cross-process sandwich — AppKit ordering does not work above another process's
+/// window, which is why the agent cursor otherwise floats frontmost.
+pub fn order_overlay_above_window(overlay_wid: u32, target_wid: u32) -> bool {
+    // `find_sym` (inside the resolvers below) lazily `dlopen`s SkyLight.
+    match (connection_id_fn(), order_window_fn()) {
+        (Some(cid_fn), Some(order_fn)) => unsafe {
+            let cid = cid_fn();
+            // kCGSOrderAbove = 1 → place the overlay directly above the target.
+            order_fn(cid, overlay_wid, 1, target_wid);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn factory_msg_send_fn() -> Option<FactoryMsgSendFn> {

@@ -181,6 +181,7 @@ Two addressing modes:
 
 - **Element index** (`element_index` + `window_id`): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. Cache is scoped per `(pid, window_id)` and is replaced by the next snapshot.
 - **Pixel** (`x`, `y`): CGEvent path. Synthesizes mouse events posted to pid. Needs a visible on-screen window.
+- **Screen-absolute** (`x`, `y` with no window owner, under `capture_scope: desktop`): clicks true screen coordinates even when no window owns the point (desktop background, menu-extra gaps). The button is preserved — a windowless `right_click`/middle no longer downgrades to left.
 
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
@@ -362,18 +363,22 @@ Two modes:
 
 ### `scroll`
 
-Scroll the target pid's focused region by synthesized keystrokes.
+Scroll the target pid. Two addressing paths:
 
-Mapping: `by='page'` → PageDown/PageUp × amount; `by='line'` → DownArrow/UpArrow × amount. Horizontal variants use Left/Right arrow keys.
+- **Keystroke** (default — no coordinate/element target): scrolls the focused / page scroller via synthesized keys. `by='page'` → PageDown/PageUp × amount; `by='line'` → Down/Up arrow × amount. Horizontal uses Left/Right.
+- **Pixel-wheel** (`element_index` / `element_token`, or window-local `x, y`) — *macOS*: synthesizes a mouse wheel at the target point so the scroll routes to the element under it. Use it to drive a **nested overflow region or an unfocused scroller** the keystroke path can't reach (e.g. a web `overflow` div). Background-safe — no cursor warp, no focus steal.
 
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
 | `direction` | string | Yes | Scroll direction: `up`, `down`, `left`, `right`. |
 | `by` | string | No | Scroll granularity: `line` (default) or `page`. |
-| `amount` | integer | No | Number of keystroke repetitions. Default 3. |
-| `element_index` | integer | No | Pre-focuses this element before scrolling. |
-| `window_id` | integer | No | Required when `element_index` is set. |
+| `amount` | integer | No | Pixel-wheel: number of wheel notches. Keystroke: number of key repetitions. Default 3. |
+| `element_index` | integer | No | Element from last `get_window_state`. macOS: pixel-wheel at its center (e.g. a nested overflow region located in the AX tree); other platforms: pre-focuses it before the keystroke scroll. |
+| `element_token` | string | No | Per-snapshot element handle (`structuredContent.elements[].element_token`); precedence over `element_index`. macOS: pixel-wheel at its center. |
+| `x` | number | No | Window-local screenshot X (top-left origin). With `y`, macOS pixel-wheel at this point — for a scrollable surface not in the AX tree. Requires `window_id`. |
+| `y` | number | No | Window-local screenshot Y. See `x`. |
+| `window_id` | integer | No | Required when `element_index` / `x, y` is set. |
 
 ```json
 {"direction": "down", "pid": 844}

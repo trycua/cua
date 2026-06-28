@@ -315,14 +315,16 @@ for($i=0;$i -lt $plan.Count;$i++){
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
   "step $i '$($p.t)': anchor-baseline foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$anchorHeld"|Add-Content "$dir\baseline.log"
  }
- elseif($m.fg -and $hHar -ne [IntPtr]::Zero -and ($vision -or $desktop -or $p.t -eq 'drag')){
-  # fg mode, COORDINATE-dispatch steps only (vision/desktop, or the ax-mode slider drag):
-  # GENUINELY foreground the harness first. The drag's SendInput path SetForegroundWindow's
-  # the target and BAILS if the swap is rejected, so without this the slider drag silently
-  # no-ops. Gated to coordinate steps because [W]::Front taps ALT (foreground-unlock) which
-  # would drop element-path double/right-click into WPF menu-accelerator mode and break them.
+ elseif($m.fg -and $hHar -ne [IntPtr]::Zero){
+  # fg mode: GENUINELY foreground the harness before EVERY step. The drag's SendInput path
+  # (and any coordinate dispatch) needs the harness to be the real foreground window — and it
+  # must be kept primed across steps, since gating the assert to the drag step alone still let
+  # the drag no-op (foreground drifted before the daemon's own SetForegroundWindow ran).
+  # [W]::Front taps ALT (the foreground-unlock), which drops WPF into menu-accelerator mode, so
+  # clear it with an ESC afterwards — otherwise the element-path double/right-click mis-fire.
   $harFront=$false
   for($a=0;$a -lt 8;$a++){ [W]::Front($hHar)|Out-Null; Start-Sleep -Milliseconds 150; if([W]::Title([W]::GetForegroundWindow()) -like '*CuaTestHarness*'){ $harFront=$true; break } }
+  D "press_key" ('{{"pid":{0},"key":"escape","session":"d1"}}' -f $wp)|Out-Null   # exit ALT menu-accelerator mode so element double/right aren't tainted
   if($hPanel -and $hPanel -ne [IntPtr]::Zero){ [W]::Topmost($hPanel,$PANX,$PANY,$PANW,$PANH) }
   "step $i '$($p.t)': fg-mode harness foreground='$([W]::Title([W]::GetForegroundWindow()))' held=$harFront"|Add-Content "$dir\baseline.log"
  }

@@ -3325,13 +3325,14 @@ impl Tool for SetAgentCursorMotionTool {
     fn def(&self) -> &ToolDef {
         CURSOR_DEF.get_or_init(|| ToolDef {
             name: "set_agent_cursor_motion".into(),
-            description: "Configure the visual appearance of an agent cursor instance.\n\n\
+            description: format!("Configure the visual appearance of an agent cursor instance.\n\n\
                 - cursor_id: instance name (default='default')\n\
-                - cursor_icon: built-in ('arrow','crosshair','hand','dot') or PNG/SVG file path\n\
+                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default arrow\n\
                 - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
                 - cursor_label: short text shown near the cursor\n\
                 - cursor_size: dot radius in points (default=16)\n\
-                - cursor_opacity: 0.0–1.0 (default=0.85)".into(),
+                - cursor_opacity: 0.0–1.0 (default=0.85)",
+                cursor_overlay::BuiltinShape::names_help()),
             input_schema: json!({
                 "type":"object","properties":{
                     "session":{"type":"string"},
@@ -3348,6 +3349,20 @@ impl Tool for SetAgentCursorMotionTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        // Resolve `cursor_icon` (built-in name or image path — same vocabulary as
+        // the CLI flags) to a shape override and dispatch it, so the overlay
+        // actually changes instead of just recording the string.
+        let mut shape_cmd: Option<cursor_overlay::OverlayCommand> = None;
+        if let Some(icon) = args.opt_str("cursor_icon") {
+            let icon_owned = icon.clone();
+            match tokio::task::spawn_blocking(move || {
+                cursor_overlay::resolve_cursor_icon(&icon_owned)
+            }).await {
+                Ok(Ok(shape)) => shape_cmd = Some(cursor_overlay::OverlayCommand::SetShape(shape)),
+                Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
+        }
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.opt_str("cursor_icon") { cfg.cursor_icon = Some(v); }
             if let Some(v) = args.opt_str("cursor_color") { cfg.cursor_color = Some(v); }
@@ -3355,6 +3370,9 @@ impl Tool for SetAgentCursorMotionTool {
             if let Some(v) = args.opt_f64("cursor_size") { cfg.cursor_size = Some(v); }
             if let Some(v) = args.opt_f64("cursor_opacity") { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
         });
+        if let Some(cmd) = shape_cmd {
+            crate::overlay::send_command_for(cursor_id.clone(), cmd);
+        }
         ToolResult::text(format!("Cursor '{cursor_id}' config updated.")).with_structured(args)
     }
 }

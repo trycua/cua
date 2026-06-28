@@ -221,8 +221,10 @@ pub fn parse_command() -> Command {
         println!("  --no-overlay            Disable the cursor overlay entirely for this daemon.");
         println!("  --cursor-id <id>        Name the default cursor instance (default: 'default').");
         println!("  --cursor-icon <path>    Use a custom PNG / JPEG / SVG / ICO cursor asset.");
-        println!("  --cursor-shape <name>   Built-in silhouette: 'arrow' (default — procedural");
-        println!("                          gradient diamond) or 'teardrop' (embedded cursor-up SVG).");
+        println!("  --cursor-shape <name>   Built-in silhouette: {} ('arrow' is the default —",
+            cursor_overlay::BuiltinShape::names_help());
+        println!("                          procedural gradient diamond; 'teardrop' is the embedded");
+        println!("                          cursor-up SVG). Same vocabulary as MCP `cursor_icon`.");
         println!("  --cursor-palette <name> Pick a built-in colour palette for the cursor.");
         println!("  (These are no-ops for one-shot CLI calls like `cua-driver call` — the overlay");
         println!("   needs the long-lived AppKit runloop that only `serve` / `mcp` keep alive.)");

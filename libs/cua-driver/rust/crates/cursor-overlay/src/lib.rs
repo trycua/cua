@@ -22,7 +22,7 @@ pub use palette::Palette;
 pub use motion::{MotionConfig, Spring};
 pub use bezier::CubicBezier;
 pub use path_planner::{PathPlanner, PlannedPath, PathState};
-pub use shape::{BuiltinShape, CursorShape};
+pub use shape::{resolve_cursor_icon, BuiltinShape, CursorShape};
 pub use render_state::{RenderStateCore, FocusRect, render_frame, paint_cursor, draw_default_arrow};
 pub use z_order::ZOrderEnforcer;
 

@@ -115,10 +115,10 @@ static MOTION_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn motion_def() -> &'static ToolDef {
     MOTION_DEF.get_or_init(|| ToolDef {
         name: "set_agent_cursor_motion".into(),
-        description: "Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
+        description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
             Appearance (multi-cursor customization):\n\
             - cursor_id: instance name (default='default')\n\
-            - cursor_icon: built-in ('arrow','crosshair','hand','dot') or PNG/SVG file path\n\
+            - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default arrow\n\
             - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
             - cursor_label: short text shown near the cursor\n\
             - cursor_size: dot radius in points (default=16)\n\
@@ -131,12 +131,13 @@ fn motion_def() -> &'static ToolDef {
             - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
             - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based (the default)\n\
             - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
-            - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000".into(),
+            - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000",
+            cursor_overlay::BuiltinShape::names_help()),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "cursor_id":    { "type": "string", "description": "Cursor instance name. Default: 'default'." },
-                "cursor_icon":  { "type": "string", "description": "Built-in icon name or file path to PNG/SVG." },
+                "cursor_icon":  { "type": "string", "description": format!("Built-in shape ({}) or a path to a PNG/JPEG/SVG/ICO file. '' reverts to the default arrow.", cursor_overlay::BuiltinShape::names_help()) },
                 "cursor_color": { "type": "string", "description": "Hex color (e.g. '#00FFFF') or CSS color name." },
                 "cursor_label": { "type": "string", "description": "Short label near the cursor dot." },
                 "cursor_size":  { "type": "number", "description": "Dot radius in points. Default: 16." },
@@ -208,8 +209,24 @@ impl Tool for SetAgentCursorMotionTool {
         let config = &mut current.config;
 
         // ── Appearance fields ────────────────────────────────────────────────
+        // `cursor_icon` accepts the same vocabulary as the CLI `--cursor-shape` /
+        // `--cursor-icon` flags: a built-in name (resolved via the shared
+        // `BuiltinShape` table) or a path to an image file. Resolve it to a shape
+        // override and dispatch below so the overlay actually changes — this field
+        // used to be stored and never rendered.
+        let mut shape_cmd: Option<cursor_overlay::OverlayCommand> = None;
         if let Some(icon) = args.opt_str("cursor_icon") {
-            config.cursor_icon = Some(icon);
+            let icon_owned = icon.clone();
+            match tokio::task::spawn_blocking(move || {
+                cursor_overlay::resolve_cursor_icon(&icon_owned)
+            }).await {
+                Ok(Ok(shape)) => {
+                    config.cursor_icon = Some(icon);
+                    shape_cmd = Some(cursor_overlay::OverlayCommand::SetShape(shape));
+                }
+                Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
         }
         if let Some(color) = args.opt_str("cursor_color") {
             config.cursor_color = Some(color);
@@ -225,6 +242,11 @@ impl Tool for SetAgentCursorMotionTool {
         }
 
         self.state.cursor_registry.update_config(config.clone());
+
+        // Dispatch the resolved shape to this session's overlay instance.
+        if let Some(cmd) = shape_cmd {
+            crate::cursor::overlay::send_command(cursor_id.clone(), cmd);
+        }
 
         // ── Motion curve fields (apply to shared overlay MotionConfig) ───────
         // JSON integers from MCP decode as i64; coerce to f64 here.

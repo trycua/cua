@@ -23,16 +23,70 @@ pub enum BuiltinShape {
 }
 
 impl BuiltinShape {
-    /// Parse the value of `--cursor-shape`. Case-insensitive. Returns
-    /// `None` for unknown names so the caller can warn and fall back to
+    /// Canonical `(name → variant)` table. The single source of truth behind
+    /// [`parse`](Self::parse), [`names`](Self::names),
+    /// [`names_help`](Self::names_help), the CLI `--cursor-shape` help text, and
+    /// every platform's MCP `cursor_icon` tool description. Add a built-in here
+    /// and all of them pick it up — nothing else hardcodes the name list.
+    const TABLE: &'static [(&'static str, Self)] =
+        &[("arrow", Self::Arrow), ("teardrop", Self::Teardrop)];
+
+    /// Parse the value of `--cursor-shape` / MCP `cursor_icon`. Case-insensitive.
+    /// Returns `None` for unknown names so the caller can warn and fall back to
     /// the default.
     pub fn parse(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
-            "arrow" => Some(Self::Arrow),
-            "teardrop" => Some(Self::Teardrop),
-            _ => None,
+        let lower = name.to_ascii_lowercase();
+        Self::TABLE.iter().find(|(n, _)| *n == lower).map(|(_, v)| *v)
+    }
+
+    /// The accepted built-in names in declaration order, e.g.
+    /// `["arrow", "teardrop"]`.
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::TABLE.iter().map(|(name, _)| *name)
+    }
+
+    /// Human-facing list of built-in names for help / tool-description text,
+    /// e.g. `'arrow' | 'teardrop'`. The single string the CLI `--help` and every
+    /// MCP `cursor_icon` description render from, so the advertised vocabulary
+    /// can never drift from what [`parse`](Self::parse) actually accepts.
+    pub fn names_help() -> String {
+        Self::names()
+            .map(|n| format!("'{n}'"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
+    /// The overlay shape override this built-in renders as: `Arrow` → `None`
+    /// (the procedural gradient arrow — nothing rasterised), `Teardrop` → the
+    /// embedded `cursor-up` SVG. Matches `OverlayCommand::SetShape`'s
+    /// "`None` is the arrow" contract.
+    pub fn shape(self) -> Option<CursorShape> {
+        match self {
+            Self::Arrow => None,
+            Self::Teardrop => Some(CursorShape::teardrop().clone()),
         }
     }
+}
+
+/// Resolve an MCP `cursor_icon` (or CLI) value to an overlay shape override,
+/// ready to drop into `OverlayCommand::SetShape`.
+///
+/// - empty string → `Ok(None)` — revert to the procedural gradient arrow
+/// - a built-in name (`arrow` / `teardrop`, case-insensitive) → that built-in's
+///   shape via [`BuiltinShape::shape`]
+/// - anything else → treated as a file path and loaded (`.svg` / `.png` / `.ico`)
+///
+/// This is the single resolver shared by the CLI flags and every platform's MCP
+/// `set_agent_cursor_motion` handler, so the accepted vocabulary stays identical
+/// across all of them.
+pub fn resolve_cursor_icon(value: &str) -> Result<Option<CursorShape>> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if let Some(builtin) = BuiltinShape::parse(value) {
+        return Ok(builtin.shape());
+    }
+    CursorShape::load(value).map(Some)
 }
 
 impl Default for BuiltinShape {
@@ -170,6 +224,41 @@ mod tests {
         assert_eq!(BuiltinShape::parse("diamond"), None);
         assert_eq!(BuiltinShape::parse("arrow "), None); // whitespace-significant
         assert_eq!(BuiltinShape::parse("cua_brand"), None); // legacy name no longer recognised
+        // The invented MCP names that never existed in the renderer must NOT parse —
+        // they were doc-only fiction and are gone now.
+        assert_eq!(BuiltinShape::parse("crosshair"), None);
+        assert_eq!(BuiltinShape::parse("hand"), None);
+        assert_eq!(BuiltinShape::parse("dot"), None);
+    }
+
+    #[test]
+    fn names_help_lists_every_table_entry() {
+        // Single source of truth: help text is derived from TABLE, so it always
+        // matches what `parse` accepts.
+        let help = BuiltinShape::names_help();
+        for name in BuiltinShape::names() {
+            assert!(help.contains(name), "names_help() missing {name}: {help}");
+            assert!(BuiltinShape::parse(name).is_some(), "{name} listed but unparseable");
+        }
+        assert_eq!(help, "'arrow' | 'teardrop'");
+    }
+
+    #[test]
+    fn builtin_shape_maps_to_overlay_shape() {
+        // Arrow is the procedural renderer (None); teardrop rasterises a buffer.
+        assert!(BuiltinShape::Arrow.shape().is_none());
+        assert!(BuiltinShape::Teardrop.shape().is_some());
+    }
+
+    #[test]
+    fn resolve_cursor_icon_matches_builtins_and_revert() {
+        // Empty reverts to the procedural arrow.
+        assert!(resolve_cursor_icon("").unwrap().is_none());
+        // Built-in names resolve the same way `--cursor-shape` does.
+        assert!(resolve_cursor_icon("arrow").unwrap().is_none());
+        assert!(resolve_cursor_icon("TEARDROP").unwrap().is_some());
+        // A non-name, non-existent path is treated as a file and fails to load.
+        assert!(resolve_cursor_icon("/no/such/cursor.png").is_err());
     }
 
     /// The default is `Arrow` while the teardrop's retina rasterisation

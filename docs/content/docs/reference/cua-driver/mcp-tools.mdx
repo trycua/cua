@@ -586,7 +586,7 @@ Configure the visual appearance and motion curve of an agent cursor instance.
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `cursor_id` | string | No | Instance name. Default: `"default"`. |
-| `cursor_icon` | string | No | Built-in (`arrow`, `crosshair`, `hand`, `dot`) or PNG/SVG file path. |
+| `cursor_icon` | string | No | Built-in silhouette (`arrow`, `teardrop`) or a path to a PNG/JPEG/SVG/ICO file. `""` reverts to the default arrow. Same vocabulary as the CLI `--cursor-shape` / `--cursor-icon` flags. |
 | `cursor_color` | string | No | Hex color (e.g. `"#00FFFF"`) or CSS name. |
 | `cursor_label` | string | No | Short text shown near the cursor. |
 | `cursor_size` | number | No | Dot radius in points. Default 16. |

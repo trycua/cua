@@ -39,7 +39,7 @@ Every per-instance cursor accepts a runtime style override via the `set_agent_cu
 - `bloom_color`: hex string for the radial halo behind the cursor. Empty string reverts.
 - `image_path`: path to a PNG / JPEG / SVG / ICO file. When set, replaces the built-in silhouette with your asset. Empty string reverts.
 
-Switching between `arrow` and `teardrop` at runtime is not exposed via `set_agent_cursor_style` yet — for now it's CLI-only.
+Switching between the built-in `arrow` and `teardrop` silhouettes at runtime is exposed via `set_agent_cursor_motion`'s `cursor_icon` field — pass the built-in name (or a file path), exactly the vocabulary the CLI `--cursor-shape` / `--cursor-icon` flags accept. Both the CLI and MCP resolve names through the same `BuiltinShape` table, so they can never drift.
 
 ## Use your own cursor asset
 
@@ -79,7 +79,6 @@ Custom cursor assets are rendered with no rotation compensation — the driver a
 - **Multiple agent cursors with distinct palettes.** Only one built-in palette today. If you want per-agent distinct cursors, file an issue with the use case.
 - **Cursor display size.** Fixed at 26 logical pixels (52 physical on retina). The runtime `cursor_size` field controls the **dot-style** cursor's radius and doesn't apply to the shape-based render path.
 - **Motion-path curve shape.** Glide duration, post-click dwell, idle-hide delay, and spring damping are tunable via `set_agent_cursor_motion`, but the underlying bezier shape of the path is hardcoded.
-- **Switching `arrow` ↔ `teardrop` at runtime.** Today it's CLI-only — restart the daemon with a different `--cursor-shape` to swap.
 
 ## See also
 

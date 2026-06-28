@@ -5100,10 +5100,10 @@ impl Tool for SetAgentCursorMotionTool {
     fn def(&self) -> &ToolDef {
         CURSOR_DEF.get_or_init(|| ToolDef {
             name: "set_agent_cursor_motion".into(),
-            description: "Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
+            description: format!("Configure the visual appearance and motion curve of an agent cursor instance.\n\n\
                 Appearance:\n\
                 - cursor_id: instance name (default='default')\n\
-                - cursor_icon: built-in ('arrow','crosshair','hand','dot') or PNG/SVG file path\n\
+                - cursor_icon: built-in ({}) or a path to a PNG/JPEG/SVG/ICO file; '' reverts to the default arrow\n\
                 - cursor_color: hex color e.g. '#00FFFF' or CSS name\n\
                 - cursor_label: short text shown near the cursor\n\
                 - cursor_size: dot radius in points (default=16)\n\
@@ -5113,7 +5113,8 @@ impl Tool for SetAgentCursorMotionTool {
                 - spring: settle damping [0.3,1.0]; 1.0=no overshoot. Default 0.72\n\
                 - glide_duration_ms: fixed flight duration per move [50,5000]; omit for speed-based (the default)\n\
                 - dwell_after_click_ms: pause after click ripple [0,5000]. Default 80\n\
-                - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000".into(),
+                - idle_hide_ms: auto-hide delay [0,60000]; 0=never. Default 20000",
+                cursor_overlay::BuiltinShape::names_help()),
             input_schema: json!({
                 "type":"object","properties":{
                     "cursor_id":{"type":"string"},
@@ -5145,6 +5146,20 @@ impl Tool for SetAgentCursorMotionTool {
         }
         // Cursor key: caller-declared `session` > legacy `cursor_id` > NO_CURSOR.
         let cursor_id = resolve_cursor_key(&args);
+        // 0. Resolve `cursor_icon` (built-in name or image path — same vocabulary
+        // as the CLI flags) to a shape override and dispatch it below, so the
+        // overlay actually changes instead of only recording the string.
+        let mut shape_cmd: Option<cursor_overlay::OverlayCommand> = None;
+        if let Some(icon) = args.get("cursor_icon").and_then(|v| v.as_str()) {
+            let icon_owned = icon.to_owned();
+            match tokio::task::spawn_blocking(move || {
+                cursor_overlay::resolve_cursor_icon(&icon_owned)
+            }).await {
+                Ok(Ok(shape)) => shape_cmd = Some(cursor_overlay::OverlayCommand::SetShape(shape)),
+                Ok(Err(e)) => return ToolResult::error(format!("Invalid cursor_icon: {e}")),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
+        }
         // 1. Per-instance appearance fields (Rust-only).
         self.state.cursor_registry.update_config(&cursor_id, |cfg| {
             if let Some(v) = args.get("cursor_icon").and_then(|v| v.as_str()) { cfg.cursor_icon = Some(v.to_owned()); }
@@ -5153,6 +5168,9 @@ impl Tool for SetAgentCursorMotionTool {
             if let Some(v) = num(args.get("cursor_size"))    { cfg.cursor_size    = Some(v); }
             if let Some(v) = num(args.get("cursor_opacity")) { cfg.cursor_opacity = Some(v.clamp(0.0, 1.0)); }
         });
+        if let Some(cmd) = shape_cmd {
+            crate::overlay::send_command(cursor_id.clone(), cmd);
+        }
         // 2. Apply motion knobs to the live render state — was silently
         // dropped before; this is the Swift parity behavior.
         let current = crate::overlay::current_motion(&cursor_id);

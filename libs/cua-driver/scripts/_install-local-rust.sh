@@ -70,6 +70,7 @@ BOLD=$(tput bold 2>/dev/null || true)
 NORMAL=$(tput sgr0 2>/dev/null || true)
 RED=$(tput setaf 1 2>/dev/null || true)
 GREEN=$(tput setaf 2 2>/dev/null || true)
+YELLOW=$(tput setaf 3 2>/dev/null || true)
 BLUE=$(tput setaf 4 2>/dev/null || true)
 
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
@@ -339,6 +340,10 @@ if [ "$OS" = "Darwin" ]; then
         plutil -replace CFBundleVersion -string "$VERSION_TAG" \
             "$APP_STAGE/Contents/Info.plist" 2>/dev/null || true
     fi
+    # Stop any daemon still running from the bundle before replacing and
+    # re-signing it. Signing a bundle whose executable is still mapped by a
+    # live daemon can wedge codesign on macOS.
+    stop_cua_driver_daemons
     # Install to /Applications (user-writable for admins; no sudo — same
     # as install.sh). Replace any prior bundle wholesale.
     rm -rf "$APP_DEST"

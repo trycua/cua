@@ -10,10 +10,12 @@
 #   modality_matrix.sh shot <name>  # screenshot -> /tmp/mm_<name>.png
 #   modality_matrix.sh b64 <name>   # print a saved screenshot as base64 (host decodes)
 set -uo pipefail
-export DISPLAY=:1
-export HOME=/home/cua
-export XAUTHORITY=/home/cua/.Xauthority
-CUA=/home/cua/.local/bin/cua-driver
+# Paths derive from $HOME so the same harness drives both container lanes:
+# trycua/cua-xfce (user `cua`) and trycua/cua-ubuntu / Kasm (user `kasm-user`).
+# Override CUA / XAUTHORITY / DISPLAY via env if your layout differs.
+export DISPLAY=${DISPLAY:-:1}
+export XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+CUA=${CUA:-$HOME/.local/bin/cua-driver}
 S=/tmp/cstate
 
 pidf() { cat "$S.pid" 2>/dev/null; }

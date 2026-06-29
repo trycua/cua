@@ -85,6 +85,35 @@ there.
 - **VNC screenshots over the computer-server `/cmd` SSE endpoint** are `data:`-
   prefixed JSON; strip the `data: ` prefix before `json.loads`.
 
+## Second lane: trycua/cua-ubuntu (Kasm desktop)
+
+The same harness validates the Kasm-based `trycua/cua-ubuntu` image (XFCE under
+Kasm/VNC, user `kasm-user`). Two image-specific gotchas:
+
+- **Startup hangs without a Kasm orchestrator.** `vnc_startup.sh` blocks in
+  `wait_for_network_devices`, which loops until `ip link show type veth` returns
+  an `eth*` interface — an interface type the Kasm orchestrator's networking
+  provides but plain ACI does not, so it waits forever (no `NET_ADMIN` to create
+  one, and the script's filesystem is read-only). Bypass it at container start
+  with an override command-line that patches the wait to a no-op (runs as the
+  main process, so no restart loop):
+
+  ```
+  az container create -g <rg> -n cua-ubuntu --image trycua/cua-ubuntu:latest \
+    --cpu 2 --memory 4 --ports 6901 8000 --ip-address Public \
+    --os-type Linux --restart-policy OnFailure \
+    --command-line '/bin/bash -c "sed s/^wait_for_network_devices/true/ /dockerstartup/vnc_startup.sh>/tmp/vs.sh && exec /bin/bash /tmp/vs.sh /dockerstartup/kasm_startup.sh --wait"'
+  ```
+
+- **Drive it as `kasm-user`** with `$HOME=/home/kasm-user`. The harness derives
+  its paths from `$HOME`, so no edits are needed:
+  `bash modality_matrix.sh setup` / `matrix` just work once cua-driver is built
+  to `~/.local/bin`. noVNC is on `:6901` (password `vncpassword`).
+
+Both lanes produce the same modality matrix and both prove the session-bus
+auto-discovery fix (daemon started with `DBUS_SESSION_BUS_ADDRESS` unset → 58
+AT-SPI elements, `degraded` unset).
+
 ## CI coverage
 
 The dispatch *contract* (every input tool advertises `delivery_mode`;

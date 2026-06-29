@@ -1588,7 +1588,8 @@ impl Tool for PressKeyTool {
                     "key":{"type":"string"},
                     "modifiers":{"type":"array","items":{"type":"string"}},
                     "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. Resolves window_id when window_id is omitted."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -1659,17 +1660,27 @@ impl Tool for PressKeyTool {
         }
 
         let key_for_task = key.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
                 if inject_terminal_input(pid, xid, "\n")? {
                     return Ok(());
                 }
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
+            // foreground: activate the window first so the key reaches a widget
+            // that only accepts input while focused; background = direct send.
+            if delivery.is_foreground() {
+                return crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_key(xid, &key_for_task, &m)
+                });
+            }
             crate::input::send_key(xid, &key_for_task, &m)
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key}'.")),
+            Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key}' (delivery_mode={mode_label})."))
+                .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -1698,7 +1709,8 @@ impl Tool for HotkeyTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
-                        "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."}
+                        "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -1741,7 +1753,8 @@ impl Tool for HotkeyTool {
         let key_display = format!("{}+{}", mods.join("+"), key);
         let key_for_wayland = key.clone();
         let mods_for_wayland = mods.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 // Native Wayland: route the modifier combo through wtype's
                 // -M/-k/-m sequence — the closest equivalent to the X11
@@ -1751,10 +1764,19 @@ impl Tool for HotkeyTool {
                 return crate::wayland::hotkey(&combo);
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
+            // foreground: activate the target first so the accelerator reaches a
+            // widget that reads its key state only while focused.
+            if delivery.is_foreground() {
+                return crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_key(xid, &key, &m)
+                });
+            }
             crate::input::send_key(xid, &key, &m)
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Pressed {key_display} on pid {pid}.")),
+            Ok(Ok(())) => ToolResult::text(format!("Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."))
+                .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

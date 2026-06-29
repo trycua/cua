@@ -129,8 +129,13 @@ fn discover_from_session_process_environ() -> Option<String> {
 }
 
 /// True when `comm` looks like a desktop-session leader, tolerating the
-/// kernel's 15-char `comm` truncation in either direction.
+/// kernel's 15-char `comm` truncation in either direction. Empty `comm` never
+/// matches (every string "starts with" the empty string, so it must be
+/// excluded explicitly).
 fn is_session_process(comm: &str) -> bool {
+    if comm.is_empty() {
+        return false;
+    }
     SESSION_PROCESS_COMMS
         .iter()
         .any(|known| known.starts_with(comm) || comm.starts_with(known))

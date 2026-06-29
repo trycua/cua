@@ -170,4 +170,14 @@ async with Localhost.connect() as host:
 
 Methods: same signatures as `Sandbox` (`screenshot`, `screenshot_base64`, `get_environment`, `get_dimensions`, `disconnect`).
 
+For `ComputerAgent`, pass a sandbox directly or wrap localhost with the agent adapter:
+
+```python
+from cua import ComputerAgent, Localhost
+from cua_sandbox.agent import LocalhostHandler
+
+async with Localhost.connect() as host:
+    agent = ComputerAgent(model="...", tools=[LocalhostHandler(host)])
+```
+
 See [Sandbox interfaces reference](/reference/sandbox-sdk/interfaces) for the full API of sb.shell, sb.mouse, sb.keyboard, sb.screen, sb.clipboard, sb.tunnel, sb.terminal, sb.window, and sb.mobile. See [Image reference](/reference/sandbox-sdk/image) for the full Image builder API.

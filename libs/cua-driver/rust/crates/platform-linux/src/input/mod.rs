@@ -812,6 +812,58 @@ fn ewmh_activate_window(
     }
 }
 
+/// Foreground rung for X11 (`delivery_mode:"foreground"`): briefly activate
+/// `xid` via EWMH `_NET_ACTIVE_WINDOW`, run `body` (which injects the input
+/// while the window holds focus), then restore the prior active window. The
+/// Linux analogue of macOS `with_foreground_assist` / the Windows foreground
+/// swap, reusing the existing [`ewmh_active_window`] / [`ewmh_activate_window`]
+/// primitives (proper `x_server_time` stamping beats the WM's focus-stealing
+/// prevention).
+///
+/// Best-effort: if no X display can be opened the body still runs (without
+/// activation) so a headless/Wayland path degrades rather than hard-fails.
+/// `settle_ms` is the pause after activation before the first injected event —
+/// the WM needs a moment to complete the focus swap (mirrors the macOS settle).
+pub fn with_x11_foreground<T>(
+    xid: u64,
+    settle_ms: u64,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    if display.is_null() {
+        return body();
+    }
+    let prior = ewmh_active_window(display);
+    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
+    unsafe { x11::xlib::XSync(display, 0); }
+    if settle_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+    }
+    let result = body();
+    // Restore the prior active window (brief swap, like macOS/Windows).
+    if let Some(p) = prior {
+        ewmh_activate_window(display, p, xid as x11::xlib::Window);
+        unsafe { x11::xlib::XSync(display, 0); }
+    }
+    unsafe { x11::xlib::XCloseDisplay(display); }
+    result
+}
+
+/// Activate `xid` and LEAVE it active (no restore) — the persistent foreground
+/// swap behind `bring_to_front`. Returns the window that was active before, so
+/// the caller can report/inspect it. Best-effort; returns `None` prior on a
+/// headless display.
+pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
+    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    if display.is_null() {
+        bail!("cannot activate window: no X display (DISPLAY={:?})", std::env::var("DISPLAY").ok());
+    }
+    let prior = ewmh_active_window(display).map(|w| w as u64);
+    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0) as x11::xlib::Window);
+    unsafe { x11::xlib::XSync(display, 0); x11::xlib::XCloseDisplay(display); }
+    Ok(prior)
+}
+
 fn button_code(button: u8) -> Result<Key> {
     match button {
         1 => Ok(Key::BTN_LEFT),

@@ -2888,25 +2888,13 @@ impl Tool for TypeTextTool {
 
         // 0. Terminal short-circuit: Windows Terminal, mintty, ConsoleWindowClass,
         //    GVim / NeoVim — all consume keys through console / VT pipelines that
-        //    PostMessage(WM_CHAR) doesn't reach. The `set_value` UIA path also
-        //    silently no-ops on most of these. Go straight to SendInput Unicode
-        //    via `inject_text_cloaked` (capability-first; brief focus, foreground
-        //    restored). See `crate::terminal::TERMINAL_CLASS_PREFIXES`.
+        //    PostMessage(WM_CHAR) doesn't reach, and the `set_value` UIA path
+        //    silently no-ops on most of these. The only background way in was a
+        //    cloaked focus grab (SendInput Unicode) — which the macOS-aligned
+        //    contract forbids in background. Surface background_unavailable; the
+        //    agent escalates to delivery_mode:"foreground".
         if crate::terminal::is_terminal_hwnd(hwnd) {
-            drop(_noact);
-            let text_t = text.clone();
-            let r = tokio::task::spawn_blocking(move || crate::input::inject_text_cloaked(hwnd, &text_t)).await;
-            return match r {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (terminal emulator, cloaked focus)."
-                ))
-                .with_structured(serde_json::json!({
-                    "path": "key_events",
-                    "characters": text_len,
-                })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
-            };
+            return background_unavailable_error(hwnd, EventKind::TextInput);
         }
 
         // CUA-543 routing: PostMessage WM_CHAR doesn't reach modern
@@ -2986,25 +2974,13 @@ impl Tool for TypeTextTool {
         }
 
         // 2. No element_index on a WPF target: WM_CHAR is dropped and there's no
-        //    element to SetValue, so deliver real keystrokes via the cloaked-
-        //    focus path (capability-first; the brief focus is hidden, foreground
-        //    restored). Supplying an element_index (path 1) is preferred and
-        //    never raises.
+        //    element to SetValue. The only background path was a cloaked focus
+        //    grab (SendInput), which the macOS-aligned contract forbids in
+        //    background. Prefer supplying an element_index (path 1, UIA SetValue —
+        //    never raises); otherwise surface background_unavailable so the agent
+        //    escalates to delivery_mode:"foreground".
         if elem_idx.is_none() && crate::input::delivery::is_wpf_target_window(hwnd) {
-            drop(_noact);
-            let text2 = text.clone();
-            let r = tokio::task::spawn_blocking(move || crate::input::inject_text_cloaked(hwnd, &text2)).await;
-            return match r {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (WPF, cloaked focus)."
-                ))
-                .with_structured(serde_json::json!({
-                    "path": "key_events",
-                    "characters": text_len,
-                })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
-            };
+            return background_unavailable_error(hwnd, EventKind::TextInput);
         }
 
         // 3. Legacy Win32 / GDI / Chromium-IME — PostMessage WM_CHAR, no focus steal.
@@ -3261,24 +3237,13 @@ impl Tool for PressKeyTool {
         if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
-            // Universal background keyboard actuator: cloaked focus + SendInput,
-            // so TranslateAccelerator-based shortcuts (VCL/classic Win32) and
-            // Chromium key-combos fire without a visible foreground raise. The
-            // structured error only survives when focus can't be obtained
-            // (foreground-lock + no UIAccess → route via the uia worker).
-            let key_i = key.clone();
-            let mods_i: Vec<String> = mods.clone();
-            let inj = tokio::task::spawn_blocking(move || {
-                let m: Vec<&str> = mods_i.iter().map(String::as_str).collect();
-                crate::input::inject_key_cloaked(hwnd, &key_i, &m)
-            }).await;
-            return match inj {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent {key_display} on pid {raw_pid} (background; cloaked focus if needed)."
-                )),
-                Ok(Err(_)) => background_unavailable_error(hwnd, event_kind),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
-            };
+            // macOS-aligned contract: a `background` actuation never fronts. This
+            // key would be silently dropped by the target's input stack
+            // (TranslateAccelerator-based VCL/classic Win32, or Chromium key-
+            // combos) and the only way to land it is a foreground/focus grab —
+            // which background must not do. Surface background_unavailable so the
+            // agent escalates to delivery_mode:"foreground" (which may front).
+            return background_unavailable_error(hwnd, event_kind);
         }
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
         if delivery == DeliveryMode::Foreground {
@@ -3508,22 +3473,12 @@ impl Tool for HotkeyTool {
         if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
-            // Universal background keyboard actuator (see press_key): cloaked
-            // focus + SendInput so VCL/Chromium accelerators fire without a
-            // visible raise. Structured error only if focus can't be obtained.
-            let key_i = key.clone();
-            let mods_i: Vec<String> = mods.clone();
-            let inj = tokio::task::spawn_blocking(move || {
-                let m: Vec<&str> = mods_i.iter().map(String::as_str).collect();
-                crate::input::inject_key_cloaked(hwnd, &key_i, &m)
-            }).await;
-            return match inj {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Pressed {key_display} on pid {raw_pid} (background; cloaked focus if needed)."
-                )),
-                Ok(Err(_)) => background_unavailable_error(hwnd, event_kind),
-                Err(e)     => ToolResult::error(format!("Task error: {e}")),
-            };
+            // macOS-aligned: a `background` hotkey never fronts. This combo would
+            // be silently dropped (VCL/classic-Win32 TranslateAccelerator, or
+            // Chromium key-combos) and only a foreground/focus grab lands it —
+            // which background must not do. Surface background_unavailable; the
+            // agent escalates to delivery_mode:"foreground".
+            return background_unavailable_error(hwnd, event_kind);
         }
         // delivery_mode:"foreground" — explicit SendInput swap (the path that
         // unblocks TranslateAccelerator-style apps). A Background call that

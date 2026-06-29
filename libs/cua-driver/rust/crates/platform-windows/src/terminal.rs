@@ -5,8 +5,9 @@
 //! channels, not through the GUI's WM_CHAR queue. PostMessage(WM_CHAR)
 //! against those hosts is silently dropped — the user reports
 //! "type was acknowledged but nothing appeared". We detect the target
-//! by window class name and route through SendInput (Unicode key
-//! events) via the existing `inject_text_cloaked` primitive instead.
+//! by window class name; in background, type_text to a terminal returns
+//! `background_unavailable` (escalate to `delivery_mode:"foreground"`,
+//! which delivers via SendInput Unicode) rather than fronting it.
 //!
 //! Adding a new terminal: append a class-name prefix to
 //! [`TERMINAL_CLASS_PREFIXES`] and a coverage entry in the tests.

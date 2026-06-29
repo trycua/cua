@@ -52,8 +52,20 @@ strict no-foreground:
 
 | `delivery_mode` | Behavior on Windows |
 |---|---|
-| `"background"` (DEFAULT) | **For pixel clicks**: cua-driver first does a UIA hit-test at the resolved screen position; if the deepest invokable element at that point exposes `InvokePattern`, it's invoked through the accessibility channel (same path as `element_index` mode — no foreground swap, no flash, works on UWP / WinUI3 / Win11 packaged apps). Only if the UIA hit-test misses does the PostMessage(WM_LBUTTONDOWN/UP) fallback run; if that's also known-to-drop for this event kind (Chromium DOM mouse + key-combos, GTK button widgets, VCL/LibreOffice keystrokes + key-combos), the call returns a structured `background_unavailable` error. **No foreground swap, ever.** |
-| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. Required to drive Chromium DOM content, GTK button widgets, and VCL/LibreOffice accelerators reliably, and the only path for canvas / video / custom-drawn surfaces that have no UIA peer to hit-test against. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. Flashes the target visible unless `bring_to_front` was called first. |
+| `"background"` (DEFAULT) | Never fronts and **never raises/restacks** the target — macOS-aligned (mirrors CGEvent-to-pid). **Pixel clicks**: a UIA hit-test at the point first (accessibility-channel Invoke — works on UWP / WinUI3 / Win11 packaged apps, no flash); if that misses, coordinate-injected pen/touch, **but only when the target is the *visible* window at that point**; PostMessage for plain Win32. It returns a structured `background_unavailable` error — rather than raising or fronting — when the target is **occluded** at the point, or the event kind is known-dropped (Chromium DOM mouse + key-combos, GTK buttons, VCL/LibreOffice accelerators, terminal / WPF text with no `element_index`). **No foreground swap and no z-order raise, ever.** |
+| `"foreground"` | SendInput with brief `SetForegroundWindow(target)` → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. Flashes the target visible unless `bring_to_front` was called first. |
+
+> **macOS is the source of truth — `background` never alters the screen.**
+> Earlier Windows builds "cheated" in background with three tricks that this
+> pass **removed**: (1) a z-order raise (`ZorderGuard`) to win the pointer
+> hit-test on occluded windows, (2) a full focus-activate for WPF drags, and
+> (3) a *cloaked* (hidden) focus-grab for keystrokes/text the target would
+> otherwise drop. macOS does none of these (pure CGEvent-to-pid + focus
+> suppression), so Windows now does none either: when strict no-front /
+> no-raise delivery can't land, the tool returns `background_unavailable` and
+> **the agent — not the driver — decides** whether to escalate to
+> `delivery_mode:"foreground"` (the rung where fronting is explicitly opted
+> into). A `background` call will never raise, restack, flash, or steal focus.
 
 > **Removed: the legacy `"auto"` mode.** Earlier builds had a third
 > Windows-only `dispatch:"auto"` mode (silent SendInput fallback on

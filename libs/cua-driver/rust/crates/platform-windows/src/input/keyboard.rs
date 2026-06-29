@@ -425,9 +425,9 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
 /// `type_text`. Symmetric with [`send_key_synthesized`] — briefly fronts the
 /// target, types `text` as SendInput Unicode (`KEYEVENTF_UNICODE`, so every
 /// codepoint lands regardless of keyboard layout), then restores the prior
-/// foreground. Unlike [`crate::input::inject_text_cloaked`] (the background
-/// cloaked-focus fallback) this does NOT try to hide the swap and it does NOT
-/// silently fall back to PostMessage: if the foreground swap is rejected
+/// foreground. This is only reached on the explicit `delivery_mode:"foreground"`
+/// rung (background never fronts); it does NOT silently fall back to
+/// PostMessage: if the foreground swap is rejected
 /// (daemon not at UIAccess integrity) it bails with the same diagnostic
 /// `send_key_synthesized` returns, so the caller gets an honest error instead
 /// of a false success. Required for VCL/LibreOffice document grids and other

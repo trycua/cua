@@ -207,8 +207,9 @@ pub fn is_vcl_target_window(hwnd: u64) -> bool {
 /// Detect WPF top-level windows. WPF hosts its visual tree in an HWND whose
 /// class is `HwndWrapper[<module>;;<guid>]`. WPF TextBoxes consume only real
 /// keyboard input routed through WPF's input manager, so a posted `WM_CHAR`
-/// (the `post_type_text` path) is silently dropped — type_text must instead
-/// deliver genuine SendInput keystrokes (see `inject_text_cloaked`).
+/// (the `post_type_text` path) is silently dropped — so in background, type_text
+/// with no element_index returns `background_unavailable` (escalate to
+/// `delivery_mode:"foreground"`); with an element_index it uses UIA ValuePattern.
 pub fn is_wpf_target_window(hwnd: u64) -> bool {
     read_class_name(hwnd).starts_with("HwndWrapper")
 }

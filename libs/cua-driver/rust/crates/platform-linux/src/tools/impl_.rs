@@ -1366,7 +1366,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via EIS compositor)."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len })),
+                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1384,7 +1384,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len })),
+                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1418,7 +1418,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len })),
+                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1467,7 +1467,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) into the focused widget."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len })),
+                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1483,7 +1483,7 @@ impl Tool for TypeTextTool {
             Ok(Ok(())) => {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
                 return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."))
-                    .with_structured(json!({ "path": "ax", "characters": text_len }));
+                    .with_structured(json!({ "path": "ax", "characters": text_len, "verified": true }));
             }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
@@ -1512,7 +1512,7 @@ impl Tool for TypeTextTool {
         match qt5_result {
             Ok(Ok(())) => {
                 return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."))
-                    .with_structured(json!({ "path": "ax", "characters": text_len }));
+                    .with_structured(json!({ "path": "ax", "characters": text_len, "verified": true }));
             }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
@@ -1557,13 +1557,15 @@ impl Tool for TypeTextTool {
         }).await;
         let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            // verified:false here — these keystroke/XSendEvent rungs aren't
-            // read-back-confirmed (the AT-SPI insert path above could be; P3
-            // adds the read-back verdict). Caller confirms via screenshot.
+            // Read-back verdict: the AT-SPI EditableText.insertText path ("ax") is
+            // the driver-verifiable rung on Linux — the a11y layer confirms the
+            // insert into the widget model (truthful on GTK/Qt). The keystroke /
+            // XSendEvent / XTest rungs aren't read-back-confirmed (verified:false;
+            // caller confirms via screenshot).
             Ok(Ok(path)) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))
-            .with_structured(json!({ "path": path, "characters": text_len, "verified": false })),
+            .with_structured(json!({ "path": path, "characters": text_len, "verified": path == "ax" })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

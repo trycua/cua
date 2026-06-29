@@ -878,17 +878,21 @@ renderer, so the fallback path works for hyperlinks and buttons.
   blind success:
     - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
       surfaces a `background_unavailable` error for VCL.
-    - **`type_text`** (a `WM_CHAR` `TextInput`, NOT flagged droppable):
-      background does a **UIA read-back** of the focused field and returns a
-      three-way `verify` in structured output: `confirmed` (✅, value changed),
+    - **`type_text`** does a **UIA read-back** and returns a three-way `verify`
+      in structured output: `confirmed` (✅, value reflects the text),
       `unchanged` (📨, read OK but value didn't change → likely dropped, retry
-      foreground), or `unreadable` (✅ "delivered, not verified"). **Windows
-      caveat:** UIA `GetFocusedElement` is system-wide (unlike macOS's per-app
-      `AXFocusedUIElement`), so read-back can only reach `confirmed`/`unchanged`
-      when the target is the **foreground** app; a backgrounded target reads
-      `unreadable` even when the text actually landed. So `unreadable` is NOT a
-      failure signal — verify via screenshot if it matters. (Measured: a
-      backgrounded LO Calc grid accepts WM_CHAR fine but reports `unreadable`.)
+      foreground), or `unreadable` (✅ "delivered, not verified"). **Pass an
+      `element_index`** for reliable verification: the read-back then reads
+      *that specific element* by handle (ValuePattern → TextPattern), which is
+      **focus-independent** — it reaches `confirmed`/`unchanged` whether or not
+      the target is foreground. (Verified live against the WPF harness: typed
+      via element_index, read back `confirmed`, value independently present in
+      the next snapshot — app never fronted.) **Without** an element_index it
+      falls back to system-wide `GetFocusedElement`, which on Windows only
+      resolves when the target is the **foreground** app (no per-app
+      `AXFocusedUIElement` like macOS); a backgrounded target then reads
+      `unreadable` even when the text actually landed — so `unreadable` is NOT a
+      failure signal, verify via screenshot if it matters.
   Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
   accelerator). **But** foreground needs the swap to actually land — if the
   daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`

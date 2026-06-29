@@ -2958,12 +2958,28 @@ impl Tool for TypeTextTool {
                 ok
             }).await.unwrap_or(false);
             if set_ok {
+                // Read the value back by element handle — focus-independent
+                // (works regardless of which window is foreground), proving the
+                // a11y write actually took rather than trusting SetValue's
+                // return alone.
+                let state_rb = self.state.clone();
+                let text_rb = text.clone();
+                let verify = tokio::task::spawn_blocking(move || {
+                    match read_cached_element_value(&state_rb, pid, hwnd, idx) {
+                        Some(v) if v.contains(text_rb.as_str()) => "confirmed",
+                        Some(_) => "unchanged",
+                        None    => "unreadable",
+                    }
+                }).await.unwrap_or("unreadable");
                 return ToolResult::text(format!(
-                    "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern (element_index=[{idx}])."
+                    "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern \
+                     (element_index=[{idx}]; verify: {verify})."
                 ))
                 .with_structured(serde_json::json!({
                     "path": "ax",
                     "characters": text_len,
+                    "verified": verify == "confirmed",
+                    "verify": verify,
                 }));
             }
             // ValuePattern unavailable → fall through to the WM_CHAR path.
@@ -3003,11 +3019,21 @@ impl Tool for TypeTextTool {
         // can't confirm (conservative: under-claim rather than false-succeed).
         let text_for_post = text.clone();
         let verify_pid = pid;
+        let verify_idx = elem_idx.map(|i| i as usize);
+        let state_rb = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let before = read_focused_value_uia(verify_pid);
+            // Prefer a focus-independent read of the *specific* cached element
+            // when we have its index; only fall back to the (flaky, focus-
+            // dependent) system focused element when typing into "whatever is
+            // focused" with no element_index.
+            let read = |idx: Option<usize>| match idx {
+                Some(i) => read_cached_element_value(&state_rb, verify_pid, hwnd, i),
+                None    => read_focused_value_uia(verify_pid),
+            };
+            let before = read(verify_idx);
             let post_res = crate::input::post_type_text(hwnd, &text_for_post);
             std::thread::sleep(std::time::Duration::from_millis(40));
-            let after = read_focused_value_uia(verify_pid);
+            let after = read(verify_idx);
             (post_res, before, after)
         }).await;
         match result {
@@ -3057,6 +3083,47 @@ impl Tool for TypeTextTool {
             Err(e)             => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// Read a **specific cached element's** text value by its `element_index`,
+/// for type_text read-back verification. Tries `ValuePattern.CurrentValue`
+/// then falls back to `TextPattern` document text. Unlike
+/// [`read_focused_value_uia`] this is **focus-independent**: it reads the exact
+/// element the caller typed into (by handle, from the per-(pid,window) cache),
+/// so it works whether or not the target is the foreground window. Returns
+/// `None` if the index isn't cached or the element exposes no readable text
+/// pattern. Mirrors the cache-retain + `mem::forget` discipline of the
+/// ValuePattern.SetValue path so the cached COM ref isn't released.
+fn read_cached_element_value(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    idx: usize,
+) -> Option<String> {
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationValuePattern,
+        UIA_TextPatternId, UIA_ValuePatternId,
+    };
+    use windows::core::Interface;
+    let guard = state.element_cache.get_element_retained(pid, hwnd, idx)?;
+    let ptr = guard.as_ptr();
+    let elem: IUIAutomationElement = unsafe { IUIAutomationElement::from_raw(ptr as *mut _) };
+    let val = unsafe {
+        elem.GetCurrentPattern(UIA_ValuePatternId).ok()
+            .and_then(|p| p.cast::<IUIAutomationValuePattern>().ok())
+            .and_then(|vp| vp.CurrentValue().ok())
+            .map(|b| b.to_string())
+            .or_else(|| {
+                elem.GetCurrentPattern(UIA_TextPatternId).ok()
+                    .and_then(|p| p.cast::<IUIAutomationTextPattern>().ok())
+                    .and_then(|tp| tp.DocumentRange().ok())
+                    .and_then(|r| r.GetText(-1).ok())
+                    .map(|b| b.to_string())
+            })
+    };
+    // The cache guard owns the ref; don't let `elem`'s Drop release it.
+    std::mem::forget(elem);
+    val
 }
 
 /// Read the currently-focused UIA element's `ValuePattern` value **iff it

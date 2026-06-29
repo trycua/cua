@@ -829,7 +829,7 @@ impl Tool for GetWindowStateTool {
                 // → screenshot + pixel coords + dispatch:"foreground"; UWP
                 // class → retry with capture_mode:"vision" to skip the
                 // UIA walk and just get a screenshot).
-                let class = crate::input::dispatch::read_class_name(hwnd);
+                let class = crate::input::delivery::read_class_name(hwnd);
                 Err(anyhow::anyhow!(
                     "get_window_state timed out after 4s (UIA provider unresponsive on \
                      hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
@@ -837,7 +837,7 @@ impl Tool for GetWindowStateTool {
                      UIA walk and just capture the screenshot — bypasses UIA entirely, \
                      then drive via pixel `click(x, y)` against the returned image; \
                      (b) if the target is a transient VCL / message-box dialog, send \
-                     `press_key` with `dispatch:\"foreground\"` (SendInput) to fire the \
+                     `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
                      default accelerator (Esc / Enter / Y / N) without needing the tree."
                 ))
             }
@@ -1350,7 +1350,7 @@ impl Tool for LaunchAppTool {
                 "electron_debugging_port":{"type":"integer","description":"Accepted for cross-platform parity; currently no-op on Windows."},
                 "webkit_inspector_port":{"type":"integer","description":"Accepted for cross-platform parity; no-op on Windows."},
                 "creates_new_application_instance":{"type":"boolean","description":"Accepted for parity; no-op on Windows (ShellExecuteEx always creates a new process)."},
-                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Implementation uses SW_SHOWMINNOACTIVE for the ShellExecuteEx path and a follow-up ShowWindow(SW_MINIMIZE) on the AUMID path. UIA / background dispatch still work on a minimized window; only `screenshot` and `dispatch:\"foreground\"` need it restored."}
+                "start_minimized":{"type":"boolean","description":"When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Implementation uses SW_SHOWMINNOACTIVE for the ShellExecuteEx path and a follow-up ShowWindow(SW_MINIMIZE) on the AUMID path. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:\"foreground\"` need it restored."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: true,
         })
@@ -2073,19 +2073,19 @@ impl Tool for ClickTool {
                 is scoped per (pid, window_id) and is replaced by the next snapshot of the \
                 same window.\n\n\
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
-                returned by `get_window_state`). On `dispatch:\"background\"` (default) and \
-                `dispatch:\"auto\"`, cua-driver FIRST does a UIA hit-test at the resolved \
+                returned by `get_window_state`). On `delivery_mode:\"background\"` (the \
+                default), cua-driver FIRST does a UIA hit-test at the resolved \
                 screen position: if the deepest invokable element under that point exposes \
                 `InvokePattern`, it's invoked through the accessibility channel — same \
                 background-safe path as the `element_index` mode, no foreground swap, no \
                 visible flash. **This makes pixel clicks on UWP / WinUI3 / Win11 packaged \
                 apps work flash-free out of the box** — agents should default to \
-                `dispatch:\"background\"` even on XAML hosts whose CoreInput dispatcher \
+                `delivery_mode:\"background\"` even on XAML hosts whose CoreInput dispatcher \
                 drops raw PostMessage. The PostMessage(WM_LBUTTONDOWN/UP) fallback only \
                 runs when the UIA hit-test misses (canvas / video / WebGL / custom-drawn \
-                surfaces with no UIA peer), and on those targets `dispatch:\"background\"` \
+                surfaces with no UIA peer), and on those targets `delivery_mode:\"background\"` \
                 returns a structured `background_unavailable` error if PostMessage is \
-                known to drop too — at which point you switch to `dispatch:\"foreground\"`. \
+                known to drop too — at which point you switch to `delivery_mode:\"foreground\"`. \
                 `count: 2` posts two down/up pairs for a double-click. Pixel clicks need \
                 a visible on-screen window to anchor the coordinate conversion (errors \
                 with `pid X has no on-screen window` otherwise).\n\n\
@@ -2109,7 +2109,7 @@ impl Tool for ClickTool {
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Windows-only convenience; Swift exposes right-click as a separate `right_click` tool."},
                     "count":{"type":"integer","minimum":1,"maximum":3,"description":"Click count — 1 (single), 2 (double), 3 (triple). Default 1."},
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
-                    "dispatch": crate::input::dispatch::dispatch_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -2118,7 +2118,7 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         use crate::uia::cache::SnapshotKind;
         let cursor_key = resolve_cursor_key(&args);
 
@@ -2230,7 +2230,7 @@ impl Tool for ClickTool {
         }
         let button = if button_raw.is_empty() { "left".to_string() } else { button_raw };
         let count = args.u64_or("count", 1) as usize;
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
         // For every non-foreground click, mark the target window
         // non-activatable (WS_EX_NOACTIVATE) for the duration so a target that
         // self-activates in its UIA-Invoke / click handler (WPF
@@ -2238,7 +2238,7 @@ impl Tool for ClickTool {
         // foreground — the window still receives the click. Held for the whole
         // invoke; a no-op for dispatch:"foreground" (which wants the swap) and
         // when no window_id was given.
-        let _noact = match (dispatch != DispatchMode::Foreground, hwnd_opt) {
+        let _noact = match (dispatch != DeliveryMode::Foreground, hwnd_opt) {
             (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(h as *mut _),
             )),
@@ -2368,7 +2368,7 @@ impl Tool for ClickTool {
             // delivery; UIA Invoke would be background-safe (which they
             // rejected) and might fail on elements that don't support
             // InvokePattern anyway.
-            if dispatch == DispatchMode::Foreground {
+            if dispatch == DeliveryMode::Foreground {
                 // Foreground delivery is a real SendInput tap at (cx,cy); if the
                 // element is off-screen, scroll it into view and re-resolve so the
                 // tap doesn't land on the taskbar, else keep the clean failure.
@@ -2398,7 +2398,7 @@ impl Tool for ClickTool {
             // left falls through to the UIA Invoke path below (already drives
             // WinUI3). Double-left lands via a double UIA Invoke; right/middle
             // can't both land and hold the contract → structured error.
-            if dispatch == DispatchMode::Background && (count > 1 || btn == "right" || btn == "middle") {
+            if dispatch == DeliveryMode::Background && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), count, &btn).await {
                     return r;
                 }
@@ -2515,8 +2515,8 @@ impl Tool for ClickTool {
                 // to know the target is Chromium/GTK and never sees a raise.
                 // Only the structured error remains as a last resort (e.g. a
                 // right-click, which has no clean touch mapping).
-                if dispatch == DispatchMode::Background
-                    && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+                if dispatch == DeliveryMode::Background
+                    && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
                 {
                     // Coordinate injection lands at (cx,cy); scroll the element
                     // into view if it's off-screen, else preserve the clean
@@ -2602,7 +2602,7 @@ impl Tool for ClickTool {
             // foreground delivery. Skip the UIA hit-test (UIA Invoke is
             // background-safe and would deliver the click without the
             // foreground swap the caller asked for).
-            if dispatch == DispatchMode::Foreground {
+            if dispatch == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -2626,7 +2626,7 @@ impl Tool for ClickTool {
             // path, no element_index → no cached element to UIA-Invoke): these
             // can't both land and hold the contract on WinUI3 (posted input is
             // ignored, the pen injector steals foreground) → structured error.
-            if dispatch == DispatchMode::Background && (count > 1 || btn == "right" || btn == "middle") {
+            if dispatch == DeliveryMode::Background && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, count, &btn).await {
                     return r;
                 }
@@ -2661,8 +2661,8 @@ impl Tool for ClickTool {
             // without knowing whether it's Chromium/GTK/etc. The structured
             // background_unavailable error only survives as a last resort for
             // inputs injection can't express (e.g. right/middle clicks).
-            if dispatch == DispatchMode::Background
-                && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+            if dispatch == DeliveryMode::Background
+                && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();
                 let inj = tokio::task::spawn_blocking(move || {
@@ -2681,75 +2681,15 @@ impl Tool for ClickTool {
                 };
             }
 
-            // dispatch:"auto" — historical heuristic: Chromium targets get
-            // SendInput with foreground swap (#1623); everything else takes
-            // the PostMessage path. This branch is ONLY reached on Auto mode
-            // (Background returned above; Foreground was handled at the top).
-
-            // #1623: PostMessage(WM_LBUTTONDOWN) to Chromium frame HWNDs doesn't
-            // reach the DOM input pipeline — Chromium's input thread only accepts
-            // events with SendInput-queue origin. For Chromium targets, take the
-            // SendInput path; for everything else, take the existing PostMessage
-            // path (the path was added as a no-focus-steal click delivery, which
-            // PostMessage uniquely provides). The Chromium path moves the cursor
-            // visibly and briefly steals foreground — there's no Chromium-native
-            // alternative that gets DOM events to fire without these tradeoffs.
-            //
-            // SendInput on Chromium requires the daemon to have UIAccess integrity
-            // (otherwise SetForegroundWindow is rejected and the events land on the
-            // wrong window). The MCP proxy auto-prefers the cua-driver-uia worker
-            // when both pipes are up, so this path runs with UIAccess in the
-            // common case. When UIAccess is missing, send_click_synthesized
-            // surfaces an actionable error and we fall through to PostMessage —
-            // PostMessage won't fire DOM events on Chromium either, but the user
-            // gets a meaningful diagnostic instead of silent no-op.
-            let chromium = tokio::task::spawn_blocking(move || {
-                crate::input::is_chromium_target_window(hwnd)
-            })
-            .await
-            .unwrap_or(false);
-            if chromium {
-                // Belt-and-suspenders foreground restore. `send_click_synthesized`
-                // does its own SetForegroundWindow(prev_fg) ~40ms after the
-                // click, BUT Chromium's reaction to the click can include an
-                // async re-activation (focus().activate() in the renderer-side
-                // event handler, sometimes 100-500 ms later). The launch_app
-                // FocusRestoreGuard (PR #1668) already proved the polling
-                // pattern works; reuse the same helper to catch the async case.
-                //
-                // Captured here (async-runtime side) rather than inside the
-                // blocking task so we have a known-stable "before" snapshot.
-                let prev_fg_addr = unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
-                };
-                let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, count, &btn)
-                })
-                .await;
-                // Kick off the polling restore regardless of click result
-                // — even a partially-inserted click might have started an
-                // async activation Chromium can't undo.
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
-                match send_result {
-                    Ok(Ok(())) => {
-                        let click_word = match count {
-                            2 => "double-click",
-                            3 => "triple-click",
-                            _ => "click",
-                        };
-                        return ToolResult::text(format!(
-                            "✅ Sent {click_word} via SendInput to pid {pid} (Chromium target)."
-                        ));
-                    }
-                    Ok(Err(e)) => {
-                        // Bubble the actionable diagnostic ("Run through uia worker") up
-                        // to the caller rather than silently falling to PostMessage,
-                        // which we know doesn't work for Chromium.
-                        return ToolResult::error(e.to_string());
-                    }
-                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
-                }
-            }
+            // delivery_mode:"background", non-dropped + non-UIA click — e.g. a
+            // right-click or multi-click on a plain Win32 window. Chromium is
+            // never reached here: its mouse events are flagged silently-dropped
+            // above and handled by the injection path, so the only targets that
+            // fall through are ones PostMessage delivers to without a foreground
+            // swap. (Foreground was handled at the top; the legacy `auto`
+            // Chromium-SendInput heuristic was removed in the macOS-alignment
+            // pass — escalating to delivery_mode:"foreground" is now the explicit
+            // path for any target PostMessage can't reach.)
 
             // bitmap pixels -> screen (DWM-frame origin + inset). Use
             // post_click_screen so we don't double-ClientToScreen.
@@ -2821,7 +2761,7 @@ impl Tool for TypeTextTool {
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."},
-                    "dispatch": crate::input::dispatch::dispatch_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -2830,7 +2770,7 @@ impl Tool for TypeTextTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
         let text_raw = match args.require_str("text") { Ok(v) => v, Err(e) => return e };
@@ -2863,7 +2803,7 @@ impl Tool for TypeTextTool {
                 window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
@@ -2875,7 +2815,7 @@ impl Tool for TypeTextTool {
         // target makes that a no-op while the value still gets set. Safe because
         // type_text never uses the SendInput foreground-swap path. No-op for
         // dispatch:"foreground" and when no window_id was given.
-        let _noact = match (dispatch != DispatchMode::Foreground, hwnd_opt) {
+        let _noact = match (dispatch != DeliveryMode::Foreground, hwnd_opt) {
             (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(h as *mut _),
             )),
@@ -2894,29 +2834,38 @@ impl Tool for TypeTextTool {
         };
         let text_len = text.chars().count();
 
-        // dispatch:"background" — TextInput is currently never flagged as
+        // delivery_mode:"background" — TextInput is currently never flagged as
         // silently dropped (Chromium accepts WM_CHAR through its IME path),
-        // but call the helper so the policy stays centralised in dispatch.rs
+        // but call the helper so the policy stays centralised in delivery.rs
         // and future targets can be added without touching this site.
-        if dispatch == DispatchMode::Background
-            && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::TextInput)
+        if dispatch == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
         {
             return background_unavailable_error(hwnd, EventKind::TextInput);
         }
-        // dispatch:"foreground" — no SendInput-based text-input helper yet.
-        // Caller can build a foreground-style "type" by hotkey/press_key per
-        // character; or use bring_to_front then dispatch:"auto" which keeps
-        // PostMessage WM_CHAR (works for the targets we know about).
-        if dispatch == DispatchMode::Foreground {
-            return ToolResult::error(
-                "dispatch:\"foreground\" is not yet implemented for type_text. \
-                 Use bring_to_front and retry with dispatch:\"auto\" — \
-                 PostMessage WM_CHAR works against an already-foreground \
-                 window for legacy Win32 targets, and UIA ValuePattern.SetValue \
-                 handles XAML/WinUI3 hosts when element_index is supplied. \
-                 TODO: add a send_text_synthesized helper that drives per-char \
-                 SendInput keystrokes.".to_string(),
-            );
+        // delivery_mode:"foreground" — explicit SendInput Unicode with a brief
+        // foreground swap (send_text_synthesized), symmetric with press_key's
+        // foreground path. This is the rung that lands on VCL/LibreOffice
+        // document grids and other targets where PostMessage WM_CHAR is
+        // silently dropped. Honest by construction: if the foreground swap is
+        // rejected (daemon not at UIAccess integrity), it returns an error
+        // rather than a false success.
+        if dispatch == DeliveryMode::Foreground {
+            let text_fg = text.clone();
+            let r = tokio::task::spawn_blocking(move || {
+                crate::input::send_text_synthesized(hwnd, &text_fg)
+            }).await;
+            return match r {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (delivery_mode:foreground)."
+                ))
+                .with_structured(serde_json::json!({
+                    "path": "key_events",
+                    "characters": text_len,
+                })),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
         }
 
         // Pin the agent-cursor overlay above the target window so the synthetic
@@ -3025,7 +2974,7 @@ impl Tool for TypeTextTool {
         //    focus path (capability-first; the brief focus is hidden, foreground
         //    restored). Supplying an element_index (path 1) is preferred and
         //    never raises.
-        if elem_idx.is_none() && crate::input::dispatch::is_wpf_target_window(hwnd) {
+        if elem_idx.is_none() && crate::input::delivery::is_wpf_target_window(hwnd) {
             drop(_noact);
             let text2 = text.clone();
             let r = tokio::task::spawn_blocking(move || crate::input::inject_text_cloaked(hwnd, &text2)).await;
@@ -3091,7 +3040,7 @@ impl Tool for PressKeyTool {
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
-                    "dispatch": crate::input::dispatch::dispatch_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -3100,7 +3049,7 @@ impl Tool for PressKeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
         let key = match args.require_str("key") { Ok(v) => v, Err(e) => return e };
@@ -3126,7 +3075,7 @@ impl Tool for PressKeyTool {
                 window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
         // Swift requires window_id when element_index is supplied — ports the
         // same validation.
         if elem_idx.is_some() && hwnd_opt.is_none() {
@@ -3151,8 +3100,8 @@ impl Tool for PressKeyTool {
         // Keystroke variant by design. KeyCombo (modifiers) on Chromium IS
         // dropped, so check that when modifiers are present.
         let event_kind = if mods.is_empty() { EventKind::Keystroke } else { EventKind::KeyCombo };
-        if dispatch == DispatchMode::Background
-            && crate::input::dispatch::would_be_silently_dropped(hwnd, event_kind)
+        if dispatch == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             // Universal background keyboard actuator: cloaked focus + SendInput,
             // so TranslateAccelerator-based shortcuts (VCL/classic Win32) and
@@ -3174,7 +3123,7 @@ impl Tool for PressKeyTool {
             };
         }
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
-        if dispatch == DispatchMode::Foreground {
+        if dispatch == DeliveryMode::Foreground {
             let send_result = tokio::task::spawn_blocking(move || {
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
                 crate::input::send_key_synthesized(hwnd, &key, &m)
@@ -3252,7 +3201,7 @@ impl Tool for HotkeyTool {
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
                     "window_id":{"type":"integer","description":"Explicit HWND when the pid owns multiple windows."},
-                    "dispatch": crate::input::dispatch::dispatch_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -3261,11 +3210,11 @@ impl Tool for HotkeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
 
         // Parse keys array (Swift's only path).  Legacy key+modifiers shape
         // still accepted as a Rust-side convenience.
@@ -3398,8 +3347,8 @@ impl Tool for HotkeyTool {
         // dispatch:"background" — refuse if PostMessage of the key combo
         // would be silently dropped on this target (Chromium with modifiers).
         let event_kind = if has_modifiers { EventKind::KeyCombo } else { EventKind::Keystroke };
-        if dispatch == DispatchMode::Background
-            && crate::input::dispatch::would_be_silently_dropped(hwnd, event_kind)
+        if dispatch == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             // Universal background keyboard actuator (see press_key): cloaked
             // focus + SendInput so VCL/Chromium accelerators fire without a
@@ -3418,15 +3367,14 @@ impl Tool for HotkeyTool {
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        // dispatch:"foreground" — explicit SendInput swap (the path that
-        // unblocks TranslateAccelerator-style apps). Auto mode preserves the
-        // historical "Chromium → PostMessage, non-Chromium-with-modifiers →
-        // SendInput" heuristic.
-        let is_chromium = crate::input::is_chromium_target_window(hwnd);
+        // delivery_mode:"foreground" — explicit SendInput swap (the path that
+        // unblocks TranslateAccelerator-style apps). A Background call that
+        // reaches here means the key combo is NOT silently dropped on this
+        // target (the drop-check above returned early otherwise), so it stays
+        // on PostMessage and the no-foreground contract holds.
         let use_send_input = match dispatch {
-            DispatchMode::Foreground => true,
-            DispatchMode::Background => false,
-            DispatchMode::Auto => has_modifiers && !is_chromium,
+            DeliveryMode::Foreground => true,
+            DeliveryMode::Background => false,
         };
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
@@ -3531,8 +3479,8 @@ impl Tool for SetValueTool {
         // the target makes that a no-op while the value is still set, so a
         // background SetValue can't steal the user's foreground. Held across the
         // whole write. (No-op for dispatch:"foreground".)
-        let _noact = if crate::input::dispatch::DispatchMode::from_args(&args)
-            != crate::input::dispatch::DispatchMode::Foreground
+        let _noact = if crate::input::delivery::DeliveryMode::from_args(&args)
+            != crate::input::delivery::DeliveryMode::Foreground
         {
             Some(crate::input::NoActivateGuard::arm(windows::Win32::Foundation::HWND(hwnd as *mut _)))
         } else { None };
@@ -3654,7 +3602,7 @@ impl Tool for ScrollTool {
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
-                    "dispatch": crate::input::dispatch::dispatch_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: false, open_world: true,
@@ -3662,11 +3610,7 @@ impl Tool for ScrollTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        // `background_unavailable_error` was dropped from this import when
-        // the ScrollTool background-rejection branch swapped to a
-        // scroll-specific structured error (see commit 9e30d2cb). The
-        // dispatch enums are still in use just below.
-        use crate::input::dispatch::{DispatchMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         use cua_driver_core::tool_args::ArgsExt;
         // `direction` is required in both the pid path and the window-less
         // desktop path, so resolve it before the pid check.
@@ -3732,7 +3676,7 @@ impl Tool for ScrollTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
         let by = args.str_or("by", "line");
         let direction_display = direction.clone();
         let by_display = by.clone();
@@ -3776,50 +3720,63 @@ impl Tool for ScrollTool {
             }
         };
 
-        // dispatch:"background" — WM_VSCROLL/HSCROLL is silently dropped by
-        // Chromium and may be by GTK. Don't use the generic
-        // `background_unavailable_error` helper here: its standard
-        // remediation suggests retrying with `dispatch:"foreground"`, but
-        // scroll's foreground path is unimplemented (see the explicit
-        // foreground rejection below), so the advertised recovery would
-        // dead-end at another error. Surface a scroll-specific structured
-        // error that points at `bring_to_front` + `dispatch:"auto"` (the
-        // PostMessage path against an already-foreground window works for
-        // most non-Chromium targets) as the actual viable recovery.
-        if dispatch == DispatchMode::Background
-            && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseScroll)
+        // delivery_mode:"background" — WM_VSCROLL/HSCROLL is silently dropped by
+        // Chromium and may be by GTK. Surface the standard structured
+        // background_unavailable error: its remediation (bring_to_front +
+        // delivery_mode:"foreground") is now a real recovery because scroll's
+        // foreground path is implemented below (SendInput wheel reaches the
+        // Chromium/GTK targets PostMessage can't).
+        if dispatch == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseScroll)
         {
-            let class = crate::input::dispatch::read_class_name(hwnd);
-            return ToolResult::error(format!(
-                "Background scroll dispatch is not available for target window class \
-                 '{class}' on this event kind (mouse_scroll). The Chromium / GTK input \
-                 stack silently drops PostMessage WM_VSCROLL/HSCROLL events. \
-                 dispatch:\"foreground\" is also unimplemented for scroll — there is no \
-                 SendInput-based wheel-synthesis helper yet. Workaround: call \
-                 bring_to_front(pid, window_id) to make the target frontmost, then \
-                 retry with dispatch:\"auto\" — PostMessage scroll against an already-\
-                 foreground window works for most non-Chromium targets."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "scroll_unavailable",
-                "target_class": class,
-                "event_kind": "mouse_scroll",
-                "suggestion":
-                    "bring_to_front + dispatch:\"auto\". dispatch:\"foreground\" is \
-                     NOT a valid recovery for scroll — that path returns an explicit \
-                     not-implemented error.",
-            }));
+            return background_unavailable_error(hwnd, EventKind::MouseScroll);
         }
-        // dispatch:"foreground" — TODO: route through SendInput MOUSEEVENTF_WHEEL
-        // with brief SetForegroundWindow swap. No helper yet.
-        if dispatch == DispatchMode::Foreground {
-            return ToolResult::error(
-                "dispatch:\"foreground\" is not yet implemented for the scroll tool. \
-                 Use bring_to_front to activate the target, then retry with \
-                 dispatch:\"auto\" (PostMessage scroll works against an already-\
-                 foreground window for most non-Chromium targets). TODO: add a \
-                 send_wheel_synthesized helper.".to_string(),
-            );
+        // delivery_mode:"foreground" — SendInput MOUSEEVENTF_WHEEL at the target
+        // window's screen center (send_wheel_synthesized). The wheel routes to
+        // the window under the cursor — queue-origin input Chromium/GTK accept —
+        // so it lands where PostMessage WM_*SCROLL is dropped. Mirrors the
+        // desktop-scope wheel branch above; `by` (line/page) folds into the tick
+        // count (page ≈ 3 detents).
+        if dispatch == DeliveryMode::Foreground {
+            let (horizontal, sign) = match direction.as_str() {
+                "up"    => (false,  1),
+                "down"  => (false, -1),
+                "right" => (true,   1),
+                "left"  => (true,  -1),
+                other   => return ToolResult::error(format!(
+                    "scroll: unknown direction \"{other}\" — expected up, down, left, right."
+                )),
+            };
+            let per: i32 = if by == "page" { 3 } else { 1 };
+            let ticks = sign * (amount as i32) * per;
+            // Target the window's screen center so the wheel lands on it.
+            let center = tokio::task::spawn_blocking(move || {
+                crate::win32::list_windows(Some(pid))
+                    .into_iter()
+                    .find(|w| w.hwnd == hwnd)
+                    .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
+            }).await.ok().flatten();
+            let (cx, cy) = match center {
+                Some(c) => c,
+                None => return ToolResult::error(format!(
+                    "scroll: could not resolve on-screen bounds for window {hwnd:#x} \
+                     (pid {pid}) to target the wheel. The window may be minimized or \
+                     off-screen — call bring_to_front first."
+                )),
+            };
+            let dir_disp = direction.clone();
+            let tick_disp = ticks.abs();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::input::send_wheel_synthesized(cx, cy, ticks, horizontal)
+            }).await;
+            return match result {
+                Ok(Ok(())) => ToolResult::text(format!(
+                    "✅ Scrolled {dir_disp} via SendInput wheel ({tick_disp} tick(s)) at \
+                     screen ({cx},{cy}) (delivery_mode:foreground)."
+                )),
+                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            };
         }
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -4024,7 +3981,7 @@ async fn winui3_background_gesture(
     button: &str,
 ) -> Option<ToolResult> {
     let is_w = tokio::task::spawn_blocking(move || {
-        crate::input::dispatch::is_winui3_target_window(hwnd)
+        crate::input::delivery::is_winui3_target_window(hwnd)
     })
     .await
     .unwrap_or(false);
@@ -4048,9 +4005,9 @@ async fn winui3_background_gesture(
             }
         }
     }
-    Some(crate::input::dispatch::background_unavailable_error(
+    Some(crate::input::delivery::background_unavailable_error(
         hwnd,
-        crate::input::dispatch::EventKind::MouseClick,
+        crate::input::delivery::EventKind::MouseClick,
     ))
 }
 
@@ -4093,13 +4050,13 @@ impl Tool for DoubleClickTool {
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the gesture. Accepted for parity; currently no-op on Windows."},
                 "from_zoom":{"type":"boolean","description":"After a zoom call, pass true to translate zoom-image coords back to window space."},
-                "dispatch": crate::input::dispatch::dispatch_schema()
+                "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -4130,7 +4087,7 @@ impl Tool for DoubleClickTool {
         };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
         let cursor_key = resolve_cursor_key(&args);
         // Swift validates "both x and y or neither" and "no element_index without window_id".
         let has_xy        = x.is_some() && y.is_some();
@@ -4185,7 +4142,7 @@ impl Tool for DoubleClickTool {
             // → last_action=double_click, held non-activatable so no foreground
             // swap. If the element has no InvokePattern, a background double-
             // click isn't expressible → structured error.
-            if dispatch == DispatchMode::Background {
+            if dispatch == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), 2, "left").await {
                     return r;
                 }
@@ -4195,8 +4152,8 @@ impl Tool for DoubleClickTool {
             // actuator (system input queue, NO foreground swap), exactly like
             // ClickTool, instead of refusing. Only error if injection can't
             // express this click (e.g. right/middle on such a target).
-            if dispatch == DispatchMode::Background
-                && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+            if dispatch == DeliveryMode::Background
+                && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
                     crate::input::inject_click_screen(hwnd, cx, cy, 2, "left")
@@ -4210,7 +4167,7 @@ impl Tool for DoubleClickTool {
                 };
             }
             // dispatch:"foreground" — route through SendInput at the cached coords.
-            if dispatch == DispatchMode::Foreground {
+            if dispatch == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4265,15 +4222,15 @@ impl Tool for DoubleClickTool {
             // background double-click on WinUI3 only lands via UIA Invoke on a
             // cached element, which the pixel path doesn't have → structured
             // error (caller retries with dispatch:foreground or uses element_index).
-            if dispatch == DispatchMode::Background {
+            if dispatch == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 2, "left").await {
                     return r;
                 }
             }
             // dispatch:"background" (default): inject via the coordinate actuator
             // (no foreground swap) for targets that drop posted clicks (#1984).
-            if dispatch == DispatchMode::Background
-                && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+            if dispatch == DeliveryMode::Background
+                && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
                     crate::input::inject_click_screen(hwnd, sx_i, sy_i, 2, "left")
@@ -4287,7 +4244,7 @@ impl Tool for DoubleClickTool {
                 };
             }
             // dispatch:"foreground" — SendInput at screen coords with FG swap.
-            if dispatch == DispatchMode::Foreground {
+            if dispatch == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4364,13 +4321,13 @@ impl Tool for RightClickTool {
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the right-click. Accepted for parity; currently no-op on Windows."},
                 "from_zoom":{"type":"boolean","description":"After a zoom call, pass true to translate zoom-image coords back to window space."},
-                "dispatch": crate::input::dispatch::dispatch_schema()
+                "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::dispatch::{DispatchMode, EventKind, background_unavailable_error};
+        use crate::input::delivery::{DeliveryMode, EventKind, background_unavailable_error};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
@@ -4401,7 +4358,7 @@ impl Tool for RightClickTool {
         };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
         let cursor_key = resolve_cursor_key(&args);
         // Port Swift's full validation set.
         let has_xy     = x.is_some() && y.is_some();
@@ -4453,7 +4410,7 @@ impl Tool for RightClickTool {
             // island ignores posted WM_RBUTTON (measured: RightTapped never
             // fired), and the pen-barrel injector click-activates the frame.
             // Return the structured error (retry with dispatch:foreground).
-            if dispatch == DispatchMode::Background {
+            if dispatch == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), 1, "right").await {
                     return r;
                 }
@@ -4461,8 +4418,8 @@ impl Tool for RightClickTool {
             // dispatch:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984); a right-click
             // injection that the actuator can't express falls back to the error.
-            if dispatch == DispatchMode::Background
-                && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+            if dispatch == DeliveryMode::Background
+                && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
                     crate::input::inject_click_screen(hwnd, cx, cy, 1, "right")
@@ -4475,7 +4432,7 @@ impl Tool for RightClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            if dispatch == DispatchMode::Foreground {
+            if dispatch == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4530,15 +4487,15 @@ impl Tool for RightClickTool {
             // dispatch:"background" on WinUI3: right-click can't land while
             // holding the contract (no UIA right-click, posted WM_RBUTTON
             // ignored, pen-barrel injector steals foreground) → structured error.
-            if dispatch == DispatchMode::Background {
+            if dispatch == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 1, "right").await {
                     return r;
                 }
             }
             // dispatch:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984).
-            if dispatch == DispatchMode::Background
-                && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+            if dispatch == DeliveryMode::Background
+                && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
                     crate::input::inject_click_screen(hwnd, sx_i, sy_i, 1, "right")
@@ -4551,7 +4508,7 @@ impl Tool for RightClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            if dispatch == DispatchMode::Foreground {
+            if dispatch == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4617,20 +4574,20 @@ impl Tool for DragTool {
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys: cmd/shift/option/ctrl (held via keyboard)."},
                 "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: left."},
                 "from_zoom":{"type":"boolean","description":"When true, coordinates are in the last zoom image for this pid."},
-                "dispatch": crate::input::dispatch::dispatch_schema()
+                "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
     }
     async fn invoke(&self, args: Value) -> ToolResult {
-        use crate::input::dispatch::{DispatchMode, EventKind};
+        use crate::input::delivery::{DeliveryMode, EventKind};
         // Swift error wording 1:1.
         let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(p) => p,
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        let dispatch = DispatchMode::from_args(&args);
+        let dispatch = DeliveryMode::from_args(&args);
 
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
@@ -4694,7 +4651,7 @@ impl Tool for DragTool {
         // the structured error so the caller retries with dispatch:foreground
         // (a WinUI3 Slider can also be set with the set_value tool, which uses
         // UIA RangeValuePattern and holds the contract).
-        if dispatch == DispatchMode::Background {
+        if dispatch == DeliveryMode::Background {
             if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 1, &button).await {
                 return r;
             }
@@ -4706,8 +4663,8 @@ impl Tool for DragTool {
         // synthetic-pen drag injection instead of refusing. No foreground swap,
         // no cursor move; the target is held non-activatable + cloaked for the
         // stroke (mirrors the click pen path).
-        if dispatch == DispatchMode::Background
-            && crate::input::dispatch::would_be_silently_dropped(hwnd, EventKind::MouseClick)
+        if dispatch == DeliveryMode::Background
+            && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
         {
             let target = hwnd;
             let btn = button.clone();
@@ -4744,7 +4701,7 @@ impl Tool for DragTool {
         // state, so those targets see a button-up world during the drag
         // and never start tracking). Subject to the same UIAccess
         // foreground-lock constraint as send_click_synthesized.
-        if dispatch == DispatchMode::Foreground {
+        if dispatch == DeliveryMode::Foreground {
             let btn_fg = button.clone();
             let prev_fg_addr = unsafe {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
@@ -6097,10 +6054,10 @@ impl Tool for BringToFrontTool {
                 stack silently drops PostMessage (Chromium DOM content, GTK button widgets) \
                 and the agent wants to pay the foreground cost once instead of per call. \n\n\
                 Pairs with the `dispatch` field on input tools:\n\
-                  1. Try `click(..., dispatch:\"background\")`. If it returns \
+                  1. Try `click(..., delivery_mode:\"background\")`. If it returns \
                      `background_unavailable`, the target needs foreground delivery.\n\
                   2. Call `bring_to_front(pid)` so the target is foreground.\n\
-                  3. Subsequent input calls with `dispatch:\"foreground\"` deliver via \
+                  3. Subsequent input calls with `delivery_mode:\"foreground\"` deliver via \
                      SendInput WITHOUT visible flashing -- the SetForegroundWindow swap \
                      inside SendInput is a no-op since target is already foreground.\n\n\
                 Implementation uses the `AttachThreadInput` trick to bypass Windows' \

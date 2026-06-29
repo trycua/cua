@@ -340,7 +340,7 @@ fn harness_lo_vcl_modal_input_roundtrip_works() {
 
     let open_resp = driver.call("hotkey", serde_json::json!({
         "pid": pid as i64, "window_id": wid,
-        "keys": ["ctrl", "h"], "dispatch": "foreground"
+        "keys": ["ctrl", "h"], "delivery_mode": "foreground"
     }));
     let open_text = open_resp.text();
     assert!(open_text.starts_with("✅"),
@@ -394,7 +394,7 @@ fn harness_lo_vcl_modal_input_roundtrip_works() {
     // Foreground Escape should close the dialog.
     let esc_resp = driver.call("press_key", serde_json::json!({
         "pid": pid as i64, "window_id": dialog_wid,
-        "key": "escape", "dispatch": "foreground"
+        "key": "escape", "delivery_mode": "foreground"
     }));
     let esc_text = esc_resp.text();
     assert!(esc_text.starts_with("✅"),
@@ -506,7 +506,7 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
 
     let _ = driver.call("hotkey", serde_json::json!({
         "pid": pid as i64, "window_id": wid,
-        "keys": ["ctrl", "a"], "dispatch": "foreground"
+        "keys": ["ctrl", "a"], "delivery_mode": "foreground"
     }));
     std::thread::sleep(Duration::from_millis(400));
 

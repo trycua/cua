@@ -682,7 +682,7 @@ pub fn inject_drag_screen(
     // (Chromium/GTK) are pointer-aware and process injection in the background,
     // so we hold them non-activatable and only raise them into the topmost band
     // to win the hit-test when occluded — no focus steal.
-    let needs_active = crate::input::dispatch::is_wpf_target_window(target);
+    let needs_active = crate::input::delivery::is_wpf_target_window(target);
     if needs_active {
         // Break the no-raise contract for WPF: fully raise+activate it for the
         // brief moment of the stroke so its Wisp input stack processes the

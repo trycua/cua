@@ -47,14 +47,14 @@ pub fn class_matches_terminal(class_name: &str) -> bool {
 }
 
 /// Returns `true` if the HWND at `hwnd` belongs to a known terminal
-/// host. Uses the existing `input::dispatch::read_class_name` helper
+/// host. Uses the existing `input::delivery::read_class_name` helper
 /// (cheap: one `GetClassNameW` call into a 256-WCHAR buffer).
 #[cfg(target_os = "windows")]
 pub fn is_terminal_hwnd(hwnd: u64) -> bool {
     if hwnd == 0 {
         return false;
     }
-    let class = crate::input::dispatch::read_class_name(hwnd);
+    let class = crate::input::delivery::read_class_name(hwnd);
     class_matches_terminal(&class)
 }
 

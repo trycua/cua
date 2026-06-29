@@ -273,7 +273,7 @@ function DoAct($t,$el){
  $wl= if($el){Win0 $el}else{$null}
  switch($t){
   'click'  { if($desktop){D "click" ('{{"x":{0},"y":{1},"session":"d1"}}' -f $c[0],$c[1])|Out-Null}
-             elseif($vision){$disp=if($m.fg){'foreground'}else{'background'};D "click" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"dispatch":"{4}","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1],$disp)|Out-Null}
+             elseif($vision){$disp=if($m.fg){'foreground'}else{'background'};D "click" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"delivery_mode":"{4}","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1],$disp)|Out-Null}
              else{D "click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }
   'double' { if($vision){D "double_click" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}
              else{D "double_click" ('{{"pid":{0},"window_id":{1},"element_index":{2},"session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null} }
@@ -291,7 +291,7 @@ function DoAct($t,$el){
                D "set_value" ('{{"pid":{0},"window_id":{1},"element_index":{2},"value":"48","session":"d1"}}' -f $wp,$wd,$el.element_index)|Out-Null
              } else {
                $fx=[int]($el.frame.x-$w.bounds.x+8);$fy=[int]($el.frame.y-$w.bounds.y+$el.frame.h/2);$tx=$fx+150
-               D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"dispatch":"foreground","session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy)|Out-Null
+               D "drag" ('{{"pid":{0},"from_x":{1},"from_y":{2},"to_x":{3},"to_y":{4},"delivery_mode":"foreground","session":"d1"}}' -f $wp,$fx,$fy,$tx,$fy)|Out-Null
              } }
   'scroll' { if($desktop){D "scroll" ('{{"x":{0},"y":{1},"direction":"down","session":"d1"}}' -f $c[0],$c[1])|Out-Null}
              elseif($vision){D "scroll" ('{{"pid":{0},"window_id":{1},"x":{2},"y":{3},"direction":"down","session":"d1"}}' -f $wp,$wd,$wl[0],$wl[1])|Out-Null}

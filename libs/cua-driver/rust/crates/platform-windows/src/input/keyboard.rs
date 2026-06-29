@@ -22,7 +22,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
     KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-    KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
+    KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, SetForegroundWindow,
@@ -388,7 +388,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
                  swap, SendInput would land on the wrong window. Fix: install \
                  / spawn the cua-driver-uia worker (UIAccess-manifested PE) \
                  and route hotkey calls through it. Until then, the calling \
-                 app must already be foreground for dispatch:\"foreground\" \
+                 app must already be foreground for delivery_mode:\"foreground\" \
                  to be safe.",
                 target.0, actual_fg.0
             );
@@ -419,6 +419,101 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
         }
     }
     Ok(())
+}
+
+/// Foreground-delivery text entry: the `delivery_mode:"foreground"` rung for
+/// `type_text`. Symmetric with [`send_key_synthesized`] — briefly fronts the
+/// target, types `text` as SendInput Unicode (`KEYEVENTF_UNICODE`, so every
+/// codepoint lands regardless of keyboard layout), then restores the prior
+/// foreground. Unlike [`crate::input::inject_text_cloaked`] (the background
+/// cloaked-focus fallback) this does NOT try to hide the swap and it does NOT
+/// silently fall back to PostMessage: if the foreground swap is rejected
+/// (daemon not at UIAccess integrity) it bails with the same diagnostic
+/// `send_key_synthesized` returns, so the caller gets an honest error instead
+/// of a false success. Required for VCL/LibreOffice document grids and other
+/// targets where PostMessage WM_CHAR is silently dropped.
+pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
+    let target = HWND(hwnd as *mut _);
+    if target.0.is_null() {
+        bail!("invalid target hwnd");
+    }
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        bail!(msg);
+    }
+    // Build the Unicode key-event sequence: each UTF-16 code unit as a
+    // down/up pair with KEYEVENTF_UNICODE (wVk=0, wScan=code unit).
+    let mut events: Vec<INPUT> = Vec::with_capacity(text.len() * 2);
+    for unit in text.encode_utf16() {
+        events.push(unicode_key_input(unit, false));
+        events.push(unicode_key_input(unit, true));
+    }
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    unsafe {
+        // Save & set foreground so SendInput lands on `target`. Same verify-
+        // before-send guard as send_key_synthesized: a foreground-lock no-op
+        // would otherwise spray the text into whatever window actually held
+        // focus (typically the terminal hosting this daemon).
+        let prev_fg = GetForegroundWindow();
+        let _ = SetForegroundWindow(target);
+        sleep(Duration::from_millis(8));
+        let actual_fg = GetForegroundWindow();
+        if actual_fg != target {
+            bail!(
+                "Foreground swap to target HWND {:?} was rejected by Windows \
+                 (actual foreground is HWND {:?}). This daemon is not at \
+                 UIAccess integrity, so SetForegroundWindow is subject to the \
+                 foreground-lock and the swap silently fails. Without the swap, \
+                 SendInput would land on the wrong window. Fix: install / spawn \
+                 the cua-driver-uia worker (UIAccess-manifested PE) and route \
+                 type_text through it. Until then, the calling app must already \
+                 be foreground for delivery_mode:\"foreground\" to be safe.",
+                target.0, actual_fg.0
+            );
+        }
+
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != events.len() {
+            let _ = SetForegroundWindow(prev_fg);
+            bail!(
+                "SendInput inserted only {sent} of {} key events. Likely cause: \
+                 the daemon is not at UIAccess integrity, so SetForegroundWindow \
+                 was rejected and the events landed on the wrong window.",
+                events.len()
+            );
+        }
+
+        // Settle so the target processes the text before we yield focus back.
+        sleep(Duration::from_millis(40));
+        if !prev_fg.0.is_null() && prev_fg != target {
+            let _ = SetForegroundWindow(prev_fg);
+        }
+    }
+    Ok(())
+}
+
+/// Build a single Unicode keyboard INPUT struct for one UTF-16 code unit,
+/// either down (`up = false`) or up (`up = true`). Used by
+/// [`send_text_synthesized`].
+fn unicode_key_input(unit: u16, up: bool) -> INPUT {
+    let mut flags = KEYEVENTF_UNICODE;
+    if up {
+        flags |= KEYEVENTF_KEYUP;
+    }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: unit,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 /// Build a single keyboard INPUT struct for `vk`, either down (`up = false`)

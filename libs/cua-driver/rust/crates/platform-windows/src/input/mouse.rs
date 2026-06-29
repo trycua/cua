@@ -467,7 +467,7 @@ pub fn send_click_synthesized(
 }
 
 /// Press-hold-move-release drag via `SendInput`. Companion to
-/// [`send_click_synthesized`] for the `drag` tool's `dispatch:"foreground"`
+/// [`send_click_synthesized`] for the `drag` tool's `delivery_mode:"foreground"`
 /// path.
 ///
 /// Why a SendInput drag is needed at all: the PostMessage drag path posts

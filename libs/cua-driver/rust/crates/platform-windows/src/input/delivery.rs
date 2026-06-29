@@ -1,28 +1,34 @@
-//! Shared dispatch-mode logic for cua-driver-rs Windows input tools.
+//! Shared delivery-mode logic for cua-driver-rs Windows input tools.
 //!
-//! Each input tool accepts an optional `dispatch` field with three modes:
+//! Mirrors the macOS `DeliveryMode` model (see platform-macos
+//! `tools::DeliveryMode`): each input tool accepts an optional
+//! `delivery_mode` field with exactly two modes — the agent-selected rung
+//! of the best-effort-background ladder, passed per call (never a stored
+//! setting):
 //!
-//! - `background` (DEFAULT) — PostMessage / UIA path only. If
+//! - `background` (DEFAULT) — PostMessage / UIA path only, never fronts. If
 //!   `would_be_silently_dropped(target, event_kind)` returns true, the tool
 //!   returns a structured `background_unavailable` error so the caller can
-//!   `bring_to_front` then retry with `dispatch:"foreground"`. This is the
-//!   default because cua-driver's value proposition is that input never
-//!   steals foreground — making that the silent guarantee, not a hidden
-//!   trade-off, is worth a breaking change to existing callers that
-//!   previously got auto-fallback to SendInput.
+//!   `bring_to_front` then retry with `delivery_mode:"foreground"`. This is
+//!   the default because cua-driver's value proposition is that input never
+//!   steals foreground — surfacing an honest error beats silently fronting.
 //!
 //! - `foreground` — SendInput with a brief `SetForegroundWindow(target)`
 //!   swap, restoring the prior foreground after the events flush. Brief
-//!   flash unless the target was already foreground. Required to drive
-//!   Chromium-content or GTK-button widget targets reliably.
+//!   flash unless the target was already foreground. The agent's explicit
+//!   last resort, and the only rung that reaches Chromium-content / GTK-
+//!   button / VCL-accelerator targets reliably.
 //!
-//! - `auto` — current heuristics: each tool's existing PostMessage /
-//!   SendInput routing is preserved bit-for-bit. Opt-in for callers that
-//!   want the historical silent-fallback behavior. Not the default.
+//! The legacy Windows-only `auto` mode (silent SendInput fallback) was
+//! removed in the macOS-alignment pass: it could front without the caller
+//! opting in, breaking the no-foreground contract macOS guarantees. Any
+//! unrecognised value now resolves to `background` (see [`DeliveryMode::parse`]).
 //!
 //! The matrix of "which (window class, event kind) pairs are silently
-//! dropped by PostMessage" lives here as `would_be_silently_dropped`.
-//! Tools call into this helper instead of inlining the class checks.
+//! dropped by PostMessage" lives here as `would_be_silently_dropped` — a
+//! Windows-specific safeguard with no macOS analogue (CGEvent posting does
+//! not have the same per-framework silent-drop problem). Tools call into
+//! this helper instead of inlining the class checks.
 
 use serde_json::Value;
 
@@ -57,52 +63,63 @@ impl EventKind {
     }
 }
 
-/// Client-controlled dispatch policy.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DispatchMode {
-    /// Current heuristics. Each tool keeps its existing routing.
-    Auto,
-    /// PostMessage / UIA only. Error if dispatch would be silently dropped.
+/// Input delivery modality — the agent-selected rung of the best-effort-
+/// background ladder, passed per call (never a stored/config setting).
+/// Mirrors macOS `tools::DeliveryMode`.
+///
+/// - `Background` (default): post synthetic input to the target without
+///   fronting; on a known silent-drop (class, event) pair the tool returns
+///   a structured `background_unavailable` error instead of fronting.
+/// - `Foreground`: briefly front the target window, act via SendInput, then
+///   restore the prior foreground. The agent's explicit last resort.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum DeliveryMode {
+    /// PostMessage / UIA only. Error if delivery would be silently dropped.
+    #[default]
     Background,
     /// SendInput with brief foreground swap.
     Foreground,
 }
 
-impl DispatchMode {
-    /// Parse from a tool's `dispatch` JSON arg.
-    ///
-    /// Missing / unknown values resolve to `Background` — cua-driver's
-    /// default is now strict no-foreground. Callers that want the
-    /// historical silent-fallback heuristics must explicitly pass
-    /// `dispatch:"auto"`.
-    pub fn from_args(args: &Value) -> Self {
-        match args.get("dispatch").and_then(|v| v.as_str()) {
-            Some("auto")       => Self::Auto,
-            Some("foreground") => Self::Foreground,
-            _                  => Self::Background,
+impl DeliveryMode {
+    /// Parse the per-call `delivery_mode` argument. Anything other than an
+    /// explicit case-insensitive `"foreground"` resolves to `Background` —
+    /// the correct default, so an omitted/garbage value (or the removed
+    /// legacy `"auto"`) never silently fronts. Matches macOS
+    /// `DeliveryMode::parse`.
+    pub fn parse(arg: Option<&str>) -> Self {
+        match arg {
+            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
+            _ => Self::Background,
         }
     }
+
+    /// Parse from a tool's JSON args, reading the `delivery_mode` field.
+    pub fn from_args(args: &Value) -> Self {
+        Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
+    }
+
+    pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
 }
 
-/// JSON-schema fragment for the `dispatch` field. Include this in every
-/// input tool's `input_schema.properties.dispatch`.
-pub fn dispatch_schema() -> Value {
+/// JSON-schema fragment for the `delivery_mode` field. Include this in every
+/// input tool's `input_schema.properties.delivery_mode`. Two modes, matching
+/// the macOS surface.
+pub fn delivery_mode_schema() -> Value {
     serde_json::json!({
         "type": "string",
-        "enum": ["background", "foreground", "auto"],
+        "enum": ["background", "foreground"],
         "default": "background",
         "description":
-            "Dispatch mode. 'background' (default) never swaps foreground: it \
-             routes through UIA Invoke / PostMessage, and for targets that \
-             silently drop posted clicks (Chromium/Electron content, GTK \
-             buttons) it transparently falls back to coordinate-based pointer \
-             injection — so a caller can just target the app and click without \
-             knowing its internals, and the window is never raised. (A \
-             background_unavailable error only surfaces for inputs injection \
-             can't express, e.g. a right/middle click on such a target.) \
-             'foreground' explicitly accepts a brief SetForegroundWindow swap \
-             (SendInput path). 'auto' uses cua-driver's historical heuristics \
-             (silent SendInput fallback on known-problematic targets)."
+            "Input delivery mode. 'background' (default) never swaps foreground: \
+             it routes through UIA Invoke / PostMessage and the window is never \
+             raised. For targets whose input stack silently drops posted events \
+             (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) \
+             the tool returns a structured background_unavailable error rather than \
+             fronting. 'foreground' is the explicit escalation: a brief \
+             SetForegroundWindow swap + SendInput, restoring the prior foreground \
+             afterward (call bring_to_front first to avoid the flash). Matches the \
+             macOS delivery_mode surface."
     })
 }
 
@@ -258,10 +275,10 @@ pub fn background_unavailable_error(
 ) -> cua_driver_core::protocol::ToolResult {
     let class = read_class_name(hwnd);
     let text = format!(
-        "Background dispatch is not available for target window class \
+        "Background delivery is not available for target window class \
          '{class}' on this event kind ({}). Either call bring_to_front \
-         then retry with dispatch:\"foreground\", or accept the foreground \
-         swap directly by setting dispatch:\"foreground\".",
+         then retry with delivery_mode:\"foreground\", or accept the foreground \
+         swap directly by setting delivery_mode:\"foreground\".",
         kind.name()
     );
     cua_driver_core::protocol::ToolResult::error(text)
@@ -270,8 +287,8 @@ pub fn background_unavailable_error(
             "target_class": class,
             "event_kind": kind.name(),
             "suggestion":
-                "Either call bring_to_front then retry with dispatch:\"foreground\", \
-                 or accept the foreground swap by setting dispatch:\"foreground\" directly.",
+                "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
+                 or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
         }))
 }
 
@@ -280,27 +297,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dispatch_mode_parses_known_values() {
-        let j = |s: &str| serde_json::json!({"dispatch": s});
-        assert_eq!(DispatchMode::from_args(&j("auto")), DispatchMode::Auto);
-        assert_eq!(DispatchMode::from_args(&j("background")), DispatchMode::Background);
-        assert_eq!(DispatchMode::from_args(&j("foreground")), DispatchMode::Foreground);
+    fn delivery_mode_parses_known_values() {
+        let j = |s: &str| serde_json::json!({"delivery_mode": s});
+        assert_eq!(DeliveryMode::from_args(&j("background")), DeliveryMode::Background);
+        assert_eq!(DeliveryMode::from_args(&j("foreground")), DeliveryMode::Foreground);
+        // Case-insensitive, matching macOS DeliveryMode::parse.
+        assert_eq!(DeliveryMode::from_args(&j("Foreground")), DeliveryMode::Foreground);
     }
 
     #[test]
-    fn dispatch_mode_defaults_to_background() {
-        // Missing field, garbage value, null — all resolve to Background.
-        // This is the cua-driver no-foreground-by-default contract;
-        // breaking change to callers who used to rely on silent SendInput
-        // fallback against Chromium / GTK-button targets.
-        assert_eq!(DispatchMode::from_args(&serde_json::json!({})), DispatchMode::Background);
+    fn delivery_mode_defaults_to_background() {
+        // Missing field, garbage value, null, and the removed legacy "auto"
+        // all resolve to Background. This is the cua-driver no-foreground-by-
+        // default contract: an unrecognised value never silently fronts.
+        assert_eq!(DeliveryMode::from_args(&serde_json::json!({})), DeliveryMode::Background);
         assert_eq!(
-            DispatchMode::from_args(&serde_json::json!({"dispatch": "garbage"})),
-            DispatchMode::Background
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
+            DeliveryMode::Background
         );
         assert_eq!(
-            DispatchMode::from_args(&serde_json::json!({"dispatch": null})),
-            DispatchMode::Background
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})),
+            DeliveryMode::Background
+        );
+        assert_eq!(
+            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
+            DeliveryMode::Background
         );
     }
 }

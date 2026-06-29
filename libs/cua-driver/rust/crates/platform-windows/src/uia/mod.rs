@@ -350,7 +350,7 @@ unsafe fn walk_tree_unsafe(
                  would normally find them is known to hang on SAL Subtree \
                  BuildUpdatedCache. Use one of: \
                  (a) `screenshot(pid, window_id)` + pixel `click(x, y)`; \
-                 (b) `press_key` with `dispatch:\"foreground\"` (Esc / Enter / Y / N); \
+                 (b) `press_key` with `delivery_mode:\"foreground\"` (Esc / Enter / Y / N); \
                  (c) `get_window_state` with `capture_mode:\"vision\"`.)\n"
             );
             return UiaTreeResult { tree_markdown: stub, nodes: Vec::new() };

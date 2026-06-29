@@ -1307,7 +1307,8 @@ impl Tool for TypeTextTool {
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
                     "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity). REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -1522,10 +1523,22 @@ impl Tool for TypeTextTool {
         // structured response stays honest. The closure can't borrow
         // a local mutably across `spawn_blocking`, so funnel the
         // decision through the success type instead.
+        // delivery_mode: background (default) = focus-free AT-SPI / XSendEvent;
+        // foreground = activate the window (EWMH), then synthesize REAL key
+        // events to it via XTest — the escalation when background didn't land
+        // (e.g. a GTK dialog whose widget ignores synthetic XSendEvent keys).
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
                 return Ok("key_events");
+            }
+            if delivery.is_foreground() {
+                // Activate target → XTest real keystrokes → restore prior active.
+                return crate::input::with_x11_foreground(xid, 80, || {
+                    crate::input::send_type_text_xtest(&text)?;
+                    Ok("key_events_fg")
+                });
             }
             // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
             // focused widget, so background XSendEvent typing doesn't land. Fill
@@ -1542,9 +1555,15 @@ impl Tool for TypeTextTool {
             crate::input::send_type_text(xid, &text)?;
             Ok("key_events")
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(path)) => ToolResult::text(format!("Typed {text_len} character(s) (via X11 fallback)."))
-                .with_structured(json!({ "path": path, "characters": text_len })),
+            // verified:false here — these keystroke/XSendEvent rungs aren't
+            // read-back-confirmed (the AT-SPI insert path above could be; P3
+            // adds the read-back verdict). Caller confirms via screenshot.
+            Ok(Ok(path)) => ToolResult::text(format!(
+                "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
+            ))
+            .with_structured(json!({ "path": path, "characters": text_len, "verified": false })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

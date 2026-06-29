@@ -2007,7 +2007,8 @@ impl Tool for DoubleClickTool {
                 "y":{"type":"number"},
                 "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                 "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
-                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
+                "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
@@ -2106,14 +2107,24 @@ impl Tool for DoubleClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 return crate::wayland::click(xid, xi, yi, 2, 1);
             }
+            if delivery.is_foreground() {
+                return crate::input::with_x11_foreground(xid, 80, || {
+                    x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
+                });
+            }
             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({x:.1}, {y:.1}).")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Double-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
+            ))
+            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -2145,7 +2156,8 @@ impl Tool for RightClickTool {
                 "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
                 "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                 "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys to hold."},
-                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+                "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
+                "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
         })
@@ -2244,14 +2256,24 @@ impl Tool for RightClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 return crate::wayland::click(xid, xi, yi, 1, 3);
             }
+            if delivery.is_foreground() {
+                return crate::input::with_x11_foreground(xid, 80, || {
+                    x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
+                });
+            }
             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Right-clicked at ({x:.1}, {y:.1}).")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Right-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
+            ))
+            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

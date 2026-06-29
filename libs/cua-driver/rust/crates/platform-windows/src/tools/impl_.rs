@@ -826,7 +826,7 @@ impl Tool for GetWindowStateTool {
                 // Surface the target's window class + an actionable hint
                 // instead of just "UIA provider unresponsive". The class
                 // points the caller at the right workaround (e.g. SALFRAME
-                // → screenshot + pixel coords + dispatch:"foreground"; UWP
+                // → screenshot + pixel coords + delivery_mode:"foreground"; UWP
                 // class → retry with capture_mode:"vision" to skip the
                 // UIA walk and just get a screenshot).
                 let class = crate::input::delivery::read_class_name(hwnd);
@@ -1375,7 +1375,7 @@ impl Tool for LaunchAppTool {
         // what an agent doing background work wants — the user's terminal
         // stays visually on top. UIA / PostMessage / set_value all keep
         // working against a minimized window; only screenshot and
-        // dispatch:"foreground" pay a cost.
+        // delivery_mode:"foreground" pay a cost.
         let n_show: i32 = if start_minimized {
             windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE.0
         } else {
@@ -2230,15 +2230,15 @@ impl Tool for ClickTool {
         }
         let button = if button_raw.is_empty() { "left".to_string() } else { button_raw };
         let count = args.u64_or("count", 1) as usize;
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
         // For every non-foreground click, mark the target window
         // non-activatable (WS_EX_NOACTIVATE) for the duration so a target that
         // self-activates in its UIA-Invoke / click handler (WPF
         // `UIElement.Focus()`, XAML, Tauri/WebView2) CANNOT steal the user's
         // foreground — the window still receives the click. Held for the whole
-        // invoke; a no-op for dispatch:"foreground" (which wants the swap) and
+        // invoke; a no-op for delivery_mode:"foreground" (which wants the swap) and
         // when no window_id was given.
-        let _noact = match (dispatch != DeliveryMode::Foreground, hwnd_opt) {
+        let _noact = match (delivery != DeliveryMode::Foreground, hwnd_opt) {
             (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(h as *mut _),
             )),
@@ -2272,7 +2272,7 @@ impl Tool for ClickTool {
             //     Opens the picker (e.g. LO Writer Font Color → SALTMPSUBFRAME).
             //   - default action / `"invoke"` → SendInput at center
             //     (matches `accDoDefaultAction` semantics for VCL controls
-            //     and works through dispatch:"foreground"). We DO NOT call
+            //     and works through delivery_mode:"foreground"). We DO NOT call
             //     `accDoDefaultAction` here because LO's MSAA impl applies
             //     the change asynchronously and returns S_OK either way,
             //     so the visible behavior is the same as a center click.
@@ -2363,12 +2363,12 @@ impl Tool for ClickTool {
             });
             let btn = button.clone();
 
-            // dispatch:"foreground" — skip UIA Invoke and use SendInput at the
+            // delivery_mode:"foreground" — skip UIA Invoke and use SendInput at the
             // cached element center. The caller explicitly chose foreground
             // delivery; UIA Invoke would be background-safe (which they
             // rejected) and might fail on elements that don't support
             // InvokePattern anyway.
-            if dispatch == DeliveryMode::Foreground {
+            if delivery == DeliveryMode::Foreground {
                 // Foreground delivery is a real SendInput tap at (cx,cy); if the
                 // element is off-screen, scroll it into view and re-resolve so the
                 // tap doesn't land on the taskbar, else keep the clean failure.
@@ -2388,17 +2388,17 @@ impl Tool for ClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (dispatch:foreground)."
+                        "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            // dispatch:"background" on WinUI3 for double / right / middle: single
+            // delivery_mode:"background" on WinUI3 for double / right / middle: single
             // left falls through to the UIA Invoke path below (already drives
             // WinUI3). Double-left lands via a double UIA Invoke; right/middle
             // can't both land and hold the contract → structured error.
-            if dispatch == DeliveryMode::Background && (count > 1 || btn == "right" || btn == "middle") {
+            if delivery == DeliveryMode::Background && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), count, &btn).await {
                     return r;
                 }
@@ -2508,14 +2508,14 @@ impl Tool for ClickTool {
                     }
                 }
                 // PostMessage fallback (legacy Win32 + non-Invokable elements).
-                // dispatch:"background" on targets that silently drop PostMessage
+                // delivery_mode:"background" on targets that silently drop PostMessage
                 // clicks (Chromium content, GTK buttons): route through the
                 // universal coordinate-injection actuator (touch injection, no
                 // foreground swap, z-order preserved) so the caller never needs
                 // to know the target is Chromium/GTK and never sees a raise.
                 // Only the structured error remains as a last resort (e.g. a
                 // right-click, which has no clean touch mapping).
-                if dispatch == DeliveryMode::Background
+                if delivery == DeliveryMode::Background
                     && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
                 {
                     // Coordinate injection lands at (cx,cy); scroll the element
@@ -2598,11 +2598,11 @@ impl Tool for ClickTool {
             // right-click (UIA has no by-coord `ShowContextMenu`) and
             // multi-click (`Invoke()` is single-fire by definition)
             // skip directly to PostMessage.
-            // dispatch:"foreground" short-circuit — caller explicitly chose
+            // delivery_mode:"foreground" short-circuit — caller explicitly chose
             // foreground delivery. Skip the UIA hit-test (UIA Invoke is
             // background-safe and would deliver the click without the
             // foreground swap the caller asked for).
-            if dispatch == DeliveryMode::Foreground {
+            if delivery == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -2614,7 +2614,7 @@ impl Tool for ClickTool {
                     Ok(Ok(())) => {
                         let click_word = match count { 2 => "double-click", 3 => "triple-click", _ => "click" };
                         ToolResult::text(format!(
-                            "✅ Sent {click_word} via SendInput to pid {pid} at ({sx},{sy}) (dispatch:foreground)."
+                            "✅ Sent {click_word} via SendInput to pid {pid} at ({sx},{sy}) (delivery_mode:foreground)."
                         ))
                     }
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -2622,11 +2622,11 @@ impl Tool for ClickTool {
                 };
             }
 
-            // dispatch:"background" on WinUI3 for double / right / middle (pixel
+            // delivery_mode:"background" on WinUI3 for double / right / middle (pixel
             // path, no element_index → no cached element to UIA-Invoke): these
             // can't both land and hold the contract on WinUI3 (posted input is
             // ignored, the pen injector steals foreground) → structured error.
-            if dispatch == DeliveryMode::Background && (count > 1 || btn == "right" || btn == "middle") {
+            if delivery == DeliveryMode::Background && (count > 1 || btn == "right" || btn == "middle") {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, count, &btn).await {
                     return r;
                 }
@@ -2650,7 +2650,7 @@ impl Tool for ClickTool {
             // UIA hit-test didn't land. Decide between PostMessage / injection /
             // SendInput based on dispatch mode.
             //
-            // dispatch:"background" (the default) — never swap foreground. If the
+            // delivery_mode:"background" (the default) — never swap foreground. If the
             // target silently drops PostMessage mouse events (Chromium DOM
             // content, GTK button widgets), route through the universal
             // coordinate-injection actuator: touch injection lands in the system
@@ -2661,7 +2661,7 @@ impl Tool for ClickTool {
             // without knowing whether it's Chromium/GTK/etc. The structured
             // background_unavailable error only survives as a last resort for
             // inputs injection can't express (e.g. right/middle clicks).
-            if dispatch == DeliveryMode::Background
+            if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();
@@ -2803,7 +2803,7 @@ impl Tool for TypeTextTool {
                 window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
                 "window_id is required when element_index is used — the element_index cache \
@@ -2814,8 +2814,8 @@ impl Tool for TypeTextTool {
         // calls UIElement.Focus()→SetForegroundWindow; WS_EX_NOACTIVATE on the
         // target makes that a no-op while the value still gets set. Safe because
         // type_text never uses the SendInput foreground-swap path. No-op for
-        // dispatch:"foreground" and when no window_id was given.
-        let _noact = match (dispatch != DeliveryMode::Foreground, hwnd_opt) {
+        // delivery_mode:"foreground" and when no window_id was given.
+        let _noact = match (delivery != DeliveryMode::Foreground, hwnd_opt) {
             (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
                 windows::Win32::Foundation::HWND(h as *mut _),
             )),
@@ -2838,7 +2838,7 @@ impl Tool for TypeTextTool {
         // silently dropped (Chromium accepts WM_CHAR through its IME path),
         // but call the helper so the policy stays centralised in delivery.rs
         // and future targets can be added without touching this site.
-        if dispatch == DeliveryMode::Background
+        if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
         {
             return background_unavailable_error(hwnd, EventKind::TextInput);
@@ -2850,7 +2850,7 @@ impl Tool for TypeTextTool {
         // silently dropped. Honest by construction: if the foreground swap is
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
-        if dispatch == DeliveryMode::Foreground {
+        if delivery == DeliveryMode::Foreground {
             let text_fg = text.clone();
             let r = tokio::task::spawn_blocking(move || {
                 crate::input::send_text_synthesized(hwnd, &text_fg)
@@ -2992,21 +2992,100 @@ impl Tool for TypeTextTool {
         }
 
         // 3. Legacy Win32 / GDI / Chromium-IME — PostMessage WM_CHAR, no focus steal.
+        //
+        // Read-back verification (mirrors macOS type_text): WM_CHAR is silently
+        // dropped by some focused targets (notably a VCL/LibreOffice Calc grid
+        // not in cell-edit mode), and PostMessage reports success regardless. So
+        // snapshot the focused element's UIA value before and after; if it did
+        // not change we can't confirm the text landed and report "Sent
+        // (unverified)" with the foreground-escalation hint, instead of a blind
+        // success. If the focused element exposes no ValuePattern we likewise
+        // can't confirm (conservative: under-claim rather than false-succeed).
+        let text_for_post = text.clone();
+        let verify_pid = pid;
         let result = tokio::task::spawn_blocking(move || {
-            crate::input::post_type_text(hwnd, &text)
+            let before = read_focused_value_uia(verify_pid);
+            let post_res = crate::input::post_type_text(hwnd, &text_for_post);
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            let after = read_focused_value_uia(verify_pid);
+            (post_res, before, after)
         }).await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage ({_delay_ms}ms delay)."
-            ))
-            .with_structured(serde_json::json!({
-                "path": "key_events",
-                "characters": text_len,
-            })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Ok((Ok(()), before, after)) => {
+                // Verified iff we could read the focused value both times AND it
+                // changed. Unreadable (None) → unverified.
+                let verified = matches!((&before, &after), (Some(b), Some(a)) if a != b);
+                if verified {
+                    ToolResult::text(format!(
+                        "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
+                         ({_delay_ms}ms delay; verified via UIA read-back)."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "path": "key_events",
+                        "characters": text_len,
+                        "verified": true,
+                    }))
+                } else {
+                    ToolResult::text(format!(
+                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
+                         (unverified) — the driver could not confirm the text landed. \
+                         The focused target may drop WM_CHAR (e.g. a VCL/LibreOffice \
+                         grid not in edit mode) or expose no readable value. Verify via \
+                         screenshot, and re-call with delivery_mode:\"foreground\" if it \
+                         didn't."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "path": "key_events",
+                        "characters": text_len,
+                        "verified": false,
+                    }))
+                }
+            }
+            Ok((Err(e), _, _)) => ToolResult::error(e.to_string()),
+            Err(e)             => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// Read the currently-focused UIA element's `ValuePattern` value **iff it
+/// belongs to `expect_pid`**, for type_text read-back verification.
+/// Self-contained COM (STA) init/teardown so it can be called from a
+/// `spawn_blocking` worker. Returns `None` if UIA is unreachable, nothing is
+/// focused, the focused element is owned by a different process (e.g. the
+/// target is backgrounded and system focus is on the user's foreground app —
+/// we must NOT read that element's value), or the focused element exposes no
+/// `ValuePattern` (most rich-text/document surfaces). Callers treat `None` as
+/// "could not confirm" rather than failure. Mirrors the focused-element read in
+/// the `debug_window_info` tool.
+fn read_focused_value_uia(expect_pid: u32) -> Option<String> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_ValuePatternId,
+    };
+    use windows::core::Interface;
+
+    let coinit_ok = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
+    let value = (|| -> Option<String> {
+        let uia: IUIAutomation = unsafe {
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+        }.ok()?;
+        let focused = unsafe { uia.GetFocusedElement() }.ok()?;
+        // Scope to the target: system focus may be on a different app when the
+        // target is backgrounded; reading that element would give a bogus verdict.
+        if unsafe { focused.CurrentProcessId() }.ok()? as u32 != expect_pid {
+            return None;
+        }
+        let pattern = unsafe { focused.GetCurrentPattern(UIA_ValuePatternId) }.ok()?;
+        let vp: IUIAutomationValuePattern = pattern.cast().ok()?;
+        Some(unsafe { vp.CurrentValue() }.ok()?.to_string())
+    })();
+    if coinit_ok {
+        unsafe { CoUninitialize(); }
+    }
+    value
 }
 
 // ── press_key ─────────────────────────────────────────────────────────────────
@@ -3075,7 +3154,7 @@ impl Tool for PressKeyTool {
                 window_id.map(|v| v as u64).or_else(|| args.opt_u64("window_id")),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
         // Swift requires window_id when element_index is supplied — ports the
         // same validation.
         if elem_idx.is_some() && hwnd_opt.is_none() {
@@ -3100,7 +3179,7 @@ impl Tool for PressKeyTool {
         // Keystroke variant by design. KeyCombo (modifiers) on Chromium IS
         // dropped, so check that when modifiers are present.
         let event_kind = if mods.is_empty() { EventKind::Keystroke } else { EventKind::KeyCombo };
-        if dispatch == DeliveryMode::Background
+        if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             // Universal background keyboard actuator: cloaked focus + SendInput,
@@ -3123,14 +3202,14 @@ impl Tool for PressKeyTool {
             };
         }
         // Foreground: send_key_synthesized takes the SetForegroundWindow path.
-        if dispatch == DeliveryMode::Foreground {
+        if delivery == DeliveryMode::Foreground {
             let send_result = tokio::task::spawn_blocking(move || {
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
                 crate::input::send_key_synthesized(hwnd, &key, &m)
             }).await;
             return match send_result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent {key_display} via SendInput on pid {raw_pid} (dispatch:foreground)."
+                    "✅ Sent {key_display} via SendInput on pid {raw_pid} (delivery_mode:foreground)."
                 )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -3214,7 +3293,7 @@ impl Tool for HotkeyTool {
         let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") { Ok(v) => v, Err(e) => return e };
         let pid = raw_pid as u32;
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
 
         // Parse keys array (Swift's only path).  Legacy key+modifiers shape
         // still accepted as a Rust-side convenience.
@@ -3344,10 +3423,10 @@ impl Tool for HotkeyTool {
         //   - Modifiers + non-Chromium Win32 → SendInput (the
         //     TranslateAccelerator path). The foreground swap stays.
         let has_modifiers = !mods.is_empty();
-        // dispatch:"background" — refuse if PostMessage of the key combo
+        // delivery_mode:"background" — refuse if PostMessage of the key combo
         // would be silently dropped on this target (Chromium with modifiers).
         let event_kind = if has_modifiers { EventKind::KeyCombo } else { EventKind::Keystroke };
-        if dispatch == DeliveryMode::Background
+        if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, event_kind)
         {
             // Universal background keyboard actuator (see press_key): cloaked
@@ -3372,7 +3451,7 @@ impl Tool for HotkeyTool {
         // reaches here means the key combo is NOT silently dropped on this
         // target (the drop-check above returned early otherwise), so it stays
         // on PostMessage and the no-foreground contract holds.
-        let use_send_input = match dispatch {
+        let use_send_input = match delivery {
             DeliveryMode::Foreground => true,
             DeliveryMode::Background => false,
         };
@@ -3478,7 +3557,7 @@ impl Tool for SetValueTool {
         // SetForegroundWindow during ValuePattern.SetValue. WS_EX_NOACTIVATE on
         // the target makes that a no-op while the value is still set, so a
         // background SetValue can't steal the user's foreground. Held across the
-        // whole write. (No-op for dispatch:"foreground".)
+        // whole write. (No-op for delivery_mode:"foreground".)
         let _noact = if crate::input::delivery::DeliveryMode::from_args(&args)
             != crate::input::delivery::DeliveryMode::Foreground
         {
@@ -3676,7 +3755,7 @@ impl Tool for ScrollTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
         let by = args.str_or("by", "line");
         let direction_display = direction.clone();
         let by_display = by.clone();
@@ -3726,7 +3805,7 @@ impl Tool for ScrollTool {
         // delivery_mode:"foreground") is now a real recovery because scroll's
         // foreground path is implemented below (SendInput wheel reaches the
         // Chromium/GTK targets PostMessage can't).
-        if dispatch == DeliveryMode::Background
+        if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseScroll)
         {
             return background_unavailable_error(hwnd, EventKind::MouseScroll);
@@ -3737,7 +3816,7 @@ impl Tool for ScrollTool {
         // so it lands where PostMessage WM_*SCROLL is dropped. Mirrors the
         // desktop-scope wheel branch above; `by` (line/page) folds into the tick
         // count (page ≈ 3 detents).
-        if dispatch == DeliveryMode::Foreground {
+        if delivery == DeliveryMode::Foreground {
             let (horizontal, sign) = match direction.as_str() {
                 "up"    => (false,  1),
                 "down"  => (false, -1),
@@ -3967,7 +4046,7 @@ fn winui3_uia_multi_invoke(
 ///    island ignores posted `WM_*BUTTON`, and the pointer injector
 ///    click-activates the frame. So we return the structured
 ///    `background_unavailable` error (the honest result — the caller can retry
-///    with `dispatch:"foreground"` or `bring_to_front`) instead of a silent
+///    with `delivery_mode:"foreground"` or `bring_to_front`) instead of a silent
 ///    no-op that reports false success.
 ///
 /// Returns `None` for non-WinUI3 targets (caller falls through to its normal
@@ -4087,7 +4166,7 @@ impl Tool for DoubleClickTool {
         };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
         let cursor_key = resolve_cursor_key(&args);
         // Swift validates "both x and y or neither" and "no element_index without window_id".
         let has_xy        = x.is_some() && y.is_some();
@@ -4134,7 +4213,7 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
-            // dispatch:"background" (default) on WinUI3: the pen/touch injector
+            // delivery_mode:"background" (default) on WinUI3: the pen/touch injector
             // click-activates the content island (8/8 foreground steals) and
             // posted WM_*BUTTON to the frame/island no-ops (measured). A double
             // UIA Invoke on the cached element is the only contract-holding way
@@ -4142,17 +4221,17 @@ impl Tool for DoubleClickTool {
             // → last_action=double_click, held non-activatable so no foreground
             // swap. If the element has no InvokePattern, a background double-
             // click isn't expressible → structured error.
-            if dispatch == DeliveryMode::Background {
+            if delivery == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), 2, "left").await {
                     return r;
                 }
             }
-            // dispatch:"background" (default): Chromium/Electron & GTK targets
+            // delivery_mode:"background" (default): Chromium/Electron & GTK targets
             // silently drop posted clicks (#1984) — inject via the coordinate
             // actuator (system input queue, NO foreground swap), exactly like
             // ClickTool, instead of refusing. Only error if injection can't
             // express this click (e.g. right/middle on such a target).
-            if dispatch == DeliveryMode::Background
+            if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
@@ -4166,8 +4245,8 @@ impl Tool for DoubleClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            // dispatch:"foreground" — route through SendInput at the cached coords.
-            if dispatch == DeliveryMode::Foreground {
+            // delivery_mode:"foreground" — route through SendInput at the cached coords.
+            if delivery == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4177,7 +4256,7 @@ impl Tool for DoubleClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent double-click via SendInput on [{idx}] at screen ({cx},{cy}) (dispatch:foreground)."
+                        "✅ Sent double-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -4218,18 +4297,18 @@ impl Tool for DoubleClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
-            // dispatch:"background" on WinUI3 (pixel path, no element_index): a
+            // delivery_mode:"background" on WinUI3 (pixel path, no element_index): a
             // background double-click on WinUI3 only lands via UIA Invoke on a
             // cached element, which the pixel path doesn't have → structured
-            // error (caller retries with dispatch:foreground or uses element_index).
-            if dispatch == DeliveryMode::Background {
+            // error (caller retries with delivery_mode:foreground or uses element_index).
+            if delivery == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 2, "left").await {
                     return r;
                 }
             }
-            // dispatch:"background" (default): inject via the coordinate actuator
+            // delivery_mode:"background" (default): inject via the coordinate actuator
             // (no foreground swap) for targets that drop posted clicks (#1984).
-            if dispatch == DeliveryMode::Background
+            if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
@@ -4243,8 +4322,8 @@ impl Tool for DoubleClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            // dispatch:"foreground" — SendInput at screen coords with FG swap.
-            if dispatch == DeliveryMode::Foreground {
+            // delivery_mode:"foreground" — SendInput at screen coords with FG swap.
+            if delivery == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4254,7 +4333,7 @@ impl Tool for DoubleClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (dispatch:foreground)."
+                        "✅ Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -4358,7 +4437,7 @@ impl Tool for RightClickTool {
         };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
         let cursor_key = resolve_cursor_key(&args);
         // Port Swift's full validation set.
         let has_xy     = x.is_some() && y.is_some();
@@ -4405,20 +4484,20 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: cx as f64, y: cy as f64 });
-            // dispatch:"background" on WinUI3: a right-click can't both land and
+            // delivery_mode:"background" on WinUI3: a right-click can't both land and
             // hold the contract — UIA has no right-click pattern, the content
             // island ignores posted WM_RBUTTON (measured: RightTapped never
             // fired), and the pen-barrel injector click-activates the frame.
-            // Return the structured error (retry with dispatch:foreground).
-            if dispatch == DeliveryMode::Background {
+            // Return the structured error (retry with delivery_mode:foreground).
+            if delivery == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, Some(idx), 1, "right").await {
                     return r;
                 }
             }
-            // dispatch:"background" (default): try coordinate injection (no
+            // delivery_mode:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984); a right-click
             // injection that the actuator can't express falls back to the error.
-            if dispatch == DeliveryMode::Background
+            if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
@@ -4432,7 +4511,7 @@ impl Tool for RightClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            if dispatch == DeliveryMode::Foreground {
+            if delivery == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4442,7 +4521,7 @@ impl Tool for RightClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (dispatch:foreground)."
+                        "✅ Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -4484,17 +4563,17 @@ impl Tool for RightClickTool {
             pin_overlay_above(&cursor_key, hwnd);
             overlay_glide_to(&cursor_key, sx, sy).await;
             crate::overlay::send_command(cursor_key.clone(), cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy });
-            // dispatch:"background" on WinUI3: right-click can't land while
+            // delivery_mode:"background" on WinUI3: right-click can't land while
             // holding the contract (no UIA right-click, posted WM_RBUTTON
             // ignored, pen-barrel injector steals foreground) → structured error.
-            if dispatch == DeliveryMode::Background {
+            if delivery == DeliveryMode::Background {
                 if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 1, "right").await {
                     return r;
                 }
             }
-            // dispatch:"background" (default): try coordinate injection (no
+            // delivery_mode:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984).
-            if dispatch == DeliveryMode::Background
+            if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let inj = tokio::task::spawn_blocking(move || {
@@ -4508,7 +4587,7 @@ impl Tool for RightClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            if dispatch == DeliveryMode::Foreground {
+            if delivery == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
@@ -4518,7 +4597,7 @@ impl Tool for RightClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (dispatch:foreground)."
+                        "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
                     )),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -4587,7 +4666,7 @@ impl Tool for DragTool {
             None    => return ToolResult::error("Missing required integer field pid."),
         };
         let pid = raw_pid as u32;
-        let dispatch = DeliveryMode::from_args(&args);
+        let delivery = DeliveryMode::from_args(&args);
 
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
@@ -4643,27 +4722,27 @@ impl Tool for DragTool {
         let (sx_from, sy_from) = bitmap_to_screen(hwnd, from_x as i32, from_y as i32);
         let (sx_to,   sy_to)   = bitmap_to_screen(hwnd, to_x   as i32, to_y   as i32);
 
-        // dispatch:"background" on WinUI3: a pointer drag can't both land and
+        // delivery_mode:"background" on WinUI3: a pointer drag can't both land and
         // hold the contract — the content island only consumes real
         // system-queue pointer input (which the pen/touch injector delivers but
         // at the cost of click-activating the frame: 8/8 foreground steals) and
         // ignores posted WM_* drag messages; UIA has no drag analogue. Return
-        // the structured error so the caller retries with dispatch:foreground
+        // the structured error so the caller retries with delivery_mode:foreground
         // (a WinUI3 Slider can also be set with the set_value tool, which uses
         // UIA RangeValuePattern and holds the contract).
-        if dispatch == DeliveryMode::Background {
+        if delivery == DeliveryMode::Background {
             if let Some(r) = winui3_background_gesture(&self.state, pid, hwnd, None, 1, &button).await {
                 return r;
             }
         }
 
-        // dispatch:"background" — if a PostMessage drag would silently drop
+        // delivery_mode:"background" — if a PostMessage drag would silently drop
         // (Chromium/WPF/GTK canvas content reads mouse from the system input
         // queue, not the per-window queue), fall back to coordinate-routed
         // synthetic-pen drag injection instead of refusing. No foreground swap,
         // no cursor move; the target is held non-activatable + cloaked for the
         // stroke (mirrors the click pen path).
-        if dispatch == DeliveryMode::Background
+        if delivery == DeliveryMode::Background
             && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
         {
             let target = hwnd;
@@ -4688,20 +4767,20 @@ impl Tool for DragTool {
                     ToolResult::text(format!(
                         "✅ Sent drag via synthetic-pen injection on pid {raw_pid} \
                          from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
-                         (dispatch:background, PostMessage would have been dropped)."
+                         (delivery_mode:background, PostMessage would have been dropped)."
                     ))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        // dispatch:"foreground" — SendInput-based drag. Required for WPF
+        // delivery_mode:"foreground" — SendInput-based drag. Required for WPF
         // Slider thumbs (and any framework that polls GetKeyState during
         // its drag handler — PostMessage doesn't update per-thread input
         // state, so those targets see a button-up world during the drag
         // and never start tracking). Subject to the same UIAccess
         // foreground-lock constraint as send_click_synthesized.
-        if dispatch == DeliveryMode::Foreground {
+        if delivery == DeliveryMode::Foreground {
             let btn_fg = button.clone();
             let prev_fg_addr = unsafe {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
@@ -4720,7 +4799,7 @@ impl Tool for DragTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent drag{button_suffix} via SendInput on pid {raw_pid} \
                      from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
-                     in {duration_ms}ms / {steps} steps (dispatch:foreground)."
+                     in {duration_ms}ms / {steps} steps (delivery_mode:foreground)."
                 )),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -6053,7 +6132,7 @@ impl Tool for BringToFrontTool {
                 agent is about to drive a sequence of operations against a target whose input \
                 stack silently drops PostMessage (Chromium DOM content, GTK button widgets) \
                 and the agent wants to pay the foreground cost once instead of per call. \n\n\
-                Pairs with the `dispatch` field on input tools:\n\
+                Pairs with the `delivery_mode` field on input tools:\n\
                   1. Try `click(..., delivery_mode:\"background\")`. If it returns \
                      `background_unavailable`, the target needs foreground delivery.\n\
                   2. Call `bring_to_front(pid)` so the target is foreground.\n\

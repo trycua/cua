@@ -874,14 +874,19 @@ renderer, so the fallback path works for hyperlinks and buttons.
   `TranslateAccelerator` (reads `GetKeyState`, which PostMessage doesn't
   update) and the Calc/Writer document grid only takes real keystrokes
   when a cell is in edit mode, so background `WM_CHAR` / key-combos are
-  silently dropped. `delivery_mode:"background"` now surfaces a
-  `background_unavailable` error for VCL keystrokes/key-combos instead of
-  a false success; escalate to `delivery_mode:"foreground"` (SendInput
-  Unicode / accelerator) for those. **But** foreground needs the
-  foreground swap to actually land — if the daemon lacks UIAccess and
-  `bring_to_front` returns `landed_on_target:false`, you can't drive it by
-  input at all: produce the artifact and `launch_app` it (build the
-  `.xlsx` / `.docx` and open it) rather than typing into the GUI.
+  silently dropped. Two honesty mechanisms now cover this instead of a
+  blind success:
+    - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
+      surfaces a `background_unavailable` error for VCL.
+    - **`type_text`** (a `WM_CHAR` `TextInput`, NOT flagged droppable):
+      background now does a **UIA read-back** of the focused field's value;
+      if it can't confirm the text landed it returns `📨 Sent N char(s)
+      (unverified)` (structured `verified:false`) instead of `✅ Typed …`.
+  Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
+  accelerator). **But** foreground needs the swap to actually land — if the
+  daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`,
+  you can't drive it by input at all: produce the artifact and `launch_app`
+  it (build the `.xlsx` / `.docx` and open it) rather than typing into the GUI.
 - **Edge / Chrome shows tab switching even though I used pid-scoped
   hotkey** — `Ctrl+Tab` / `Ctrl+1..9` aren't pid-scopable; the
   receiver activates. Use the windows-per-URL pattern.

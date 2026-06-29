@@ -239,7 +239,7 @@ def do(t, sel):
     if t == "click":
         if DESKTOP and c: D("click", {"x":c[0],"y":c[1],"session":"d1"})
         elif use_ax: D("click", {"pid":WP,"window_id":WD,"element_index":eidx,"session":"d1"})
-        elif c: D("click", {"pid":WP,"window_id":WD,"x":wl[0],"y":wl[1],"dispatch":("foreground" if m["fg"] else "background"),"session":"d1"})
+        elif c: D("click", {"pid":WP,"window_id":WD,"x":wl[0],"y":wl[1],"delivery_mode":("foreground" if m["fg"] else "background"),"session":"d1"})
     elif t == "double":
         if use_ax: D("double_click", {"pid":WP,"window_id":WD,"element_index":eidx,"session":"d1"})
         elif c: D("double_click", {"pid":WP,"window_id":WD,"x":wl[0],"y":wl[1],"session":"d1"})

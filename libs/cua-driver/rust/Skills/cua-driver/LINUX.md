@@ -36,6 +36,34 @@ AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
   It glides on clicks and `move_cursor`; issue `move_cursor` to make it
   track a field while typing advances focus across cells.
 
+## `delivery_mode` — the background/foreground ladder
+
+Every input tool (`click`, `type_text`, `press_key`, `hotkey`,
+`double_click`, `right_click`, `scroll`) takes an optional **`delivery_mode`**
+— the per-call rung of the best-effort-background ladder, matching the macOS
+and Windows surface:
+
+- **`background`** (default) — inject **without activating or raising** the
+  target. X11: the no-focus-steal paths above (AT-SPI / `XSendEvent` /
+  XInput2 MPX pointer). This is cua-driver's differentiator and the right
+  default.
+- **`foreground`** — **activate the target first** (X11 EWMH
+  `_NET_ACTIVE_WINDOW`, proper timestamp handling to beat the WM's
+  focus-stealing prevention), inject, then **restore the prior active
+  window**. The explicit escalation when a background inject didn't land —
+  e.g. a GTK dialog button or a widget that only reads input while focused.
+  A brief focus swap unless the target was already active.
+
+**`bring_to_front`** (X11): persistent `_NET_ACTIVE_WINDOW` activation (the
+`wmctrl -a` equivalent), kept active. Call it before `delivery_mode:"foreground"`
+input to avoid a per-call flash, or to escalate when background didn't land.
+
+**Read-back / `verified`** — `type_text` reports `{verified}`: the AT-SPI
+`EditableText.insertText` path (`path:"ax"`) is the **driver-verifiable** rung
+(the a11y layer confirms the insert into the widget model) → `verified:true`;
+keystroke / XSendEvent / XTest / foreground rungs are not read-back-confirmed
+→ `verified:false` (confirm via screenshot). Mirrors the macOS/Windows verdict.
+
 ## Wayland (opt-in — still preview)
 
 Native Wayland support is behind an opt-in flag and not yet at the same
@@ -51,6 +79,18 @@ maturity as X11:
 - Screenshots work via `grim` / wlr-screencopy. **Video recording is
   not yet available on Wayland** — the recorder is `x11grab`, which is
   X11-only.
+- **`delivery_mode` on Wayland is constrained by the protocol**, honestly:
+  input goes through libei + xdg-desktop-portal, which injects to the
+  **compositor's input focus** — there is no per-window background targeting
+  like X11/macOS/Windows. So `background` can't aim at a specific non-focused
+  window, and `bring_to_front` has no standalone external activate (the
+  compositor bundles activation into the virtual-pointer/click path) — it
+  returns `bring_to_front_wayland_bundled` and points you at
+  `delivery_mode:"foreground"` on the input call instead. The delivery
+  contract also defines a structured `background_unavailable` error for the
+  no-libei-backend case (built without `portal-libei` or a denied portal
+  session); when input has no actuator the tools surface an error rather
+  than silently succeeding.
 
 ## Quick triage
 

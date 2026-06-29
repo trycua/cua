@@ -4145,44 +4145,79 @@ impl Tool for BringToFrontTool {
         BTF_DEF.get_or_init(|| ToolDef {
             name: "bring_to_front".into(),
             description:
-                "Activate a window so subsequent input tools land on it. **Windows-only \
-                 today:** on Linux this stub returns an error; the X11/Wayland equivalents \
-                 (`wmctrl -a`, `xdotool windowactivate`) aren't wired up because the Linux \
-                 input tools deliver via AT-SPI / X11 input injection which already reaches \
-                 backgrounded windows without needing activation."
+                "Persistently activate a window so subsequent input lands on it. \
+                 X11: EWMH _NET_ACTIVE_WINDOW activation (the `wmctrl -a` equivalent, \
+                 proper timestamp handling to beat focus-stealing prevention) — call \
+                 it before `delivery_mode:\"foreground\"` input to avoid a per-call \
+                 flash, or to escalate when background injection didn't land. \
+                 Wayland: a standalone activate is NOT exposed — the compositor's \
+                 security model bundles activation into the virtual-pointer/click \
+                 path, so use `delivery_mode:\"foreground\"` on the input call \
+                 itself; this reports that constraint on Wayland rather than \
+                 faking it. Matches the macOS / Windows bring_to_front rung."
                 .into(),
             input_schema: serde_json::json!({
                 "type":"object","required":["pid"],"properties":{
                     "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"}
+                    "window_id":{"type":"integer","description":"X11 window id (xid) to activate. If omitted, the first window of `pid` is used."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
 
-    async fn invoke(&self, _args: Value) -> ToolResult {
-        ToolResult::error(
-            "bring_to_front is Windows-only today. On Linux the input tools deliver via \
-             AT-SPI / X11 input injection which already reaches backgrounded windows. If \
-             you need explicit activation for your own UX reasons, shell out to \
-             `wmctrl -a` or `xdotool windowactivate` from outside cua-driver."
-                .to_string(),
-        )
-        .with_structured(serde_json::json!({
-            "code": "bring_to_front_unsupported_on_platform",
-            "platform": "linux",
-            // Machine-readable remediation hint — mirrors the macOS
-            // bring_to_front stub's structured `suggestion` field so
-            // cross-platform clients can dispatch on a uniform key.
-            "suggestion":
-                "Linux input tools (click / type_text / press_key / hotkey) already \
-                 reach backgrounded windows via AT-SPI / X11 input injection — \
-                 there is no equivalent need to bring a window to the foreground. \
-                 If you need explicit window activation for UX reasons, shell out \
-                 to `wmctrl -a <title>` or `xdotool windowactivate <wid>` from \
-                 outside cua-driver.",
-        }))
+    async fn invoke(&self, args: Value) -> ToolResult {
+        use cua_driver_core::tool_args::ArgsExt;
+        // Wayland: no standalone external activate (compositor security model
+        // bundles it into the vptr/click path). Report honestly; the agent
+        // escalates via delivery_mode:"foreground" on the input call instead.
+        if crate::wayland::is_wayland() {
+            return ToolResult::error(
+                "bring_to_front: Wayland has no standalone window-activation API for \
+                 external clients — the compositor bundles activation into the \
+                 virtual-pointer/click path. Use delivery_mode:\"foreground\" on the \
+                 click/type_text call itself (it activates the target as part of the \
+                 injection)."
+                    .to_string(),
+            )
+            .with_structured(serde_json::json!({
+                "code": "bring_to_front_wayland_bundled",
+                "platform": "linux",
+                "session": "wayland",
+                "suggestion":
+                    "On Wayland, pass delivery_mode:\"foreground\" to click / type_text — \
+                     activation is performed as part of the injection.",
+            }));
+        }
+
+        // X11: resolve the target xid (window_id, else first window for pid).
+        let xid = match args.opt_u64("window_id") {
+            Some(x) => x,
+            None => {
+                let pid = args.u64_or("pid", 0) as u32;
+                let windows = tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
+                    .await.unwrap_or_default();
+                match windows.first() {
+                    Some(w) => w.xid,
+                    None => return ToolResult::error(format!(
+                        "bring_to_front: no window_id given and no windows found for pid {pid}."
+                    )),
+                }
+            }
+        };
+        let r = tokio::task::spawn_blocking(move || crate::input::x11_activate_window_persistent(xid)).await;
+        match r {
+            Ok(Ok(prior)) => ToolResult::text(format!(
+                "✅ Brought window {xid} to front (X11 _NET_ACTIVE_WINDOW)."
+            ))
+            .with_structured(serde_json::json!({
+                "window_id": xid,
+                "prior_active": prior,
+                "platform": "linux",
+            })),
+            Ok(Err(e)) => ToolResult::error(format!("bring_to_front failed: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
+        }
     }
 }
 

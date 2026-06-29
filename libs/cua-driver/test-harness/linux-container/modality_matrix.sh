@@ -126,6 +126,23 @@ PY
     [ -s /tmp/shot.err ] && head -c 200 /tmp/shot.err
     ;;
 
+  seq) # seq <label>...  background element-click each labeled button (clean demo)
+    shift; PID=$(pidf); WID=$(widf)
+    for lbl in "$@"; do
+      IDX=$(python3 - "$lbl" <<'PY'
+import json,sys
+d=json.load(open('/tmp/state.json'))
+for e in d.get('elements',[]):
+    if str(e.get('label'))==sys.argv[1]: print(e['element_index']); break
+PY
+)
+      [ -z "$IDX" ] && { echo "  '$lbl' -> no element"; continue; }
+      "$CUA" call click "{\"pid\":$PID,\"window_id\":$WID,\"element_index\":$IDX,\"delivery_mode\":\"background\"}" >/dev/null 2>&1
+      echo "  '$lbl' -> element $IDX clicked (bg)"
+      sleep 0.4
+    done
+    ;;
+
   b64) base64 -w0 "/tmp/mm_${2:-shot}.png" 2>/dev/null ;;
 
   *) echo "usage: modality_matrix.sh setup|matrix|shot <name>|b64 <name>" ;;

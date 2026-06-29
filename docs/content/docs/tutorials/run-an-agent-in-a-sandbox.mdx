@@ -85,7 +85,7 @@ You should also see a new file named `screenshot.png` in the current directory.
 
 ## What just happened
 
-`Sandbox.ephemeral(Image.linux())` created a cloud Linux sandbox. `sb.shell.run("python3 -c 'print(1 + 1)'")` executed code inside the cloud container and returned a `CommandResult` with `stdout`, `stderr`, `returncode`, and the `success` boolean property. The script printed `result.stdout`.
+`Sandbox.ephemeral(Image.linux())` created a cloud Linux sandbox. `sb.shell.run("python3 -c 'print(1 + 1)'")` executed code inside the sandbox and returned a `CommandResult` with `stdout`, `stderr`, `returncode`, and the `success` boolean property. The script printed `result.stdout`.
 
 `sb.clipboard.set(...)` changed the sandbox desktop clipboard state. `sb.clipboard.get()` read that GUI state back as a string. `sb.screenshot()` captured the sandbox display as PNG bytes and wrote them to `screenshot.png`.
 

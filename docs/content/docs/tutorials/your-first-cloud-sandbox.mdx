@@ -74,7 +74,7 @@ You should also see a new file named `screenshot.png` in the current directory.
 
 ## What just happened
 
-`Sandbox.ephemeral(Image.linux())` created a cloud Linux container. The script ran `uname -a` inside that container, printed the command output, took a screenshot, and wrote it to `screenshot.png`.
+`Sandbox.ephemeral(Image.linux())` created a cloud Linux sandbox. The script ran `uname -a` inside that sandbox, printed the command output, took a screenshot, and wrote it to `screenshot.png`.
 
 When the `async with` block exited, **the sandbox destroyed itself**. No cleanup is needed.
 

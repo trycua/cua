@@ -143,21 +143,28 @@ impl ResizeRegistry {
 
 /// Runtime-mutable driver configuration persisted across calls within a session.
 ///
-/// `capture_mode` and `capture_scope` were removed here: behavior knobs are now
-/// declared per call (the `capture_mode` / `scope` / `delivery_mode` params), not
-/// stored as hidden mutable session/global state — matching the session-as-identity
-/// model. Only the rendering knob `max_image_dimension` remains a setting.
+/// `capture_mode` is per-call now (the `capture_mode` param). `capture_scope` is
+/// re-introduced here as a GLOBAL setting: it gates `get_desktop_state` (a
+/// full-display capture has no pid/window_id and therefore no per-call scope to
+/// key on — the only coherent gate is a global one), matching the Windows/Linux
+/// `DriverConfig.capture_scope`. Per-call tools (`click`/`scroll`) still accept a
+/// per-call `scope`; this global is the baseline the no-args desktop-capture
+/// tool reads. Default `"window"`.
 pub struct DriverConfig {
     /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
     /// Default 1568 matches Swift's `CuaDriverConfig.defaultMaxImageDimension` —
     /// the long edge is downscaled to this before encoding.
     pub max_image_dimension: u32,
+    /// Capture scope: `"window"` (default) or `"desktop"`. Gates
+    /// `get_desktop_state` (full-display capture requires `"desktop"`).
+    pub capture_scope: String,
 }
 
 impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             max_image_dimension: 1568,
+            capture_scope: "window".to_owned(),
         }
     }
 }
@@ -183,12 +190,17 @@ pub fn load_driver_config() -> DriverConfig {
         Ok(v) => v,
         Err(_) => return cfg,  // malformed file — use defaults
     };
-    // `capture_mode` / `capture_scope` are no longer settings — they're per-call
-    // params now. Any such keys left in an old on-disk config.json are silently
-    // ignored (back-compat: no error, just dropped).
+    // `capture_mode` is per-call now; an old on-disk `capture_mode` key is
+    // silently ignored. `capture_scope` IS a global setting again (gates
+    // get_desktop_state) — load it, accepting only window|desktop.
     if let Some(v) = json.get("max_image_dimension").and_then(|v| v.as_u64()) {
         if let Ok(v32) = u32::try_from(v) {
             cfg.max_image_dimension = v32;
+        }
+    }
+    if let Some(s) = json.get("capture_scope").and_then(|v| v.as_str()) {
+        if s == "window" || s == "desktop" {
+            cfg.capture_scope = s.to_owned();
         }
     }
     cfg

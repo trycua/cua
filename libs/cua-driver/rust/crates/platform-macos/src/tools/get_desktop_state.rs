@@ -52,6 +52,25 @@ impl Tool for GetDesktopStateTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
 
+        // Gate on the global capture_scope (re-read from the persisted config,
+        // the same value set_config writes): a full-display capture is a
+        // desktop-scope operation, available only under capture_scope="desktop".
+        let scope = super::load_driver_config().capture_scope;
+        if scope != "desktop" {
+            return ToolResult::error(format!(
+                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
+                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
+                 set_config with capture_scope=desktop first (it also enables window-less \
+                 screen-absolute click/scroll). For a single window, use \
+                 get_window_state(pid, window_id) instead."
+            ))
+            .with_structured(serde_json::json!({
+                "code": "desktop_scope_disabled",
+                "capture_scope": scope,
+                "suggestion": "set_config capture_scope=desktop",
+            }));
+        }
+
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
             if s.starts_with("~/") {

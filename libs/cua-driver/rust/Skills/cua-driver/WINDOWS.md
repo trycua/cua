@@ -372,6 +372,15 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   omits the tree (PNG only); `"ax"` omits the PNG. If a snapshot
   lacks a tree, `capture_mode` is almost certainly `"vision"` —
   reason from the PNG or flip to `"som"` / `"ax"` via `set_config`.
+- **`get_desktop_state` returns `desktop_scope_disabled`?** That's
+  intended: full-display capture is a **desktop-scope** operation, gated
+  on the global `capture_scope`. It's `"window"` by default — so to verify
+  a specific window use `get_window_state(pid, window_id)` (works
+  backgrounded), and only use `get_desktop_state` after
+  `set_config capture_scope=desktop` (the same opt-in that enables
+  window-less screen-absolute `click`/`scroll`). Don't reach for
+  `get_desktop_state` as a casual screenshot — it's the capture surface for
+  desktop-scope coordinate loops, not window inspection.
 - **`Calc display stuck at 0 after my clicks`?** Almost always
   means UWP and you're on the PostMessage path. UWP processes
   pointer input via `Windows.UI.Input`, NOT through HWND message

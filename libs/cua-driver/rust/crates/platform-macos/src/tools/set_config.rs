@@ -19,12 +19,13 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
         description: "Update cua-driver-rs configuration. Changes to \
-            max_image_dimension take effect immediately. The experimental_pip \
-            keys are persisted to ~/.cua-driver/config.json and take effect on \
-            the next daemon restart (the PiP backend is initialised once at \
-            startup).\n\nNote: capture_mode and capture_scope are NO LONGER \
-            settings — they are per-call params on get_window_state / click / \
-            get_desktop_state (capture_mode, scope). Pass them per call.".into(),
+            max_image_dimension and capture_scope take effect immediately. The \
+            experimental_pip keys are persisted to ~/.cua-driver/config.json and \
+            take effect on the next daemon restart (the PiP backend is \
+            initialised once at startup).\n\nNote: capture_mode is a per-call \
+            param (on get_window_state / click), not a stored setting. \
+            capture_scope IS a global setting: it gates get_desktop_state \
+            (full-display capture requires capture_scope=desktop).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -40,6 +41,13 @@ fn def() -> &'static ToolDef {
                 "max_image_dimension": {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
+                },
+                "capture_scope": {
+                    "type": "string",
+                    "enum": ["window", "desktop"],
+                    "description": "Capture scope: \"window\" (default) or \"desktop\". Desktop \
+                        scope enables get_desktop_state (full-display capture) and window-less \
+                        screen-absolute click/scroll. Global setting; takes effect immediately."
                 },
                 "experimental_pip": {
                     "type": "boolean",
@@ -136,14 +144,46 @@ impl Tool for SetConfigTool {
                 pip_note = format!(" — restart cua-driver for experimental_pip_geometry={geom} to take effect");
             }
         }
+        // capture_scope: GLOBAL setting (gates get_desktop_state). Accept the
+        // direct field or {key,value} shape; validate window|desktop; write the
+        // shared global config + persist (matches Windows/Linux — not
+        // session-scoped, since it's the baseline a no-args capture tool reads).
+        let scope_arg = args.opt_str("capture_scope").or_else(|| {
+            kv.as_ref()
+                .filter(|(k, _)| k == "capture_scope")
+                .and_then(|(_, v)| v.as_str().map(str::to_owned))
+        });
+        let mut capture_scope_note = String::new();
+        if let Some(sc) = scope_arg {
+            if sc != "window" && sc != "desktop" {
+                return ToolResult::error(format!(
+                    "`capture_scope` must be \"window\" or \"desktop\", got \"{sc}\"."
+                ));
+            }
+            self.state.config.write().unwrap().capture_scope = sc.clone();
+            if let Err(e) = write_driver_config_key("capture_scope", &Value::String(sc.clone())) {
+                tracing::warn!("set_config: failed to persist capture_scope: {e}");
+            }
+            capture_scope_note = format!(", capture_scope={sc}");
+        }
+
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"
         } else {
             ""
         };
+        // Echo the config back in structured content (matches Windows/Linux
+        // set_config, which callers/tests read for the applied capture_scope).
+        let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
         ToolResult::text(format!(
-            "Config updated: max_image_dimension={}{}{}",
-            effective_dim, scope_note, pip_note
+            "Config updated: max_image_dimension={}{}{}{}",
+            effective_dim, capture_scope_note, scope_note, pip_note
         ))
+        .with_structured(serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "platform": "macos",
+            "max_image_dimension": effective_dim,
+            "capture_scope": capture_scope,
+        }))
     }
 }

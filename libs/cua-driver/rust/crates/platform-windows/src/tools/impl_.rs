@@ -5029,6 +5029,29 @@ impl Tool for GetDesktopStateTool {
         use cua_driver_core::tool_args::ArgsExt;
         use cua_driver_core::protocol::Content;
 
+        // Gate on the global capture_scope: a full-display capture is a
+        // desktop-scope operation, so it's only available when the agent has
+        // opted into capture_scope="desktop" (same gate as window-less
+        // screen-absolute click/scroll — see is_windowless_desktop_action).
+        // Read the persisted value the same way load_config does.
+        let scope = pip_preview::read_config_value("capture_scope")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "window".to_owned());
+        if scope != "desktop" {
+            return ToolResult::error(format!(
+                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
+                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
+                 set_config with capture_scope=desktop first (it also enables window-less \
+                 screen-absolute click/scroll). For a single window, use \
+                 get_window_state(pid, window_id) instead."
+            ))
+            .with_structured(serde_json::json!({
+                "code": "desktop_scope_disabled",
+                "capture_scope": scope,
+                "suggestion": "set_config capture_scope=desktop",
+            }));
+        }
+
         let screenshot_out_file = args.opt_str("screenshot_out_file");
 
         // True screen geometry in physical pixels (same space as the capture).

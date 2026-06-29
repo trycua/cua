@@ -56,12 +56,15 @@ impl Tool for GetConfigTool {
         // response reflects whatever set_config (or a direct JSON edit)
         // last wrote.
         let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
+        let capture_scope = self.state.config.read().unwrap().capture_scope.clone();
         ToolResult::text("cua-driver-rs configuration")
             .with_structured(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "macos",
-                // capture_mode / scope are per-call params now, not settings.
+                // capture_mode is a per-call param; capture_scope is a global
+                // setting that gates get_desktop_state.
                 "max_image_dimension": max_image_dimension,
+                "capture_scope": capture_scope,
                 "agent_cursor": {
                     "enabled": cursor_enabled,
                 },

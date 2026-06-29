@@ -3108,6 +3108,28 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // Gate on the global capture_scope: a full-display capture is a
+        // desktop-scope operation, available only when capture_scope="desktop"
+        // (same gate as window-less screen-absolute click/scroll). Read the
+        // persisted value the same way load_config does.
+        let scope = pip_preview::read_config_value("capture_scope")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "window".to_owned());
+        if scope != "desktop" {
+            return ToolResult::error(format!(
+                "get_desktop_state requires capture_scope=\"desktop\" (current scope is \
+                 \"{scope}\"). Full-display capture is a desktop-scope operation; call \
+                 set_config with capture_scope=desktop first (it also enables window-less \
+                 screen-absolute click/scroll). For a single window, use \
+                 get_window_state(pid, window_id) instead."
+            ))
+            .with_structured(serde_json::json!({
+                "code": "desktop_scope_disabled",
+                "capture_scope": scope,
+                "suggestion": "set_config capture_scope=desktop",
+            }));
+        }
+
         let out_file = args.opt_str("screenshot_out_file");
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {

@@ -585,6 +585,27 @@ impl Tool for GetWindowStateTool {
                          Issue #22865: use `max_elements` / `max_depth` to bound the \
                          AT-SPI walk on apps with very large trees."
                     );
+                    // Best-effort-background ladder parity with macOS/Windows: an
+                    // AT-SPI walk that ran but found zero actionable elements is
+                    // NOT a clean "this window has no controls" — far more often
+                    // the bridge wasn't ready (toolkit-accessibility off, or the
+                    // daemon isn't on the desktop session bus so the registry is
+                    // empty), or it's a non-AX surface (canvas/WebGL). Mark it
+                    // degraded so callers don't read `elements: []` as authoritative.
+                    if count == 0 {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(
+                            "atspi_tree_empty: the AT-SPI walk returned no actionable \
+                             elements. Common causes: the a11y bridge is off (enable \
+                             `gsettings set org.gnome.desktop.interface \
+                             toolkit-accessibility true`), the daemon is not on the \
+                             desktop session bus (DBUS_SESSION_BUS_ADDRESS unreachable — \
+                             run `cua-driver doctor`), or the window is a non-AX surface \
+                             (canvas/WebGL/custom-drawn). Do not treat element data as \
+                             authoritative — verify via the screenshot, and re-snapshot \
+                             after enabling a11y or if the app just launched."
+                        );
+                    }
                 }
 
                 if let Some((b64, w, h, orig_w)) = shot_opt {
@@ -3717,11 +3738,31 @@ impl Tool for CheckPermissionsTool {
             x11rb::rust_connection::RustConnection::connect(None).is_ok()
         }).await.unwrap_or(false);
 
-        // Check AT-SPI (required for accessibility tree).
-        let atspi_ok = std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok()
-            || std::path::Path::new("/run/user").exists();
+        // Check AT-SPI: not merely "is there a session bus?" but "does
+        // org.a11y.Bus actually answer on it?" — the previous env-var-or-
+        // /run/user heuristic false-passed exactly the headless/container case
+        // (/run/user exists, but no a11y bus → empty trees). Probe for real.
+        let dbus_address = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+        let atspi_ok = tokio::task::spawn_blocking(crate::health_report::probe_a11y_bus)
+            .await
+            .unwrap_or(false);
 
         let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+        let atspi_status = if atspi_ok {
+            match &dbus_address {
+                Some(a) => format!("✅ org.a11y.Bus reachable (DBUS_SESSION_BUS_ADDRESS={a})"),
+                None => "✅ org.a11y.Bus reachable".to_string(),
+            }
+        } else if dbus_address.is_none() {
+            "❌ no session bus (DBUS_SESSION_BUS_ADDRESS unset and none auto-discovered) — \
+             AT-SPI trees will be empty; start the daemon inside the desktop session"
+                .to_string()
+        } else {
+            "❌ session bus present but org.a11y.Bus has no owner — enable accessibility \
+             (gsettings set org.gnome.desktop.interface toolkit-accessibility true) / \
+             start at-spi-bus-launcher"
+                .to_string()
+        };
         let status_text = format!(
             "X11 display: {}\nWayland: {}\nAT-SPI (D-Bus): {}\nXSendEvent injection: {}",
             if x11_ok { "✅ connected" } else { "❌ DISPLAY not set or X11 unavailable" },
@@ -3735,11 +3776,11 @@ impl Tool for CheckPermissionsTool {
                 ),
                 None => "❌ not a Wayland session".to_string(),
             },
-            if atspi_ok { "✅ D-Bus session available" } else { "⚠️  D-Bus session not detected" },
+            atspi_status,
             if x11_ok { "✅ available" } else { "❌ requires X11" }
         );
         ToolResult::text(status_text)
-            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "wayland_enabled": crate::wayland::wayland_enabled(), "atspi": atspi_ok, "xsend_event": x11_ok }))
+            .with_structured(json!({ "x11": x11_ok, "wayland": wayland_display.is_some(), "wayland_enabled": crate::wayland::wayland_enabled(), "atspi": atspi_ok, "dbus_session_bus_address": dbus_address, "xsend_event": x11_ok }))
     }
 }
 

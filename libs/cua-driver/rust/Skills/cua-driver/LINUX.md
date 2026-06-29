@@ -64,6 +64,63 @@ input to avoid a per-call flash, or to escalate when background didn't land.
 keystroke / XSendEvent / XTest / foreground rungs are not read-back-confirmed
 → `verified:false` (confirm via screenshot). Mirrors the macOS/Windows verdict.
 
+## AT-SPI needs the session bus (headless / containers / `runuser`)
+
+AT-SPI — the accessibility tree behind `get_window_state`, element-indexed
+clicks, and focus-free `type_text` — lives **entirely on the desktop
+session's D-Bus**. cua-driver reaches it via `DBUS_SESSION_BUS_ADDRESS`. When
+the daemon is started *inside* a normal desktop login that variable is already
+exported and everything works. When it is started **outside** the session —
+a container entrypoint, a headless box, `runuser`/`su` into the desktop user,
+a systemd *system* unit, or a VNC session running its own ad-hoc bus — the
+variable is unset, the AT-SPI registry walk comes back empty, and
+`get_window_state` reports **every** window as having no elements.
+
+cua-driver now **auto-discovers the session bus at startup** (mirroring the
+`XAUTHORITY` recovery): if `DBUS_SESSION_BUS_ADDRESS` is unset it adopts
+`/run/user/<uid>/bus`, or reads the address out of a running desktop-session
+process's `/proc/<pid>/environ` (`xfce4-session`, `gnome-session`, …). So the
+common headless cases now "just work". The two things that still must be true:
+
+1. **An accessibility bus must be running** in that session, and
+   **`toolkit-accessibility` must be on** — cua-driver advertises a screen
+   reader at startup to flip it, but a session with no a11y bus at all
+   (`/usr/libexec/at-spi-bus-launcher`) can't expose a tree. `cua-driver
+   doctor` now probes `org.a11y.Bus` for real (not just "is there a bus?")
+   and tells you which of the two is missing.
+2. The daemon must run **as the desktop user** (so it can read that user's
+   session-process environ and the `/run/user/<uid>/bus` socket). Running the
+   daemon as root against a user session is the Linux analogue of the Windows
+   "Session 0" isolation problem.
+
+An empty AT-SPI walk is now surfaced honestly: `get_window_state` sets
+`degraded: true` + a `degraded_reason` (instead of a bare `elements: []`) so a
+caller can tell "this window genuinely has no controls" apart from "the a11y
+bridge isn't up / the daemon isn't on the session bus".
+
+## The validated modality matrix (X11 / XFCE)
+
+Each input rung, and whether the **driver itself** can confirm it (vs. only
+the caller agent confirming via screenshot — the same honesty line macOS and
+Windows draw):
+
+| Modality | `delivery_mode` | Path reported | Driver-verifiable? |
+|---|---|---|---|
+| Element click (`element_index`) | `background` | `x11_atspi` (AT-SPI `do_action`) | ✅ a11y action |
+| **Pixel / vision click** | `background` | `x11_atspi` (AT-SPI `do_action`-at-point) for AX apps; else MPX `x11_pixel` | ✅ when AT-SPI-at-point lands; else best-effort |
+| Pixel click (escalated) | `foreground` | `x11_pixel_fg` (EWMH activate → inject → restore) | ❌ confirm via screenshot |
+| `type_text` into editable | `background` | `ax` (AT-SPI `insertText`) | ✅ `verified:true` |
+| `type_text`, non-editable focus | `background`/`foreground` | `key_events` / `key_events_fg` | ❌ confirm via screenshot |
+
+**Background pixel/vision click does land on X11** — for an AX-exposing app it
+takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly
+like the macOS/Windows background pixel click. It falls to the MPX
+virtual-pointer path (`x11_pixel`) only for non-AX surfaces, **and that path
+needs a real Xorg + `/dev/uinput`** — under Xvnc / minimal containers without
+uinput, escalate to `delivery_mode:"foreground"`. (`type_text` in the
+`background` rung is focus-dependent for non-editable widgets; that's the one
+genuine background limitation, and `foreground` is the documented escalation.)
+
 ## Wayland (opt-in — still preview)
 
 Native Wayland support is behind an opt-in flag and not yet at the same
@@ -97,14 +154,20 @@ maturity as X11:
 If a tool call surprises you on Linux:
 
 1. `cua-driver doctor` — reports the display server (X11 / Wayland),
-   AT-SPI bus reachability, and `ffmpeg` availability (for recording).
+   **whether `org.a11y.Bus` actually answers on the session bus** (not just
+   "is there a bus"), the discovered `DBUS_SESSION_BUS_ADDRESS`, and
+   `ffmpeg` availability (for recording).
 2. Check `XDG_SESSION_TYPE` — `x11` is fully supported; `wayland`
    needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for native input (preview),
    else XWayland.
-3. Empty / partial AT-SPI tree — make sure the a11y bus is enabled
-   (`gsettings set org.gnome.desktop.interface toolkit-accessibility
-   true`). GTK4 / Qt6 also populate lazily, so re-snapshot after an
-   interaction.
+3. **Empty AT-SPI tree** (`get_window_state` returns `degraded:true`) — in
+   order of likelihood: (a) the daemon isn't on the desktop session bus
+   (headless / container / `runuser` / root-against-user-session — see
+   *AT-SPI needs the session bus* above; doctor will say
+   `DBUS_SESSION_BUS_ADDRESS unset`); (b) the a11y bridge is off
+   (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`);
+   (c) GTK4 / Qt6 / Chromium populate lazily — re-snapshot after an
+   interaction or an AX-enable settle.
 
 ## Forbidden vectors
 

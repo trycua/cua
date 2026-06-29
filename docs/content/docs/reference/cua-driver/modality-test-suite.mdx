@@ -499,6 +499,37 @@ I. **The AFH UIA root is a caption-only ~188×32 strip** for Settings and Store 
 
 ---
 
+## Linux dispatch ladder & the XFCE container lane
+
+Linux (X11/XFCE) now validates the same `delivery_mode` background/foreground dispatch ladder that macOS and Windows exercise, closing the parity gap. The matrix below shows each modality's path and whether the driver can verify the action landed without a screenshot.
+
+### Validated modality matrix
+
+| Modality | `delivery_mode` | Path reported | Driver-verifiable? |
+|----------|----------------|---------------|-------------------|
+| Element click (`element_index`) | background | `x11_atspi` (AT-SPI `doAction`) | yes — a11y action confirmed |
+| Pixel/vision click | background | `x11_atspi` (AT-SPI `doAction`-at-point) for AX apps; else MPX `x11_pixel` | yes when AT-SPI-at-point lands; best-effort otherwise |
+| Pixel click (escalated) | foreground | `x11_pixel_fg` (EWMH activate → inject → restore) | no — confirm via screenshot |
+| `type_text` into editable | background | `ax` (AT-SPI `insertText`) | yes (`verified: true`) |
+| `type_text`, non-editable focus | background / foreground | `key_events` / `key_events_fg` | no — confirm via screenshot |
+
+Background pixel/vision clicks do land on X11: apps that expose AT-SPI take the focus-free `doAction`-at-point path (`x11_atspi`), matching the macOS/Windows background-click behavior. The fallback to MPX `x11_pixel` (which requires a real Xorg server with `/dev/uinput` — unavailable under Xvnc or minimal containers) fires only for non-AX surfaces; escalate to `delivery_mode: foreground` there.
+
+### The XFCE container lane
+
+The `trycua/cua-xfce` Docker image is a reproducible, WM-equipped X11 target — xfwm4 + EWMH + full AT-SPI stack — that exercises both the foreground/EWMH and background AT-SPI modalities. It is richer than the existing Xvfb harness (no window manager, no EWMH) for those paths.
+
+The harness script lives at `libs/cua-driver/test-harness/linux-container/calc.sh`. It drives galculator through four modalities: background AX element click, background pixel/vision click, foreground EWMH type, and background type with focus fallback.
+
+**Gotchas:**
+
+- **AT-SPI session-bus auto-discovery.** AT-SPI lives on the desktop session's D-Bus (`DBUS_SESSION_BUS_ADDRESS`). When the daemon starts outside the session (container entrypoint, headless, `runuser`/`su`, systemd system unit, VNC ad-hoc bus), that variable is unset, yielding an empty AT-SPI tree. The driver now auto-discovers the bus at startup — preferring `/run/user/<uid>/bus`, else reading it from a running desktop-session process's `/proc/<pid>/environ` (`xfce4-session`, `gnome-session`, etc.). An a11y bus must be running with toolkit-accessibility enabled, and the daemon must run as the desktop user — running the daemon as root against a user session is the Linux analogue of the Windows Session 0 isolation problem.
+- **`install-local` refuses root.** Use `runuser -u <desktop-user> -- cua-driver serve` to start the daemon as the session owner.
+- **Single-instance apps + zombie children.** Unreaped zombie children can pollute `pgrep`; a full daemon restart reaps them.
+- **Stale daemon, stale tool schema.** A daemon that was not restarted after an update can serve an outdated tool schema. Verify with `cua-driver describe <tool>` from a fresh shell.
+
+---
+
 ## Appendix — file map
 
 | Path | Role |

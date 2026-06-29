@@ -72,6 +72,8 @@ Walk a running app's AX tree and return a Markdown rendering of its UI, tagging 
 {"pid": 844, "window_id": 10725}
 ```
 
+On Linux (and macOS/Windows), the structured result may include `degraded: true` alongside a `degraded_reason` string when the accessibility walk completed but found no actionable elements. This distinguishes "a11y bridge not up, daemon not on the session D-Bus, or non-AX surface" from a window that genuinely has no controls — do not treat `elements: []` as authoritative when `degraded: true` is set.
+
 ---
 
 ### `get_accessibility_tree`

@@ -128,9 +128,36 @@ async fn check_ax_capability() -> CheckEntry {
         .await
         .unwrap_or(false);
     if x11_ok {
-        return CheckEntry::pass(
+        // X11 input works, but AT-SPI *inspection* (get_window_state) also needs
+        // org.a11y.Bus on the session bus. Probe it so we don't claim AX works
+        // when the tree would come back empty — the DBUS_SESSION_BUS_ADDRESS-
+        // unset / a11y-bridge-off case the daemon now auto-recovers at startup.
+        let a11y_ok = tokio::task::spawn_blocking(probe_a11y_bus)
+            .await
+            .unwrap_or(false);
+        if a11y_ok {
+            return CheckEntry::pass(
+                NAME_AX_CAPABILITY,
+                "X11 reachable and org.a11y.Bus is on the session bus; \
+                 AT-SPI inspection + XSendEvent input will work.",
+            );
+        }
+        let hint = if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+            "DBUS_SESSION_BUS_ADDRESS is set but org.a11y.Bus has no owner — enable \
+             accessibility (`gsettings set org.gnome.desktop.interface \
+             toolkit-accessibility true`) and/or start the AT-SPI bus \
+             (`/usr/libexec/at-spi-bus-launcher`)."
+        } else {
+            "DBUS_SESSION_BUS_ADDRESS is unset and none was auto-discovered, so there \
+             is no session bus to reach AT-SPI on — start the daemon inside the desktop \
+             session, or ensure a /run/user/<uid>/bus socket exists (the daemon adopts \
+             it at startup)."
+        };
+        return CheckEntry::fail(
             NAME_AX_CAPABILITY,
-            "X11 reachable; AT-SPI + XSendEvent input will work.",
+            "X11 is reachable but AT-SPI (org.a11y.Bus) is not — UI inspection \
+             (get_window_state) will return empty trees; X11 input injection still works.",
+            hint,
         );
     }
     let display_set = std::env::var_os("DISPLAY").is_some();
@@ -354,7 +381,7 @@ fn probe_x11_connect() -> bool {
 /// stand in. Returns false on any error (no session bus, no a11y service,
 /// timeout, etc.) so the doctor message stays simple.
 #[cfg(target_os = "linux")]
-fn probe_a11y_bus() -> bool {
+pub(crate) fn probe_a11y_bus() -> bool {
     use atspi::zbus;
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -384,7 +411,7 @@ fn probe_a11y_bus() -> bool {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn probe_a11y_bus() -> bool {
+pub(crate) fn probe_a11y_bus() -> bool {
     false
 }
 

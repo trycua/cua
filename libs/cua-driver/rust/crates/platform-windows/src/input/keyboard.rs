@@ -365,7 +365,11 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
     unsafe {
         // Save & set foreground so SendInput lands on `target`.
         let prev_fg = GetForegroundWindow();
-        let _ = SetForegroundWindow(target);
+        // Robust auto bring-to-front (AttachThreadInput, same engine as
+        // bring_to_front / macOS with_foreground_assist) — a bare
+        // SetForegroundWindow is denied by the foreground-lock without UIAccess.
+        // Restored to prev_fg below.
+        let _ = crate::input::inject::force_foreground_attached(target);
         // Brief settle so the foreground swap is processed before we send.
         sleep(Duration::from_millis(8));
 
@@ -457,7 +461,11 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
         // would otherwise spray the text into whatever window actually held
         // focus (typically the terminal hosting this daemon).
         let prev_fg = GetForegroundWindow();
-        let _ = SetForegroundWindow(target);
+        // Robust auto bring-to-front (AttachThreadInput, same engine as
+        // bring_to_front / macOS with_foreground_assist) — a bare
+        // SetForegroundWindow is denied by the foreground-lock without UIAccess.
+        // Restored to prev_fg below.
+        let _ = crate::input::inject::force_foreground_attached(target);
         sleep(Duration::from_millis(8));
         let actual_fg = GetForegroundWindow();
         if actual_fg != target {

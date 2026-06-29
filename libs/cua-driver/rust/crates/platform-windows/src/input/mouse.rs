@@ -407,14 +407,22 @@ pub fn send_click_synthesized(
         let mut prev_cursor = POINT::default();
         let _ = GetCursorPos(&mut prev_cursor);
 
-        // Focus the target so the click lands there (mirrors send_key_synthesized).
-        let _ = SetForegroundWindow(target);
+        // Auto bring-to-front (robust) so the click lands on the target —
+        // mirrors macOS `with_foreground_assist` and the `bring_to_front` tool,
+        // and is restored to `prev_fg` below. Uses the AttachThreadInput trick
+        // (force_foreground_attached, the same engine `bring_to_front` uses)
+        // rather than a bare SetForegroundWindow, which the foreground-lock
+        // denies from a non-UIAccess process — so the agent doesn't have to call
+        // bring_to_front separately before a delivery_mode:"foreground" click.
+        let _ = crate::input::inject::force_foreground_attached(target);
         sleep(Duration::from_millis(8));
 
-        // Verify the swap actually happened. Without UIAccess the call returns
-        // success but the foreground stays put — and SendInput then lands on
-        // whatever window IS foreground (typically the terminal hosting this
-        // process). Abort before injecting so we don't click random apps.
+        // Verify the swap actually happened. Even the AttachThreadInput front
+        // can be denied by a maxed foreground-lock without UIAccess — and
+        // SendInput would then land on whatever window IS foreground (typically
+        // the terminal hosting this process). Abort before injecting so we don't
+        // click random apps (route through the cua-driver-uia worker for a
+        // guaranteed front).
         let actual_fg = GetForegroundWindow();
         if actual_fg != target {
             bail!(

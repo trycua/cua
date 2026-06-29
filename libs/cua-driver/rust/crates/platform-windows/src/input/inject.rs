@@ -54,7 +54,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// honored even on a foreground-locked session without UIAccess (mirrors the
 /// `bring_to_front` tool). Single attach, no retry loop — bounded. Returns
 /// whether `target` actually became foreground.
-unsafe fn force_foreground_attached(target: HWND) -> bool {
+pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
     let cur = GetForegroundWindow();
     if cur == target {
         return true;

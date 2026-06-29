@@ -18,8 +18,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, CWP_SKIPTRANSPARENT,
     GetCursorPos, GetForegroundWindow, GetSystemMetrics, PostMessageW, SetCursorPos,
-    SetForegroundWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    SetWindowPos, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
 };
 
@@ -407,68 +408,51 @@ pub fn send_click_synthesized(
         let mut prev_cursor = POINT::default();
         let _ = GetCursorPos(&mut prev_cursor);
 
-        // Auto bring-to-front (robust) so the click lands on the target —
-        // mirrors macOS `with_foreground_assist` and the `bring_to_front` tool,
-        // and is restored to `prev_fg` below. Uses the AttachThreadInput trick
-        // (force_foreground_attached, the same engine `bring_to_front` uses)
-        // rather than a bare SetForegroundWindow, which the foreground-lock
-        // denies from a non-UIAccess process — so the agent doesn't have to call
-        // bring_to_front separately before a delivery_mode:"foreground" click.
-        let _ = crate::input::inject::force_foreground_attached(target);
-        sleep(Duration::from_millis(8));
+        // Bring the target to the top of the VISIBLE z-order so the
+        // coordinate-routed SendInput mouse click lands on it — WITHOUT stealing
+        // focus. `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE)` is **lock-free**:
+        // it works from a non-UIAccess process even on a maxed foreground-lock
+        // (unlike `SetForegroundWindow`, which the lock denies), and sends no
+        // WM_ACTIVATE. `NoActivateGuard` then keeps the click itself from
+        // activating the target. This is the macOS-aligned "front → act →
+        // restore" for pointer input, done the one Windows way that doesn't
+        // need UIAccess — the technique the OG GTK path used. (Keyboard
+        // foreground still needs *real* focus; only pointer can be z-routed.)
+        let _noact = crate::input::NoActivateGuard::arm(target);
+        let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
-        // Verify the swap actually happened. Even the AttachThreadInput front
-        // can be denied by a maxed foreground-lock without UIAccess — and
-        // SendInput would then land on whatever window IS foreground (typically
-        // the terminal hosting this process). Abort before injecting so we don't
-        // click random apps (route through the cua-driver-uia worker for a
-        // guaranteed front).
-        let actual_fg = GetForegroundWindow();
-        if actual_fg != target {
-            bail!(
-                "Foreground swap to target HWND {:?} was rejected by Windows \
-                 (actual foreground is HWND {:?}). This daemon is not at \
-                 UIAccess integrity, so SetForegroundWindow is subject to the \
-                 foreground-lock and the swap silently fails. Without the \
-                 swap, SendInput-based mouse events would land on the wrong \
-                 window. Fix: install / spawn the cua-driver-uia worker \
-                 (UIAccess-manifested PE) and route Chromium coord clicks \
-                 through it.",
-                target.0, actual_fg.0
-            );
-        }
-
-        // Move the cursor first so the OS hover state matches before the click.
-        // `SetCursorPos` is the visible cursor move; the MOUSEEVENTF_MOVE input
-        // ensures Chromium's input filter sees a coordinated move event.
+        // Move the cursor so the OS hover state matches before the click; the
+        // MOUSEEVENTF_MOVE input ensures Chromium's input filter sees a
+        // coordinated move event.
         let _ = SetCursorPos(sx, sy);
 
         let count = count.max(1);
+        let mut sent_ok = true;
         for i in 0..count {
             let events = [move_input, down_input, up_input];
             let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
             if sent as usize != events.len() {
-                // Partial insertion — restore foreground+cursor and bail with
-                // the standard "needs UIAccess worker" diagnostic.
-                let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-                let _ = SetForegroundWindow(prev_fg);
-                bail!(
-                    "SendInput inserted only {sent} of {} mouse events. Likely cause: \
-                     the daemon is not at UIAccess integrity, so SetForegroundWindow was \
-                     rejected and the events landed on the wrong window. Route Chromium \
-                     coord clicks through the cua-driver-uia worker.",
-                    events.len()
-                );
+                sent_ok = false;
+                break;
             }
             if i + 1 < count {
                 sleep(Duration::from_millis(80));
             }
         }
 
-        // Brief settle so the target processes the click before we restore.
+        // Brief settle so the target processes the click, then restore z-order:
+        // demote the target out of the topmost band and restack the user's
+        // window on top (no activation), and restore the cursor.
         sleep(Duration::from_millis(40));
+        let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !prev_fg.0.is_null() && prev_fg != target {
+            let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
         let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-        let _ = SetForegroundWindow(prev_fg);
+        drop(_noact);
+        if !sent_ok {
+            bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
+        }
     }
 
     Ok(())
@@ -546,18 +530,12 @@ pub fn send_drag_synthesized(
         let mut prev_cursor = POINT::default();
         let _ = GetCursorPos(&mut prev_cursor);
 
-        let _ = SetForegroundWindow(target);
-        sleep(Duration::from_millis(8));
-        let actual_fg = GetForegroundWindow();
-        if actual_fg != target {
-            bail!(
-                "Foreground swap to target HWND {:?} was rejected by Windows \
-                 (actual foreground is HWND {:?}). Non-UIAccess processes can't \
-                 reliably change foreground under the foreground-lock. Route the \
-                 drag through cua-driver-uia.exe.",
-                target.0, actual_fg.0
-            );
-        }
+        // Lock-free z-order raise (no focus steal) so the coordinate-routed drag
+        // lands on the target — same technique as send_click_synthesized.
+        // SetForegroundWindow is lock-denied without UIAccess and isn't needed
+        // for pointer input; NoActivateGuard keeps the press from activating it.
+        let _noact = crate::input::NoActivateGuard::arm(target);
+        let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
         // 1. Move + press at the start of the drag.
         let (nfx, nfy) = norm(sx_from, sy_from);
@@ -568,8 +546,11 @@ pub fn send_drag_synthesized(
         ];
         let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != prelude.len() {
+            let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            if !prev_fg.0.is_null() && prev_fg != target {
+                let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+            }
             let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-            let _ = SetForegroundWindow(prev_fg);
             bail!("SendInput drag-prelude inserted {sent}/{} events", prelude.len());
         }
 
@@ -595,10 +576,15 @@ pub fn send_drag_synthesized(
         let release = [make_input(ntx, nty, up_flag)];
         let _ = SendInput(&release, std::mem::size_of::<INPUT>() as i32);
 
-        // Brief settle, then restore previous state.
+        // Brief settle, then restore z-order (demote target, restack user's
+        // window — no activation) and the cursor.
         sleep(Duration::from_millis(40));
+        let _ = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        if !prev_fg.0.is_null() && prev_fg != target {
+            let _ = SetWindowPos(prev_fg, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        }
         let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
-        let _ = SetForegroundWindow(prev_fg);
+        drop(_noact);
     }
 
     Ok(())

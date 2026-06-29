@@ -1880,7 +1880,8 @@ impl Tool for ScrollTool {
                     "amount":{"type":"integer","minimum":1,"maximum":50},
                     "window_id":{"type":"integer"},
                     "element_index":{"type":"integer"},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."}
+                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: false, idempotent: false, open_world: true,
@@ -1934,10 +1935,14 @@ impl Tool for ScrollTool {
         let direction_for_wayland = direction.clone();
         let amount_u32 = amount as u32;
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 return crate::wayland::scroll(xid, &direction_for_wayland, amount_u32);
             }
+            // foreground: activate the window, then scroll, then restore — for
+            // surfaces that only route wheel events to the active window.
+            let x11_scroll = || -> anyhow::Result<()> {
             // X11: synthetic Button4-7 XSendEvents are dropped by XInput2
             // toolkits (GTK never scrolls). On a real Xorg host, drive a real
             // wheel detent through the MPX uinput pointer over the window's
@@ -1968,9 +1973,19 @@ impl Tool for ScrollTool {
                 }
             }
             crate::input::send_click(xid, 0, 0, amount, button)
+            };
+            if delivery.is_foreground() {
+                crate::input::with_x11_foreground(xid, 80, x11_scroll)
+            } else {
+                x11_scroll()
+            }
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Scrolled {direction} {amount} ticks.")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Scrolled {direction} {amount} ticks (delivery_mode={mode_label})."
+            ))
+            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

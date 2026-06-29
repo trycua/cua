@@ -879,14 +879,22 @@ renderer, so the fallback path works for hyperlinks and buttons.
     - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
       surfaces a `background_unavailable` error for VCL.
     - **`type_text`** (a `WM_CHAR` `TextInput`, NOT flagged droppable):
-      background now does a **UIA read-back** of the focused field's value;
-      if it can't confirm the text landed it returns `📨 Sent N char(s)
-      (unverified)` (structured `verified:false`) instead of `✅ Typed …`.
+      background does a **UIA read-back** of the focused field and returns a
+      three-way `verify` in structured output: `confirmed` (✅, value changed),
+      `unchanged` (📨, read OK but value didn't change → likely dropped, retry
+      foreground), or `unreadable` (✅ "delivered, not verified"). **Windows
+      caveat:** UIA `GetFocusedElement` is system-wide (unlike macOS's per-app
+      `AXFocusedUIElement`), so read-back can only reach `confirmed`/`unchanged`
+      when the target is the **foreground** app; a backgrounded target reads
+      `unreadable` even when the text actually landed. So `unreadable` is NOT a
+      failure signal — verify via screenshot if it matters. (Measured: a
+      backgrounded LO Calc grid accepts WM_CHAR fine but reports `unreadable`.)
   Escalate to `delivery_mode:"foreground"` for both (SendInput Unicode /
   accelerator). **But** foreground needs the swap to actually land — if the
-  daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`,
-  you can't drive it by input at all: produce the artifact and `launch_app`
-  it (build the `.xlsx` / `.docx` and open it) rather than typing into the GUI.
+  daemon lacks UIAccess and `bring_to_front` returns `landed_on_target:false`
+  (or it reverts before the next call), you can't drive it by input at all:
+  produce the artifact and `launch_app` it (build the `.xlsx` / `.docx` and
+  open it) rather than typing into the GUI.
 - **Edge / Chrome shows tab switching even though I used pid-scoped
   hotkey** — `Ctrl+Tab` / `Ctrl+1..9` aren't pid-scopable; the
   receiver activates. Use the windows-per-URL pattern.

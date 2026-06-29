@@ -3012,33 +3012,45 @@ impl Tool for TypeTextTool {
         }).await;
         match result {
             Ok((Ok(()), before, after)) => {
-                // Verified iff we could read the focused value both times AND it
-                // changed. Unreadable (None) → unverified.
-                let verified = matches!((&before, &after), (Some(b), Some(a)) if a != b);
-                if verified {
-                    ToolResult::text(format!(
+                // Three-way verdict. Crucially, "couldn't read the field" is NOT
+                // the same as "the text didn't land": on Windows, UIA's
+                // GetFocusedElement is system-wide (unlike macOS's per-app
+                // AXFocusedUIElement), so when the target isn't the foreground
+                // app we cannot read it back even though a PostMessage WM_CHAR
+                // may have landed fine. Treating unreadable as failure would
+                // spuriously push agents to foreground and break the
+                // background-first contract. So only DOWNGRADE on positive
+                // evidence (read OK both times, value unchanged).
+                match (&before, &after) {
+                    (Some(b), Some(a)) if a != b => ToolResult::text(format!(
                         "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
                          ({_delay_ms}ms delay; verified via UIA read-back)."
                     ))
                     .with_structured(serde_json::json!({
-                        "path": "key_events",
-                        "characters": text_len,
-                        "verified": true,
-                    }))
-                } else {
-                    ToolResult::text(format!(
-                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
-                         (unverified) — the driver could not confirm the text landed. \
-                         The focused target may drop WM_CHAR (e.g. a VCL/LibreOffice \
-                         grid not in edit mode) or expose no readable value. Verify via \
-                         screenshot, and re-call with delivery_mode:\"foreground\" if it \
-                         didn't."
+                        "path": "key_events", "characters": text_len,
+                        "verified": true, "verify": "confirmed",
+                    })),
+                    (Some(_), Some(_)) => ToolResult::text(format!(
+                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
+                         the focused field's value did not change — the text was likely \
+                         dropped (e.g. a VCL/LibreOffice grid not in cell-edit mode). \
+                         Retry with delivery_mode:\"foreground\"."
                     ))
                     .with_structured(serde_json::json!({
-                        "path": "key_events",
-                        "characters": text_len,
-                        "verified": false,
-                    }))
+                        "path": "key_events", "characters": text_len,
+                        "verified": false, "verify": "unchanged",
+                    })),
+                    _ => ToolResult::text(format!(
+                        "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
+                         ({_delay_ms}ms delay; delivered, not verified — could not read \
+                         the focused field back, e.g. the target isn't foreground or \
+                         exposes no ValuePattern). If it didn't land, retry with \
+                         delivery_mode:\"foreground\"."
+                    ))
+                    .with_structured(serde_json::json!({
+                        "path": "key_events", "characters": text_len,
+                        "verified": false, "verify": "unreadable",
+                    })),
                 }
             }
             Ok((Err(e), _, _)) => ToolResult::error(e.to_string()),

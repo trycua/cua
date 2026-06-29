@@ -2081,7 +2081,9 @@ impl Tool for DoubleClickTool {
             }).await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    if let Ok((sx, sy)) = element_screen_center(pid, idx) {
+                    if let Ok(Ok((sx, sy))) =
+                        tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
+                    {
                         crate::overlay::send_command_for(
                             cursor_id.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(xid),
@@ -2230,7 +2232,9 @@ impl Tool for RightClickTool {
             }).await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    if let Ok((sx, sy)) = element_screen_center(pid, idx) {
+                    if let Ok(Ok((sx, sy))) =
+                        tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
+                    {
                         crate::overlay::send_command_for(
                             cursor_id.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(xid),

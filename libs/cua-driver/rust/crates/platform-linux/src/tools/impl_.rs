@@ -1056,7 +1056,8 @@ impl Tool for ClickTool {
                     "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
-                    "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
+                    "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -1237,40 +1238,52 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        // delivery_mode: background (default) = no-focus-steal injection;
+        // foreground = activate the target window (EWMH) first, then inject,
+        // then restore prior active. Mirrors macOS/Windows.
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             if crate::wayland::is_wayland() {
                 if crate::wayland::is_inject_mode() {
-                    return crate::wayland::inject_click(xid, x, y, count as u32, button);
+                    crate::wayland::inject_click(xid, x, y, count as u32, button)?;
+                    return Ok("wayland_libei");
                 }
                 // Native Wayland: focus+raise the target toplevel
-                // (foreign-toplevel `activate`), then drive `count`
-                // virtual-pointer button events at the requested coordinates.
-                // Wayland hides cross-window geometry, so callers should pass
-                // output-relative coords; (0,0) preserves the legacy
-                // "click the activated window's centre" behaviour.
-                return crate::wayland::click(xid, xi, yi, count as u32, button);
+                // (foreign-toplevel `activate`), then drive `count` virtual-pointer
+                // button events. Wayland injection routes to the compositor focus.
+                crate::wayland::click(xid, xi, yi, count as u32, button)?;
+                return Ok("wayland_activate");
             }
-            // X11: a synthetic XSendEvent pointer event (send_event=True) is
-            // dropped by XInput2 toolkits — a GTK button never sees it, so a
-            // pixel click is a silent no-op. Tiered no-focus-steal delivery:
-            //   1. Plain left single-click → AT-SPI doAction at that point
-            //      (lands the click without activating/raising the window, and
-            //      works on headless Xvfb too).
-            //   2. Right / middle / double click (and left clicks with no
-            //      actionable element) → real MPX uinput pointer + XI2 shield
-            //      grab, which delivers a true button event to GTK without the
-            //      WM stealing focus. Real Xorg only; skipped on Xvfb/Wayland.
-            //   3. Fallback → synthetic XSendEvent (a no-op on GTK but preserves
-            //      behaviour on core-only toolkits and headless servers).
-            if button == 1 && count == 1 {
-                if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
-                    return Ok(());
+            // X11 injection. Tiered no-focus-steal delivery (background):
+            //   1. Plain left single-click → AT-SPI doAction at that point.
+            //   2. Right / middle / double click → real MPX uinput pointer + XI2
+            //      shield grab (real Xorg only; skipped on Xvfb/Wayland).
+            //   3. Fallback → synthetic XSendEvent.
+            // Foreground skips the AT-SPI shortcut and does a real activated pixel
+            // click (the agent's escalation when background didn't land).
+            let inject = |fg: bool| -> anyhow::Result<&'static str> {
+                if !fg && button == 1 && count == 1 {
+                    if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
+                        return Ok("x11_atspi");
+                    }
                 }
+                x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, button, count)?;
+                Ok(if fg { "x11_pixel_fg" } else { "x11_pixel" })
+            };
+            if delivery.is_foreground() {
+                crate::input::with_x11_foreground(xid, 80, || inject(true))
+            } else {
+                inject(false)
             }
-            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, button, count)
         }).await;
+        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Clicked at ({x:.1}, {y:.1}) × {count}.")),
+            // A click is never driver-verifiable (no read-back) — verified:false,
+            // the caller confirms via screenshot. path reports the rung taken.
+            Ok(Ok(path)) => ToolResult::text(format!(
+                "✅ Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label})."
+            ))
+            .with_structured(json!({ "path": path, "verified": false })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

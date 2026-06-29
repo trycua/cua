@@ -6233,11 +6233,11 @@ impl Tool for BringToFrontTool {
         // trick mirrors `send_key_synthesized` (input/keyboard.rs:313-345)
         // and is validated by `flash-repro/16-edge-launch-fg.ps1` for the
         // Edge launch focus-steal recovery case.
-        let outcome = tokio::task::spawn_blocking(move || -> Result<(u64, u64), String> {
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool), String> {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{
-                GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
-                SetForegroundWindow,
+                GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+                SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
             };
             use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 
@@ -6249,9 +6249,23 @@ impl Tool for BringToFrontTool {
             let prev_fg = unsafe { GetForegroundWindow() };
             let prev_fg_addr = prev_fg.0 as u64;
 
-            // Attach our thread to the current FG thread so we inherit its
-            // FG-lock token; SetForegroundWindow then succeeds even when
-            // the daemon is at Medium IL without UIAccess.
+            // Lock-free z-order raise FIRST: bring the window to the top of the
+            // normal band (the HWND_TOPMOST→HWND_NOTOPMOST force-to-front trick)
+            // so it's brought to the VISIBLE front even when the foreground-lock
+            // denies focus. SWP_NOACTIVATE → no focus steal; SetWindowPos z-order
+            // is not gated by the foreground-lock / UIAccess. This is the same
+            // technique the delivery_mode:"foreground" pointer path uses.
+            let raised = unsafe {
+                let a = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE).is_ok();
+                let b = SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE).is_ok();
+                a && b
+            };
+
+            // Then best-effort focus/activation (needed for keyboard) via the
+            // AttachThreadInput trick — inherits the current FG thread's FG-lock
+            // token so SetForegroundWindow can succeed at Medium IL. Still denied
+            // on a maxed lock without UIAccess; the z-raise already made the
+            // window visible regardless.
             let my_tid = unsafe { GetCurrentThreadId() };
             let mut fg_pid = 0u32;
             let fg_tid = unsafe { GetWindowThreadProcessId(prev_fg, Some(&mut fg_pid)) };
@@ -6259,32 +6273,33 @@ impl Tool for BringToFrontTool {
             if attached {
                 let _ = unsafe { AttachThreadInput(my_tid, fg_tid, true) };
             }
-            let set_ok = unsafe { SetForegroundWindow(target) }.as_bool();
+            let _ = unsafe { SetForegroundWindow(target) };
             if attached {
                 let _ = unsafe { AttachThreadInput(my_tid, fg_tid, false) };
             }
-
-            // SetForegroundWindow can silently return FALSE under UIPI /
-            // foreground-lock denial. We still report what we tried.
-            let _ = set_ok;
             let now_fg = unsafe { GetForegroundWindow() };
-            Ok((prev_fg_addr, now_fg.0 as u64))
+            Ok((prev_fg_addr, now_fg.0 as u64, raised))
         }).await;
 
         match outcome {
-            Ok(Ok((prev, now))) => {
-                let landed_on_target = now == hwnd;
-                let msg = if landed_on_target {
+            Ok(Ok((prev, now, raised))) => {
+                let focused = now == hwnd;
+                let msg = if focused {
                     format!("✅ bring_to_front: pid {pid} hwnd 0x{hwnd:x} is now foreground (was 0x{prev:x}).")
+                } else if raised {
+                    format!(
+                        "✅ bring_to_front: pid {pid} hwnd 0x{hwnd:x} raised to the visible front \
+                         (z-order, no focus steal), but the foreground-lock denied keyboard focus — \
+                         focus is still 0x{now:x}. A delivery_mode:\"foreground\" pointer click will \
+                         land; for keyboard focus run the cua-driver-uia worker."
+                    )
                 } else {
                     format!(
-                        "bring_to_front returned but the OS did not honor the swap: target 0x{hwnd:x}, \
-                         current foreground 0x{now:x}. Common cause: Windows foreground-lock denied \
-                         SetForegroundWindow from a non-UIAccess process. Route through the \
-                         cua-driver-uia worker if you have one running."
+                        "bring_to_front could neither focus nor raise target 0x{hwnd:x} (current \
+                         foreground 0x{now:x})."
                     )
                 };
-                let r = if landed_on_target {
+                let r = if focused || raised {
                     ToolResult::text(msg)
                 } else {
                     ToolResult::error(msg)
@@ -6293,7 +6308,8 @@ impl Tool for BringToFrontTool {
                     "previous_fg_hwnd": format!("0x{prev:x}"),
                     "now_fg_hwnd":      format!("0x{now:x}"),
                     "target_hwnd":      format!("0x{hwnd:x}"),
-                    "landed_on_target": landed_on_target,
+                    "landed_on_target": focused,
+                    "raised":           raised,
                 }))
             }
             Ok(Err(e)) => ToolResult::error(format!("bring_to_front: {e}")),

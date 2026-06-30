@@ -1184,40 +1184,45 @@ impl Tool for ClickTool {
 
         if let Some(idx) = elem_idx_resolved {
             let xid_hint = window_id_resolved;
-            // For element_index: try AT-SPI perform_action first (background-safe).
-            // Always get bounds to send the overlay ClickPulse at the element center.
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
-                // Get element screen-absolute center for the overlay pulse.
-                let (screen_cx, screen_cy) = element_screen_center(pid, idx).unwrap_or((0.0, 0.0));
+            // Resolve the element's screen center + its window FIRST, so the
+            // agent cursor glides to the target *before* the click fires —
+            // matching the coordinate path below and the macOS/Windows backends.
+            // Previously perform_action ran inside this spawn_blocking, so the
+            // app updated before the cursor visibly arrived.
+            let (xid, sx, sy) = tokio::task::spawn_blocking(move || -> (u64, f64, f64) {
+                let (cx, cy) = element_screen_center(pid, idx).unwrap_or((0.0, 0.0));
+                let xid = xid_hint
+                    .or_else(|| crate::x11::list_windows(Some(pid)).into_iter().next().map(|w| w.xid))
+                    .unwrap_or(0);
+                (xid, cx, cy)
+            })
+            .await
+            .unwrap_or((0, 0.0, 0.0));
+            if xid != 0 {
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(xid),
+                );
+            }
+            overlay_glide_to_for(&cursor_id, sx, sy).await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
+            );
 
-                // Primary: AT-SPI doAction(0) — typically "click", no focus steal.
+            // Now perform the actual click: AT-SPI doAction(0) first (background-
+            // safe, no focus steal), else XSendEvent at window-local coords.
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 if crate::atspi::perform_action(pid, idx).is_ok() {
-                    let xid = xid_hint.or_else(|| {
-                        crate::x11::list_windows(Some(pid)).into_iter().next().map(|w| w.xid)
-                    }).unwrap_or(0);
-                    return Ok((xid, screen_cx, screen_cy));
+                    return Ok(());
                 }
-
-                // Fallback: XSendEvent at window-local coords.
-                let (xid, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
-                crate::input::send_click(xid, lx as i32, ly as i32, count, button)?;
-                Ok((xid, screen_cx, screen_cy))
-            }).await;
+                let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
+                crate::input::send_click(xid2, lx as i32, ly as i32, count, button)?;
+                Ok(())
+            })
+            .await;
             return match result {
-                Ok(Ok((xid, x, y))) => {
-                    if xid != 0 {
-                        crate::overlay::send_command_for(
-                            cursor_id.clone(),
-                            cursor_overlay::OverlayCommand::PinAbove(xid),
-                        );
-                    }
-                    overlay_glide_to_for(&cursor_id, x, y).await;
-                    crate::overlay::send_command_for(
-                        cursor_id.clone(),
-                        cursor_overlay::OverlayCommand::ClickPulse { x, y },
-                    );
-                    ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
-                }
+                Ok(Ok(())) => ToolResult::text(format!("Clicked element [{idx}] (pid {pid}).")),
                 Ok(Err(e)) => ToolResult::error(format!("AT-SPI element click failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };

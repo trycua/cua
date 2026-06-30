@@ -1055,19 +1055,20 @@ fn gtk_frame_extents(xid: u64) -> Option<(i32, i32)> {
 ///
 /// AT-SPI `CoordType::Window` coords are relative to the toolkit's *content*
 /// toplevel. The content's screen position is the X11 window's root-relative
-/// origin plus the GTK4 CSD shadow inset; for non-GTK / SSD windows the inset
-/// is absent → `(0,0)`, so the offset is just the X11 origin and the
-/// reconstruction equals the value `CoordType::Screen` used to return on
-/// correctly-behaving toolkits (Qt/GTK3). This is deterministic and replaces
-/// the old frame-(0,0)-detection heuristic; crucially it fixes GTK4, whose
-/// `CoordType::Screen` collapses *every* element to (0,0) so a constant offset
-/// could never separate them (GNOME/gtk a11y rework, issues #1564 / #1739) —
-/// `CoordType::Window` returns the distinct per-widget offsets instead.
+/// origin plus the GTK4 CSD shadow inset (`_GTK_FRAME_EXTENTS`). This is
+/// deterministic and replaces the old frame-(0,0)-detection heuristic; it fixes
+/// GTK4, whose `CoordType::Screen` collapses *every* element to (0,0) so a
+/// constant offset could never separate them (GNOME/gtk a11y rework, issues
+/// #1564 / #1739) — `CoordType::Window` returns the distinct per-widget offsets
+/// instead.
 ///
-/// Returns `None` when the offset can't be established — on native Wayland
-/// (clients may not query screen origins, by design) or when no X11 window
-/// resolves — so callers fall back to the legacy `CoordType::Screen` path and
-/// behaviour is never worse than before.
+/// **Gated on `_GTK_FRAME_EXTENTS` presence**: only GTK toolkits set that
+/// property (for CSD), and only GTK's Screen extents are unreliable. Non-GTK
+/// toolkits (Qt, etc.) have no such property *and* report correct Screen
+/// extents, so we return `None` for them — callers keep the unchanged Screen
+/// path and the WINDOW reconstruction can never regress a toolkit that was
+/// already correct. Also returns `None` on native Wayland (clients may not
+/// query screen origins, by design) or when no X11 window resolves.
 fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
     if crate::wayland::is_wayland() {
         return None;
@@ -1081,8 +1082,10 @@ fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
     } else {
         crate::x11::list_windows(Some(pid)).first().map(|w| w.xid)?
     };
+    // `?` here is the GTK gate: no _GTK_FRAME_EXTENTS → non-GTK toolkit → keep
+    // the legacy Screen path (which those toolkits report correctly).
+    let (fl, ft) = gtk_frame_extents(win_xid)?;
     let (ox, oy) = x11_window_origin(win_xid)?;
-    let (fl, ft) = gtk_frame_extents(win_xid).unwrap_or((0, 0));
     Some((ox + fl, oy + ft))
 }
 

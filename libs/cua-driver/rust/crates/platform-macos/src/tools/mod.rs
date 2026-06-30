@@ -363,9 +363,14 @@ pub fn register_all(registry: &mut ToolRegistry, compat: bool) {
     registry.register(Box::new(hotkey::HotkeyTool::new(state.clone())));
     registry.register(Box::new(set_value::SetValueTool::new(state.clone())));
     registry.register(Box::new(scroll::ScrollTool::new(state.clone())));
-    // `screenshot` removed - see the matching comment in
-    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
-    // screenshot path is `get_window_state` with `capture_mode:"vision"`.
+    // The standalone `screenshot` tool was removed (#1692). The pixel-grounding
+    // screenshot the Claude Code computer-use compat loop relies on now comes
+    // from `get_window_state` (which always returns BOTH the tree AND a
+    // screenshot — perception is mode-agnostic; `capture_mode` is deprecated/
+    // ignored) for a window, or `get_desktop_state` for the whole screen.
+    // `compat` no longer gates a tool swap here — the flag's live purpose is to
+    // register the MCP server under the `cua-computer-use` name, which is what
+    // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
     registry.register(Box::new(get_desktop_state::GetDesktopStateTool));

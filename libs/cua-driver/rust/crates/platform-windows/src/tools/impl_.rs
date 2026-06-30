@@ -248,8 +248,10 @@ impl Default for DriverConfig {
 /// Load `DriverConfig` from `~/.cua-driver/config.json`, falling back to
 /// defaults for any missing/malformed keys. Called once at `ToolState`
 /// construction (i.e. on every fresh `cua-driver call` process) so that a
-/// prior `set_config capture_mode=vision` survives across stateless one-shot
-/// invocations — matching the macOS daemon's startup load. See #2008.
+/// prior `set_config max_image_dimension=...` survives across stateless
+/// one-shot invocations — matching the macOS daemon's startup load. See #2008.
+/// (`capture_mode` is still loaded/persisted for back-compat but no longer
+/// affects behavior — `get_window_state` always returns tree + screenshot.)
 pub fn load_driver_config() -> DriverConfig {
     let mut cfg = DriverConfig::default();
     if let Some(v) = pip_preview::read_config_value("capture_mode").and_then(|v| v.as_str().map(str::to_owned)) {
@@ -704,12 +706,11 @@ impl Tool for GetWindowStateTool {
                 Set `query` to a case-insensitive substring to filter `tree_markdown` down to \
                 matching lines plus their ancestor chain. element_index values and \
                 `element_count` are unchanged — the filter only trims the rendered Markdown.\n\n\
-                Two capture modes that map 1:1 to how you'll act. `ax` (default): the \
-                UIA tree only — act via element_index — and NO screenshot is delivered \
-                (set `screenshot_out_file` to also write the frame to disk). `vision`: a \
-                fresh PNG only (UIA walk skipped; element_index cache not updated) — act \
-                via x,y pixels. Switch to `vision` when the surface has no usable UIA tree \
-                (canvas / WebGL / Electron web content) or the tree is too large.\n\n\
+                Always returns BOTH the element tree AND a screenshot — ground on both \
+                and cross-check (the tree lies on some surfaces). Choose the modality at \
+                ACTION time: an element ax action (element_index/element_token → \
+                accessibility rung) or an element px action (x,y → pixel rung off this \
+                screenshot). capture_mode is deprecated and ignored.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
@@ -724,7 +725,8 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
-                "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead. Works in `ax` mode too (the only way to also grab a frame on the accessibility path)."},
+                "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
+                "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees (#22865)."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees (#22865)."}
@@ -763,18 +765,18 @@ impl Tool for GetWindowStateTool {
                 "No window with window_id {hwnd} exists. Call `list_windows({{\"pid\": \
                  {pid}}})` for candidates."));
         }
-        let (default_mode, max_dim) = {
+        let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            (cfg.capture_mode.clone(), cfg.max_image_dimension)
+            cfg.max_image_dimension
         };
         use cua_driver_core::tool_args::ArgsExt;
-        // capture_mode collapses to two modes that map 1:1 to the action path:
-        // `ax` (default; tree, screenshot withheld) and `vision` (screenshot,
-        // no walk). `som`/`tree`/`screenshot` still decode as deprecated aliases
-        // — see cua_driver_core::capture_mode. The persisted config default (now
-        // "ax") feeds the parse when the per-call arg is absent.
-        let capture_mode = args.str_or("capture_mode", &default_mode);
-        let mode = cua_driver_core::capture_mode::CaptureMode::parse(Some(capture_mode.as_str()));
+        // `capture_mode` is DEPRECATED and ignored — get_window_state always
+        // returns BOTH the UIA tree and a screenshot now, so the agent grounds on
+        // both and cross-checks (the UIA tree lies often enough that a grounding
+        // screenshot should always be present). The modality is chosen at action
+        // time: an element ax action (element_index) or an element px action (x,y).
+        // We don't read the arg; it stays in the schema only so old callers don't
+        // trip additionalProperties:false.
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
         // Optional caps — when omitted, fall back to the walker's built-in
@@ -791,14 +793,16 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
 
-        // Walk the UIA tree only on the accessibility path. Screenshot gating —
-        // capture-but-withhold on the AX path: `vision` mode captures AND delivers
-        // (base64 in content, or a file); `ax` mode only grabs a frame at all when
-        // `screenshot_out_file` was passed (write to disk, surface the path, never
-        // embed base64) — otherwise the grab is skipped entirely so the hot AX
-        // lookup path pays no capture latency or image tokens.
-        let do_tree = mode.walks_ax();
-        let do_shot = mode.delivers_screenshot() || screenshot_out_file.is_some();
+        // Always walk the UIA tree. The screenshot is returned by DEFAULT — the
+        // grounding frame the agent cross-checks the (sometimes-lying) tree
+        // against — but `include_screenshot:false` opts out of the grab entirely
+        // (tree only: the cheap path for re-indexing before an element ax action).
+        // `screenshot_out_file` still forces a capture to disk regardless. With
+        // `screenshot_out_file` the bytes go to disk and the path is surfaced
+        // instead of embedding base64; otherwise the base64 PNG is embedded.
+        let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        let do_tree = true;
+        let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
 
         let state = self.state.clone();
         let q = query.clone();
@@ -851,15 +855,15 @@ impl Tool for GetWindowStateTool {
                 // instead of just "UIA provider unresponsive". The class
                 // points the caller at the right workaround (e.g. SALFRAME
                 // → screenshot + pixel coords + delivery_mode:"foreground"; UWP
-                // class → retry with capture_mode:"vision" to skip the
-                // UIA walk and just get a screenshot).
+                // class → re-call with a depth-limited scan and act by pixel
+                // off the screenshot if the tree stays unusable).
                 let class = crate::input::delivery::read_class_name(hwnd);
                 Err(anyhow::anyhow!(
                     "get_window_state timed out after 4s (UIA provider unresponsive on \
                      hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
-                     (a) re-call this tool with `capture_mode:\"vision\"` to skip the \
-                     UIA walk and just capture the screenshot — bypasses UIA entirely, \
-                     then drive via pixel `click(x, y)` against the returned image; \
+                     (a) re-call this tool with a depth-limited scan \
+                     (`max_elements` / `max_depth`) — if the tree stays unusable, act \
+                     by pixel `click(x, y)` off the screenshot in the response; \
                      (b) if the target is a transient VCL / message-box dialog, send \
                      `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
                      default accelerator (Esc / Enter / Y / N) without needing the tree."
@@ -967,9 +971,10 @@ impl Tool for GetWindowStateTool {
                     // may be a non-UIA surface (canvas/WebGL/custom-drawn) or its
                     // tree wasn't ready (Chromium/Electron need an enable + settle).
                     // Mark it degraded so callers don't read `elements: []` as "this
-                    // window has no controls", and point at the next rung. Windows
-                    // can pixel-target in the background for many surfaces, so the
-                    // recommendation is vision_pixel, not foreground.
+                    // window has no controls", and point at the next rung. An empty
+                    // UIA tree means element_index has nothing to bind to, so the
+                    // deliberate move is an element px action — read the screenshot
+                    // already in this response and click by pixel (x,y).
                     if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
@@ -981,9 +986,9 @@ impl Tool for GetWindowStateTool {
                              switch to the visual path."
                         );
                         structured["escalation"] = json!({
-                            "recommended": "vision_pixel",
-                            "reason": "non-AX surface — re-capture capture_mode:\"vision\" \
-                                       and click by pixel (x,y)."
+                            "recommended": "px",
+                            "reason": "non-AX surface — act by pixel (x,y) off the \
+                                       screenshot in this response (an element px action)."
                         });
                     }
                 }
@@ -4081,8 +4086,8 @@ impl Tool for ScrollTool {
 }
 
 // `ScreenshotTool` and `ScreenshotCompatTool` were removed in PR #1692 —
-// `get_window_state` with `capture_mode:"vision"` is the single canonical
-// screenshot path. The underlying capture functions
+// `get_window_state` (which now always returns a screenshot) is the single
+// canonical screenshot path. The underlying capture functions
 // (`crate::capture::screenshot_window_bytes_with_occlusion`,
 // `screenshot_display_bytes`, etc.) and the WGC backend
 // (`crate::wgc::screenshot_window_via_wgc`) are still in use by
@@ -5850,8 +5855,10 @@ impl Tool for GetConfigTool {
                 same fallback the daemon uses at startup. Sibling to `set_config`.\n\n\
                 Current schema (Windows):\n\n  \
                 {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \
-                \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\",\n    \
-                \"max_image_dimension\": 0\n  }\n".into(),
+                \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\" (DEPRECATED, ignored),\n    \
+                \"max_image_dimension\": 0\n  }\n\n\
+                `capture_mode` is deprecated and no longer affects behavior — \
+                `get_window_state` always returns both the UIA tree and a screenshot.".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -5901,12 +5908,14 @@ impl Tool for SetConfigTool {
             description: "Write a setting into the persistent driver config. Values take \
                 effect immediately.\n\n\
                 Two input shapes:\n\
-                - **Swift-compatible** (preferred): `{\"key\": \"capture_mode\", \"value\": \"som\"}` \
+                - **Swift-compatible** (preferred): `{\"key\": \"max_image_dimension\", \"value\": 1568}` \
                   — single dotted-path leaf write.\n\
-                - **Legacy per-field** (Rust-only): `{\"capture_mode\": \"som\", \"max_image_dimension\": 0}` \
+                - **Legacy per-field** (Rust-only): `{\"max_image_dimension\": 0}` \
                   — bulk write of named fields.\n\n\
                 Known keys:\n\
-                - `capture_mode` (string: `vision` | `ax` | `som`)\n\
+                - `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; \
+                  `get_window_state` always returns both the UIA tree and a screenshot. Still \
+                  accepted/persisted for back-compat but has no effect.\n\
                 - `max_image_dimension` (integer)\n\
                 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
                 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
@@ -5914,7 +5923,7 @@ impl Tool for SetConfigTool {
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
-                "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
+                "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window (default) or whole desktop. Desktop scope enables window-less screen-absolute click/scroll (no pid/window_id). Accepted in both the {key,value} and legacy per-field shapes."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
                 "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
@@ -6840,12 +6849,12 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(SetValueTool { state: state.clone() }));
     r.register(Box::new(ScrollTool { state: state.clone() }));
     // `screenshot` / `ScreenshotCompatTool` removed from the tool surface
-    // — `get_window_state` with `capture_mode:"vision"` is the single
-    // canonical path for getting a window screenshot. Reasons:
+    // — `get_window_state` (which now always returns a screenshot) is the
+    // single canonical path for getting a window screenshot. Reasons:
     //   1. One entry point means callers always have a window_id context,
     //      which `screenshot` made ambiguous (whole-display fallback
     //      always picked the wrong thing for headless agent workflows).
-    //   2. `get_window_state` already returns a JPEG in vision/som mode
+    //   2. `get_window_state` always returns a PNG alongside the tree
     //      — there's no information `screenshot` exposed that's not in
     //      `get_window_state`.
     //   3. Claude Code's vision pipeline can be retargeted at

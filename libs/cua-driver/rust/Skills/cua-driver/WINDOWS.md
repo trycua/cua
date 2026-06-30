@@ -114,8 +114,8 @@ costlier path; only use it for surfaces with no UIA peer.
 The `escalation` field is the same machine-readable hint the action
 responses carry (see `SKILL.md` → behavior matrix). On Windows the
 recommendation is `"foreground"` — the dropped event needs the fronting
-rung. (Contrast macOS / X11, where a `vision` pixel click can still land
-in the background, so there the hint is `vision_pixel`.)
+rung. (Contrast macOS / X11, where a background px click can still land
+in the background, so there the hint is `px`.)
 
 The recommended flow when an agent gets that error:
 
@@ -413,19 +413,17 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   stale (window closed, recreated). Re-resolve via `list_windows`.
 - **Empty `tree_markdown` / sparse UIA tree?** Some apps populate
   their UIA tree lazily on first call; retry `get_window_state`
-  once. If still empty, the app has no UIA provider — fall back to
-  vision-mode (x,y) clicks on visible content (acceptable for
-  exploration; pair with screenshots).
-- **Empty tree, or a snapshot with no image?** Check `cua-driver
-  get_config` → `capture_mode`. Two modes, 1:1 with the action path:
-  `"ax"` (DEFAULT) returns the UIA tree and **no image** (act by
-  `element_index`); `"vision"` returns a PNG and **no tree** (act by
-  pixel). If you wanted pixels and got none you're in `"ax"` — take a
-  `"vision"` capture (a deliberate switch to the pixel path). If the
-  tree came back empty in `ax`, the response is `degraded` (no UIA
-  provider — see the lazy-tree retry note above), cross to `vision`.
-  (`"som"` still decodes as a deprecated alias for `"ax"`; it no longer
-  means "tree + PNG".)
+  once. If still empty, the app has no UIA provider — fall back to an
+  element px action (x,y clicks off the screenshot) on visible content
+  (acceptable for exploration; pair with screenshots).
+- **Empty tree, or a snapshot with no image?** `get_window_state`
+  returns **both** the UIA tree and a screenshot by default — there is no
+  capture mode to pick. If the tree came back empty, the response is
+  `degraded` (no UIA provider — retry once for lazy trees, see the note
+  above); act by **px** off the screenshot in the same response. The
+  `capture_mode` param is **deprecated and ignored** — it's still accepted
+  so old callers don't error, but both the tree and the image come back
+  regardless of what you pass.
 - **`get_desktop_state` returns `desktop_scope_disabled`?** That's
   intended: full-display capture is a **desktop-scope** operation, gated
   on the global `capture_scope`. It's `"window"` by default — so to verify
@@ -611,7 +609,7 @@ Properties:
 This is the right path for **any** "click button N" / "click menu
 item X" / "click checkbox Y" intent.
 
-### `(x, y)` mode (vision / pixel)
+### `(x, y)` mode (element px action / pixel)
 
 ```json
 {"pid": 6004, "window_id": 459672, "x": 446, "y": 671}

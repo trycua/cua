@@ -69,19 +69,40 @@ cross-platform `effect` (`confirmed` / `unverifiable` / `suspected_noop`) and,
 when you should change rung, `escalation:{recommended, reason}`. See `SKILL.md`
 → behavior matrix. The Linux-specific value of `recommended` is **`foreground`
 on Wayland** (background pixel can't target an unfocused window) and
-`vision_pixel` on X11 (a `vision` capture + background pixel click lands via
-AT-SPI `do_action`-at-point — the matrix below).
+**`px` on X11** (an element px action — background pixel click — lands via
+AT-SPI `do_action`-at-point off the screenshot already in the snapshot — the
+matrix below).
 
-## `capture_mode` — two modes, 1:1 with the action path
+## Perception and the ax/px action choice
 
-The capture vocabulary is the same two modes as macOS/Windows, and each maps
-to one addressing mode: **`ax`** (DEFAULT) returns the AT-SPI tree and **no
-image** — act by `element_index`; **`vision`** returns a screenshot and **no
-tree** — act by pixel `x,y`. Picking `vision` is a deliberate switch to the
-pixel path. `get_window_state` returning `degraded:true` (empty AT-SPI walk)
-is the cue to cross to `vision` (X11) or escalate to `delivery_mode:"foreground"`
-(Wayland). (`som` still decodes as a deprecated alias for `ax`; it no longer
-means "tree + screenshot".)
+`get_window_state` is **perception-mode-agnostic** — by default it returns
+**both** the AT-SPI tree **and** a screenshot in one call. You ground on both
+and cross-check; the tree **lies** on some surfaces (Electron echo-confirms
+`setValue`, virtualized/off-viewport rows report bogus `h:1` frames), so a
+grounding screenshot is always present by default. There is no capture mode to
+pick.
+
+**Perf opt-out — `include_screenshot`** (boolean, default `true`). Pass
+`include_screenshot:false` to skip the screen grab and return tree-only — the
+cheap path when you're re-indexing before an **element ax action** and don't
+need fresh pixels. It's a **perf** knob, not a modality choice.
+
+**`capture_mode` is DEPRECATED and IGNORED.** It's still *accepted* so old
+callers don't error, but it has **no effect** — both the tree and the
+screenshot come back regardless of what you pass (`ax`/`vision`/`som`). There
+is no `ax`/`vision`/`som` capture choice anymore; drop that vocabulary.
+
+Modality is chosen at **action time**, by how you address the target:
+
+- **element ax action** — `element_index` / `element_token` → AT-SPI
+  `do_action`. Backgroundable, driver-verifiable.
+- **element px action** — `x,y` → pixel rung, read straight off the screenshot
+  already in the `get_window_state` response. Best-effort; caller-confirmed.
+
+`get_window_state` returning `degraded:true` (empty AT-SPI walk) is the cue to
+do an **element px action** off that same screenshot (X11) or escalate to
+`delivery_mode:"foreground"` (Wayland — background pixel can't target an
+unfocused window there).
 
 ## Cross-platform schema residuals (Linux)
 
@@ -145,12 +166,12 @@ Windows draw):
 | Modality | `delivery_mode` | Path reported | Driver-verifiable? |
 |---|---|---|---|
 | Element click (`element_index`) | `background` | `x11_atspi` (AT-SPI `do_action`) | ✅ a11y action |
-| **Pixel / vision click** | `background` | `x11_atspi` (AT-SPI `do_action`-at-point) for AX apps; else MPX `x11_pixel` | ✅ when AT-SPI-at-point lands; else best-effort |
-| Pixel click (escalated) | `foreground` | `x11_pixel_fg` (EWMH activate → inject → restore) | ❌ confirm via screenshot |
+| **element px action (x,y)** | `background` | `x11_atspi` (AT-SPI `do_action`-at-point) for AX apps; else MPX `x11_pixel` | ✅ when AT-SPI-at-point lands; else best-effort |
+| Pixel (px) click, escalated | `foreground` | `x11_pixel_fg` (EWMH activate → inject → restore) | ❌ confirm via screenshot |
 | `type_text` into editable | `background` | `ax` (AT-SPI `insertText`) | ✅ `verified:true` |
 | `type_text`, non-editable focus | `background`/`foreground` | `key_events` / `key_events_fg` | ❌ confirm via screenshot |
 
-**Background pixel/vision click does land on X11** — for an AX-exposing app it
+**A background element px action does land on X11** — for an AX-exposing app it
 takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly
 like the macOS/Windows background pixel click. It falls to the MPX
 virtual-pointer path (`x11_pixel`) only for non-AX surfaces, **and that path
@@ -186,15 +207,15 @@ maturity as X11:
   no-libei-backend case (built without `portal-libei` or a denied portal
   session); when input has no actuator the tools surface an error rather
   than silently succeeding.
-- **Wayland escalation is `foreground`, NOT `vision_pixel`.** This is the
+- **Wayland escalation is `foreground`, NOT `px`.** This is the
   one place the cross-platform escalation hint flips. Everywhere else
-  (macOS, X11, most Windows surfaces) a background `vision` pixel click can
-  land on an unfocused window, so `escalation.recommended` is `vision_pixel`.
+  (macOS, X11, most Windows surfaces) a background pixel click can
+  land on an unfocused window, so `escalation.recommended` is `px`.
   On Wayland an unfocused window **cannot** be pixel-targeted in the
   background (libei injects only to compositor focus → `background_unavailable`),
   so the hint on action responses and on a `degraded` `get_window_state` is
   `foreground`: re-call the action with `delivery_mode:"foreground"`, don't
-  drop to a pixel capture expecting a background click to land.
+  expect an element px action off the screenshot to land in the background.
 
 ## Quick triage
 

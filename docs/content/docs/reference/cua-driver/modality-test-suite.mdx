@@ -1,6 +1,6 @@
 ---
 title: Modality Test Suite & Harnesses
-description: How the Cua Driver modality test suite and per-OS app harnesses work — capture modes, scopes, the action matrix, and per-platform results.
+description: How the Cua Driver modality test suite and per-OS app harnesses work — action rungs, scopes, the action matrix, and per-platform results.
 ---
 
 This document describes the cua-driver test-harness: a cross-OS, cross-toolkit
@@ -56,15 +56,22 @@ The core instrument is the **modality recorder** (one per OS:
 
 ### The 5 modality modes (per surface)
 
-Capture method × foreground/background × scope = 5 single-modality runs:
+Action rung × foreground/background × scope = 5 single-modality runs:
 
-| Mode             | Capture (`capture_mode`) | Dispatch        | Foreground? | Scope     |
-|------------------|--------------------------|-----------------|-------------|-----------|
-| `ax-fg`          | `ax` (accessibility tree)| `element_index` | app kept FRONT | window  |
-| `ax-bg`          | `ax`                     | `element_index` | app stays BACKGROUND (contract measured) | window |
-| `vision-fg`      | `vision` (pixels)        | pixel coords    | app kept FRONT | window  |
-| `vision-bg`      | `vision`                 | pixel coords    | app stays BACKGROUND (contract measured) | window |
-| `vision-desktop` | `vision`                 | screen pixels (window-less) | FRONT | desktop |
+| Mode             | Action rung           | Dispatch        | Foreground? | Scope     |
+|------------------|-----------------------|-----------------|-------------|-----------|
+| `ax-fg`          | element `ax` action (accessibility) | `element_index` | app kept FRONT | window  |
+| `ax-bg`          | element `ax` action   | `element_index` | app stays BACKGROUND (contract measured) | window |
+| `vision-fg`      | element `px` action (pixel) | pixel coords    | app kept FRONT | window  |
+| `vision-bg`      | element `px` action   | pixel coords    | app stays BACKGROUND (contract measured) | window |
+| `vision-desktop` | element `px` action   | screen pixels (window-less) | FRONT | desktop |
+
+The run names retain `ax`/`vision` as historical labels for the
+element-dispatch vs pixel-dispatch runs; **`capture_mode` itself is now
+deprecated and ignored** — `get_window_state` returns both the tree and a
+screenshot regardless of what you pass. The distinction the recorder exercises
+is the **action rung** (the element `ax` action addressing by `element_index`
+vs the element `px` action addressing by pixel `x,y`), not a capture toggle.
 
 The fg/bg split only matters for the contract (measured in the `*-bg` runs).
 `vision-desktop` sets `capture_scope=desktop` and issues window-less,
@@ -97,7 +104,7 @@ reads them differently per platform:
 | Windows WPF / WinUI3          | **UIAutomation** — finds the harness window by title substring, scans `ControlType.Text` descendants, regex-extracts `agreed=`, `slider_value=`, `last_action=`, `mirror=`, `menu_action=`, `scroll_offset=` |
 | Windows WebView2 / Electron   | Same UIA scan, but the window is matched by **substring** because Chromium titles carry a `[cdp=NNNN]` suffix; the web-AX tree only surfaces with `--force-renderer-accessibility` |
 | Linux GTK3                    | The harness writes a **state file** (`/tmp/cua-lin-state.json`); the recorder's `hstate()` reads it (AT-SPI text isn't reliably enumerable for all labels) |
-| Linux Electron                | Chromium **web-AX over AT-SPI** (`--force-renderer-accessibility`), read via `get_window_state(capture_mode=ax)` |
+| Linux Electron                | Chromium **web-AX over AT-SPI** (`--force-renderer-accessibility`), read from the `get_window_state` tree |
 | macOS AppKit / SwiftUI        | **AX** — status labels render as AX text nodes in `tree_markdown`; `do_native()` drives the action, then re-reads the labels |
 | macOS WKWebView / Electron    | Chromium/WebKit web-AX text (`WEBISH` path), same label contract |
 
@@ -195,23 +202,29 @@ verifier asserts on them:
 
 ---
 
-## 4. Capture modes & scopes
+## 4. Action rungs & scopes
 
-### Capture mode (`get_window_state` `capture_mode`)
+### Action rung (how the action addresses the target)
 
-There are exactly **two** capture modes, mapping one-to-one onto the two
-action-addressing paths:
+`get_window_state` is perception-mode-agnostic: it returns **both** the
+accessibility tree and a screenshot by default (`include_screenshot:false` skips
+the screenshot grab — a perf opt-out, not a modality choice). `capture_mode` is
+**deprecated and ignored** — there is no `ax`/`vision` capture toggle anymore.
+The modality is chosen at **action time** by how you address the target, and
+that one choice selects the rung:
 
-| Mode     | What the agent sees                  | How actions dispatch |
-|----------|--------------------------------------|----------------------|
-| `ax` (default) | accessibility tree only (element indices), **no screenshot** in the response (frame written to disk only if `screenshot_out_file` is set) | **`element_index`** — UIA Invoke (Windows) / AT-SPI `doAction` (Linux) / AX actions (macOS) |
-| `vision` | a fresh screenshot / pixels only     | **pixel coordinates** — synthetic/injected pointer events at (x,y) |
+| Rung | How the agent addresses the target | How actions dispatch |
+|------|------------------------------------|----------------------|
+| element `ax` action | by `element_index` (read off the tree) | UIA Invoke (Windows) / AT-SPI `doAction` (Linux) / AX actions (macOS) — backgroundable, driver-verifiable |
+| element `px` action | by pixel `x,y` (read off the screenshot in the same response) | synthetic/injected pointer events at (x,y) — best-effort, caller-confirmed |
 
-> **Deprecated aliases.** `som` (the old set-of-marks mode) is no longer an
-> advertised capture mode — it still decodes as an alias for `ax`, and
-> `screenshot` decodes as an alias for `vision`. The modality recorder always ran
-> `ax` and `vision` only, so the recorder runs and the results matrices below are
-> unchanged; only the now-removed third mode is gone from the capture surface.
+> **Deprecated aliases.** `som` (the old set-of-marks mode) and `screenshot` are
+> no longer advertised capture modes — like `ax`/`vision`/`capture_mode` itself,
+> they still decode but are **ignored** (both the tree and the screenshot come
+> back regardless). The modality recorder's runs exercise the element-dispatch
+> path and the pixel-dispatch path, so the recorder runs and the results matrices
+> below are unchanged — they are framed here as the element `ax` action and the
+> element `px` action rungs.
 
 ### Capture scope (`capture_scope`)
 
@@ -224,12 +237,13 @@ action-addressing paths:
 
 This is the central organizing idea (from `CUA_DRIVER_LIMITATIONS_AND_TEST_MATRIX.md`):
 
-- **`ax` mode = element dispatch.** Limits in the element path (a toolkit with no
-  `doAction` for right-click, a WinUI3 composition input-site the WPF path can't
-  reach, an AXValue a SwiftUI slider rejects) show up in **`ax`**.
-- **`vision` mode = pixel dispatch.** Limits in the pixel path (GTK dropping
-  synthetic X events, NSButton ignoring a synthetic mouseDown, a 2× Retina
-  coordinate conversion) show up in **`vision`**.
+- **The element `ax` action (`element_index`) path.** Limits in the element path
+  (a toolkit with no `doAction` for right-click, a WinUI3 composition input-site
+  the WPF path can't reach, an AXValue a SwiftUI slider rejects) surface in this
+  rung — the `ax-` runs.
+- **The element `px` action (pixel) path.** Limits in the pixel path (GTK
+  dropping synthetic X events, NSButton ignoring a synthetic mouseDown, a 2×
+  Retina coordinate conversion) surface in this rung — the `vision-` runs.
 - **fg/bg** isolates the *contract* (only `*-bg` measures focus steal).
 - **`desktop` scope** is where window-less / coordinate-space-conversion bugs
   surface (e.g. the macOS 2× Retina desktop path, the macOS no-windowless-click
@@ -240,8 +254,9 @@ This is the central organizing idea (from `CUA_DRIVER_LIMITATIONS_AND_TEST_MATRI
 ## 5. Action × control matrix
 
 **8 actions** × **6 controls**. Each modality run filters the plan:
-`set_value` is dropped in `vision` modes (it's AX-only); `vision-desktop` keeps
-only `{click, scroll, type, press-key}` (window-less screen actions).
+`set_value` is dropped in the `vision` modes (the pixel-dispatch runs — it's
+AX-only); `vision-desktop` keeps only `{click, scroll, type, press-key}`
+(window-less screen actions).
 
 | Action ↓ / Control → | checkbox | click-target | slider | scroll-target | text-input | context-menu |
 |----------------------|:--------:|:------------:|:------:|:-------------:|:----------:|:------------:|
@@ -353,8 +368,9 @@ the pixel that gets clicked* — verified by the target's own instrumented state
 changing.
 
 The loop (no cheating in locate or click):
-1. **capture** — `get_window_state(capture_mode=vision)` (window) /
-   `get_desktop_state` (desktop, true pixels): the exact image an agent receives.
+1. **capture** — `get_window_state` (window — reads the screenshot it returns by
+   default) / `get_desktop_state` (desktop, true pixels): the exact image an agent
+   receives.
 2. **locate** — a deterministic pixel **in the returned-image coordinate space**
    (`PixelRegistryLocator`: a pre-measured pixel read off the real PNG, with a
    dims-guard that fails loud if the pinned geometry drifts). No `element_index`,
@@ -512,13 +528,13 @@ Linux (X11/XFCE and real-desktop VMs) now validates the same `delivery_mode` bac
 | Modality | `delivery_mode` | Path reported | Driver-verifiable? |
 |----------|----------------|---------------|-------------------|
 | Element click (`element_index`) | background | `x11_atspi` (AT-SPI `doAction`) | yes — a11y action confirmed |
-| Pixel/vision click | background | `x11_atspi` (AT-SPI `doAction`-at-point) for AX apps; else MPX `x11_pixel` | yes when AT-SPI-at-point lands; best-effort otherwise |
-| Pixel click (escalated) | foreground | `x11_pixel_fg` (EWMH activate → inject → restore) | no — confirm via screenshot |
+| Element `px` action (pixel) | background | `x11_atspi` (AT-SPI `doAction`-at-point) for AX apps; else MPX `x11_pixel` | yes when AT-SPI-at-point lands; best-effort otherwise |
+| Element `px` action (escalated) | foreground | `x11_pixel_fg` (EWMH activate → inject → restore) | no — confirm via screenshot |
 | `type_text` into editable | background | `ax` (AT-SPI `insertText`) | yes (`verified: true`) |
 | `type_text`, non-editable focus | background / foreground | `key_events` / `key_events_fg` | no — confirm via screenshot |
 | `press_key` / `hotkey` | foreground | `x11_xtest_fg` (XSetInputFocus → XTEST key) | no — confirm via screenshot / effect (`keytest`) |
 
-Background pixel/vision clicks do land on X11: apps that expose AT-SPI take the focus-free `doAction`-at-point path (`x11_atspi`), matching the macOS/Windows background-click behavior. The fallback to MPX `x11_pixel` (which requires a real Xorg server with `/dev/uinput` — unavailable under Xvnc or minimal containers) fires only for non-AX surfaces; escalate to `delivery_mode: foreground` there.
+Background element `px` actions (pixel clicks) do land on X11: apps that expose AT-SPI take the focus-free `doAction`-at-point path (`x11_atspi`), matching the macOS/Windows background-click behavior. The fallback to MPX `x11_pixel` (which requires a real Xorg server with `/dev/uinput` — unavailable under Xvnc or minimal containers) fires only for non-AX surfaces; escalate to `delivery_mode: foreground` there.
 
 **Foreground keyboard (`press_key` / `hotkey`, and `type_text` foreground) lands under Xvnc.** The XTEST keyboard path injects on a short-lived X connection; it now **round-trips after injection** so the server delivers the key before the connection closes — under Xvnc a connection that closed right after `flush()` had its queued KeyPress/KeyRelease dropped (pointer events survived the same close, which masked the bug as "foreground clicks work but keys don't"). Two companion fixes: shifted-level symbols (`*`, `+`, `(`) **auto-hold Shift** via slot-0/slot-1 keysym resolution (a bare keycode press emitted the unshifted glyph, e.g. `*`→`8`); and the foreground rung now **`XSetInputFocus`es the target** (KWin honours EWMH `_NET_ACTIVE_WINDOW` as raise-only — fine for clicks that land by stacking, but keys route to the X input focus). `derec.sh keytest` effect-confirms the whole path across toolkits (AC, `3*4=` → display reads `12`).
 
@@ -526,7 +542,7 @@ Background pixel/vision clicks do land on X11: apps that expose AT-SPI take the 
 
 The `trycua/cua-xfce` Docker image is a reproducible, WM-equipped X11 target — xfwm4 + EWMH + full AT-SPI stack — that exercises both the foreground/EWMH and background AT-SPI modalities. It is richer than the existing Xvfb harness (no window manager, no EWMH) for those paths.
 
-The harness script lives at `libs/cua-driver/test-harness/linux-container/calc.sh`. It drives galculator through four modalities: background AX element click, background pixel/vision click, foreground EWMH type, and background type with focus fallback.
+The harness script lives at `libs/cua-driver/test-harness/linux-container/calc.sh`. It drives galculator through four modalities: background element `ax` click, background element `px` (pixel) click, foreground EWMH type, and background type with focus fallback.
 
 **Gotchas:**
 
@@ -574,7 +590,7 @@ Non-GTK toolkits (Qt) keep the existing SCREEN path — the gate is the presence
 
 On a native Wayland session the **background AX rung is the same coordinate-free AT-SPI `doAction`** as on X11, and it is the one rung that works unchanged: `Action.DoAction` is dispatched toolkit-side (GTK/Qt invoke the widget's own action), so it needs no coordinates, no portal, no cursor move, and no focus steal. Element-index clicks therefore land on Mutter/KWin exactly as on X11.
 
-**Pixel/vision coordinate clicks now land too — without pointer injection.** There is no global coordinate space on Wayland and Mutter drops synthetic virtual-pointer events, so a "click at (x,y)" can't be delivered as input. Instead the driver resolves the screen pixel back to the accessible element under it and fires *that* element's action — the proven `element_index` rung, reached by coordinates. The screen frame of every element is reconstructed the same way `get_window_state` exposes it (the `org.cua.WinRects` GNOME Shell helper supplies the window origin; GTK4's correct `CoordType::Window` extents supply the per-widget offset). The covering element is chosen **role-aware**: GTK4 nests a `label` inside every `button` with a near-identical, slightly *smaller* frame, so an area-only hit-test lands on the inert label and `do_action` silently no-ops (a "false success"); the selector prefers the smallest covering *real actuator* and only falls back to a passive label if nothing else covers the point. Validated live on Mutter Wayland: vision-clicking buttons by `{x,y}` (no `element_index`) types `789` into gnome-calculator (rung `wayland_atspi`). The same role-aware fix hardened the X11 `perform_action_at_point` rung, which had the identical GTK4 false-success.
+**Element `px` (pixel) coordinate clicks now land too — without pointer injection.** There is no global coordinate space on Wayland and Mutter drops synthetic virtual-pointer events, so a "click at (x,y)" can't be delivered as input. Instead the driver resolves the screen pixel back to the accessible element under it and fires *that* element's action — the proven `element_index` rung, reached by coordinates. The screen frame of every element is reconstructed the same way `get_window_state` exposes it (the `org.cua.WinRects` GNOME Shell helper supplies the window origin; GTK4's correct `CoordType::Window` extents supply the per-widget offset). The covering element is chosen **role-aware**: GTK4 nests a `label` inside every `button` with a near-identical, slightly *smaller* frame, so an area-only hit-test lands on the inert label and `do_action` silently no-ops (a "false success"); the selector prefers the smallest covering *real actuator* and only falls back to a passive label if nothing else covers the point. Validated live on Mutter Wayland: an element `px` action targeting buttons by `{x,y}` (no `element_index`) types `789` into gnome-calculator (rung `wayland_atspi`). The same role-aware fix hardened the X11 `perform_action_at_point` rung, which had the identical GTK4 false-success.
 
 Two Wayland-specific facts the lane exercises:
 

@@ -84,7 +84,7 @@ Use this recipe when the data already lives on your machine, for example in a PD
     field from the PDF, and submit the form.
     ```
 
-    The agent can use `launch_app` to open the PDF viewer, `page` to drive the browser, `get_window_state` or `get_accessibility_tree` to read visible fields, and `click`, `type_text`, or `set_value` to fill the form. It can set `capture_mode` to `vision` on `get_window_state` when a screenshot is needed.
+    The agent can use `launch_app` to open the PDF viewer, `page` to drive the browser, `get_window_state` or `get_accessibility_tree` to read visible fields, and `click`, `type_text`, or `set_value` to fill the form. `get_window_state` returns a screenshot alongside the tree by default, so the agent can ground on both.
   </Step>
 
   <Step>

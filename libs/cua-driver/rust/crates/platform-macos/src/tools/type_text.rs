@@ -230,7 +230,7 @@ impl Tool for TypeTextTool {
                     // type_text the next rung is delivery_mode:"foreground" (the
                     // field IS in the AX tree — it's a focus/accept problem, not a
                     // missing element), so the escalation points there rather than
-                    // at vision_pixel.
+                    // at the px rung.
                     let mut s = serde_json::json!({
                         "path": path,
                         "characters": char_count,

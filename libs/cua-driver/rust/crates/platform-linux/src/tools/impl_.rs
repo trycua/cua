@@ -436,12 +436,12 @@ impl Tool for GetWindowStateTool {
                 available and unchanged in shape for existing text-parsing \
                 callers — but new fields will only be added to the structured \
                 side.\n\n\
-                Two capture modes that map 1:1 to how you'll act. `ax` (default): \
-                the AT-SPI tree only — act via element_index — and NO screenshot \
-                is delivered (set screenshot_out_file to also write the frame to \
-                disk). `vision`: a fresh PNG only (no AT-SPI walk) — act via x,y \
-                pixels. Switch to `vision` when the surface has no usable AX tree \
-                (canvas / WebGL / Electron web content) or the tree is too large.\n\n\
+                Always returns BOTH the element tree AND a screenshot — ground on \
+                both and cross-check (the tree lies on some surfaces). Choose the \
+                modality at ACTION time: an element ax action \
+                (element_index/element_token → accessibility rung) or an element px \
+                action (x,y → pixel rung off this screenshot). capture_mode is \
+                deprecated and ignored.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees (#22865). When applied, BOTH \
@@ -452,8 +452,10 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"X11 XID from list_windows."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_screenshot":{"type":"boolean",
+                    "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
-                    "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead. In the default `ax` mode this is the ONLY way to also capture a frame (the AX path withholds the screenshot otherwise)."},
+                    "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
                 "query":{"type":"string"},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees (#22865)."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps (#22865)."}
@@ -466,23 +468,25 @@ impl Tool for GetWindowStateTool {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") { Ok(v) => v, Err(e) => return e };
         let xid = match args.require_u64("window_id") { Ok(v) => v, Err(e) => return e };
-        let (default_mode, max_dim) = {
+        let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            (cfg.capture_mode.clone(), cfg.max_image_dimension)
+            cfg.max_image_dimension
         };
-        // capture_mode collapses to two modes that map 1:1 to the action path:
-        // `ax` (default; walk the AT-SPI tree, screenshot withheld from the
-        // response) and `vision` (deliver a screenshot, skip the walk). `som` /
-        // `tree` / `screenshot` still decode as deprecated aliases — see
-        // cua_driver_core::capture_mode. The config-derived `default_mode` only
-        // sets the absent-arg fallback (now `ax`).
-        let mode = cua_driver_core::capture_mode::CaptureMode::parse(
-            Some(args.str_or("capture_mode", &default_mode).as_str()),
-        );
+        // `capture_mode` is DEPRECATED and ignored — get_window_state always
+        // returns BOTH the AT-SPI tree and a screenshot now, so the agent grounds
+        // on both and cross-checks (the tree lies often enough that a grounding
+        // screenshot should always be present). The modality is chosen at action
+        // time: an element ax action (element_index) or element px action (x,y).
+        // We don't even read the arg; it stays in the schema only so old callers
+        // don't trip additionalProperties:false.
         let query = args.opt_str("query");
-        // screenshot_out_file: when set, write the PNG to disk instead of
-        // embedding base64. In `ax` mode it's the only thing that triggers a grab
-        // at all (the AX path withholds the screenshot otherwise). `~` expands.
+        // include_screenshot (default true) — the perf opt-out. The tree+screenshot
+        // pair is the default; `include_screenshot:false` skips the grab and returns
+        // tree only (the cheap re-index path before an element ax action). A
+        // screenshot_out_file still forces a capture (to disk), regardless.
+        let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        // screenshot_out_file: when set, write the PNG to disk and surface the
+        // path instead of embedding base64 in the response. `~` expands.
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             if let Some(rest) = s.strip_prefix("~/") {
                 let home = std::env::var("HOME").unwrap_or_default();
@@ -496,35 +500,26 @@ impl Tool for GetWindowStateTool {
         let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize);
         let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize);
 
-        // Walk the AT-SPI tree only on the accessibility path. Deliver/grab a
-        // screenshot when vision mode asks for one OR a disk path was given.
-        let do_tree = mode.walks_ax();
-        let want_shot = mode.delivers_screenshot() || screenshot_out_file.is_some();
+        // Always walk the AT-SPI tree; capture the screenshot by default. The
+        // tree+screenshot pair is the default so the agent grounds on both and
+        // cross-checks the (sometimes-lying) tree against the frame — only the
+        // explicit `include_screenshot:false` opt-out (with no screenshot_out_file)
+        // skips the grab to return tree only.
+        let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         let state = self.state.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let tree_result = if do_tree {
-                Some(crate::atspi::walk_tree_bounded(pid, xid, query.as_deref(), max_elements, max_depth))
-            } else {
-                None
-            };
+            let tree_result = Some(crate::atspi::walk_tree_bounded(pid, xid, query.as_deref(), max_elements, max_depth));
             // Best-effort per-element screen bounds (AT-SPI Component.GetExtents).
             // Tolerant: an empty/missing map never fails the call.
-            let bounds = if do_tree {
-                crate::atspi::get_all_element_bounds(pid, xid).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            // Screenshot gating — capture-but-withhold on the AX path:
-            //   * vision mode → capture and DELIVER (base64 in content, or a file).
-            //   * ax mode → only grab a frame when screenshot_out_file was passed
-            //     (write to disk, surface the path, never embed base64). Otherwise
-            //     skip the grab entirely so the hot AX-lookup path pays no capture
-            //     latency or image tokens.
-            // The embed-vs-disk decision is purely whether a path was supplied:
-            // out_file ALWAYS writes to disk (b64=None); otherwise embed b64.
+            let bounds = crate::atspi::get_all_element_bounds(pid, xid).unwrap_or_default();
+            // Capture and DELIVER the screenshot alongside the tree by default — the
+            // grounding frame the agent cross-checks the tree against. With
+            // screenshot_out_file set, write to disk and surface the path instead
+            // of embedding base64; otherwise embed base64. Skipped only when
+            // include_screenshot:false and no disk path was requested.
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
-            let screenshot = if want_shot {
+            let screenshot = if should_capture {
                 match crate::wayland::screenshot_dispatch(xid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw).map(|(w, _)| w).unwrap_or(0);
@@ -657,7 +652,7 @@ impl Tool for GetWindowStateTool {
                         );
                         // Point the agent at the next rung explicitly: an empty
                         // tree means element_index has nothing to bind to. The
-                        // recommendation is session-dependent (X11 → vision_pixel,
+                        // recommendation is session-dependent (X11 → px,
                         // Wayland → foreground) — see non_ax_escalation.
                         structured["escalation"] = non_ax_escalation();
                     }
@@ -824,26 +819,26 @@ fn parse_mouse_button(name: &str) -> u8 {
 /// Escalation hint for a non-AX / suspected-no-op surface — the cross-platform
 /// `escalation` field mirrored from macOS. The recommended next rung depends on
 /// the session type: X11 can pixel-target a specific window in the background,
-/// so the deliberate move is to re-capture in `vision` and click by pixel
-/// (`vision_pixel`). Native Wayland CANNOT background-target an unfocused window
-/// (libei injects to the compositor's input focus — see `input::delivery`), and
-/// the vision/pixel path itself routes through the same coordinate-free AT-SPI
-/// actuation that just no-op'd, so the move there is to bring the window to the
-/// foreground first (`foreground`).
+/// so the deliberate move is an element px action — click by pixel (x,y) off the
+/// screenshot already in this response (`px`). Native Wayland CANNOT
+/// background-target an unfocused window (libei injects to the compositor's input
+/// focus — see `input::delivery`), and the pixel path itself routes through the
+/// same coordinate-free AT-SPI actuation that just no-op'd, so the move there is
+/// to bring the window to the foreground first (`foreground`).
 fn non_ax_escalation() -> Value {
     if crate::wayland::is_wayland() {
         json!({
             "recommended": "foreground",
             "reason": "non-AX surface on Wayland: a specific unfocused window can't be \
                        pixel-targeted in the background (libei injects to the compositor's \
-                       focus). bring_to_front, then re-capture capture_mode:\"vision\" and \
-                       click by pixel with delivery_mode:\"foreground\"."
+                       focus). bring_to_front, then click by pixel off the screenshot \
+                       with delivery_mode:\"foreground\"."
         })
     } else {
         json!({
-            "recommended": "vision_pixel",
-            "reason": "non-AX surface — re-capture with capture_mode:\"vision\" and click \
-                       by pixel (x,y)."
+            "recommended": "px",
+            "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
+                       in this response (an element px action)."
         })
     }
 }
@@ -2230,8 +2225,8 @@ impl Tool for ScrollTool {
 }
 
 // `ScreenshotTool` and `ScreenshotCompatTool` removed in PR #1692 — see the
-// matching note in platform-windows/src/tools/impl_.rs. `get_window_state`
-// with `capture_mode:"vision"` is the canonical screenshot path; the
+// matching note in platform-windows/src/tools/impl_.rs. `get_window_state` is
+// the canonical screenshot path (it always returns a screenshot now); the
 // underlying capture machinery (XGetImage / `import` shell-out / etc.)
 // stays reachable through GetWindowStateTool.
 
@@ -4626,7 +4621,7 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(ScrollTool));
     // `screenshot` removed - see the matching comment in
     // platform-windows/src/tools/impl_.rs::build_registry. Canonical
-    // screenshot path is `get_window_state` with `capture_mode:"vision"`.
+    // screenshot path is `get_window_state` (it always returns a screenshot now).
     let _ = compat;
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool));

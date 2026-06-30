@@ -190,40 +190,58 @@ returns.
 
 ## Behavior matrix
 
-Two orthogonal axes shape what the agent can do.
+### Perception is mode-agnostic — `get_window_state` returns BOTH
 
-**capture_mode → addressing mode (two modes, 1:1 with the action path)**
+`get_window_state(pid, window_id)` **returns both the accessibility
+tree AND a screenshot by default.** There is no capture mode to pick
+and nothing to configure — you ground on the tree and the screenshot
+together, and you cross-check one against the other. This matters
+because the tree **lies** on some surfaces:
 
-There are exactly **two** capture modes, and each maps one-to-one to
-one action-addressing mode:
+- **Electron** echo-confirms a `set_value` / `type_text` against the AX
+  shim while the rendered text view never changed.
+- **Catalyst** (iOSAppOnMac) exposes null / placeholder `AXValue`s.
+- **Virtualized / off-viewport list rows** report bogus frames (an
+  `h:1` height, an off-screen origin) for rows that aren't actually
+  laid out.
 
-| `capture_mode` | `get_window_state` returns | Act via |
-|---|---|---|
-| **`ax`** (DEFAULT) | AX/UIA tree only — **no screenshot in the response** | `element_index` |
-| **`vision`** | a fresh screenshot only — **no AX walk** | pixel `x,y` |
+A grounding screenshot is present by default, so when the tree looks
+wrong you look at the pixels **in the same response** — no second
+capture, no mode flip.
 
-That's the whole model: `ax`↔`element_index`, `vision`↔pixel. There's
-no "both halves in one call" mode anymore. `ax` keeps the
-accessibility path cheap — it walks the tree and returns it, and
-**does not deliver an image** (the frame is captured to disk only if
-you pass `screenshot_out_file`). Choosing `vision` is your
-**deliberate, conscious switch to the pixel path**: you get pixels and
-nothing else, and you act by coordinate.
+> **Perf opt-out — `include_screenshot`.** `include_screenshot`
+> (boolean, default `true`) is the one knob, and it is a **perf** knob,
+> not a modality choice. Default returns both (grounding-first). Pass
+> `include_screenshot:false` to skip the screen grab and get the tree
+> only — the cheap path when you're just **re-indexing before an
+> element ax action** and don't need to re-ground on pixels. The
+> `ax`/`px` decision still lives at action time, not here.
 
-`som` is **removed as an advertised mode.** An on-disk or passed
-`"capture_mode": "som"` still decodes — as a **deprecated alias for
-`ax`** — so old configs don't break, but don't reach for it: it no
-longer means "tree + screenshot." (Same for the older `"screenshot"`
-alias, which decodes to `vision`.) Note the tool named `screenshot` is
-separate (raw PNG, no AX walk) and unrelated to the capture mode.
+> **`capture_mode` is DEPRECATED and ignored.** It is still *accepted*
+> on `get_window_state` so old callers don't error, but it has **no
+> effect** — both the tree and the screenshot come back regardless of
+> what you pass (`ax`, `vision`, `som`, anything). There is no
+> `ax`/`vision`/`som` capture choice anymore. Drop the word "vision"
+> for perception entirely. (The tool named `screenshot` is separate —
+> raw PNG, no AX walk — and unrelated.)
 
-When a snapshot looks wrong (empty tree in `ax`, tiny image in
-`vision`), check `cua-driver get_config` for `capture_mode` before
-anything else.
+### The modality is chosen at ACTION time — `ax` vs `px`
 
-Pure-vision mode has its own caveats — Claude Code's vision pipeline
-downsamples dense text aggressively, so pixel grounding takes
-multiple correction cycles on text-heavy UIs.
+You don't pick a capture mode; you pick **how you address the target**
+on the action call, and that one choice selects the rung:
+
+- **element ax action** — pass `element_index` / `element_token`.
+  Dispatches through the **accessibility rung**: AXPress (macOS) / UIA
+  Invoke (Windows) / AT-SPI `doAction` (Linux). Backgroundable,
+  z-order-independent, and the only **driver-verifiable** rung.
+- **element px action** — pass `x`, `y`. Dispatches through the **pixel
+  rung**, reading the coordinate straight off the screenshot that's
+  already in the `get_window_state` response. Best-effort; the caller
+  confirms the effect.
+
+`ax`↔`element_index`, `px`↔pixel `x,y`. We retired the word "vision"
+for the *dispatch* path — it conflated perception with dispatch.
+Perception is always both; dispatch is `ax` or `px`.
 
 **Action responses carry an effect/escalation verdict**
 
@@ -232,75 +250,75 @@ post-condition?) and adds two machine-readable fields so you know
 whether — and where — to climb the ladder:
 
 - `effect`: one of
-  - `"confirmed"` — the driver read back the effect (AX path only).
+  - `"confirmed"` — the driver read back the effect (`ax` rung only).
   - `"unverifiable"` — dispatched, but the driver has no handle to
-    read back (every pixel/CGEvent path; foreground rung). **You**
-    confirm it via a `vision` screenshot — it is not a failure.
-  - `"suspected_noop"` — the AX action **likely did nothing** (the
+    read back (every `px`/CGEvent path; foreground rung). **You**
+    confirm it off the screenshot — it is not a failure.
+  - `"suspected_noop"` — the `ax` action **likely did nothing** (the
     element didn't actually advertise the action, or you hit a passive
-    label). This is the explicit **"cross to vision"** trigger.
+    label). This is the explicit **"cross to `px`"** trigger.
 - `escalation`: `{recommended, reason}` when the driver thinks you
   should change rung —
-  - `"vision_pixel"` — the element isn't really actionable in AX; drop
-    to a `vision` capture and click the pixel.
+  - `"px"` — the element isn't really actionable in `ax`; do an
+    **element px action** off the screenshot you already have.
   - `"foreground"` — a background insert/click was *dropped* on
     delivery; re-call the same action with `delivery_mode:"foreground"`.
 
 `get_window_state` itself, when the AX tree comes back empty (a non-AX
-surface like Electron/Chromium/canvas), now returns `degraded: true`
-**plus the same `escalation` hint** — normally pointing at
-`vision_pixel`.
+surface like Electron/Chromium/canvas), returns `degraded: true`
+**plus the same `escalation` hint** — normally pointing at `px` (you
+still have the screenshot from the same call to click off).
 
 **Platform nuance for `escalation`.** On **Wayland** an unfocused
 window cannot be pixel-targeted in the background (libei →
 `background_unavailable`), so there the recommendation is
-**`foreground`, not `vision_pixel`**. macOS, X11, and most Windows
-surfaces *can* pixel-target in the background, so they recommend
-`vision_pixel`. See `LINUX.md` / `WINDOWS.md`.
+**`foreground`, not `px`**. macOS, X11, and most Windows surfaces
+*can* pixel-target in the background, so they recommend `px`. See
+`LINUX.md` / `WINDOWS.md`.
 
 ## The verify-then-escalate ladder (algorithm)
 
-Verifying an action no longer means "ask for a screenshot every time"
-— `ax` doesn't ship one. It means: read the tree back, and only spend
-a `vision` capture when the tree can't tell you what happened. Walk
-the rungs:
+Every snapshot already hands you both the tree and the screenshot, so
+verifying never means "go take a screenshot" — it means cross-check
+the tree against the pixels you already have, and only change
+*dispatch rung* on a real signal. Walk the rungs:
 
 ```
-# Rung 1 — AX, backgrounded, by element_index (the cheap default)
-get_window_state(pid, window_id)            # capture_mode: ax (default), no image
+# Rung 1 — element ax action, backgrounded (the cheap default)
+get_window_state(pid, window_id)            # tree + screenshot, both, always
 resp = click(pid, window_id, element_index) # or type_text / set_value / press_key
 get_window_state(pid, window_id)            # re-snapshot — did the tree change?
 
 if resp.effect == "confirmed" and tree changed:
-    done                                    # driver-verified, no pixels needed
+    done                                    # driver-verified
 
 # escalate only on a real signal
 if resp.effect == "suspected_noop"
-   or resp.escalation.recommended == "vision_pixel"
+   or resp.escalation.recommended == "px"
    or get_window_state.degraded            # empty tree → non-AX surface
-   or tree looks unchanged / unreadable:
+   or the tree looks wrong vs the screenshot:   # e.g. an h:1 / off-viewport row
 
-    # Rung 2 — switch to the pixel path: vision capture, then pixel click
-    shot = get_window_state(pid, window_id, capture_mode="vision")
-    pick the target pixel from the image
+    # Rung 2 — element px action off the SAME screenshot
+    pick the target pixel from the screenshot already in the response
     click(pid, x, y)                        # background pixel — still no foreground
-    get_window_state(pid, window_id, capture_mode="vision")  # eyeball the result
+    get_window_state(pid, window_id)        # re-snapshot, eyeball the result
     if it landed: done
 
 # Rung 3 — background delivery was dropped (insert/click never arrived)
 if resp.escalation.recommended == "foreground"
-   or the pixel click still did nothing:
+   or the px action still did nothing:
     re-call the same action with delivery_mode:"foreground"
-    # on Wayland this is the ONLY escalation — pixel-bg can't target an
+    # on Wayland this is the ONLY escalation — px-bg can't target an
     # unfocused window there; see LINUX.md
-    verify again with a vision capture
+    verify again
 ```
 
 The two ideas to hold onto: (1) the AX tree **lies** on canvas / web /
-Catalyst surfaces, so an unchanged-looking `ax` snapshot plus
-`suspected_noop`/`degraded` is your cue to spend one `vision` capture
-and look at pixels; (2) `vision` is a *conscious* mode switch to the
-pixel addressing path, not a free add-on to every snapshot.
+Catalyst / virtualized surfaces, so an unchanged-or-bogus tree plus
+`suspected_noop`/`degraded` — or a tree that simply disagrees with the
+screenshot — is your cue to do an **element px action** off the
+screenshot you already have; (2) `px` is a *conscious* switch to the
+pixel addressing path, not a different capture.
 
 **Window state → what works**
 
@@ -377,12 +395,14 @@ single-window case you can skip `list_windows` entirely and read the
 
 Call `get_window_state({pid, window_id})` with the `window_id` from
 `launch_app`'s `windows` array (or a fresh `list_windows({pid})` if
-you're interacting with a long-lived process). The default `ax`
-capture_mode returns **the tree, no image**, so the element_index loop
-works immediately without any config change — and without paying for
-pixels you don't need yet.
+you're interacting with a long-lived process). It returns **the tree
+and the screenshot together** by default, so you can both dispatch by
+`element_index` and ground on pixels from one call — no config change,
+no mode flip. When you're just re-indexing before an element ax action
+and don't need fresh pixels, pass `include_screenshot:false` to skip
+the grab (a perf knob, not a modality choice).
 
-In `ax` mode (the default) the response carries:
+The response carries:
 
 - `tree_markdown` — every actionable element tagged `[N]`. That `N`
   is the `element_index`. The tree can be very large (Finder is
@@ -391,14 +411,14 @@ In `ax` mode (the default) the response carries:
   `jq -r '.tree_markdown'` + `grep` to pull the section you need.
 - `effect` / `escalation` / `degraded` — the verify-then-escalate
   signals (see the behavior matrix above): `degraded: true` means the
-  tree came back empty (non-AX surface) and you should cross to a
-  `vision` capture.
-- `screenshot_file_path` — present only in `vision` mode, or in `ax`
-  mode when you explicitly passed `screenshot_out_file` (the frame is
-  written to disk but never inlined in an `ax` response).
+  tree came back empty (non-AX surface), so you act by **`px`** off the
+  screenshot in the same response.
+- `screenshot_file_path` — present when the screenshot was written to
+  disk instead of inlined (you passed `screenshot_out_file`, or the
+  context-saving CLI path); otherwise the frame is inlined.
 - `screenshot_width` / `_height` / `_scale_factor` — dimensions of
-  the captured image. Present whenever a screenshot was actually
-  taken.
+  the captured image. Present whenever a screenshot was taken (i.e.
+  unless you passed `include_screenshot:false`).
 
 **Getting the screenshot as a file (CLI and context-constrained agents):**
 
@@ -406,7 +426,7 @@ In `ax` mode (the default) the response carries:
 # write to file — stdout stays readable (AX/UIA tree / summary only, no base64)
 cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
 
-# CLI --screenshot-out-file flag is equivalent and works for all capture modes
+# CLI --screenshot-out-file flag is equivalent
 cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.jpg
 ```
 
@@ -417,29 +437,30 @@ content block is omitted from the response when this param is set —
 the model receives only the tree and `screenshot_file_path`, then
 reads the image from disk.
 
-**The tree and the screenshot are complementary, not redundant — but
-they now come from separate captures.** `ax` gives you the tree, no
-image; `vision` gives you the image, no tree. Each half carries signal
-the other can't:
+**The tree and the screenshot are complementary, not redundant — and
+they come from the *same* call.** Each half carries signal the other
+can't, which is exactly why you cross-check them:
 
-- The **tree** (`ax`) tells you *what's clickable* — roles, labels,
+- The **tree** tells you *what's clickable* — roles, labels,
   `element_index` handles, advertised actions, parent-child
-  structure. This is the ground truth for dispatching.
-- The **screenshot** (`vision`) tells you *which one* — the tree often
-  has many buttons with similar or empty labels ("Delete", "OK",
-  anonymous UUID-labeled buttons, repeated static-text), and visual
-  context disambiguates. Captions, colors, layout relationships
-  visible in pixels often don't show up in the tree at all
-  (especially in Chromium / Electron / web content).
+  structure. This is the ground truth for an **element ax action**.
+- The **screenshot** tells you *which one* — the tree often has many
+  buttons with similar or empty labels ("Delete", "OK", anonymous
+  UUID-labeled buttons, repeated static-text), and visual context
+  disambiguates. Captions, colors, layout relationships visible in
+  pixels often don't show up in the tree at all (especially in
+  Chromium / Electron / web content) — and the screenshot is where you
+  catch the tree *lying* (an `h:1`/off-viewport row, a Catalyst null
+  value).
 
-Default to the `ax` tree and dispatch by `element_index`. Reach for a
-`vision` capture when the tree can't disambiguate (repeated/empty
-labels), when it's empty (`degraded` — non-AX surface), or when an
-action came back `suspected_noop`. Once you're in `vision` you act by
-pixel, not by index — that's the 1:1 mapping. Don't try to dispatch
-from a `vision` shot by pretending you still have indices, and don't
-keep paying for `vision` captures when the `ax` tree already answers
-the question.
+Default to dispatching by `element_index` (the **element ax action**) —
+it's the verifiable, backgroundable rung. Do an **element px action**
+(`x,y` off the same screenshot) when the tree can't disambiguate
+(repeated/empty labels), when it's empty (`degraded` — non-AX
+surface), when an action came back `suspected_noop`, or when the tree
+disagrees with the pixels. You never re-capture to switch — the
+screenshot is already there; you just change *how you address* the
+target.
 
 Reach for pixel coordinates only when the target is a canvas /
 video / WebGL / custom-drawn surface that isn't in the tree
@@ -485,9 +506,11 @@ coordinates only when the accessibility tree can't.
 ## Cross-platform parameter contract
 
 The capture, dispatch, and addressing params — `session`,
-`delivery_mode`, `capture_mode`, `scope`, `modifier`, `button`,
-`element_index`, `element_token` — are a **shared schema contract**:
-identical *shape* (`type`/`enum`/`items`) on macOS, Windows, and Linux.
+`delivery_mode`, `capture_mode` (deprecated/ignored — see the behavior
+matrix; still in the schema only so old callers don't error), `scope`,
+`modifier`, `button`, `element_index`, `element_token` — are a **shared
+schema contract**: identical *shape* (`type`/`enum`/`items`) on macOS,
+Windows, and Linux.
 They compose from canonical fragments in
 `cua-driver-core::tool_schema` (+ `capture_mode`), and a CI gate
 (`schema_consistency_test`) runs every tool's live `tools/list` through a
@@ -622,22 +645,23 @@ the snapshot invariant.
 
 Check the tree diff: a changed value, a new element, a new window,
 or the disappearance of the thing you just clicked (menus collapse
-after selection, buttons may become disabled, etc.). The cheap default
-is an `ax` re-snapshot — **no screenshot needed** if the tree shows the
-change.
+after selection, buttons may become disabled, etc.). The re-snapshot
+gives you both the tree and the screenshot, so you cross-check the tree
+diff against the pixels in one call — and when you're only confirming a
+tree change, `include_screenshot:false` skips the grab.
 
-Cross to a `vision` capture (and eyeball pixels) only on a real
-signal: the action response carried `effect:"suspected_noop"`, the
-re-snapshot came back `degraded` (empty tree → non-AX surface), the
-tree looks unchanged/unreadable, or `escalation.recommended` points you
-there. That's the verify-then-escalate ladder in the behavior-matrix
-section. If the tree's unchanged AND a `vision` look confirms nothing
-moved, the action likely failed silently — **tell the user what you
-attempted and what you observed**, don't paper over with "done"
-language (and consider `delivery_mode:"foreground"` when
-`escalation.recommended == "foreground"`). Agents that skip this step
-report success on silently-dropped actions — the single most common
-failure mode.
+Switch to an **element px action** only on a real signal: the action
+response carried `effect:"suspected_noop"`, the re-snapshot came back
+`degraded` (empty tree → non-AX surface), the tree looks
+unchanged/unreadable or disagrees with the screenshot, or
+`escalation.recommended` points you there (`px`). That's the
+verify-then-escalate ladder in the behavior-matrix section. If the tree
+is unchanged AND the screenshot confirms nothing moved, the action
+likely failed silently — **tell the user what you attempted and what
+you observed**, don't paper over with "done" language (and consider
+`delivery_mode:"foreground"` when `escalation.recommended ==
+"foreground"`). Agents that skip this step report success on
+silently-dropped actions — the single most common failure mode.
 
 ## Recording trajectories
 
@@ -669,12 +693,15 @@ respective companion files.
 ## Things to avoid
 
 - **Never** reuse an `element_index` across a re-snapshot of the same pid.
-- **Don't mix the two addressing modes.** An `ax` tree gives you
-  `element_index` handles, not coordinates — don't eyeball pixels off
-  a (non-existent) `ax` image. Coordinates come from a `vision`
-  capture, whose pixels *are* the click frame. Stay on the AX path
-  until a real signal (`suspected_noop` / `degraded` / repeated
-  labels) sends you to `vision`.
+- **Don't conflate the two addressing modes.** The tree gives you
+  `element_index` handles; the screenshot (same call) gives you the
+  pixel frame. An **element ax action** addresses by index, an
+  **element px action** by `x,y`. Default to `element_index` and only
+  do a px action on a real signal (`suspected_noop` / `degraded` /
+  repeated labels / tree-disagrees-with-pixels). Don't pass an
+  `element_index` you read off the screenshot, and don't pixel-click a
+  coordinate you computed from the tree's (possibly lying) frame
+  without checking it against the image.
 - **Prefer accessibility actions over pixels.** `click({pid, x, y})`
   works for canvas / WebView regions, but it lands blindly on raw
   coordinates. Exhaust accessibility paths (menu bars, cmd-k palettes,

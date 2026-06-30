@@ -1,30 +1,36 @@
 ---
 title: "Capture and Dispatch Modalities"
-description: "The three independent axes that define how Cua Driver observes and acts on an app — capture mode, dispatch, and capture scope — and which combinations are valid."
+description: "How Cua Driver observes and acts on an app — perception always returns both the accessibility tree and a screenshot, the action rung (ax or px) is chosen at action time, plus dispatch and capture scope — and which combinations are valid."
 ---
 
 # Capture and Dispatch Modalities
 
-Every Cua Driver action is defined by three independent choices: **what the agent observes**, **how input is delivered**, and **what coordinate space the action targets**. These are the *modalities*. Most callers never set them — the defaults give background, per-window, accessibility-first automation. This page documents the full set so you can reason about the combinations that are valid and the ones the driver rejects by design.
+Every Cua Driver action is shaped by four things: **what the agent observes**, **which rung dispatches the action**, **how input is delivered**, and **what coordinate space the action targets**. Most callers never set any of them — the defaults give background, per-window, accessibility-first automation. The key change from earlier versions: perception is no longer a mode you pick. `get_window_state` returns *both* the accessibility tree and a screenshot in one call, and the `ax`-versus-`px` choice is made at action time, by how you address the target. This page documents the full set so you can reason about the combinations that are valid and the ones the driver rejects by design.
 
-## The Three Axes
+## The Axes
 
-### 1. Capture mode — what the agent observes
+### 1. Perception — what the agent observes
 
-Set with `set_config capture_mode=…`, or per call on `get_window_state`.
+`get_window_state(pid, window_id)` returns **both the accessibility tree and a screenshot by default**, in one call. There is no capture mode to pick: you ground on the tree and the screenshot together and cross-check one against the other. This matters because the tree *lies* on some surfaces — Electron echo-confirms a `set_value` against its AX shim while the rendered view never changed, Catalyst apps expose null `AXValue`s, and virtualized or off-viewport list rows report bogus frames (an `h:1` height, an off-screen origin). A grounding screenshot is always present, so when the tree looks wrong you check the pixels in the *same* response.
 
-There are exactly two capture modes, and they map one-to-one onto the two ways an action is addressed:
+The accessibility tree is the ground truth for *what is clickable* — roles, labels, advertised actions, and an `element_index` handle on every actionable element. The screenshot tells you *which one*, disambiguates repeated or empty labels, and surfaces captions, colors, and layout the tree omits entirely (common in Chromium and Electron). They are complementary, which is why both come back together.
 
-| `capture_mode` | What you get | Act by | Use when |
+> **Perf opt-out — `include_screenshot`.** `include_screenshot` (boolean, default `true`) is the one knob, and it is a **performance** knob, not a modality choice. The default returns both. Pass `include_screenshot: false` to skip the screen grab and get the tree only — the cheap path when you are re-indexing before an element ax action and don't need fresh pixels. The `ax`-versus-`px` decision still lives at action time, not here.
+
+> **`capture_mode` is deprecated and ignored.** It is still *accepted* on `get_window_state` so old callers don't error, but it has **no effect** — both the tree and the screenshot come back regardless of what you pass. The old `ax` / `vision` / `som` / `screenshot` values all decode (`som` mapped to `ax`, `screenshot` to `vision`) but none changes what is captured. There is no capture-mode choice anymore; perception is always both. (The separately named `screenshot` tool — raw PNG, no AX walk — is unrelated.)
+
+### 2. Action rung — how the target is addressed
+
+You don't pick a capture mode; you pick **how you address the target** on the action call, and that one choice selects the rung:
+
+| Rung | Address with | Dispatches through | Properties |
 |---|---|---|---|
-| `ax` (default) | Accessibility tree only — **no screenshot** in the response (the frame is written to disk only if you set `screenshot_out_file`). Every actionable element carries an `element_index`. | `element_index` | The target exposes good structure and you want the cheapest, most robust, driver-verifiable path. No Screen Recording grant needed. |
-| `vision` | A fresh screenshot only, no AX walk. | `x, y` pixel | The target has no usable accessibility tree (canvas, custom-drawn UI, pure web content). |
+| **element ax action** | `element_index` / `element_token` | the accessibility rung — UIA Invoke (Windows), `AXPerformAction` (macOS), AT-SPI `doAction` (Linux) | Backgroundable, z-order-independent, and the only **driver-verifiable** rung. |
+| **element px action** | `x, y` | the pixel rung, reading the coordinate straight off the screenshot already in the `get_window_state` response | Best-effort; the caller confirms the effect off the screenshot. |
 
-The two modes differ in how the agent then *acts*: an `ax` observation yields an `element_index`, which drives the semantic action path (UIA Invoke, `AXPerformAction`, AT-SPI `doAction`). A `vision` observation yields pixels, so the agent grounds a target to `(x, y)` and acts by coordinate. There is no third "both" mode — pick the structure path or the pixel path.
+Default to the element ax action — it is verifiable and backgroundable. Drop to an element px action when the tree can't disambiguate (repeated or empty labels), when it's empty (`degraded` — a non-AX surface), when an action came back `suspected_noop`, or when the tree disagrees with the pixels. You never re-capture to switch rungs: the screenshot is already in the snapshot, so you only change *how you address* the target.
 
-> **Deprecated aliases.** `som` (the old set-of-marks mode) still decodes, but only as an alias for `ax`; `screenshot` still decodes as an alias for `vision`. Neither is an advertised mode — new callers should use `ax` or `vision`.
-
-### 2. Dispatch — how input is delivered
+### 3. Dispatch — how input is delivered
 
 Set per call on the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) with the `delivery_mode` field. This field is a shared cross-platform parameter — the same two values, accepted uniformly on Windows, macOS, and Linux.
 
@@ -33,9 +39,9 @@ Set per call on the input family (`click`, `double_click`, `right_click`, `drag`
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/explanation/the-no-foreground-contract). |
 | `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. The explicit last resort when a background attempt did not land — and the only path for apps that accept events solely when foregrounded (DirectInput games, raw-input canvases). |
 
-Only `background` and `foreground` are valid; any other value (including the historical `auto` heuristic) resolves to `background`. `element_index` (AX) actions are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for coordinate (vision) input, where `background` routes the event to the target and `foreground` raises the window first.
+Only `background` and `foreground` are valid; any other value (including the historical `auto` heuristic) resolves to `background`. Element ax actions (`element_index`) are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
 
-### 3. Capture scope — what coordinate space the action targets
+### 4. Capture scope — what coordinate space the action targets
 
 Set with `set_config capture_scope=…`.
 
@@ -48,28 +54,28 @@ Desktop scope is the "Computer-Use 1.0" loop: the agent reads the whole screen a
 
 ## The Validity Matrix
 
-Capture scope is the constraining axis. Window scope supports **any** combination of the other two. Desktop scope supports **only** vision capture and foreground dispatch.
+Perception is no longer an axis in this matrix — every `get_window_state` returns both the tree and a screenshot, so there is nothing to cross here. The real constraints are **capture scope** (window or desktop) against the **action rung** (`ax` or `px`) and **delivery** (background or foreground). Capture scope is the constraining axis: window scope supports **any** combination of rung and delivery; desktop scope supports **only** the `px` rung with `foreground` delivery.
 
-| `capture_scope` | `capture_mode` | `dispatch` | Valid? | Why |
+| `capture_scope` | action rung | `delivery_mode` | Valid? | Why |
 |---|---|---|---|---|
-| `window` | `ax` | `background` | ✅ | The default. Semantic actions on a backgrounded window. |
-| `window` | `ax` | `foreground` | ✅ | Activate, then act by element. |
-| `window` | `vision` | `background` | ✅ | Screenshot a window, click a coordinate in it without raising it. |
-| `window` | `vision` | `foreground` | ✅ | Activate, then click by coordinate. |
-| `desktop` | `vision` | `foreground` | ✅ | The only desktop combination. Read the whole screen, click absolute coordinates on the active desktop. |
-| `desktop` | `ax` | any | ❌ | A desktop-absolute action has no `window_id`, so there is no accessibility tree to resolve an `element_index` against. |
+| `window` | `ax` (element_index) | `background` | ✅ | The default. Semantic actions on a backgrounded window. |
+| `window` | `ax` (element_index) | `foreground` | ✅ | Activate, then act by element. |
+| `window` | `px` (x, y) | `background` | ✅ | Click a coordinate off the window's screenshot without raising it. |
+| `window` | `px` (x, y) | `foreground` | ✅ | Activate, then click by coordinate. |
+| `desktop` | `px` (x, y) | `foreground` | ✅ | The only desktop combination. Read the whole screen, click absolute coordinates on the active desktop. |
+| `desktop` | `ax` (element_index) | any | ❌ | A desktop-absolute action has no `window_id`, so there is no element tree to resolve an `element_index` against — there is no `ax` rung. |
 | `desktop` | any | `background` | ❌ | Screen-absolute input hits whatever owns those pixels on the active desktop; there is no per-process route, so it cannot be backgrounded. |
-| `window` | any | — | ❌ | A window-less (no `pid`/`window_id`) action while scope is `window` is rejected with the structured `desktop_scope_disabled` error. |
+| `window` | (window-less) | — | ❌ | A window-less (no `pid`/`window_id`) action while scope is `window` is rejected with the structured `desktop_scope_disabled` error. |
 
-The two rejections are enforced, not advisory. A window-less click while `capture_scope=window` returns `desktop_scope_disabled`, pointing the caller at `set_config capture_scope=desktop`. Desktop scope inherently foregrounds and works on pixels, so it cannot honor the background contract or the accessibility path — which is exactly why background, per-window automation is the default.
+The two rejections are enforced, not advisory. A window-less click while `capture_scope=window` returns `desktop_scope_disabled`, pointing the caller at `set_config capture_scope=desktop`. Desktop scope inherently foregrounds and works on pixels, so it cannot honor the background contract or reach the `ax` rung — which is exactly why background, per-window automation is the default.
 
 ## Platform Support
 
 | Axis / value | Windows | macOS | Linux |
 |---|---|---|---|
-| `capture_mode` `ax` / `vision` | ✅ | ✅ | ✅ |
+| action rung: `ax` (element_index) / `px` (x, y) | ✅ | ✅ | ✅ |
 | `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11 and Wayland via AT-SPI; raw keyboard into native-Wayland apps is the [residual gap](/explanation/the-no-foreground-contract#linux)) |
 | `dispatch: foreground` + `bring_to_front` | ✅ explicit activation | ✅ explicit activation (`NSRunningApplication.activate`) | ✅ X11 EWMH activation (`_NET_ACTIVE_WINDOW` + input focus); Wayland raise is compositor-constrained |
 | `capture_scope: desktop` (full screen-absolute loop) | ✅ | rolling out | rolling out |
 
-`capture_mode` is recognized everywhere, so window-scope automation — the four window-scope rows of the matrix — works on all three platforms. The desktop-scope loop (`get_desktop_state` plus window-less screen-absolute input via hit-testing) is complete on Windows and rolling out to macOS and Linux; on those platforms a window-less action under window scope is still rejected. See the [MCP tool reference](/reference/cua-driver/mcp-tools) for per-tool parameters and the [no-foreground contract](/explanation/the-no-foreground-contract) for how background dispatch is implemented on each OS.
+Both action rungs work on all three platforms, so window-scope automation — the four window-scope rows of the matrix — works everywhere. The desktop-scope loop (`get_desktop_state` plus window-less screen-absolute input via hit-testing) is complete on Windows and rolling out to macOS and Linux; on those platforms a window-less action under window scope is still rejected. See the [MCP tool reference](/reference/cua-driver/mcp-tools) for per-tool parameters and the [no-foreground contract](/explanation/the-no-foreground-contract) for how background dispatch is implemented on each OS.

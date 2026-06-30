@@ -284,9 +284,9 @@ unsafe fn walk_tree_unsafe(
         // promptly instead of stalling 4 s on the fallback's hang.
         //
         // The diagnostic tells callers exactly how to drive the SAL
-        // dialog without the tree: pixel click via screenshot,
-        // capture_mode:"vision", or press_key with dispatch:"foreground"
-        // for accelerator-style dismissal. That's enough for the
+        // dialog without the tree: pixel click off the screenshot
+        // get_window_state always returns, or press_key with
+        // dispatch:"foreground" for accelerator-style dismissal. That's enough for the
         // common modal-dismissal case (Yes/No/Esc on a Confirmation),
         // which is what SAL dialogs almost always need.
         let is_sal = {
@@ -349,9 +349,9 @@ unsafe fn walk_tree_unsafe(
                  ElementFromHandle, and the desktop-root fallback walk that \
                  would normally find them is known to hang on SAL Subtree \
                  BuildUpdatedCache. Use one of: \
-                 (a) `screenshot(pid, window_id)` + pixel `click(x, y)`; \
-                 (b) `press_key` with `delivery_mode:\"foreground\"` (Esc / Enter / Y / N); \
-                 (c) `get_window_state` with `capture_mode:\"vision\"`.)\n"
+                 (a) pixel `click(x, y)` off the screenshot `get_window_state` \
+                 returns alongside this tree; \
+                 (b) `press_key` with `delivery_mode:\"foreground\"` (Esc / Enter / Y / N).)\n"
             );
             return UiaTreeResult { tree_markdown: stub, nodes: Vec::new() };
         }

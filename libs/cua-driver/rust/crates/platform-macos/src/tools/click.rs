@@ -484,10 +484,11 @@ impl Tool for ClickTool {
                     });
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
-                            "recommended": "vision_pixel",
+                            "recommended": "px",
                             "reason": "element does not advertise this action — the \
-                                       AX press likely no-op'd. Re-capture with \
-                                       capture_mode:\"vision\" and click by pixel (x,y)."
+                                       AX press likely no-op'd. Do an element px \
+                                       action: click by pixel (x,y) off the \
+                                       screenshot from get_window_state."
                         });
                     }
                     ToolResult::text(msg).with_structured(structured)

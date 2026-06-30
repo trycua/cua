@@ -22,7 +22,7 @@ cua-driver mcp-config --client <client>
 ```
 
 <Callout type="info">
-  The `claude` client can register a computer-use compatibility surface through `--claude-code-computer-use-compat`. Every client gets the same driver tools. There is no standalone screenshot tool, so window capture comes from `get_window_state` (set `capture_mode` to `vision` for a screenshot).
+  The `claude` client can register a computer-use compatibility surface through `--claude-code-computer-use-compat`. Every client gets the same driver tools. There is no standalone screenshot tool, so window capture comes from `get_window_state`, which returns a screenshot alongside the tree by default.
 </Callout>
 
 ## Claude Code
@@ -52,7 +52,7 @@ It emits:
 claude mcp add-json cua-computer-use '{"command":"cua-driver","args":["mcp","--claude-code-computer-use-compat"]}'
 ```
 
-This registers the server under the key `cua-computer-use` and passes `--claude-code-computer-use-compat`. The flag selects the Claude Code compat surface. The compat screenshot tool was removed in #1692, so the flag has no tool-surface effect today; the wiring stays in place for any future compat-gated tool. Capture the target window with `get_window_state` (set `capture_mode` to `vision` for a screenshot).
+This registers the server under the key `cua-computer-use` and passes `--claude-code-computer-use-compat`. The flag selects the Claude Code compat surface. The compat screenshot tool was removed in #1692, so the flag has no tool-surface effect today; the wiring stays in place for any future compat-gated tool. Capture the target window with `get_window_state`, which returns a screenshot alongside the tree by default.
 
 <Callout type="info">
   This is NOT Anthropic's native computer-use API. It is Cua Driver's MCP compatibility mode for Claude Code. Start with `launch_app` or `list_windows`, then capture the target window with `get_window_state`.

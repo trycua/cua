@@ -64,9 +64,9 @@ Keys that flow through this: `capture_mode`, `capture_scope`, `max_image_dimensi
 |---|---|---|
 | Coordinate space | window-local (the PNG `get_window_state` returns) | true screen pixels |
 | Required params | `pid` (+ `window_id` for `element_index`) | only `x`, `y` |
-| Capture surface | `get_window_state` | `get_desktop_state` |
+| Capture surface | `get_window_state` (tree + screenshot) | `get_desktop_state` (screenshot) |
 | Dispatch | background (default) or foreground | foreground only |
-| Capture mode | `ax` / `vision` / `som` | `vision` only |
+| Action rung | element ax action (`element_index`) or element px action (`x,y`) | element px action (`x,y`) only |
 
 Desktop scope is the screen-absolute "Computer-Use 1.0" loop: read the whole screen, click an absolute coordinate, the way a screenshot-only model expects. Window scope is the default because it is what makes background, concurrent automation possible.
 
@@ -91,7 +91,7 @@ A window-less action is **never silently reinterpreted**. Under window scope it 
 
 | Capability | Windows | macOS | Linux |
 |---|---|---|---|
-| `capture_mode` `ax` / `vision` / `som` | ✅ | ✅ | ✅ |
+| `get_window_state` returns both tree + screenshot (element ax / px actions) | ✅ | ✅ | ✅ |
 | `dispatch: background` (the [no-foreground contract](/explanation/the-no-foreground-contract)) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a gap) |
 | `dispatch: foreground` + `bring_to_front` | ✅ | ✅ explicit activation (input is already background-safe; activation is for focus-proxy surfaces like RDP) | stubbed |
 | `get_desktop_state` (desktop capture) | ✅ | ✅ | ✅ |

@@ -32,12 +32,16 @@ fn def() -> &'static ToolDef {
             `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
-            Two capture modes that map 1:1 to how you'll act. `ax` (default): \
-            the accessibility tree only — act via element_index — and NO \
-            screenshot is delivered (set screenshot_out_file to also write the \
-            frame to disk). `vision`: a fresh PNG only (no AX walk) — act via x,y \
-            pixels. Switch to `vision` when the surface has no usable AX tree \
-            (canvas / WebGL / Electron web content) or the tree is too large.\n\n\
+            Always returns BOTH the element tree AND a screenshot — ground on \
+            both and cross-check (the tree lies on some surfaces: Electron \
+            echo-confirms, Catalyst null values, virtualized off-viewport rows \
+            with `h:1` frames). You choose the modality at ACTION time, not here: \
+            an element ax action (pass `element_index`/`element_token` → the \
+            accessibility rung) or an element px action (pass `x`,`y` → the pixel \
+            rung, read straight off this screenshot). `capture_mode` is deprecated \
+            and ignored. Pass `include_screenshot:false` to skip the grab and get \
+            the tree only — the cheap path when you're just re-indexing before an \
+            element ax action.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
             filtering only trims the rendered Markdown.\n\n\
@@ -55,6 +59,10 @@ fn def() -> &'static ToolDef {
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_screenshot": {
+                    "type": "boolean",
+                    "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk."
+                },
                 "screenshot_out_file": {
                     "type": "string",
                     "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
@@ -104,13 +112,20 @@ impl Tool for GetWindowStateTool {
             let cfg = self.state.config.read().unwrap();
             self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
-        // capture_mode is a per-call param (no longer a setting). Two modes that
-        // map 1:1 to the action path: `ax` (default; tree, screenshot withheld)
-        // and `vision` (screenshot, no walk). `som`/`tree`/`screenshot` still
-        // decode as deprecated aliases — see cua_driver_core::capture_mode.
-        let mode = cua_driver_core::capture_mode::CaptureMode::parse(
-            args.opt_str("capture_mode").as_deref(),
-        );
+        // `capture_mode` is DEPRECATED and ignored — get_window_state always
+        // returns BOTH the tree and a screenshot now, so the agent grounds on
+        // both and cross-checks (the AX tree lies often enough that a grounding
+        // screenshot should always be present). The modality is chosen at action
+        // time: an element ax action (element_index) or element px action (x,y).
+        // We don't even read the arg; it stays in the schema only so old callers
+        // don't trip additionalProperties:false.
+        //
+        // `include_screenshot` (default true) is the perf opt-out: set false to
+        // skip the grab and return the tree only — the cheap path when you're
+        // just re-indexing before an element ax action. `screenshot_out_file`
+        // still forces a capture (an explicit "write the frame to disk").
+        let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
         // Optional caps — when omitted, fall back to the defaults baked into
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
@@ -126,8 +141,8 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        // Walk AX tree on the accessibility path only.
-        let tree_result = if mode.walks_ax() {
+        // Always walk the AX tree (perception returns both tree + screenshot).
+        let tree_result = {
             let q = query.clone();
             // Wrap the blocking AX walk in a 30-second timeout. Heavy webview apps
             // (Arc, Safari with many tabs, Electron) can block
@@ -150,13 +165,12 @@ impl Tool for GetWindowStateTool {
                         "AX tree walk for pid={pid} timed out after 30 s. \
                          The app (likely Arc, Electron, or Safari with many tabs) has a \
                          pathologically large accessibility tree. \
-                         Workarounds: switch to capture_mode=vision for pixel-click \
-                         workflows, or use capture_mode=ax with a depth-limited scan."
+                         Workaround: re-call with a depth-limited scan \
+                         (max_elements / max_depth), then act by pixel (x,y) off \
+                         the screenshot if the tree stays unusable."
                     ));
                 }
             }
-        } else {
-            None
         };
 
         // Update element cache.
@@ -164,17 +178,14 @@ impl Tool for GetWindowStateTool {
             self.state.element_cache.update(pid, window_id, &r.nodes);
         }
 
-        // Screenshot gating — capture-but-withhold on the AX path:
-        //   * `vision` mode → capture and DELIVER (base64 in content, or a file).
-        //   * `ax` mode → withhold from the response. We only grab a frame at all
-        //     when `screenshot_out_file` was passed (write to disk, surface the
-        //     path, never embed base64). Otherwise we skip the grab entirely so
-        //     the hot AX-lookup path pays no ScreenCaptureKit latency or image
-        //     tokens. A non-`vision` capture never embeds the image — the inner
-        //     branch below writes the file and returns b64=None.
+        // Capture the screenshot and deliver it alongside the tree — the
+        // grounding frame the agent cross-checks the (sometimes-lying) tree
+        // against. Skipped only when `include_screenshot:false` (and no
+        // screenshot_out_file). With `screenshot_out_file` set, write to disk and
+        // surface the path instead of embedding base64; otherwise embed base64.
         let max_dim = effective_max_dim;
         // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
-        let screenshot = if mode.delivers_screenshot() || screenshot_out_file.is_some() {
+        let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Option<u32>)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -313,15 +324,15 @@ impl Tool for GetWindowStateTool {
                  re-snapshot if the app just launched, otherwise switch to the \
                  visual path."
             );
-            // Point the agent at the next rung explicitly: an empty AX tree means
-            // element_index has nothing to bind to, so the deliberate move is to
-            // re-capture in `vision` and act by pixel (x,y). macOS can pixel-target
-            // in the background, so the recommendation is vision_pixel, not
-            // foreground.
+            // Point the agent at the next rung: an empty AX tree means
+            // element_index has nothing to bind to, so the deliberate move is an
+            // element px action — read the screenshot already in this response and
+            // click by pixel (x,y). macOS can pixel-target in the background, so
+            // the recommendation is `px`, not `foreground`.
             structured["escalation"] = serde_json::json!({
-                "recommended": "vision_pixel",
-                "reason": "non-AX surface — re-capture with capture_mode:\"vision\" \
-                           and click by pixel (x,y)."
+                "recommended": "px",
+                "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
+                           in this response (an element px action)."
             });
         }
         if let Some((sw, sh)) = screenshot_dims {

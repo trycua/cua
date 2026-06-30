@@ -185,11 +185,12 @@ Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots sti
   reused across turns, or across different windows of the same app.
   Call `get_window_state({pid, window_id})` first in the same turn,
   with the same window_id you're about to act against.
-- Empty `tree_markdown` → `capture_mode` is set to `vision`, which
-  skips the AX walk by design. Flip back to the default `som`
-  (`cua-driver config set capture_mode som`) to get the tree.
-  Tiny screenshot → likely a stale window capture. See "Behavior
-  matrix" in SKILL.md for the full mode table.
+- Empty `tree_markdown` (with `degraded:true`) → this is a non-AX
+  surface (canvas / WebGL / Electron web content), not a mode problem
+  — `get_window_state` always walks the tree now. Act by pixel off the
+  screenshot already in the same response (an element px action).
+  Tiny screenshot → likely a stale window capture. See the perception
+  + element ax/px action notes in SKILL.md.
 - System-alert beep when pressing Return on a minimized Chrome
   omnibox → the keyboard-commit-on-minimized limitation. Use
   `set_value` on the field instead, or AX-click a Go/Submit button.

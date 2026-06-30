@@ -49,8 +49,8 @@ stub_tool!(list_windows_m, ListWindowsTool, "list_windows",
     serde_json::json!({"type":"object","properties":{"pid":{"type":"integer"}},"additionalProperties":false}));
 
 stub_tool!(get_window_state_m, GetWindowStateTool, "get_window_state",
-    "Walk a running app's AX/UIA tree and return a Markdown rendering of its UI. Also captures a screenshot.",
-    serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema()},"additionalProperties":false}));
+    "Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_index/element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.",
+    serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),"include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."}},"additionalProperties":false}));
 
 stub_tool!(launch_app_m, LaunchAppTool, "launch_app",
     "Launch an app in the background. Provide bundle_id (macOS) or name.",

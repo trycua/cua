@@ -27,7 +27,8 @@ Several parameters are a **shared cross-platform contract**: the same JSON shape
 | --------- | ----- | ----- |
 | `session` | every action and cursor tool | Optional run identity for the agent cursor and per-session state; the same id works over MCP, the CLI, or the raw socket and follows the run across apps and windows. Accepted on all three platforms — earlier Windows and Linux builds rejected it via `additionalProperties:false`. |
 | `delivery_mode` | the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) | `background` (default) injects without fronting or raising the target — the [no-foreground contract](/explanation/the-no-foreground-contract). `foreground` briefly fronts the target, acts, then restores the prior frontmost — the explicit last resort when a background attempt did not land. |
-| `capture_mode` | `get_window_state` | `ax` (default) or `vision`. See [capture and dispatch modalities](/explanation/capture-and-dispatch-modalities). |
+| `capture_mode` | `get_window_state` | **Deprecated and ignored.** Still accepted for back-compat so old callers don't error, but it has no effect — `get_window_state` always returns both the accessibility tree and a screenshot by default. There is no `ax`/`vision`/`som` capture choice; the modality (`ax` vs `px`) is chosen at action time by how you address the target. |
+| `include_screenshot` | `get_window_state` | Boolean, default `true` (returns the tree **and** a screenshot). Set `false` to skip the screenshot grab and return the tree only — a **perf** opt-out for the cheap re-index-before-an-element-`ax`-action path, not a modality choice. |
 | `modifier`, `button`, `element_index`, `element_token` | pointer and element tools | Held modifier keys, mouse button, and the two element-addressing handles. |
 
 ### Required parameters
@@ -85,7 +86,7 @@ Per-record fields: `window_id`, `pid`, `app_name`, `title`, `bounds` (x/y/width/
 
 ### `get_window_state`
 
-Walk a running app's AX tree and return a Markdown rendering of its UI, tagging every actionable element with `[element_index N]`. Also captures a PNG screenshot of the specified window.
+Walk a running app's AX tree and return a Markdown rendering of its UI, tagging every actionable element with `[element_index N]`. Returns **both** the accessibility/UIA tree and a PNG screenshot of the specified window by default — perception is mode-agnostic. You ground on the tree and the screenshot together and cross-check one against the other; you choose the modality (`ax` vs `px`) at action time, not here.
 
 **Invariant:** call `get_window_state` once per turn per `(pid, window_id)` before any element-indexed action. The index map is replaced by the next snapshot.
 
@@ -93,7 +94,8 @@ Walk a running app's AX tree and return a Markdown rendering of its UI, tagging 
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
 | `window_id` | integer | Yes | Target window ID from `list_windows`. |
-| `capture_mode` | string | No | `ax` (default) = AX tree only, screenshot withheld; `vision` = screenshot only, no AX walk. (`som` is a deprecated alias for `ax`.) |
+| `capture_mode` | string | No | **Deprecated and ignored.** Accepted for back-compat so old callers don't error, but it has no effect — the tree and the screenshot are both returned regardless of what you pass (`ax`, `vision`, `som`, anything). |
+| `include_screenshot` | boolean | No | Default `true` — return the tree and the screenshot. Set `false` to skip the screenshot grab and return the tree only — a perf opt-out for re-indexing before an element `ax` action, not a modality choice. |
 | `query` | string | No | Case-insensitive filter for `tree_markdown`. Element indices are unchanged. |
 | `screenshot_out_file` | string | No | When set, write the PNG to this file path (`~` expanded) instead of embedding base64 in the response. |
 
@@ -101,7 +103,7 @@ Walk a running app's AX tree and return a Markdown rendering of its UI, tagging 
 {"pid": 844, "window_id": 10725}
 ```
 
-On Linux (and macOS/Windows), the structured result may include `degraded: true` alongside a `degraded_reason` string when the accessibility walk completed but found no actionable elements. This distinguishes "a11y bridge not up, daemon not on the session D-Bus, or non-AX surface" from a window that genuinely has no controls — do not treat `elements: []` as authoritative when `degraded: true` is set.
+On Linux (and macOS/Windows), the structured result may include `degraded: true` alongside a `degraded_reason` string when the accessibility walk completed but found no actionable elements. This distinguishes "a11y bridge not up, daemon not on the session D-Bus, or non-AX surface" from a window that genuinely has no controls — do not treat `elements: []` as authoritative when `degraded: true` is set. When `degraded: true`, act by `px` off the screenshot returned in the same response.
 
 ---
 
@@ -558,7 +560,7 @@ Caveats:
 
 ### `set_config`
 
-Update cua-driver-rs configuration. Changes to `capture_mode` and `max_image_dimension` take effect immediately. The `experimental_pip` keys are persisted to `~/.cua-driver/config.json` and take effect on the next daemon restart.
+Update cua-driver-rs configuration. Changes to `max_image_dimension` take effect immediately. `capture_mode` is now deprecated and ignored — setting it has no effect (`get_window_state` returns both the tree and a screenshot regardless). The `experimental_pip` keys are persisted to `~/.cua-driver/config.json` and take effect on the next daemon restart.
 
 Two equivalent argument shapes are accepted on every platform: a **direct field** (`{"capture_scope": "desktop"}`) or a **`{key, value}` pair** (`{"key": "capture_scope", "value": "desktop"}`, the same shape the CLI `config set` uses). A direct field wins if both are supplied.
 
@@ -566,7 +568,7 @@ Two equivalent argument shapes are accepted on every platform: a **direct field*
 
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
-| `capture_mode` | string | No | Default capture mode for `get_window_state`. |
+| `capture_mode` | string | No | **Deprecated and ignored** — accepted for back-compat but has no effect; `get_window_state` returns both the tree and a screenshot regardless. |
 | `max_image_dimension` | integer | No | Max dimension for screenshot resizing. 0 = no limit. |
 | `experimental_pip` | boolean | No | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
 | `experimental_pip_geometry` | string | No | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |

@@ -383,27 +383,26 @@ input doesn't observe the AX value change. The CGEvent fallback path
 runs, but the renderer's focused-process check drops the keystrokes
 when the app isn't WindowServer-frontmost.
 
-Workaround — clipboard + windowed `Cmd+V`:
+Fix — establish real renderer focus with a **pixel click**, then type.
+Do NOT reach for a clipboard + `Cmd+V` dance:
 
-1. Put the string on the macOS clipboard externally (e.g. shell
-   `pbcopy`, or `NSPasteboard.general.setString:forType:` from your
-   own helper).
-2. Dispatch `hotkey({pid, window_id, keys: ["cmd", "v"]})`. **The
-   `window_id` matters**: the NSMenu key-equivalent path briefly
-   foregrounds the app via `SLPSSetFrontProcessWithOptions(kCPSNoWindows)`
-   for ~1 ms — enough for `paste:` to deliver — then restores prior
-   frontmost. Without `window_id`, the auth-message envelope path
-   runs and hits the same drop as `type_text`.
-3. Re-snapshot (it returns both the tree and a screenshot); read the
-   tree diff first, but if the AX value lags (it does on
-   Catalyst/Electron), read the pasted text off the screenshot already
-   in that same response — an **element px action** if you then need to
-   act on it. (See the cross-check pattern in "Verifying actions"
-   above.)
+1. **Pixel-click the input field** (`click({pid, window_id, x, y})` —
+   an **element px action**, not an `element_index` AX press). The AX
+   press opens/focuses the control at the AX layer but the Chromium /
+   UIKit renderer never gets real keyboard focus, which is exactly why
+   the keystrokes dropped. A pixel click delivers a synthetic HID-style
+   click the renderer accepts as genuine focus.
+2. **`type_text({pid, window_id, text})`** with NO `element_index` — the
+   background key-events path now lands because the renderer is focused.
+   (Re-snapshot and read the text off the screenshot to confirm; the AX
+   value can still lag on Catalyst/Electron.)
+3. Only if the background keystrokes *still* drop (a focus-polling app),
+   escalate that one `type_text` with `delivery_mode:"foreground"`.
 
-This costs one round-trip of clipboard pollution. Restore the user's
-prior clipboard if your workflow cares — store via `pbpaste` before,
-write back via `pbcopy` after.
+Why not `Cmd+V` / `hotkey`: a keyboard combo does **not** focus a text
+field, and `hotkey`/`press_key` no longer raise the window on their own
+(raising is gated on `delivery_mode:"foreground"`, like every other
+tool). The reliable move is *pixel-click to focus → type_text*.
 
 ## Navigating native menu bars (AXMenuBar)
 

@@ -60,7 +60,16 @@ fn def() -> &'static ToolDef {
              Optional `element_index` + `window_id` (from the last \
              `get_window_state` snapshot) directs the write to a specific field. \
              Without `element_index`, the write goes to the pid's currently \
-             focused element."
+             focused element.\n\n\
+             ELECTRON/CHROMIUM false-confirm: the AX path can return \
+             effect:\"confirmed\" while the rendered input stays empty (AXValue is \
+             set on the shim but the renderer never observes it). If a re-snapshot \
+             shows the field still empty, the fix is NOT a clipboard/Cmd+V dance — \
+             it's renderer focus: do an **element px action** (pixel `click({pid, \
+             window_id, x, y})` on the field to give the Chromium renderer real \
+             keyboard focus), then call `type_text` again WITHOUT `element_index` \
+             (the background key-events path lands once focused). Escalate that \
+             call to `delivery_mode:\"foreground\"` only if it still drops."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",

@@ -29,7 +29,9 @@
 #   WINDOW. `verify` asserts the observable invariant: per-button frames are
 #   DISTINCT (not collapsed) and every button center lies inside the window's
 #   X11 rect, with "7" left of "8" on the same row when both exist.
-export HOME=/home/fbonacci
+# Use the caller's $HOME; the fallback is the GNOME/KDE VM lane's user. Override
+# by exporting HOME (or running as that user) on a differently-laid-out box.
+export HOME="${HOME:-/home/fbonacci}"
 W=$HOME/derec; mkdir -p "$W"
 DE_PID=""
 for p in gnome-shell plasmashell kwin_x11 metacity xfce4-session; do

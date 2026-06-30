@@ -208,6 +208,29 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     NO_CURSOR.to_owned()
 }
 
+fn stale_element_snapshot_error(label: &str, element_index: usize, hwnd: u64) -> ToolResult {
+    ToolResult::error(format!(
+        "{label} [{element_index}] snapshot is stale for hwnd={hwnd}. The window moved or \
+         resized after get_window_state. Re-run get_window_state to refresh the cache."
+    ))
+}
+
+fn missing_cached_element_error(
+    cache: &ElementCache,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    label: &str,
+) -> ToolResult {
+    if cache.is_snapshot_stale(pid, hwnd) {
+        stale_element_snapshot_error(label, element_index, hwnd)
+    } else {
+        ToolResult::error(format!(
+            "{label} [{element_index}] not in cache for hwnd={hwnd}. Call get_window_state first."
+        ))
+    }
+}
+
 /// Returns `true` when a click/scroll invocation should take the **window-less
 /// screen-absolute** branch: the caller gave numeric `x` AND `y`, gave NO `pid`
 /// and NO `window_id`, and the effective `capture_scope` is `"desktop"`.
@@ -2374,6 +2397,9 @@ impl Tool for ClickTool {
                     Some(ROLE_BUTTONDROPDOWN | ROLE_BUTTONMENU | ROLE_BUTTONDROPDOWNGRID | ROLE_SPLITBUTTON)
                 );
                 let (tx, ty) = if want_expand && is_dropdown_role {
+                    if self.state.element_cache.is_snapshot_stale(pid, hwnd) {
+                        return stale_element_snapshot_error("MSAA element", idx, hwnd);
+                    }
                     match self.state.element_cache.get_element_rect(pid, hwnd, idx) {
                         Some((_l, t, r, b)) => {
                             // Right-edge of the SplitButton — the dropdown
@@ -2399,10 +2425,15 @@ impl Tool for ClickTool {
                 } else {
                     match self.state.element_cache.get_element_center(pid, hwnd, idx) {
                         Some(v) => v,
-                        None => return ToolResult::error(format!(
-                            "MSAA element [{idx}] not in cache for hwnd={hwnd}. \
-                             Call get_window_state first."
-                        )),
+                        None => {
+                            return missing_cached_element_error(
+                                &self.state.element_cache,
+                                pid,
+                                hwnd,
+                                idx,
+                                "MSAA element",
+                            )
+                        }
                     }
                 };
                 pin_overlay_above(&cursor_key, hwnd);
@@ -2432,7 +2463,15 @@ impl Tool for ClickTool {
             // UIA path: get cached center (no COM call needed — captured at walk time).
             let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
                 Some(v) => v,
-                None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
+                None => {
+                    return missing_cached_element_error(
+                        &self.state.element_cache,
+                        pid,
+                        hwnd,
+                        idx,
+                        "Element",
+                    )
+                }
             };
             // NB: the off-screen guard is applied per-delivery-path below (the
             // foreground SendInput tap and the background coordinate injection),
@@ -4543,7 +4582,15 @@ impl Tool for DoubleClickTool {
         if let Some(idx) = elem_idx {
             let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
                 Some(v) => v,
-                None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
+                None => {
+                    return missing_cached_element_error(
+                        &self.state.element_cache,
+                        pid,
+                        hwnd,
+                        idx,
+                        "Element",
+                    )
+                }
             };
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &self.state.element_cache, pid, hwnd, idx, cx, cy, "double-clicking",
@@ -4815,7 +4862,15 @@ impl Tool for RightClickTool {
         if let Some(idx) = elem_idx {
             let (cx, cy) = match self.state.element_cache.get_element_center(pid, hwnd, idx) {
                 Some(v) => v,
-                None => return ToolResult::error(format!("Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first.")),
+                None => {
+                    return missing_cached_element_error(
+                        &self.state.element_cache,
+                        pid,
+                        hwnd,
+                        idx,
+                        "Element",
+                    )
+                }
             };
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &self.state.element_cache, pid, hwnd, idx, cx, cy, "right-clicking",

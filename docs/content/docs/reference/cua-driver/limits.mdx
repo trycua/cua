@@ -116,4 +116,4 @@ Cua Driver is constrained by the macOS permission model. Two relevant grants:
 | **Accessibility** (System Settings → Privacy & Security → Accessibility) | Every AX read, every element-indexed click, every keyboard/text primitive. Without it, `check_permissions` returns `accessibility: false` and every tool returns a structured error. |
 | **Screen Recording** | Screenshots and the `som`/`vision` capture modes. Without it, `get_window_state` in those modes returns a tree but no PNG. Pure `ax` mode still works. |
 
-Grants are tied to the `CuaDriver.app` bundle identity (`com.trycua.driver`). Rebuilding Cua Driver from source preserves the grants because `build-app.sh` pins a stable bundle id.
+Grants are tied to the `CuaDriver.app` bundle identity (`com.trycua.driver`). The Rust build and installer preserve this identity, so TCC grants persist across rebuilds and updates.

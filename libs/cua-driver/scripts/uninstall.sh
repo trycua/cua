@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# cua-driver uninstaller (Rust implementation by default, retired Swift
-# driver as an explicit legacy path on macOS). Mirrors uninstall.ps1 on
+# cua-driver uninstaller (Rust implementation only). Mirrors uninstall.ps1 on
 # Windows: one canonical script per shell, no private `_uninstall-rust.sh`
 # helper.
 #
 # Behaviour by host + flag:
-#   macOS/Linux + no flag           → Rust uninstall
-#   macOS  + --backend=swift        → retired Swift uninstall
-#   macOS  + --experimental-rust    → same as no flag (legacy alias)
-#   macOS  + --backend=rust         → same as no flag
-#   Linux/other + --backend=swift   → no-op (still allowed for compatibility)
+#   all hosts + no flag             → Rust uninstall
+#   --backend=rust/swift            → no-op (Rust is the only supported backend)
+#   --experimental-rust             → legacy alias (no-op)
 #
 # Swift uninstall removes:
 #   - ~/.local/bin/cua-driver symlink (+ legacy /usr/local/bin/cua-driver)
@@ -77,10 +74,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --experimental-rust) shift ;;  # legacy alias for default Rust path
         --backend=rust)      shift ;;
-        --backend=swift)     USE_RUST_BACKEND=0; shift ;;
+        --backend=swift)     shift ;;  # retired Swift (no-op)
         --reset-tcc)         RESET_TCC=1; shift ;;  # also revoke TCC grants (opt-in)
         --backend=*)
-            printf 'error: unknown backend %q; supported: swift, rust\n' "${1#*=}" >&2
+            printf 'error: unknown backend %q; supported: rust\n' "${1#*=}" >&2
             exit 2
             ;;
         --)                  PASSTHROUGH=1; shift ;;  # forward the rest verbatim
@@ -88,9 +85,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# The Swift binary is macOS-only, so `--backend=swift` on Linux is a
-# deliberate no-op (the script reaches the Swift branch below, finds
-# nothing, exits clean).
+# Legacy --backend=swift is accepted as a no-op for backward compat.
 OS="$(uname -s 2>/dev/null || echo unknown)"
 if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     if [[ "$OS" != "Darwin" ]]; then
@@ -532,14 +527,6 @@ FINALUNMSG
 cua-driver uninstalled.
 FINALUNMSG
     fi
-    exit 0
-fi
-
-# ----------------------------------------------------------------------
-# Swift uninstall branch (macOS legacy, explicit --backend=swift only).
-# ----------------------------------------------------------------------
-if [[ "$OS" != "Darwin" ]]; then
-    log "legacy Swift uninstall requested on non-macOS host ($OS); nothing to remove"
     exit 0
 fi
 

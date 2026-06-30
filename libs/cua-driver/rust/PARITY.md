@@ -2174,8 +2174,8 @@ resolve the release tag in the same priority order as the Swift
 2. **Baked-in default** —
    a sentinel-block-wrapped constant carried in the install script
    itself, updated by the CD `Bake version into install scripts` step
-   after each `cua-driver-rs-v*` tag push. Matches the Swift driver's
-   `CUA_DRIVER_BAKED_VERSION` shape.
+   after each `cua-driver-rs-v*` tag push.
+   version into the script.
 3. **GitHub Releases API fallback** —
    only consulted when the env override is absent *and* the baked
    line hasn't been updated yet (dev branches, pre-release checkouts).

@@ -11,7 +11,7 @@
 # or runs on a non-macOS host. Do not invoke directly; flag parity with
 # the dispatcher's argv shape is maintained from there.
 #
-# Mirrors _install-local-swift.sh (the sibling Swift helper) in shape:
+# Rust local installer (dev-only helper for libs/cua-driver/rust):
 #   --release    build the release configuration (default: debug)
 #   --autostart  register an auto-start daemon (macOS: LaunchAgent;
 #                Linux: systemd user unit). Default off; the post-install

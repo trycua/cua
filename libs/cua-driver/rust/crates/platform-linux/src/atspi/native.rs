@@ -1042,10 +1042,18 @@ fn gtk_frame_extents(xid: u64) -> Option<(i32, i32)> {
         .reply()
         .ok()?;
     let vals: Vec<u32> = reply.value32()?.collect();
+    parse_gtk_frame_extents(&vals)
+}
+
+/// Parse a `_GTK_FRAME_EXTENTS` `CARDINAL[4]` (`[left, right, top, bottom]`) into
+/// the `(left, top)` shadow inset. `None` when fewer than 4 values (property
+/// absent or malformed). Split out from [`gtk_frame_extents`] so the index
+/// mapping (left = `[0]`, top = `[2]`, *not* `[1]`/`[3]`) is unit-tested without
+/// an X server.
+fn parse_gtk_frame_extents(vals: &[u32]) -> Option<(i32, i32)> {
     if vals.len() < 4 {
         return None;
     }
-    // [left, right, top, bottom] → we only need (left, top).
     Some((vals[0] as i32, vals[2] as i32))
 }
 
@@ -1177,4 +1185,40 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
         dlog!("get_all_element_bounds timed out for pid {pid}; returning no bounds");
         Ok(Vec::new())
     })
+}
+
+#[cfg(test)]
+mod coord_tests {
+    use super::parse_gtk_frame_extents;
+
+    #[test]
+    fn frame_extents_maps_left_and_top_not_right_or_bottom() {
+        // _GTK_FRAME_EXTENTS = [left, right, top, bottom]; we need (left, top).
+        assert_eq!(parse_gtk_frame_extents(&[61, 61, 55, 67]), Some((61, 55)));
+        // Asymmetric values prove we don't accidentally read right([1])/bottom([3]).
+        assert_eq!(parse_gtk_frame_extents(&[10, 20, 30, 40]), Some((10, 30)));
+        // Maximized GTK4 window: zero inset, but property present.
+        assert_eq!(parse_gtk_frame_extents(&[0, 0, 0, 0]), Some((0, 0)));
+    }
+
+    #[test]
+    fn frame_extents_absent_or_short_is_none() {
+        assert_eq!(parse_gtk_frame_extents(&[]), None);
+        assert_eq!(parse_gtk_frame_extents(&[61, 61]), None);
+        assert_eq!(parse_gtk_frame_extents(&[61, 61, 55]), None);
+    }
+
+    #[test]
+    fn screen_reconstruction_matches_live_gnome_calculator() {
+        // Regression anchor for the whole GTK4 fix, from a live-verified capture:
+        // gnome-calculator button "7" = x11_window_origin (55,27)
+        //   + _GTK_FRAME_EXTENTS inset (61,55) + atspi WINDOW coords (16,293)
+        //   = screen (132,375).
+        let (fl, ft) = parse_gtk_frame_extents(&[61, 61, 55, 67]).unwrap();
+        let origin = (55, 27); // x11_window_origin
+        let window = (16, 293); // atspi CoordType::Window
+        let offset = (origin.0 + fl, origin.1 + ft); // window_to_screen_offset
+        let screen = (offset.0 + window.0, offset.1 + window.1);
+        assert_eq!(screen, (132, 375));
+    }
 }

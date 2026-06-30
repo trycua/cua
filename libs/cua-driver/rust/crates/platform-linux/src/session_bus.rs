@@ -115,12 +115,22 @@ fn discover_from_session_process_environ() -> Option<String> {
             Ok(e) => e,
             Err(_) => continue,
         };
-        for kv in environ.split(|&b| b == 0) {
-            if let Some(value) = kv.strip_prefix(b"DBUS_SESSION_BUS_ADDRESS=") {
-                if let Ok(address) = std::str::from_utf8(value) {
-                    if !address.is_empty() {
-                        return Some(address.to_owned());
-                    }
+        if let Some(address) = dbus_address_from_environ(&environ) {
+            return Some(address);
+        }
+    }
+    None
+}
+
+/// Extract a non-empty `DBUS_SESSION_BUS_ADDRESS` from a NUL-separated
+/// `/proc/<pid>/environ` blob. Split out so the parse is unit-tested without a
+/// live process.
+fn dbus_address_from_environ(environ: &[u8]) -> Option<String> {
+    for kv in environ.split(|&b| b == 0) {
+        if let Some(value) = kv.strip_prefix(b"DBUS_SESSION_BUS_ADDRESS=") {
+            if let Ok(address) = std::str::from_utf8(value) {
+                if !address.is_empty() {
+                    return Some(address.to_owned());
                 }
             }
         }
@@ -165,5 +175,28 @@ mod tests {
         let uid = current_uid();
         let socket = format!("/run/user/{uid}/bus");
         assert!(format!("unix:path={socket}").starts_with("unix:path=/run/user/"));
+    }
+
+    #[test]
+    fn parses_dbus_address_from_environ_blob() {
+        // Realistic NUL-separated /proc/<pid>/environ.
+        let environ = b"PATH=/usr/bin\0DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus\0HOME=/home/cua\0";
+        assert_eq!(
+            dbus_address_from_environ(environ).as_deref(),
+            Some("unix:path=/run/user/1000/bus")
+        );
+        // Not anchored to the first entry, and tolerates a trailing NUL.
+        let mid = b"A=1\0DBUS_SESSION_BUS_ADDRESS=unix:abstract=/tmp/dbus-xyz\0";
+        assert_eq!(dbus_address_from_environ(mid).as_deref(), Some("unix:abstract=/tmp/dbus-xyz"));
+    }
+
+    #[test]
+    fn dbus_address_absent_or_empty_is_none() {
+        assert_eq!(dbus_address_from_environ(b"PATH=/usr/bin\0HOME=/x\0"), None);
+        // Present but empty value must not match (avoids exporting "").
+        assert_eq!(dbus_address_from_environ(b"DBUS_SESSION_BUS_ADDRESS=\0"), None);
+        assert_eq!(dbus_address_from_environ(b""), None);
+        // A key that merely contains the name as a substring must not match.
+        assert_eq!(dbus_address_from_environ(b"OLD_DBUS_SESSION_BUS_ADDRESS=x\0"), None);
     }
 }

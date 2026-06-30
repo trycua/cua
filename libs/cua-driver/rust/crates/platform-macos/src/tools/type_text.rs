@@ -90,6 +90,8 @@ fn def() -> &'static ToolDef {
                     "type": "string",
                     "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."
                 },
+                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
+                "y": { "type": "number", "description": "Screenshot-pixel Y of the field (see x)." },
                 "delay_ms": {
                     "type": "integer",
                     "minimum": 0,
@@ -145,6 +147,32 @@ impl Tool for TypeTextTool {
         };
         let delay_ms      = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
+
+        // ── px form: focus by pixel-click, then type into the focused element ──
+        // Pass x,y (no element_index) for an *element px action*: pixel-click the
+        // field to give the Chromium/Electron renderer the real keyboard focus the
+        // AX path can't, then fall through to the focused-element type path (which
+        // escalates AX → CGEvent and lands once focused). Reuses ClickTool's exact
+        // coordinate translation + delivery_mode, so it lands on the same pixel a
+        // px-click would.
+        let px = args.get("x").and_then(|v| v.as_f64());
+        let py = args.get("y").and_then(|v| v.as_f64());
+        if let (Some(cx), Some(cy)) = (px, py) {
+            if element_index.is_some() {
+                return ToolResult::error(
+                    "Pass either element_index (ax) or x,y (px) to type_text, not both."
+                );
+            }
+            let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+            if let Err(e) = super::focus_by_pixel(
+                &self.state, pid, window_id, cx, cy, delivery_mode.is_foreground(),
+                args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
+            ).await {
+                return e;
+            }
+            // element_index stays None → the type path below writes to the now-
+            // focused element via the CGEvent (key_events) rung.
+        }
 
         // Validate element_index requires window_id (still applies for
         // the legacy integer path; token path already resolved window_id).

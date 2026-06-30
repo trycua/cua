@@ -96,6 +96,43 @@ impl DeliveryMode {
     pub fn is_foreground(self) -> bool { matches!(self, Self::Foreground) }
 }
 
+/// px-focus for the keyboard family (type_text / press_key / hotkey): pixel-click
+/// at (x,y) to establish real renderer focus before a keystroke — the *element px
+/// action* form of a keyboard tool. Reuses ClickTool's exact coordinate
+/// translation + delivery_mode so it lands on the same pixel a px-click would.
+/// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn focus_by_pixel(
+    state: &Arc<ToolState>,
+    pid: i32,
+    window_id: Option<u32>,
+    x: f64,
+    y: f64,
+    foreground: bool,
+    session: Option<String>,
+    session_id: Option<String>,
+    from_zoom: bool,
+) -> Result<(), cua_driver_core::protocol::ToolResult> {
+    use cua_driver_core::tool::Tool;
+    let mut click_args = serde_json::json!({
+        "pid": pid, "x": x, "y": y,
+        "delivery_mode": if foreground { "foreground" } else { "background" },
+    });
+    if let Some(wid) = window_id { click_args["window_id"] = serde_json::json!(wid); }
+    if let Some(s) = session { click_args["session"] = serde_json::json!(s); }
+    if let Some(s) = session_id { click_args["_session_id"] = serde_json::json!(s); }
+    if from_zoom { click_args["from_zoom"] = serde_json::json!(true); }
+    let focus = click::ClickTool::new(state.clone()).invoke(click_args).await;
+    if focus.is_error == Some(true) {
+        return Err(cua_driver_core::protocol::ToolResult::error(format!(
+            "focus pixel-click at ({x:.0},{y:.0}) failed."
+        )));
+    }
+    // Brief settle so the renderer registers focus before the keystrokes.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    Ok(())
+}
+
 /// Thread-safe per-pid zoom context registry.
 pub struct ZoomRegistry {
     inner: std::sync::Mutex<HashMap<i32, ZoomContext>>,

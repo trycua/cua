@@ -52,6 +52,8 @@ fn def() -> &'static ToolDef {
                 "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
                 "element_index": { "type": "integer" },
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
+                "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -109,6 +111,29 @@ impl Tool for PressKeyTool {
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
 
+        // px form: pixel-click to focus, then the key goes to the focused element.
+        // Reuses click's translation + delivery_mode; after it, deliver via the
+        // plain background path (the focus-click already handled fronting if fg).
+        let px_focus = {
+            let px = args.get("x").and_then(|v| v.as_f64());
+            let py = args.get("y").and_then(|v| v.as_f64());
+            if let (Some(cx), Some(cy)) = (px, py) {
+                if element_index.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to press_key, not both."
+                    );
+                }
+                let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+                if let Err(e) = super::focus_by_pixel(
+                    &self.state, pid, window_id, cx, cy, fg,
+                    args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
+                ).await {
+                    return e;
+                }
+                true
+            } else { false }
+        };
+
         // Resolve the pre-focus element pointer (if requested) outside
         // the suppression closure — only the focus_element() write itself
         // needs to run under suppression, the cache lookup does not.
@@ -151,7 +176,8 @@ impl Tool for PressKeyTool {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     // foreground rung: NSMenu activation (raise+restore), only when
                     // explicitly requested and addressing a window without an element.
-                    if fg {
+                    // Skipped when px-focus already fronted/clicked the target.
+                    if fg && !px_focus {
                         if let Some(wid) = window_id {
                             if element_index.is_none() {
                                 crate::input::skylight::with_menu_shortcut_activation(pid as libc::pid_t, wid, || {

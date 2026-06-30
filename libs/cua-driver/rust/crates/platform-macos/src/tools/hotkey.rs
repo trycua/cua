@@ -58,6 +58,8 @@ fn def() -> &'static ToolDef {
                     "minItems": 2,
                     "description": "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"]."
                 },
+                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach." },
+                "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "window_id": {
                     "type": "integer",
                     "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode."
@@ -128,6 +130,24 @@ impl Tool for HotkeyTool {
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let fg = delivery_mode.is_foreground();
 
+        // px form: pixel-click to focus, then the combo acts on the focused field
+        // (e.g. Cmd+V into a Chromium input). After it, deliver the combo via the
+        // plain background path (the focus-click already fronted if fg).
+        let px_focus = {
+            let px = args.get("x").and_then(|v| v.as_f64());
+            let py = args.get("y").and_then(|v| v.as_f64());
+            if let (Some(cx), Some(cy)) = (px, py) {
+                let from_zoom = args.get("from_zoom").and_then(|v| v.as_bool()).unwrap_or(false);
+                if let Err(e) = super::focus_by_pixel(
+                    &self.state, pid, window_id, cx, cy, fg,
+                    args.opt_str("session"), args.opt_str("_session_id"), from_zoom,
+                ).await {
+                    return e;
+                }
+                true
+            } else { false }
+        };
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
         // windows. The NSMenu path also briefly activates the target via
@@ -144,7 +164,8 @@ impl Tool for HotkeyTool {
             || async move {
                 tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    match (fg, window_id) {
+                    // px-focus already clicked/fronted the target → deliver background.
+                    match (fg && !px_focus, window_id) {
                         // foreground rung: briefly front the window so NSMenu key
                         // equivalents dispatch, then restore prior frontmost.
                         (true, Some(wid)) => {

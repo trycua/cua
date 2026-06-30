@@ -20,9 +20,9 @@ PANX, PANW, PANH = 544, 480, 740
 META = {
  "ax-fg":         {"title":"AX - FOREGROUND","scope":"window","see":"accessibility tree (element-level)","fg":True, "expect":"App kept in FRONT on purpose. Each action runs via the accessibility tree; we measure the foreground."},
  "ax-bg":         {"title":"AX - BACKGROUND","scope":"window","see":"accessibility tree (element-level)","fg":False,"expect":"App should stay in the BACKGROUND. Each action runs via the accessibility tree; we measure which actions steal focus."},
- "vision-fg":     {"title":"VISION - FOREGROUND","scope":"window","see":"screenshot only (pixels)","fg":True, "expect":"Pure pixel-driven, app kept in FRONT. We measure the foreground."},
- "vision-bg":     {"title":"VISION - BACKGROUND","scope":"window","see":"screenshot only (pixels)","fg":False,"expect":"Pure pixel-driven, app should stay in the BACKGROUND. We measure which pixel actions steal focus."},
- "vision-desktop":{"title":"VISION - FULL DESKTOP","scope":"desktop","see":"full-screen screenshot","fg":True,"expect":"Whole-screen, window-less screen-pixel actions (no window targeted)."},
+ "px-fg":     {"title":"VISION - FOREGROUND","scope":"window","see":"screenshot only (pixels)","fg":True, "expect":"Pure pixel-driven, app kept in FRONT. We measure the foreground."},
+ "px-bg":     {"title":"VISION - BACKGROUND","scope":"window","see":"screenshot only (pixels)","fg":False,"expect":"Pure pixel-driven, app should stay in the BACKGROUND. We measure which pixel actions steal focus."},
+ "px-desktop":{"title":"VISION - FULL DESKTOP","scope":"desktop","see":"full-screen screenshot","fg":True,"expect":"Whole-screen, window-less screen-pixel actions (no window targeted)."},
 }
 m = META[MODE]
 VISION = m["see"].startswith("screenshot") or m["scope"] == "desktop"

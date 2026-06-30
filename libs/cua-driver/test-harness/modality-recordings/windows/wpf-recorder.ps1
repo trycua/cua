@@ -1,4 +1,4 @@
-param([string]$Mode="ax-bg",[string]$Toolkit="wpf")   # Mode: ax-fg|ax-bg|vision-fg|vision-bg|vision-desktop ; Toolkit: wpf|winui3|webview2|electron
+param([string]$Mode="ax-bg",[string]$Toolkit="wpf")   # Mode: ax-fg|ax-bg|px-fg|px-bg|px-desktop ; Toolkit: wpf|winui3|webview2|electron
 $TK=@{
  wpf     =@{exe="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-wpf\CuaTestHarness.Wpf.exe";        title="CuaTestHarness WPF";      label="WPF"}
  winui3  =@{exe="C:\Users\cuademo\cua\libs\cua-driver\rust\test-apps\harness-winui3\CuaTestHarness.WinUI3.exe";  title="CuaTestHarness WinUI3";   label="WinUI3"}
@@ -18,9 +18,9 @@ $PANX=560;$PANY=0;$PANW=462;$PANH=742
 $META=@{
  "ax-fg"         =@{title="AX - FOREGROUND";  scope="window"; see="accessibility tree (element-level)"; fg=$true;  expect="App kept in FRONT on purpose. Each action runs via the accessibility tree; we measure the foreground."}
  "ax-bg"         =@{title="AX - BACKGROUND";  scope="window"; see="accessibility tree (element-level)"; fg=$false; expect="App should stay in the BACKGROUND. Each action runs via the accessibility tree; we measure which actions steal focus."}
- "vision-fg"     =@{title="VISION - FOREGROUND"; scope="window"; see="screenshot only (pixels)"; fg=$true;  expect="Pure pixel-driven, app kept in FRONT. We measure the foreground."}
- "vision-bg"     =@{title="VISION - BACKGROUND"; scope="window"; see="screenshot only (pixels)"; fg=$false; expect="Pure pixel-driven, app should stay in the BACKGROUND. We measure which pixel actions steal focus."}
- "vision-desktop"=@{title="VISION - FULL DESKTOP"; scope="desktop"; see="full-screen screenshot"; fg=$true; expect="Whole-screen, window-less screen-pixel actions (no window targeted)."}
+ "px-fg"     =@{title="VISION - FOREGROUND"; scope="window"; see="screenshot only (pixels)"; fg=$true;  expect="Pure pixel-driven, app kept in FRONT. We measure the foreground."}
+ "px-bg"     =@{title="VISION - BACKGROUND"; scope="window"; see="screenshot only (pixels)"; fg=$false; expect="Pure pixel-driven, app should stay in the BACKGROUND. We measure which pixel actions steal focus."}
+ "px-desktop"=@{title="VISION - FULL DESKTOP"; scope="desktop"; see="full-screen screenshot"; fg=$true; expect="Whole-screen, window-less screen-pixel actions (no window targeted)."}
 }
 $m=$META[$Mode]; if(-not $m){ Write-Output "unknown mode $Mode"; exit 2 }
 $vision=($m.see -like 'screenshot*'); $desktop=($m.scope -eq 'desktop')

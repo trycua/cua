@@ -3,7 +3,7 @@
 # h264 mp4s to ~/Desktop/cua-driver-modality-videos/linux-electron-<mode>.mp4.
 rm -f /tmp/lin-electron-allmodes.log
 OUT="$HOME/Desktop/cua-driver-modality-videos"; mkdir -p "$OUT"
-for MODE in ax-fg ax-bg vision-fg vision-bg vision-desktop; do
+for MODE in ax-fg ax-bg px-fg px-bg px-desktop; do
   bash /tmp/lin-run-electron.sh "$MODE" >/dev/null 2>&1
   echo "DONE $MODE $(cat /tmp/cua-lin-electron-$MODE/metric.log 2>/dev/null)" | tee -a /tmp/lin-electron-allmodes.log
   SRC="/tmp/cua-lin-electron-$MODE/rec/recording.mp4"

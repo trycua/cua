@@ -9,9 +9,9 @@ cua-driver's per-session agent cursor (no real pointer move).
 Five single-modality runs per toolkit:
 - **ax-fg** — accessibility-tree actions, app intentionally kept FOREGROUND
 - **ax-bg** — accessibility-tree actions, app should stay BACKGROUND (contract measured)
-- **vision-fg** — pixel-only (screenshot + coordinates), kept FOREGROUND
-- **vision-bg** — pixel-only, should stay BACKGROUND (contract measured)
-- **vision-desktop** — whole-screen, window-less screen-pixel actions (no window targeted)
+- **px-fg** — pixel-only (screenshot + coordinates), kept FOREGROUND
+- **px-bg** — pixel-only, should stay BACKGROUND (contract measured)
+- **px-desktop** — whole-screen, window-less screen-pixel actions (no window targeted)
 
 Action set per run: left-click · double-click · right-click · drag · scroll ·
 set_value (AX-only) · type · press-key.
@@ -28,9 +28,9 @@ Recorded on the Windows VM (Session 2, 1024×768) via cua-driver `start_recordin
 |------|----------|
 | `wpf-ax-fg.mp4` | foreground-mode, 8 actions |
 | `wpf-ax-bg.mp4` | **1/8 actions stole focus** (double-click) |
-| `wpf-vision-fg.mp4` | foreground-mode, 7 actions |
-| `wpf-vision-bg.mp4` | **2/7 actions stole focus** (left-click, double-click) |
-| `wpf-vision-desktop.mp4` | foreground-mode, 4 actions |
+| `wpf-px-fg.mp4` | foreground-mode, 7 actions |
+| `wpf-px-bg.mp4` | **2/7 actions stole focus** (left-click, double-click) |
+| `wpf-px-desktop.mp4` | foreground-mode, 4 actions |
 
 ## Linux — GTK3 (`gtk3-*.mp4`)
 Recorded on the Ubuntu 24.04 VM under a headless **Xvfb + openbox + picom + AT-SPI** stack
@@ -40,9 +40,9 @@ Recorded on the Ubuntu 24.04 VM under a headless **Xvfb + openbox + picom + AT-S
 |------|----------------|----------------|
 | `gtk3-ax-fg.mp4` | 3/7 actions changed the app | foreground-mode, 8 actions |
 | `gtk3-ax-bg.mp4` | 3/7 actions changed the app | **3/8 stole focus** |
-| `gtk3-vision-fg.mp4` | 1/6 actions changed the app | foreground-mode, 7 actions |
-| `gtk3-vision-bg.mp4` | 1/6 actions changed the app | **0/7 stole focus** |
-| `gtk3-vision-desktop.mp4` | 1/3 actions changed the app | foreground-mode, 4 actions |
+| `gtk3-px-fg.mp4` | 1/6 actions changed the app | foreground-mode, 7 actions |
+| `gtk3-px-bg.mp4` | 1/6 actions changed the app | **0/7 stole focus** |
+| `gtk3-px-desktop.mp4` | 1/3 actions changed the app | foreground-mode, 4 actions |
 
 **Key Linux finding (visible in the ✓/✗ column):** cua-driver injects Linux input via **XSendEvent**
 (synthetic events delivered to a window without stealing focus — required for the no-foreground
@@ -64,6 +64,6 @@ is the point: the recordings *measure* the contract honestly rather than asserti
 - **Linux AT-SPI** exposes only buttons/text/checkbox roles (no sliders/scrollers) and no element
   frames, so drag/scroll and all vision-mode pixel actions are driven from harness-exported widget
   geometry. The drag/scroll actions fire and are measured but may not visibly move those widgets.
-- **vision-desktop** uses screen-absolute (window-less) clicks; under Xvfb these are not always
+- **px-desktop** uses screen-absolute (window-less) clicks; under Xvfb these are not always
   delivered faithfully, so some clicks register as no-ops while still being measured.
 - macOS (AppKit/SwiftUI) was out of scope for this pass (no recordable session on the host).

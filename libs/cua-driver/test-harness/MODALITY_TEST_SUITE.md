@@ -78,12 +78,12 @@ Capture method × foreground/background × scope = 5 single-modality runs:
 |------------------|--------------------------|-----------------|-------------|-----------|
 | `ax-fg`          | `ax` (accessibility tree)| `element_index` | app kept FRONT | window  |
 | `ax-bg`          | `ax`                     | `element_index` | app stays BACKGROUND (contract measured) | window |
-| `vision-fg`      | `vision` (pixels)        | pixel coords    | app kept FRONT | window  |
-| `vision-bg`      | `vision`                 | pixel coords    | app stays BACKGROUND (contract measured) | window |
-| `vision-desktop` | `vision`                 | screen pixels (window-less) | FRONT | desktop |
+| `px-fg`      | `vision` (pixels)        | pixel coords    | app kept FRONT | window  |
+| `px-bg`      | `vision`                 | pixel coords    | app stays BACKGROUND (contract measured) | window |
+| `px-desktop` | `vision`                 | screen pixels (window-less) | FRONT | desktop |
 
 The fg/bg split only matters for the contract (measured in the `*-bg` runs).
-`vision-desktop` sets `capture_scope=desktop` and issues window-less,
+`px-desktop` sets `capture_scope=desktop` and issues window-less,
 screen-absolute actions.
 
 ### Dual scoring per action
@@ -254,7 +254,7 @@ This is the central organizing idea (from `CUA_DRIVER_LIMITATIONS_AND_TEST_MATRI
 ## 5. Action × control matrix
 
 **8 actions** × **6 controls**. Each modality run filters the plan:
-`set_value` is dropped in `vision` modes (it's AX-only); `vision-desktop` keeps
+`set_value` is dropped in `vision` modes (it's AX-only); `px-desktop` keeps
 only `{click, scroll, type, press-key}` (window-less screen actions).
 
 | Action ↓ / Control → | checkbox | click-target | slider | scroll-target | text-input | context-menu |
@@ -291,7 +291,7 @@ status is flagged where a commit deferred it.
 
 ### macOS
 
-Contract: **HOLDS — 0/8 stole** on AppKit in both `ax-bg` and `vision-bg`
+Contract: **HOLDS — 0/8 stole** on AppKit in both `ax-bg` and `px-bg`
 (pixel left-click/double/drag landed while Chrome stayed frontmost). WKWebView
 also holds — confirming the Windows Chromium steal is Windows-specific, not
 WebKit-on-macOS.
@@ -299,7 +299,7 @@ WebKit-on-macOS.
 | Harness | mode | click | double | right | drag | scroll | set_value | type | press-key | Contract | Notes |
 |---------|------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
 | AppKit  | `ax` | ✓ | ✓ (fixed bg, `click_at_xy_with_window_local`, `80b4e3d7`) | ✓ (AXShowMenu→delivering-pixel fallback, `80b4e3d7`) | ✓ | ⚠ element scroll no-ops on content-height containers (use x,y) | ✓ CFNumber NSSlider (`92d8aebf`, verified 0→50) | ✓ | n/a | **0/8 stole** | ax-bg 5/7 effects |
-| AppKit  | `vision` | ⚠ **no-op on standard NSButton even frontmost** (modal mouseDown reads window-server queue, not `postToPid` → use `element_index`) | ✓ | ✓ now fires `rightMouseDown` (window-number + button + primer, `e7145c18`) | ✓ | ✓ via per-pid pixel-wheel `scroll_wheel_at_xy` (`e7145c18`) | n/a | ✓ | n/a | **0/8 stole** | needs target frontmost; vision-bg 4/6 |
+| AppKit  | `vision` | ⚠ **no-op on standard NSButton even frontmost** (modal mouseDown reads window-server queue, not `postToPid` → use `element_index`) | ✓ | ✓ now fires `rightMouseDown` (window-number + button + primer, `e7145c18`) | ✓ | ✓ via per-pid pixel-wheel `scroll_wheel_at_xy` (`e7145c18`) | n/a | ✓ | n/a | **0/8 stole** | needs target frontmost; px-bg 4/6 |
 | SwiftUI | `ax` | ✓ | ✓ | ✓ (via dedicated context-menu) | ✗ slider drag is a composition no-op | ⚠ nested scroll no-op | ⚠ **AXValue unsettable** (`-25200`); needs AXIncrement/AXDecrement stepping (`d2b29230`) | ✓ | n/a | **0/8 stole** | full 6-control parity confirmed live |
 | WKWebView | `ax`+`vision` | ✓ | ✓ | ✓ | ✓ slider (pixel drag at live frame) | ⚠ **page scroll works, nested `overflow:auto` div no-op** (div has no `tabindex` → never keyboard-focusable; needs pixel-wheel) | ✗ **AXValue set, no DOM `input` event** (web mirror unchanged) | ✓ | n/a | **HOLDS** | native analogue of WebView2. Recorder fix (`mac-rec.py`): web dispatch now uses the **live element frame**, not a stale hardcoded coord map that was ~185px off → every WKWebView pixel action used to miss. ax-fg re-measured **5/6** (click/double/right/drag/type land; only `set_value` the honest web no-op). |
 | Electron (mac) | `ax`/`vision` | ✓ | ✓ | — | — | ✗ (web scroll, same as WKWebView) | — | ✓ | n/a | holds (Chromium-on-mac does **not** steal like Windows) | local-only recordings |
@@ -316,7 +316,7 @@ launches** (store targets as window-local points, convert to live screenshot px)
 | GTK3 | `vision` (Xvfb) | ✗ | ✗ | ✗ | ✗ | ✗ | n/a | ✗ | n/a | **0/7 stole** | **GTK drops synthetic XSendEvent**; XTEST core events don't reach its XInput2 path |
 | GTK3 | `vision` (**real Xorg**) | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | n/a | holds focus | right/double/middle-click + scroll **land via uinput/XInput2-MPX + shield-grab** (`79e546ca`); capability auto-detected via `real_pointer_input_available()` — **runtime-verified on a real Xorg server (dummy-driver): the probe flips TRUE, all four actions LAND and HOLD focus (`_NET_ACTIVE_WINDOW` unchanged), confirmed by the harness oracle + a middle-click PRIMARY paste. Xvfb can't bind uinput as an X slave, so the path auto-skips there.** |
 | Electron (Linux) | `ax` | ✓ click | ✗ | ✗ | ✓ drag | ✗ scroll resolves but no-op (AT-SPI synthetic) | ✗ | ✓ type | n/a | ax-bg **2/8 stole** (`set_value` + `drag`; was 3/8 — recorder baseline artifact, `5c0a1d3c`) | drag lands a value-change but its synthetic window-coord activates Chromium (never reaches the slider thumb); still holds far better than Windows Electron's reported 7/8 (also an artifact) |
-| Electron (Linux) | `vision` | ✗ | ✓ pixel double-click fires on click-target | ✗ | ✗ | ✗ | n/a | ✗ | n/a | vision-bg **6/7 stole** (pixel dispatch foregrounds Chromium) | |
+| Electron (Linux) | `vision` | ✗ | ✓ pixel double-click fires on click-target | ✗ | ✗ | ✗ | n/a | ✗ | n/a | px-bg **6/7 stole** (pixel dispatch foregrounds Chromium) | |
 | GTK4 (gnome-calculator) | `ax` (AT-SPI) | ✓ via `doAction` (coordinate-free; lands without a valid `frame`) | ✗ no `doAction` equiv | ✗ no `doAction` equiv | ⚠ value-only (no Action) — driven via `set_value` | ⚠ driven via `set_value` | ✓ | ✓ | n/a | holds | **GTK4 coord fix required for `frame`/agent-cursor.** GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN)=(0,0)` for every widget (GNOME/gtk #1564/#1739 a11y rework). Fix: queries `CoordType::Window` (GTK4 reports correctly per-widget) and reconstructs screen as `x11_window_origin + _GTK_FRAME_EXTENTS.(left,top) + WINDOW_xy`, gated on presence of `_GTK_FRAME_EXTENTS` so non-GTK toolkits (Qt) keep their correct SCREEN path. Verified live: button "7" = window(55,27) + inset(61,55) + WINDOW(16,293) = screen(132,375). `doAction` element clicks land regardless (coordinate-free). GNOME VM lane only. |
 | GTK4 (gnome-calculator) | `vision` (real Xorg) | ✓ (after GTK4 coord fix) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | n/a | holds | Pixel/vision coords reliable **only after** WINDOW+`_GTK_FRAME_EXTENTS` reconstruction; without the fix, cursor/frame collapses to the window corner. GNOME Shell requires real console Xorg (software GLX) — not Xvnc. |
 
@@ -411,7 +411,7 @@ recorder stores targets as hand-tuned window-local points and converts them
 through a private ratio. That conversion is *self-consistent* with the driver's
 own assumption, so it never exercised the driver's real image→screen mapping —
 and the **desktop-scope 2× Retina off-by-backing-scale bug** (a center-pixel pick
-warping to the corner) slipped through every `vision-desktop` run. De-risk: the
+warping to the corner) slipped through every `px-desktop` run. De-risk: the
 **vision-agent coordinate test** (§7) reads a pixel straight off the returned PNG
 with a dims-guard, caught the bug, and now guards it (`80b4e3d7` fixes the desktop
 branch to divide x,y by the native/logical ratio; `010fdd78` adds the regression

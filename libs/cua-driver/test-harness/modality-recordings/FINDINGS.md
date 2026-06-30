@@ -2,7 +2,7 @@
 
 These recordings run the 8-action matrix (click, double-click, right-click, drag, scroll,
 set_value, type, press-key) against a controlled harness on Windows (WPF) and Linux (GTK3), in
-5 modalities each (ax-fg, ax-bg, vision-fg, vision-bg, vision-desktop). Each action now carries
+5 modalities each (ax-fg, ax-bg, px-fg, px-bg, px-desktop). Each action now carries
 **two independent measurements**:
 
 - **✓ worked / ✗ no-op** — did the action change the harness's own state (verified by reading the
@@ -54,20 +54,20 @@ Windows, but reading AT-SPI text instead of UIA. Recorder: `linux/lin-rec-electr
 |------|----------------|----------------|------------------------|
 | ax-fg          | 3/6 | click, drag, type | foreground (8 actions) |
 | ax-bg          | 2/6 | click, type       | **3/8 stole** (set_value, type, press-key) |
-| vision-fg      | 1/5 | double-click      | foreground (7 actions) |
-| vision-bg      | 1/5 | double-click      | **6/7 stole** |
-| vision-desktop | 1/2 | click             | foreground (4 actions) |
+| px-fg      | 1/5 | double-click      | foreground (7 actions) |
+| px-bg      | 1/5 | double-click      | **6/7 stole** |
+| px-desktop | 1/2 | click             | foreground (4 actions) |
 
 **Headline — Linux Electron breaks the no-foreground contract, but far less than Windows
 Electron.** Windows Electron stole **7/8** in ax-bg (Chromium self-foregrounds on nearly every
 action). Linux Electron steals **3/8 in ax-bg** — only the keyboard/focus actions (`set_value`,
 `type`, `press-key`) pull the window frontmost via the X focus path; the AX pointer actions
-(click/double/right/drag/scroll) all **held**. In **vision-bg** it steals **6/7** (pixel dispatch
+(click/double/right/drag/scroll) all **held**. In **px-bg** it steals **6/7** (pixel dispatch
 is coordinate-injection that foregrounds Chromium). Effect coverage mirrors the documented Linux
 synthetic-input limit: AX `click`/`type` land; AX `double_click`/`right_click`/`drag`/`scroll` and
 `set_value` are no-ops on the Chromium controls via AT-SPI, while **pixel** `double_click` *does*
-fire on the click-target (`last_action=double_click`, frame-verified in vision-fg/bg). All 5 modes
-frame-verified; saved as `linux-electron-{ax-fg,ax-bg,vision-fg,vision-bg,vision-desktop}.mp4`.
+fire on the click-target (`last_action=double_click`, frame-verified in px-fg/bg). All 5 modes
+frame-verified; saved as `linux-electron-{ax-fg,ax-bg,px-fg,px-bg,px-desktop}.mp4`.
 
 ## Agent-cursor centering (user-reported)
 The agent cursor lands off-center on the checkbox. Root cause: the WPF checkbox's AX
@@ -149,10 +149,10 @@ only (`macos-appkit-*.mp4`) — these record a personal screen, not uploaded.
 | mode | effects | focus contract |
 |------|---------|----------------|
 | ax-bg | 5/7 | **0/8 stole** |
-| vision-bg | 4/6 | **0/7 stole** |
-| ax-fg / vision-fg / vision-desktop | 5/7 / 4/6 / 2/3 | foreground |
+| px-bg | 4/6 | **0/7 stole** |
+| ax-fg / px-fg / px-desktop | 5/7 / 4/6 / 2/3 | foreground |
 
-Headline: in **vision-bg**, pixel left-click/double/drag landed on the harness while Chrome stayed
+Headline: in **px-bg**, pixel left-click/double/drag landed on the harness while Chrome stayed
 frontmost — **0 focus steals**; the no-foreground contract holds on macOS for both AX and pixel
 dispatch. Honest macOS gaps surfaced: the NSView click-target isn't in the AX tree (needs pixels);
 pixel right-click never fires `rightMouseDown`; pixel scroll doesn't move `NSScrollView` (element

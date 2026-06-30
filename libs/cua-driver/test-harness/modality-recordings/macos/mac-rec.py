@@ -55,13 +55,13 @@ DASH_W, DASH_H = 792, 900
 META = {
  "ax-fg":         {"title":"AX - FOREGROUND","see":"accessibility tree (element-level)","fg":True, "expect":"App kept in FRONT on purpose. Each action runs via the accessibility tree / element_index; we measure the foreground."},
  "ax-bg":         {"title":"AX - BACKGROUND","see":"accessibility tree (element-level)","fg":False,"expect":"App should stay in the BACKGROUND. Each action runs via the accessibility tree / element_index; we measure which actions steal focus."},
- "vision-fg":     {"title":"VISION - FOREGROUND","see":"screenshot only (pixels)","fg":True, "expect":"Pure pixel-driven, app kept in FRONT. We measure the foreground."},
- "vision-bg":     {"title":"VISION - BACKGROUND","see":"screenshot only (pixels)","fg":False,"expect":"Pure pixel-driven, app should stay in the BACKGROUND. We measure which pixel actions steal focus."},
- "vision-desktop":{"title":"VISION - FULL DESKTOP","see":"full-screen screenshot","fg":True,"expect":"capture_scope=desktop (full-display capture). Pure pixel-driven, app in FRONT. On macOS pixel dispatch is window-anchored, so actions route to the on-screen window."},
+ "px-fg":     {"title":"VISION - FOREGROUND","see":"screenshot only (pixels)","fg":True, "expect":"Pure pixel-driven, app kept in FRONT. We measure the foreground."},
+ "px-bg":     {"title":"VISION - BACKGROUND","see":"screenshot only (pixels)","fg":False,"expect":"Pure pixel-driven, app should stay in the BACKGROUND. We measure which pixel actions steal focus."},
+ "px-desktop":{"title":"VISION - FULL DESKTOP","see":"full-screen screenshot","fg":True,"expect":"capture_scope=desktop (full-display capture). Pure pixel-driven, app in FRONT. On macOS pixel dispatch is window-anchored, so actions route to the on-screen window."},
 }
 m = META[MODE]
 VISION = m["see"].startswith("screenshot")
-DESKTOP = MODE == "vision-desktop"
+DESKTOP = MODE == "px-desktop"
 SESS = f"macd-{MODE}-{int(time.time())}"
 
 def D(tool, payload, t=25):

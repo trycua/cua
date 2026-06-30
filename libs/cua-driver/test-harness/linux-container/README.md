@@ -114,12 +114,35 @@ Both lanes produce the same modality matrix and both prove the session-bus
 auto-discovery fix (daemon started with `DBUS_SESSION_BUS_ADDRESS` unset → 58
 AT-SPI elements, `degraded` unset).
 
+## Third lane: KDE / GNOME VMs (`derec.sh`)
+
+The container lanes above are both **XFCE** (GTK3 galculator) over `az exec`.
+The genuinely different desktops/toolkits run on full **Azure VMs** over SSH,
+driven by **`derec.sh`** (also in this directory):
+
+| VM | Desktop | App | Toolkit | Why a VM, not a container |
+|---|---|---|---|---|
+| `cua-kde` | KDE Plasma (X11) | `kcalc` | **Qt** | Plasma X11 renders fine over VNC |
+| `cua-gnome` | GNOME Shell (X11) | `gnome-calculator` | **GTK4** | gnome-shell needs **real console Xorg** (software GLX); it won't run over Xvnc (no GLX) |
+
+`derec.sh setup` / `record` / `env` mirror the container harness; **`derec.sh
+verify`** asserts the **GTK4 coordinate invariant** — per-button `frame`s are
+distinct (not collapsed to the window corner, the GTK4 `(0,0)` regression) and
+every button center lies inside the window's X11 rect. That's the runtime guard
+the schema-only `modality_dispatch_linux_test` can't provide.
+
 ## CI coverage
 
+Pure logic is unit-tested **display-free** in `platform-linux`:
+- session-bus discovery — the comm-truncation matcher *and* the
+  `/proc/<pid>/environ` parse (`session_bus.rs`);
+- the GTK4 `_GTK_FRAME_EXTENTS` parse + the `origin+inset+WINDOW` screen
+  reconstruction, anchored to the live `(132,375)` capture (`atspi/native.rs`,
+  `coord_tests`).
+
 The dispatch *contract* (every input tool advertises `delivery_mode`;
-`bring_to_front` is a real EWMH activation) is asserted display-free in
-`rust/crates/cua-driver/tests/modality_dispatch_linux_test.rs`. The
-session-bus discovery matching logic is unit-tested in
-`platform-linux/src/session_bus.rs`. This container lane covers the parts that
-genuinely need a live desktop + a11y bus, and is run manually / against the
-`trycua/cua-xfce` rig.
+`bring_to_front` is a real EWMH activation) is asserted via
+`rust/crates/cua-driver/tests/modality_dispatch_linux_test.rs`. Everything that
+genuinely needs a live desktop + a11y bus — the dispatch ladder's *behaviour*,
+the GTK4 coordinate invariant, recordings — is covered by the container lanes
+(manual / `trycua/cua-xfce` rig) and the VM lanes (`derec.sh verify`), not CI.

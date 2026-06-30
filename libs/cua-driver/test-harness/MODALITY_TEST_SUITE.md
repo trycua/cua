@@ -317,6 +317,8 @@ launches** (store targets as window-local points, convert to live screenshot px)
 | GTK3 | `vision` (**real Xorg**) | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | n/a | holds focus | right/double/middle-click + scroll **land via uinput/XInput2-MPX + shield-grab** (`79e546ca`); capability auto-detected via `real_pointer_input_available()` — **runtime-verified on a real Xorg server (dummy-driver): the probe flips TRUE, all four actions LAND and HOLD focus (`_NET_ACTIVE_WINDOW` unchanged), confirmed by the harness oracle + a middle-click PRIMARY paste. Xvfb can't bind uinput as an X slave, so the path auto-skips there.** |
 | Electron (Linux) | `ax` | ✓ click | ✗ | ✗ | ✓ drag | ✗ scroll resolves but no-op (AT-SPI synthetic) | ✗ | ✓ type | n/a | ax-bg **2/8 stole** (`set_value` + `drag`; was 3/8 — recorder baseline artifact, `5c0a1d3c`) | drag lands a value-change but its synthetic window-coord activates Chromium (never reaches the slider thumb); still holds far better than Windows Electron's reported 7/8 (also an artifact) |
 | Electron (Linux) | `vision` | ✗ | ✓ pixel double-click fires on click-target | ✗ | ✗ | ✗ | n/a | ✗ | n/a | vision-bg **6/7 stole** (pixel dispatch foregrounds Chromium) | |
+| GTK4 (gnome-calculator) | `ax` (AT-SPI) | ✓ via `doAction` (coordinate-free; lands without a valid `frame`) | ✗ no `doAction` equiv | ✗ no `doAction` equiv | ⚠ value-only (no Action) — driven via `set_value` | ⚠ driven via `set_value` | ✓ | ✓ | n/a | holds | **GTK4 coord fix required for `frame`/agent-cursor.** GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN)=(0,0)` for every widget (GNOME/gtk #1564/#1739 a11y rework). Fix: queries `CoordType::Window` (GTK4 reports correctly per-widget) and reconstructs screen as `x11_window_origin + _GTK_FRAME_EXTENTS.(left,top) + WINDOW_xy`, gated on presence of `_GTK_FRAME_EXTENTS` so non-GTK toolkits (Qt) keep their correct SCREEN path. Verified live: button "7" = window(55,27) + inset(61,55) + WINDOW(16,293) = screen(132,375). `doAction` element clicks land regardless (coordinate-free). GNOME VM lane only. |
+| GTK4 (gnome-calculator) | `vision` (real Xorg) | ✓ (after GTK4 coord fix) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | n/a | holds | Pixel/vision coords reliable **only after** WINDOW+`_GTK_FRAME_EXTENTS` reconstruction; without the fix, cursor/frame collapses to the window corner. GNOME Shell requires real console Xorg (software GLX) — not Xvnc. |
 
 ### Windows
 
@@ -515,9 +517,9 @@ I. **The AFH UIA root is a caption-only ~188×32 strip** for Settings and Store 
 
 ---
 
-## Linux dispatch ladder & the XFCE container lane
+## Linux dispatch ladder — container and VM lanes
 
-Linux (X11/XFCE) now validates the same `delivery_mode` background/foreground dispatch ladder that macOS and Windows exercise, closing the parity gap. The matrix below shows each modality's path and whether the driver can verify the action landed without a screenshot.
+Linux (X11/XFCE and real-desktop VMs) now validates the same `delivery_mode` background/foreground dispatch ladder that macOS and Windows exercise, closing the parity gap. The matrix below shows each modality's path and whether the driver can verify the action landed without a screenshot.
 
 ### Validated modality matrix
 
@@ -543,6 +545,40 @@ The harness script lives at `libs/cua-driver/test-harness/linux-container/calc.s
 - **`install-local` refuses root.** Use `runuser -u <desktop-user> -- cua-driver serve` to start the daemon as the session owner.
 - **Single-instance apps + zombie children.** Unreaped zombie children can pollute `pgrep`; a full daemon restart reaps them.
 - **Stale daemon, stale tool schema.** A daemon that was not restarted after an update can serve an outdated tool schema. Verify with `cua-driver describe <tool>` from a fresh shell.
+
+### Toolkit coverage
+
+| Toolkit | App under test | Lane | AT-SPI coord path |
+|---------|---------------|------|-------------------|
+| GTK3 | galculator | Container (XFCE / Kasm, `az exec`) | `SCREEN` — AT-SPI returns correct screen coords |
+| GTK4 | gnome-calculator | VM (GNOME Shell, SSH) | `WINDOW` + `_GTK_FRAME_EXTENTS` reconstruction (see below) |
+| Qt | kcalc | VM (KDE Plasma, SSH) | `SCREEN` — Qt AT-SPI reports correct screen coords |
+| Electron / Chromium | shared harness | Container (XFCE, `az exec`) | web-AX + pixel (`--force-renderer-accessibility`) |
+
+### Lane matrix
+
+| Lane | Desktop | Access method | Test app | Harness driver |
+|------|---------|---------------|----------|----------------|
+| XFCE container | `trycua/cua-xfce` (xfwm4) | `az exec` | galculator (GTK3), Electron | `libs/cua-driver/test-harness/linux-container/calc.sh` |
+| Kasm container | `trycua/cua-ubuntu` (Kasm/XFCE) | `az exec` | galculator (GTK3) | `libs/cua-driver/test-harness/linux-container/calc.sh` |
+| KDE Plasma VM | Azure VM, KDE Plasma X11 | SSH → `derec.sh` | kcalc (Qt) | `libs/cua-driver/test-harness/linux-container/derec.sh` |
+| GNOME Shell VM | Azure VM, GNOME Shell X11 (console Xorg) | SSH → `derec.sh` | gnome-calculator (GTK4) | `libs/cua-driver/test-harness/linux-container/derec.sh` |
+
+The VM lanes are driven over SSH by `derec.sh`, in contrast to the container lanes which use `az exec`. GNOME Shell requires the real console Xorg session (software GLX) and is not drivable over VNC (no GLX). KDE Plasma works over both console Xorg and VNC.
+
+### GTK4 coordinate reconstruction — invariant
+
+GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN) = (0, 0)` for every widget (GNOME/gtk #1564/#1739, a11y rework). The driver fix:
+
+1. Detects `_GTK_FRAME_EXTENTS` on the X11 window (present for GTK4; absent for Qt and GTK3).
+2. Queries `CoordType::Window` (which GTK4 reports correctly, per-widget).
+3. Reconstructs: `screen_xy = x11_window_origin + _GTK_FRAME_EXTENTS.(left, top) + WINDOW_xy`.
+
+Verified live: gnome-calculator button "7" = window-origin (55, 27) + inset (61, 55) + WINDOW (16, 293) = screen (132, 375).
+
+Non-GTK toolkits (Qt) keep the existing SCREEN path — the gate is the presence of `_GTK_FRAME_EXTENTS`.
+
+**Invariant worth guarding:** `frame_center ≈ x11_window_origin + _GTK_FRAME_EXTENTS + atspi_WINDOW_xy`. Any divergence means the reconstruction is broken. Before the fix, pixel clicks silently collapsed to the window corner; `doAction` element clicks landed regardless (coordinate-free).
 
 ---
 

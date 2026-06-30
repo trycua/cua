@@ -30,7 +30,12 @@ fn def() -> &'static ToolDef {
             `parent_index`, `depth`). The markdown `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
-            Also captures a PNG screenshot of the specified window.\n\n\
+            Two capture modes that map 1:1 to how you'll act. `ax` (default): \
+            the accessibility tree only — act via element_index — and NO \
+            screenshot is delivered (set screenshot_out_file to also write the \
+            frame to disk). `vision`: a fresh PNG only (no AX walk) — act via x,y \
+            pixels. Switch to `vision` when the surface has no usable AX tree \
+            (canvas / WebGL / Electron web content) or the tree is too large.\n\n\
             Optional `query` filters the tree_markdown to matching lines plus their ancestor \
             chain (case-insensitive substring). The element_index values are unchanged — \
             filtering only trims the rendered Markdown.\n\n\
@@ -47,11 +52,7 @@ fn def() -> &'static ToolDef {
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown." },
-                "capture_mode": {
-                    "type": "string",
-                    "enum": ["som", "vision", "ax"],
-                    "description": "som=AX+screenshot (default), vision=screenshot only (no AX walk), ax=AX only (no screenshot)."
-                },
+                "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "screenshot_out_file": {
                     "type": "string",
                     "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
@@ -101,8 +102,13 @@ impl Tool for GetWindowStateTool {
             let cfg = self.state.config.read().unwrap();
             self.state.session_config.effective_max_image_dimension(session_id.as_deref(), &cfg)
         };
-        // capture_mode is a per-call param now (no longer a setting); default "som".
-        let capture_mode = args.opt_str("capture_mode").unwrap_or_else(|| "som".to_owned());
+        // capture_mode is a per-call param (no longer a setting). Two modes that
+        // map 1:1 to the action path: `ax` (default; tree, screenshot withheld)
+        // and `vision` (screenshot, no walk). `som`/`tree`/`screenshot` still
+        // decode as deprecated aliases — see cua_driver_core::capture_mode.
+        let mode = cua_driver_core::capture_mode::CaptureMode::parse(
+            args.opt_str("capture_mode").as_deref(),
+        );
         // Optional caps — when omitted, fall back to the defaults baked into
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
@@ -118,9 +124,8 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        // Walk AX tree (unless vision-only mode). Accept "tree" as deprecated alias for "ax".
-        let capture_mode = if capture_mode == "tree" { "ax".to_owned() } else { capture_mode };
-        let tree_result = if capture_mode != "vision" {
+        // Walk AX tree on the accessibility path only.
+        let tree_result = if mode.walks_ax() {
             let q = query.clone();
             // Wrap the blocking AX walk in a 30-second timeout. Heavy webview apps
             // (Arc, Safari with many tabs, Electron) can block
@@ -157,11 +162,17 @@ impl Tool for GetWindowStateTool {
             self.state.element_cache.update(pid, window_id, &r.nodes);
         }
 
-        // Screenshot (unless ax-only mode). Uses the session-effective max
-        // dimension resolved above.
+        // Screenshot gating — capture-but-withhold on the AX path:
+        //   * `vision` mode → capture and DELIVER (base64 in content, or a file).
+        //   * `ax` mode → withhold from the response. We only grab a frame at all
+        //     when `screenshot_out_file` was passed (write to disk, surface the
+        //     path, never embed base64). Otherwise we skip the grab entirely so
+        //     the hot AX-lookup path pays no ScreenCaptureKit latency or image
+        //     tokens. A non-`vision` capture never embeds the image — the inner
+        //     branch below writes the file and returns b64=None.
         let max_dim = effective_max_dim;
         // Returns (b64_or_path, final_w, final_h, Option<original_w>, is_file_path)
-        let screenshot = if capture_mode != "ax" {
+        let screenshot = if mode.delivers_screenshot() || screenshot_out_file.is_some() {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Option<u32>)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -297,8 +308,19 @@ impl Tool for GetWindowStateTool {
                  window may be a non-AX surface (canvas/WebGL/custom-drawn) or its \
                  accessibility tree was not ready (Chromium/Electron require an \
                  AX-enable + settle). Do not treat element data as authoritative — \
-                 verify via the screenshot, and re-snapshot if the app just launched."
+                 re-snapshot if the app just launched, otherwise switch to the \
+                 visual path."
             );
+            // Point the agent at the next rung explicitly: an empty AX tree means
+            // element_index has nothing to bind to, so the deliberate move is to
+            // re-capture in `vision` and act by pixel (x,y). macOS can pixel-target
+            // in the background, so the recommendation is vision_pixel, not
+            // foreground.
+            structured["escalation"] = serde_json::json!({
+                "recommended": "vision_pixel",
+                "reason": "non-AX surface — re-capture with capture_mode:\"vision\" \
+                           and click by pixel (x,y)."
+            });
         }
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);

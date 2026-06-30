@@ -12,6 +12,7 @@
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 
+pub mod capture_mode;
 pub mod cdp;
 pub mod element_cache;
 pub mod element_token;

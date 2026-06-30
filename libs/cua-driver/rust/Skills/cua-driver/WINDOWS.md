@@ -105,10 +105,17 @@ costlier path; only use it for surfaces with no UIA peer.
     "code": "background_unavailable",
     "target_class": "Chrome_WidgetWin_1",
     "event_kind": "mouse_click",
+    "escalation": { "recommended": "foreground", "reason": "occluded / known-dropped event kind" },
     "suggestion": "Either call bring_to_front then retry with delivery_mode:\"foreground\", or accept the foreground swap by setting delivery_mode:\"foreground\" directly."
   }
 }
 ```
+
+The `escalation` field is the same machine-readable hint the action
+responses carry (see `SKILL.md` → behavior matrix). On Windows the
+recommendation is `"foreground"` — the dropped event needs the fronting
+rung. (Contrast macOS / X11, where a `vision` pixel click can still land
+in the background, so there the hint is `vision_pixel`.)
 
 The recommended flow when an agent gets that error:
 
@@ -379,11 +386,16 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   once. If still empty, the app has no UIA provider — fall back to
   vision-mode (x,y) clicks on visible content (acceptable for
   exploration; pair with screenshots).
-- **Tiny screenshot dimensions?** Check `cua-driver get_config` →
-  `capture_mode`. Default `"som"` returns both tree + PNG. `"vision"`
-  omits the tree (PNG only); `"ax"` omits the PNG. If a snapshot
-  lacks a tree, `capture_mode` is almost certainly `"vision"` —
-  reason from the PNG or flip to `"som"` / `"ax"` via `set_config`.
+- **Empty tree, or a snapshot with no image?** Check `cua-driver
+  get_config` → `capture_mode`. Two modes, 1:1 with the action path:
+  `"ax"` (DEFAULT) returns the UIA tree and **no image** (act by
+  `element_index`); `"vision"` returns a PNG and **no tree** (act by
+  pixel). If you wanted pixels and got none you're in `"ax"` — take a
+  `"vision"` capture (a deliberate switch to the pixel path). If the
+  tree came back empty in `ax`, the response is `degraded` (no UIA
+  provider — see the lazy-tree retry note above), cross to `vision`.
+  (`"som"` still decodes as a deprecated alias for `"ax"`; it no longer
+  means "tree + PNG".)
 - **`get_desktop_state` returns `desktop_scope_disabled`?** That's
   intended: full-display capture is a **desktop-scope** operation, gated
   on the global `capture_scope`. It's `"window"` by default — so to verify

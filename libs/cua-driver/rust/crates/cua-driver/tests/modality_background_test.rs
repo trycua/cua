@@ -13,9 +13,9 @@
 //! count of times its window lost activation. We snapshot before / after
 //! each action and assert delta == 0.
 //!
-//! Also covers **capture_mode ax** (UIA-only, no screenshot) and
-//! **capture_mode vision** (screenshot-only, no UIA tree). The default
-//! `som` covers both.
+//! Also covers **capture_mode ax** (UIA-only, no screenshot — the default) and
+//! **capture_mode vision** (screenshot-only, no UIA tree). (`som` is a
+//! deprecated alias for `ax`.)
 
 #![cfg(target_os = "windows")]
 
@@ -208,9 +208,11 @@ where F: FnOnce() {
 #[ignore]
 fn bg_modality_get_window_state_no_focus_steal() {
     let (mut driver, pid, wid) = match setup() { Some(x) => x, None => return };
-    assert_no_focus_steal("get_window_state(som)", || {
+    // Exercise the screenshot-bearing path (`vision`) — screen capture is the
+    // focus-sensitive operation; `ax` no longer grabs a frame at all.
+    assert_no_focus_steal("get_window_state(vision)", || {
         let _ = driver.call("get_window_state",
-            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "som"}));
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode": "vision"}));
     });
 }
 

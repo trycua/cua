@@ -290,6 +290,13 @@ pub fn background_unavailable_error(
             "suggestion":
                 "Either call bring_to_front then retry with delivery_mode:\"foreground\", \
                  or accept the foreground swap by setting delivery_mode:\"foreground\" directly.",
+            // Windows analog of the macOS escalation signal: this surface drops
+            // background input, so the deliberate next rung is foreground delivery.
+            "escalation": {
+                "recommended": "foreground",
+                "reason": "background input is dropped by this surface — re-call \
+                           delivery_mode:\"foreground\" (or bring_to_front first).",
+            },
         }))
 }
 

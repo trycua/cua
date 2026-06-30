@@ -900,7 +900,7 @@ fn screen_to_window_coords(xid: u64, screen_x: i32, screen_y: i32) -> Option<(i3
     Some((screen_x - trans.dst_x as i32, screen_y - trans.dst_y as i32))
 }
 
-pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     bounded(async {
         let conn = AccessibilityConnection::new()
             .await
@@ -913,6 +913,15 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
             .get(idx)
             .ok_or_else(|| anyhow!("element {idx} not found (total: {})", action_nodes.len()))?;
 
+        // Suspected no-op: actuating `do_action(0)` on a passive display role
+        // (a `label`/`static`/`image` indexed only for its Value interface) or a
+        // node that advertises no action at all is the AT-SPI analogue of macOS'
+        // "element does not advertise this action" — the call returns success but
+        // likely changes nothing. Reuses the same passive-role detector
+        // `select_click_target` leans on for the coordinate paths. The caller
+        // turns this into `effect: "suspected_noop"` + an escalation hint.
+        let suspected_noop = target.actions.is_empty() || is_passive_role(&target.role);
+
         let ap = target
             .acc
             .proxies()
@@ -924,7 +933,7 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
         ap.do_action(0)
             .await
             .map_err(|e| anyhow!("doAction failed: {e}"))?;
-        Ok(target.actions.first().cloned().unwrap_or_default())
+        Ok((target.actions.first().cloned().unwrap_or_default(), suspected_noop))
     }, || Err(anyhow!("perform_action timed out for pid {pid} (app unresponsive to AT-SPI)")))
 }
 

@@ -222,11 +222,31 @@ impl Tool for TypeTextTool {
                     "{mark} {char_count} char(s){detail}.{note}{}",
                     changes.result_suffix()
                 ))
-                .with_structured(serde_json::json!({
-                    "path": path,
-                    "characters": char_count,
-                    "verified": verified,
-                }))
+                .with_structured({
+                    // `effect` is the cross-tool tri-state mirroring `verified`'s
+                    // read-back: a positive read-back is "confirmed"; an
+                    // unreadable/unchanged AXValue (Catalyst silent-accept, or a
+                    // CGEvent rung the app dropped) is "unverifiable". For
+                    // type_text the next rung is delivery_mode:"foreground" (the
+                    // field IS in the AX tree — it's a focus/accept problem, not a
+                    // missing element), so the escalation points there rather than
+                    // at vision_pixel.
+                    let mut s = serde_json::json!({
+                        "path": path,
+                        "characters": char_count,
+                        "verified": verified,
+                        "effect": if verified { "confirmed" } else { "unverifiable" },
+                    });
+                    if !verified && path != PATH_KEY_EVENTS_FG {
+                        s["escalation"] = serde_json::json!({
+                            "recommended": "foreground",
+                            "reason": "background insert could not be confirmed — \
+                                       re-call with delivery_mode:\"foreground\" if a \
+                                       screenshot shows the text didn't land."
+                        });
+                    }
+                    s
+                })
             }
             Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),

@@ -1,6 +1,7 @@
-//! modality_capture_mode_test — the **capture_mode** axis (`ax` / `vision` /
-//! `som`) of the modality matrix, asserted on each platform's native
-//! controlled-harness app.
+//! modality_capture_mode_test — the **capture_mode** axis (`ax` / `vision`) of
+//! the modality matrix, asserted on each platform's native controlled-harness
+//! app. There are two live modes now; `som` is a deprecated alias for `ax`
+//! (collapsed once the AX path stopped delivering a screenshot).
 //!
 //! This generalizes the Windows-only oracle in `modality_background_test`
 //! (`capture_mode_ax_returns_tree_only` / `capture_mode_vision_returns_image_only`)
@@ -9,10 +10,10 @@
 //! documented in `docs/content/docs/explanation/capture-and-dispatch-modalities.mdx`.
 //!
 //! Oracle, against the harness window:
-//!   * `capture_mode=ax`     → accessibility tree present (`btn-increment`),
-//!                             NO `image` content entry.
+//!   * `capture_mode=ax` (default) → accessibility tree present (`btn-increment`),
+//!                             NO `image` content entry (screenshot withheld).
 //!   * `capture_mode=vision` → `image` content present, NO tree markdown.
-//!   * `capture_mode=som`    → both (the default).
+//!   * `capture_mode=som`    → deprecated alias for `ax`: tree, NO image.
 //!
 //! Caveats handled as graceful skips (these are `#[ignore]` interactive tests,
 //! consistent with the rest of the harness suite):
@@ -231,29 +232,52 @@ fn capture_mode_vision_returns_image_only() {
     println!("✅ capture_mode=vision: image present, no tree");
 }
 
-/// `capture_mode=som` (default): both tree and image present (each asserted only
-/// when its grant is available, so the test is a true superset of ax + vision).
+/// `capture_mode=som`: deprecated alias for `ax`. Since the AX path no longer
+/// delivers a screenshot, `som` collapsed into `ax` — it must return the tree
+/// and NO image, identical to `ax`. (Back-compat: old callers passing `som`
+/// keep working, just without the screenshot they used to get.)
 #[test]
 #[ignore]
-fn capture_mode_som_returns_tree_and_image() {
+fn capture_mode_som_is_deprecated_alias_for_ax() {
     let Some(mut driver) = McpDriver::spawn() else { return };
     let Some((pid, wid)) = launch(&mut driver) else { return };
 
     let resp = snapshot_settled(&mut driver, pid, wid, "som");
     assert!(!resp.is_error(), "get_window_state(som) errored: {}", resp.text());
 
-    let img = has_image(&resp);
-    let tree = tree_has_marker(&resp);
+    if !tree_has_marker(&resp) {
+        eprintln!("[capture_mode] som tree has no {TREE_MARKER:?} — accessibility grant likely missing; skipping");
+        return;
+    }
     assert!(
-        img || tree,
-        "capture_mode=som returned neither tree nor image — both grants missing? {}",
+        !has_image(&resp),
+        "capture_mode=som (alias for ax) must NOT return an image content entry: {}",
         resp.text().chars().take(160).collect::<String>()
     );
-    if !img {
-        eprintln!("[capture_mode] som: no image (screen-capture grant missing) — tree-only check");
+    println!("✅ capture_mode=som: aliased to ax — tree present ({TREE_MARKER}), no image");
+}
+
+/// The DEFAULT resolves to `ax`: tree present, screenshot withheld. Passing an
+/// empty/unrecognised mode string must fall back to the default rather than
+/// erroring (parse-fallback contract), so this doubles as that guard.
+#[test]
+#[ignore]
+fn capture_mode_default_is_ax() {
+    let Some(mut driver) = McpDriver::spawn() else { return };
+    let Some((pid, wid)) = launch(&mut driver) else { return };
+
+    // Empty mode string → CaptureMode::parse falls back to ax (the default).
+    let resp = snapshot_settled(&mut driver, pid, wid, "");
+    assert!(!resp.is_error(), "get_window_state(default) errored: {}", resp.text());
+
+    if !tree_has_marker(&resp) {
+        eprintln!("[capture_mode] default tree has no {TREE_MARKER:?} — accessibility grant likely missing; skipping");
+        return;
     }
-    if !tree {
-        eprintln!("[capture_mode] som: no tree marker (accessibility grant missing) — image-only check");
-    }
-    println!("✅ capture_mode=som: tree={tree} image={img}");
+    assert!(
+        !has_image(&resp),
+        "default capture_mode (ax) must NOT return an image content entry: {}",
+        resp.text().chars().take(160).collect::<String>()
+    );
+    println!("✅ capture_mode default: ax — tree present ({TREE_MARKER}), no image");
 }

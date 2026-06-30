@@ -50,7 +50,7 @@ stub_tool!(list_windows_m, ListWindowsTool, "list_windows",
 
 stub_tool!(get_window_state_m, GetWindowStateTool, "get_window_state",
     "Walk a running app's AX/UIA tree and return a Markdown rendering of its UI. Also captures a screenshot.",
-    serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode":{"type":"string","enum":["som","vision","ax"]}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema()},"additionalProperties":false}));
 
 stub_tool!(launch_app_m, LaunchAppTool, "launch_app",
     "Launch an app in the background. Provide bundle_id (macOS) or name.",
@@ -130,7 +130,7 @@ stub_tool!(get_config_m, GetConfigTool, "get_config",
 
 stub_tool!(set_config_m, SetConfigTool, "set_config",
     "Update cua-driver-rs configuration.",
-    serde_json::json!({"type":"object","properties":{"capture_mode":{"type":"string","enum":["som","vision","ax"]},"max_image_dimension":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","properties":{"capture_mode":{"type":"string","enum":["ax","vision"]},"max_image_dimension":{"type":"integer"}},"additionalProperties":false}));
 
 stub_tool!(get_ax_tree_m, GetAccessibilityTreeTool, "get_accessibility_tree",
     "Lightweight desktop snapshot: running apps and visible windows. For per-window AX tree, use get_window_state.",

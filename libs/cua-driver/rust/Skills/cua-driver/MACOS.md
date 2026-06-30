@@ -148,12 +148,15 @@ failure mode and it steals focus every time.
 
 When a cua-driver call surprises you, diagnose cua-driver first:
 
-- **Tiny screenshot / empty `tree_markdown`?** Check
-  `cua-driver get_config` → `capture_mode`. Default `"som"` returns
-  both the AX tree and screenshot. `"vision"` omits the AX tree
-  (PNG only), `"ax"` omits the PNG. If a snapshot lacks a tree,
-  `capture_mode` is almost certainly `"vision"` — either reason
-  purely from the PNG or flip to `"som"` / `"ax"` via `set_config`.
+- **Empty `tree_markdown`, or a snapshot with no image?** Check
+  `cua-driver get_config` → `capture_mode`. Two modes, 1:1 with the
+  action path: `"ax"` (DEFAULT) returns the AX tree and **no image**
+  (act by `element_index`); `"vision"` returns a PNG and **no tree**
+  (act by pixel). If you wanted pixels and got none, you're in `"ax"`
+  — take a `"vision"` capture (a deliberate switch to the pixel path).
+  If a tree came back empty in `ax`, the response is `degraded` — it's
+  a non-AX surface, cross to `vision`. (`"som"` still decodes as a
+  deprecated alias for `"ax"`; it no longer means "tree + screenshot".)
 - **`has_screenshot: false`?** The window capture failed (transient
   race against a close, or the window has no backing store yet).
   Re-snapshot; if persistent, pick a different `window_id` via
@@ -172,32 +175,42 @@ genuinely needs frontmost state, fall through to the activate
 fallback. Always name the focus steal in your response ("I'll
 briefly bring Chrome to the front because …").
 
-### Verifying actions: prefer `som` over `ax`
+### Verifying actions: `ax` first, then a gated `vision` look
 
-When verifying that an action **landed** (a click registered, a text
-input took, a menu pick changed selection), default to `get_window_state({
-capture_mode: "som"})`. `"ax"` is cheaper (no PNG in the response), but
-the AX tree **lies** for two common surface types:
+There is no `som` mode. There are two: **`ax`** (DEFAULT — AX tree, no
+image, act by `element_index`) and **`vision`** (PNG, no tree, act by
+pixel). Verifying that an action **landed** is a two-step ladder, not a
+"always grab a screenshot" reflex:
 
-- **Canvas-backed editors** — Monaco (VSCode, Cursor), xterm, Figma,
-  WebGL apps. The AX tree shows the surrounding chrome but reports
-  nothing for the canvas content. A snapshot can look unchanged after a
-  successful text edit.
-- **Catalyst / iOS-on-Mac text views** — see "Known text-input limits"
-  above. The AX `AXValue` can lag the rendered pixels, or report the
-  placeholder string when the field is actually populated.
+1. **Re-snapshot in `ax`** (the default) and read the tree diff — a
+   changed `AXValue`, a new element, a collapsed menu, a disabled
+   button. If the tree shows the change, you're done; **no image
+   needed.** Cheap and backgroundable.
+2. **Cross to a `vision` capture** only on a real signal: the action
+   response carried `effect:"suspected_noop"`, the re-snapshot came
+   back `degraded` (empty tree), or the tree looks unchanged/unreadable
+   on a surface where it's known to **lie**:
+   - **Canvas-backed editors** — Monaco (VSCode, Cursor), xterm, Figma,
+     WebGL. The AX tree shows the chrome but nothing for the canvas
+     content; a snapshot can look unchanged after a successful edit.
+   - **Catalyst / iOS-on-Mac text views** — see "Known text-input
+     limits" above. `AXValue` can lag the rendered pixels or report the
+     placeholder while the field is actually populated.
 
-`"som"` returns both the AX tree AND a PNG screenshot in a single call.
-Pay the extra tokens; the screenshot is the ground truth for both of
-the cases above, and you avoid the "type → AX-check succeeds → think
-the action landed → discover the lie three calls later" loop.
+`vision` is your **conscious switch to the pixel path** — you spend it
+to eyeball the result with your own eyes precisely because the tree
+can't be trusted here, and from there you act by pixel, not index. The
+point of the gate is to avoid paying for pixels on every verify while
+still catching the "type → AX-check succeeds → believe the lie → find
+out three calls later" trap on the surfaces that warrant it.
 
 Rule of thumb:
-- **`som`** — verifying an action landed (default).
-- **`ax`** — cheap element lookup before a click (you don't need the
-  pixels, you need the `[N]` index).
-- **`vision`** — pure visual inspection (e.g. asking the model to read
-  a chart). Skip the AX walk entirely.
+- **`ax`** (default) — the element lookup before a click AND the first
+  verify after it; you need the `[N]` index and the tree diff, not the
+  pixels.
+- **`vision`** — the gated second look when `ax` is unreadable /
+  `suspected_noop` / `degraded`, and pure visual inspection (reading a
+  chart). Skips the AX walk entirely; act by pixel.
 
 ### Self-check pattern
 
@@ -344,9 +357,10 @@ Workaround — clipboard + windowed `Cmd+V`:
    for ~1 ms — enough for `paste:` to deliver — then restores prior
    frontmost. Without `window_id`, the auth-message envelope path
    runs and hits the same drop as `type_text`.
-3. Verify with a `get_window_state({capture_mode: "som"})` snapshot.
-   Both the AX value and the rendered pixels should show the pasted
-   text. (See the verify-with-som pattern below.)
+3. Verify with an `ax` re-snapshot first; if the AX value lags (it
+   does on Catalyst/Electron), take a `vision` capture and read the
+   pasted text off the pixels. (See the `ax`-then-gated-`vision`
+   pattern in "Verifying actions" above.)
 
 This costs one round-trip of clipboard pollution. Restore the user's
 prior clipboard if your workflow cares — store via `pbpaste` before,

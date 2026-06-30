@@ -64,6 +64,25 @@ input to avoid a per-call flash, or to escalate when background didn't land.
 keystroke / XSendEvent / XTest / foreground rungs are not read-back-confirmed
 → `verified:false` (confirm via screenshot). Mirrors the macOS/Windows verdict.
 
+**`effect` / `escalation`** — alongside `verified`, action responses carry the
+cross-platform `effect` (`confirmed` / `unverifiable` / `suspected_noop`) and,
+when you should change rung, `escalation:{recommended, reason}`. See `SKILL.md`
+→ behavior matrix. The Linux-specific value of `recommended` is **`foreground`
+on Wayland** (background pixel can't target an unfocused window) and
+`vision_pixel` on X11 (a `vision` capture + background pixel click lands via
+AT-SPI `do_action`-at-point — the matrix below).
+
+## `capture_mode` — two modes, 1:1 with the action path
+
+The capture vocabulary is the same two modes as macOS/Windows, and each maps
+to one addressing mode: **`ax`** (DEFAULT) returns the AT-SPI tree and **no
+image** — act by `element_index`; **`vision`** returns a screenshot and **no
+tree** — act by pixel `x,y`. Picking `vision` is a deliberate switch to the
+pixel path. `get_window_state` returning `degraded:true` (empty AT-SPI walk)
+is the cue to cross to `vision` (X11) or escalate to `delivery_mode:"foreground"`
+(Wayland). (`som` still decodes as a deprecated alias for `ax`; it no longer
+means "tree + screenshot".)
+
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
 AT-SPI — the accessibility tree behind `get_window_state`, element-indexed
@@ -148,6 +167,15 @@ maturity as X11:
   no-libei-backend case (built without `portal-libei` or a denied portal
   session); when input has no actuator the tools surface an error rather
   than silently succeeding.
+- **Wayland escalation is `foreground`, NOT `vision_pixel`.** This is the
+  one place the cross-platform escalation hint flips. Everywhere else
+  (macOS, X11, most Windows surfaces) a background `vision` pixel click can
+  land on an unfocused window, so `escalation.recommended` is `vision_pixel`.
+  On Wayland an unfocused window **cannot** be pixel-targeted in the
+  background (libei injects only to compositor focus → `background_unavailable`),
+  so the hint on action responses and on a `degraded` `get_window_state` is
+  `foreground`: re-call the action with `delivery_mode:"foreground"`, don't
+  drop to a pixel capture expecting a background click to land.
 
 ## Quick triage
 

@@ -85,8 +85,11 @@ pub fn walk_tree_bounded(
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
-/// Returns Ok(action_name) on success.
-pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
+/// Returns `Ok((action_name, suspected_noop))` on success — `suspected_noop`
+/// is true when the actuated node looked like a silent no-op (a passive
+/// display role, or no advertised action), so the caller can surface
+/// `effect: "suspected_noop"`.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
 }
 

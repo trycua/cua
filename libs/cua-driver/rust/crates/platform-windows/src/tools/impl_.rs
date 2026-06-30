@@ -242,7 +242,7 @@ pub struct DriverConfig {
 }
 
 impl Default for DriverConfig {
-    fn default() -> Self { Self { capture_mode: "som".into(), capture_scope: "window".into(), max_image_dimension: 1568 } }
+    fn default() -> Self { Self { capture_mode: "ax".into(), capture_scope: "window".into(), max_image_dimension: 1568 } }
 }
 
 /// Load `DriverConfig` from `~/.cua-driver/config.json`, falling back to
@@ -704,10 +704,12 @@ impl Tool for GetWindowStateTool {
                 Set `query` to a case-insensitive substring to filter `tree_markdown` down to \
                 matching lines plus their ancestor chain. element_index values and \
                 `element_count` are unchanged — the filter only trims the rendered Markdown.\n\n\
-                Response shape is controlled by `capture_mode`:\n\
-                - `som` (default) — walks UIA AND captures screenshot.\n\
-                - `vision` — captures only; UIA walk skipped; element_index cache not updated.\n\
-                - `ax` — UIA only; no screenshot.\n\n\
+                Two capture modes that map 1:1 to how you'll act. `ax` (default): the \
+                UIA tree only — act via element_index — and NO screenshot is delivered \
+                (set `screenshot_out_file` to also write the frame to disk). `vision`: a \
+                fresh PNG only (UIA walk skipped; element_index cache not updated) — act \
+                via x,y pixels. Switch to `vision` when the surface has no usable UIA tree \
+                (canvas / WebGL / Electron web content) or the tree is too large.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
@@ -720,8 +722,8 @@ impl Tool for GetWindowStateTool {
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],
-                    "description":"som=tree+screenshot (default), vision=screenshot only, ax=tree only."},
+                "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead. Works in `ax` mode too (the only way to also grab a frame on the accessibility path)."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. When set, `tree_markdown` only contains lines that match plus their ancestor chain; element indices and `element_count` are unchanged."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees (#22865)."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees (#22865)."}
@@ -765,8 +767,15 @@ impl Tool for GetWindowStateTool {
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
         use cua_driver_core::tool_args::ArgsExt;
+        // capture_mode collapses to two modes that map 1:1 to the action path:
+        // `ax` (default; tree, screenshot withheld) and `vision` (screenshot,
+        // no walk). `som`/`tree`/`screenshot` still decode as deprecated aliases
+        // — see cua_driver_core::capture_mode. The persisted config default (now
+        // "ax") feeds the parse when the per-call arg is absent.
         let capture_mode = args.str_or("capture_mode", &default_mode);
+        let mode = cua_driver_core::capture_mode::CaptureMode::parse(Some(capture_mode.as_str()));
         let query = args.opt_str("query");
+        let screenshot_out_file = args.opt_str("screenshot_out_file");
         // Optional caps — when omitted, fall back to the walker's built-in
         // defaults (#22865). minimum:1 enforced in the schema, but defend
         // against 0 here too.
@@ -781,12 +790,18 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
 
-        // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
-        let do_tree = capture_mode != "vision";
-        let do_shot = capture_mode != "ax";
+        // Walk the UIA tree only on the accessibility path. Screenshot gating —
+        // capture-but-withhold on the AX path: `vision` mode captures AND delivers
+        // (base64 in content, or a file); `ax` mode only grabs a frame at all when
+        // `screenshot_out_file` was passed (write to disk, surface the path, never
+        // embed base64) — otherwise the grab is skipped entirely so the hot AX
+        // lookup path pays no capture latency or image tokens.
+        let do_tree = mode.walks_ax();
+        let do_shot = mode.delivers_screenshot() || screenshot_out_file.is_some();
 
         let state = self.state.clone();
         let q = query.clone();
+        let out_file = screenshot_out_file.clone();
         let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
                 Some(crate::uia::walk_tree_bounded(hwnd, q.as_deref(), max_elements, max_depth))
@@ -806,9 +821,17 @@ impl Tool for GetWindowStateTool {
                         let orig_w = crate::capture::png_dimensions_pub(&raw).map(|(w, _)| w).unwrap_or(0);
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                         let original_w = if w < orig_w { Some(orig_w) } else { None };
-                        (Some((B64.encode(&png), w, h, original_w)), None)
+                        // `screenshot_out_file` set (any mode) → write to disk and
+                        // surface the path, never embed bytes. Otherwise (vision,
+                        // no out_file) → embed base64.
+                        if let Some(ref path) = out_file {
+                            std::fs::write(path, &png)?;
+                            (Some((None, Some(path.clone()), w, h, original_w)), None)
+                        } else {
+                            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+                            (Some((Some(B64.encode(&png)), None, w, h, original_w)), None)
+                        }
                     }
                     Err(e) => (None, Some(format!("{e}"))),
                 }
@@ -929,21 +952,53 @@ impl Tool for GetWindowStateTool {
                          Issue #22865: use `max_elements` / `max_depth` to bound the \
                          UIA walk on apps with very large trees."
                     );
+                    // Best-effort-background ladder: a UIA walk that ran but found
+                    // zero actionable elements is NOT a clean snapshot — the window
+                    // may be a non-UIA surface (canvas/WebGL/custom-drawn) or its
+                    // tree wasn't ready (Chromium/Electron need an enable + settle).
+                    // Mark it degraded so callers don't read `elements: []` as "this
+                    // window has no controls", and point at the next rung. Windows
+                    // can pixel-target in the background for many surfaces, so the
+                    // recommendation is vision_pixel, not foreground.
+                    if count == 0 {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(
+                            "ax_tree_empty: the UIA walk returned no actionable elements. \
+                             The window may be a non-UIA surface (canvas/WebGL/custom-drawn) \
+                             or its accessibility tree was not ready (Chromium/Electron \
+                             require a UIA-enable + settle). Do not treat element data as \
+                             authoritative — re-snapshot if the app just launched, otherwise \
+                             switch to the visual path."
+                        );
+                        structured["escalation"] = json!({
+                            "recommended": "vision_pixel",
+                            "reason": "non-AX surface — re-capture capture_mode:\"vision\" \
+                                       and click by pixel (x,y)."
+                        });
+                    }
                 }
 
-                if let Some((b64, w, h, orig_w)) = screenshot_opt {
+                if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
                     if let Some(ow) = orig_w {
                         if w > 0 { state.resize_registry.set_ratio(pid, ow as f64 / w as f64); }
                     } else {
                         state.resize_registry.clear_ratio(pid);
                     }
-                    content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    // base64 is embedded only when no out_file was given (vision
+                    // path). With `screenshot_out_file` the bytes went to disk and
+                    // we surface the path instead — never both.
+                    if let Some(b64) = b64_opt {
+                        content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
                     structured["screenshot_mime_type"] = json!("image/png");
+                    if let Some(fp) = file_path {
+                        structured["screenshot_file_path"] = json!(fp);
+                    }
                 } else if let Some(err) = screenshot_err {
                     // Capture failed (most commonly because the target is
                     // minimized — see #1973). Surface the reason in BOTH the
@@ -2187,6 +2242,8 @@ impl Tool for ClickTool {
                     ToolResult::text(format!(
                         "✅ Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope)."
                     ))
+                    // SendInput dispatched but is not driver-verifiable (no read-back).
+                    .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -2337,7 +2394,8 @@ impl Tool for ClickTool {
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Performed SendInput click on MSAA [{idx}] {half} half at ({tx},{ty})."
-                    )),
+                    ))
+                    .with_structured(json!({ "path": "msaa", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -2389,7 +2447,8 @@ impl Tool for ClickTool {
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
-                    )),
+                    ))
+                    .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -2540,7 +2599,14 @@ impl Tool for ClickTool {
                 Ok(format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."))
             }).await;
             match result {
-                Ok(Ok(msg)) => ToolResult::text(msg),
+                // UIA Invoke/Toggle/SelectionItem (or the PostMessage/injection
+                // fallback) dispatched, but none of these is driver-verifiable —
+                // UIA Invoke has no read-back. `effect: unverifiable`; the caller
+                // confirms via screenshot. (The would_be_silently_dropped surfaces
+                // are diverted to `background_unavailable` below before reaching
+                // here, so a success here always means a real dispatch.)
+                Ok(Ok(msg)) => ToolResult::text(msg)
+                    .with_structured(json!({ "path": "ax", "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) if e.to_string().contains("__CUA_BG_UNAVAILABLE_CLICK__") => {
                     background_unavailable_error(hwnd, EventKind::MouseClick)
                 }
@@ -2616,6 +2682,7 @@ impl Tool for ClickTool {
                         ToolResult::text(format!(
                             "✅ Sent {click_word} via SendInput to pid {pid} at ({sx},{sy}) (delivery_mode:foreground)."
                         ))
+                        .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
                     }
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -2643,7 +2710,8 @@ impl Tool for ClickTool {
                 if invoked {
                     return ToolResult::text(format!(
                         "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
-                    ));
+                    ))
+                    .with_structured(json!({ "path": "ax", "verified": false, "effect": "unverifiable" }));
                 }
             }
 
@@ -2675,6 +2743,7 @@ impl Tool for ClickTool {
                         ToolResult::text(format!(
                             "✅ Injected {click_word} to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                         ))
+                        .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
                     }
                     Ok(Err(_)) => background_unavailable_error(hwnd, EventKind::MouseClick),
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -2705,6 +2774,7 @@ impl Tool for ClickTool {
                         _ => "click",
                     };
                     ToolResult::text(format!("✅ Posted {click_word} to pid {pid}."))
+                        .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
                 }
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -2862,6 +2932,10 @@ impl Tool for TypeTextTool {
                 .with_structured(serde_json::json!({
                     "path": "key_events",
                     "characters": text_len,
+                    // Foreground SendInput delivered, but with no read-back the
+                    // driver can't confirm the effect → unverifiable. No escalation:
+                    // foreground IS the escalated rung (mirrors macOS PATH_KEY_EVENTS_FG).
+                    "effect": "unverifiable",
                 })),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -2963,12 +3037,29 @@ impl Tool for TypeTextTool {
                     "✅ Wrote {text_len} char(s) on pid {raw_pid} via UIA ValuePattern \
                      (element_index=[{idx}]; verify: {verify})."
                 ))
-                .with_structured(serde_json::json!({
-                    "path": "ax",
-                    "characters": text_len,
-                    "verified": verify == "confirmed",
-                    "verify": verify,
-                }));
+                .with_structured({
+                    // `effect` mirrors the UIA read-back: a positive read-back is
+                    // "confirmed"; an unchanged/unreadable value is "unverifiable".
+                    // The field IS in the UIA tree (it's a focus/accept problem, not
+                    // a missing element), so escalation points at foreground.
+                    let verified = verify == "confirmed";
+                    let mut s = serde_json::json!({
+                        "path": "ax",
+                        "characters": text_len,
+                        "verified": verified,
+                        "verify": verify,
+                        "effect": if verified { "confirmed" } else { "unverifiable" },
+                    });
+                    if !verified {
+                        s["escalation"] = serde_json::json!({
+                            "recommended": "foreground",
+                            "reason": "background insert could not be confirmed — re-call \
+                                       with delivery_mode:\"foreground\" if a screenshot \
+                                       shows the text didn't land."
+                        });
+                    }
+                    s
+                });
             }
             // ValuePattern unavailable → fall through to the WM_CHAR path.
         }
@@ -3031,6 +3122,7 @@ impl Tool for TypeTextTool {
                     .with_structured(serde_json::json!({
                         "path": "key_events", "characters": text_len,
                         "verified": true, "verify": "confirmed",
+                        "effect": "confirmed",
                     })),
                     (Some(_), Some(_)) => ToolResult::text(format!(
                         "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
@@ -3041,6 +3133,13 @@ impl Tool for TypeTextTool {
                     .with_structured(serde_json::json!({
                         "path": "key_events", "characters": text_len,
                         "verified": false, "verify": "unchanged",
+                        "effect": "unverifiable",
+                        "escalation": {
+                            "recommended": "foreground",
+                            "reason": "background insert could not be confirmed — re-call \
+                                       with delivery_mode:\"foreground\" if a screenshot \
+                                       shows the text didn't land."
+                        },
                     })),
                     _ => ToolResult::text(format!(
                         "✅ Typed {text_len} char(s) on pid {raw_pid} via PostMessage \
@@ -3052,6 +3151,13 @@ impl Tool for TypeTextTool {
                     .with_structured(serde_json::json!({
                         "path": "key_events", "characters": text_len,
                         "verified": false, "verify": "unreadable",
+                        "effect": "unverifiable",
+                        "escalation": {
+                            "recommended": "foreground",
+                            "reason": "background insert could not be confirmed — re-call \
+                                       with delivery_mode:\"foreground\" if a screenshot \
+                                       shows the text didn't land."
+                        },
                     })),
                 }
             }
@@ -5713,7 +5819,7 @@ impl Tool for GetConfigTool {
                 same fallback the daemon uses at startup. Sibling to `set_config`.\n\n\
                 Current schema (Windows):\n\n  \
                 {\n    \"schema_version\": 1,\n    \"version\": \"<crate version>\",\n    \
-                \"platform\": \"windows\",\n    \"capture_mode\": \"som\" | \"vision\" | \"ax\",\n    \
+                \"platform\": \"windows\",\n    \"capture_mode\": \"ax\" | \"vision\",\n    \
                 \"max_image_dimension\": 0\n  }\n".into(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
@@ -5777,7 +5883,7 @@ impl Tool for SetConfigTool {
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape."},
+                "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window (default) or whole desktop. Desktop scope enables window-less screen-absolute click/scroll (no pid/window_id). Accepted in both the {key,value} and legacy per-field shapes."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
                 "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},

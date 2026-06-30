@@ -276,13 +276,13 @@ impl Tool for ClickTool {
                      → screen-point ({sx:.0},{sy:.0}) on pid {pid} (desktop scope; \
                      not driver-verified — confirm via screenshot)."
                 ))
-                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
+                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                 Ok(Ok(None)) => ToolResult::text(format!(
                     "✅ Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
                      (desktop scope, no window under point; not driver-verified)."
                 ))
-                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
+                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
@@ -403,7 +403,7 @@ impl Tool for ClickTool {
                         "✅ Posted middle-click to pid {pid} at element [{idx}] center \
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
-                    .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
+                    .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -456,7 +456,7 @@ impl Tool for ClickTool {
             let changes = snapshot.detect_async().await;
 
             match result {
-                Ok(Ok((mut msg, needs_webkit_delay))) => {
+                Ok(Ok((mut msg, needs_webkit_delay, suspected_noop))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
@@ -464,12 +464,28 @@ impl Tool for ClickTool {
                     }
                     msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning
-                    // success does not confirm the on-screen effect (many
-                    // elements no-op silently). The driver can't read that back
-                    // for a click → verified:false; the caller confirms visually.
-                    ToolResult::text(msg).with_structured(
-                        serde_json::json!({ "path": "ax", "verified": false })
-                    )
+                    // success does not confirm the on-screen effect (many elements
+                    // no-op silently). A click is never driver-verifiable (no
+                    // read-back) → verified:false stays for back-compat. The
+                    // tri-state `effect` is the richer signal:
+                    //   * suspected_noop — the element didn't advertise the action,
+                    //     so the press likely did nothing → cross to vision/pixel.
+                    //   * unverifiable — dispatched fine, driver just can't confirm;
+                    //     the caller verifies via screenshot.
+                    let mut structured = serde_json::json!({
+                        "path": "ax",
+                        "verified": false,
+                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                    });
+                    if suspected_noop {
+                        structured["escalation"] = serde_json::json!({
+                            "recommended": "vision_pixel",
+                            "reason": "element does not advertise this action — the \
+                                       AX press likely no-op'd. Re-capture with \
+                                       capture_mode:\"vision\" and click by pixel (x,y)."
+                        });
+                    }
+                    ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
@@ -687,7 +703,7 @@ impl Tool for ClickTool {
                      not driver-verified — confirm via screenshot).{}",
                     changes.result_suffix()
                 ))
-                .with_structured(serde_json::json!({ "path": path, "verified": false })),
+                .with_structured(serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             }
@@ -701,7 +717,13 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay)`.
+/// Returns `(summary_text, needs_webkit_delay, suspected_noop)`.
+///
+/// `suspected_noop` is true when the element did not advertise the action we
+/// dispatched — AXUIElementPerformAction returns success regardless, so this is
+/// the driver's only signal that the press likely did nothing. The caller turns
+/// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
+/// to the vision/pixel path instead of trusting a hollow success.
 fn perform_ax_click(
     element_ptr: usize,
     idx: usize,
@@ -709,7 +731,7 @@ fn perform_ax_click(
     window_id: u32,
     action_str: &str,
     cursor_key: &str,
-) -> anyhow::Result<(String, bool)> {
+) -> anyhow::Result<(String, bool, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -759,8 +781,10 @@ fn perform_ax_click(
         }
     }
 
-    // Advertised-action warning: non-fatal but surfaces likely no-ops.
-    if !advertised.contains(&ax_action.to_string()) {
+    // Advertised-action warning: non-fatal but surfaces likely no-ops. Also the
+    // machine-readable `suspected_noop` signal returned to the caller.
+    let suspected_noop = !advertised.contains(&ax_action.to_string());
+    if suspected_noop {
         let adv_list = if advertised.is_empty() { "none".into() } else { advertised.join(", ") };
         summary.push_str(&format!(
             "\n⚠️ Element does not advertise {ax_action} (actions: {adv_list}). \
@@ -792,7 +816,7 @@ fn perform_ax_click(
     }
     let _ = pid; let _ = window_id; // used by caller context
 
-    Ok((summary, needs_webkit_delay))
+    Ok((summary, needs_webkit_delay, suspected_noop))
 }
 
 fn map_action(action: &str) -> &'static str {

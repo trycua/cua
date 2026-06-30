@@ -24,7 +24,7 @@ pub struct DriverConfig {
 }
 
 impl Default for DriverConfig {
-    fn default() -> Self { Self { capture_mode: "som".into(), capture_scope: "window".into(), max_image_dimension: 1568 } }
+    fn default() -> Self { Self { capture_mode: "ax".into(), capture_scope: "window".into(), max_image_dimension: 1568 } }
 }
 
 /// Load `DriverConfig` from `~/.cua-driver/config.json`, falling back to
@@ -436,7 +436,12 @@ impl Tool for GetWindowStateTool {
                 available and unchanged in shape for existing text-parsing \
                 callers — but new fields will only be added to the structured \
                 side.\n\n\
-                Also captures a screenshot.\n\n\
+                Two capture modes that map 1:1 to how you'll act. `ax` (default): \
+                the AT-SPI tree only — act via element_index — and NO screenshot \
+                is delivered (set screenshot_out_file to also write the frame to \
+                disk). `vision`: a fresh PNG only (no AT-SPI walk) — act via x,y \
+                pixels. Switch to `vision` when the surface has no usable AX tree \
+                (canvas / WebGL / Electron web content) or the tree is too large.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees (#22865). When applied, BOTH \
@@ -445,8 +450,9 @@ impl Tool for GetWindowStateTool {
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"X11 XID from list_windows."},
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],
-                    "description":"som=tree+screenshot (default), vision=screenshot only, ax=tree only."},
+                "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "screenshot_out_file":{"type":"string",
+                    "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead. In the default `ax` mode this is the ONLY way to also capture a frame (the AX path withholds the screenshot otherwise)."},
                 "query":{"type":"string"},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees (#22865)."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps (#22865)."}
@@ -463,16 +469,36 @@ impl Tool for GetWindowStateTool {
             let cfg = self.state.config.read().unwrap();
             (cfg.capture_mode.clone(), cfg.max_image_dimension)
         };
-        let capture_mode = args.str_or("capture_mode", &default_mode);
+        // capture_mode collapses to two modes that map 1:1 to the action path:
+        // `ax` (default; walk the AT-SPI tree, screenshot withheld from the
+        // response) and `vision` (deliver a screenshot, skip the walk). `som` /
+        // `tree` / `screenshot` still decode as deprecated aliases — see
+        // cua_driver_core::capture_mode. The config-derived `default_mode` only
+        // sets the absent-arg fallback (now `ax`).
+        let mode = cua_driver_core::capture_mode::CaptureMode::parse(
+            Some(args.str_or("capture_mode", &default_mode).as_str()),
+        );
         let query = args.opt_str("query");
+        // screenshot_out_file: when set, write the PNG to disk instead of
+        // embedding base64. In `ax` mode it's the only thing that triggers a grab
+        // at all (the AX path withholds the screenshot otherwise). `~` expands.
+        let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
+            if let Some(rest) = s.strip_prefix("~/") {
+                let home = std::env::var("HOME").unwrap_or_default();
+                format!("{home}/{rest}")
+            } else {
+                s
+            }
+        });
         // Optional caps — when omitted, the AT-SPI walker uses its built-in
         // defaults (#22865).
         let max_elements = args.get("max_elements").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize);
         let max_depth = args.get("max_depth").and_then(|v| v.as_u64()).map(|v| v.max(1) as usize);
 
-        // "ax" = tree only; "vision" = screenshot only; "som" (default) = both.
-        let do_tree = capture_mode != "vision";
-        let do_shot = capture_mode != "ax";
+        // Walk the AT-SPI tree only on the accessibility path. Deliver/grab a
+        // screenshot when vision mode asks for one OR a disk path was given.
+        let do_tree = mode.walks_ax();
+        let want_shot = mode.delivers_screenshot() || screenshot_out_file.is_some();
         let state = self.state.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
@@ -488,15 +514,29 @@ impl Tool for GetWindowStateTool {
             } else {
                 Vec::new()
             };
-            let screenshot = if do_shot {
+            // Screenshot gating — capture-but-withhold on the AX path:
+            //   * vision mode → capture and DELIVER (base64 in content, or a file).
+            //   * ax mode → only grab a frame when screenshot_out_file was passed
+            //     (write to disk, surface the path, never embed base64). Otherwise
+            //     skip the grab entirely so the hot AX-lookup path pays no capture
+            //     latency or image tokens.
+            // The embed-vs-disk decision is purely whether a path was supplied:
+            // out_file ALWAYS writes to disk (b64=None); otherwise embed b64.
+            // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
+            let screenshot = if want_shot {
                 match crate::wayland::screenshot_dispatch(xid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw).map(|(w, _)| w).unwrap_or(0);
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                         let original_w = if w < orig_w { Some(orig_w) } else { None };
-                        Some((B64.encode(&png), w, h, original_w))
+                        if let Some(ref path) = screenshot_out_file {
+                            std::fs::write(path, &png)?;
+                            Some((None, Some(path.clone()), w, h, original_w))
+                        } else {
+                            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+                            Some((Some(B64.encode(&png)), None, w, h, original_w))
+                        }
                     }
                     Err(_) => None,
                 }
@@ -605,22 +645,34 @@ impl Tool for GetWindowStateTool {
                              authoritative — verify via the screenshot, and re-snapshot \
                              after enabling a11y or if the app just launched."
                         );
+                        // Point the agent at the next rung explicitly: an empty
+                        // tree means element_index has nothing to bind to. The
+                        // recommendation is session-dependent (X11 → vision_pixel,
+                        // Wayland → foreground) — see non_ax_escalation.
+                        structured["escalation"] = non_ax_escalation();
                     }
                 }
 
-                if let Some((b64, w, h, orig_w)) = shot_opt {
+                if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
                     if let Some(ow) = orig_w {
                         if w > 0 { state.resize_registry.set_ratio(pid, ow as f64 / w as f64); }
                     } else {
                         state.resize_registry.clear_ratio(pid);
                     }
-                    content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    // ax mode + screenshot_out_file writes the PNG to disk and
+                    // returns b64=None — never embed the image bytes in that case.
+                    if let Some(b64) = b64_opt {
+                        content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
                     structured["screenshot_mime_type"] = json!("image/png");
+                    if let Some(fp) = file_path {
+                        structured["screenshot_file_path"] = json!(fp);
+                    }
                 }
 
                 ToolResult { content, is_error: None, structured_content: Some(structured) }
@@ -757,6 +809,60 @@ fn parse_mouse_button(name: &str) -> u8 {
         "middle" => 2,
         _ => 1,
     }
+}
+
+/// Escalation hint for a non-AX / suspected-no-op surface — the cross-platform
+/// `escalation` field mirrored from macOS. The recommended next rung depends on
+/// the session type: X11 can pixel-target a specific window in the background,
+/// so the deliberate move is to re-capture in `vision` and click by pixel
+/// (`vision_pixel`). Native Wayland CANNOT background-target an unfocused window
+/// (libei injects to the compositor's input focus — see `input::delivery`), and
+/// the vision/pixel path itself routes through the same coordinate-free AT-SPI
+/// actuation that just no-op'd, so the move there is to bring the window to the
+/// foreground first (`foreground`).
+fn non_ax_escalation() -> Value {
+    if crate::wayland::is_wayland() {
+        json!({
+            "recommended": "foreground",
+            "reason": "non-AX surface on Wayland: a specific unfocused window can't be \
+                       pixel-targeted in the background (libei injects to the compositor's \
+                       focus). bring_to_front, then re-capture capture_mode:\"vision\" and \
+                       click by pixel with delivery_mode:\"foreground\"."
+        })
+    } else {
+        json!({
+            "recommended": "vision_pixel",
+            "reason": "non-AX surface — re-capture with capture_mode:\"vision\" and click \
+                       by pixel (x,y)."
+        })
+    }
+}
+
+/// Structured payload for a `type_text` response. Keeps the legacy
+/// `path`/`characters`/`verified` fields for back-compat and adds the cross-tool
+/// `effect` tri-state: a read-back-confirmed insert (the AT-SPI `insertText`
+/// rung) is `"confirmed"`; every keystroke / XSendEvent / XTest / Wayland rung
+/// is `"unverifiable"` (no read-back — the caller confirms via screenshot) and
+/// carries a `foreground` escalation, because the field IS in the AT-SPI tree —
+/// it's a delivery/focus problem, not a missing element. The foreground rung
+/// itself (`key_events_fg`) is already the last resort, so it emits no
+/// escalation. Mirrors the macOS `type_text` contract.
+fn type_text_structured(path: &str, characters: usize, verified: bool) -> Value {
+    let mut s = json!({
+        "path": path,
+        "characters": characters,
+        "verified": verified,
+        "effect": if verified { "confirmed" } else { "unverifiable" },
+    });
+    if !verified && path != "key_events_fg" {
+        s["escalation"] = json!({
+            "recommended": "foreground",
+            "reason": "background insert could not be confirmed — re-call with \
+                       delivery_mode:\"foreground\" if a screenshot shows the text \
+                       didn't land."
+        });
+    }
+    s
 }
 
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
@@ -1142,9 +1248,12 @@ impl Tool for ClickTool {
             })
             .await;
             return match r {
+                // Screen-absolute XTEST click — never driver-verifiable (no
+                // read-back); the caller confirms via screenshot.
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
-                )),
+                ))
+                .with_structured(json!({ "path": "xtest_desktop", "verified": false, "effect": "unverifiable" })),
                 Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
@@ -1219,18 +1328,37 @@ impl Tool for ClickTool {
             );
 
             // Now perform the actual click: AT-SPI doAction(0) first (background-
-            // safe, no focus steal), else XSendEvent at window-local coords.
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                if crate::atspi::perform_action(pid, idx).is_ok() {
-                    return Ok(());
+            // safe, no focus steal), else XSendEvent at window-local coords. The
+            // AT-SPI rung also reports whether the actuated element looked like a
+            // silent no-op (passive role / no advertised action) — see
+            // perform_action — so the response can flag `effect: "suspected_noop"`.
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(&'static str, bool)> {
+                if let Ok((_action, suspected_noop)) = crate::atspi::perform_action(pid, idx) {
+                    return Ok(("ax", suspected_noop));
                 }
                 let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
                 crate::input::send_click(xid2, lx as i32, ly as i32, count, button)?;
-                Ok(())
+                Ok(("x11_pixel", false))
             })
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!("Clicked element [{idx}] (pid {pid}).")),
+                // An element click is never driver-verifiable (no read-back) —
+                // verified:false; the caller confirms via screenshot. `effect` is
+                // the richer signal: a passive/role-mismatched AT-SPI actuation is
+                // a likely no-op (→ cross to vision/pixel), otherwise the dispatch
+                // was fine but unconfirmable.
+                Ok(Ok((path, suspected_noop))) => {
+                    let mut structured = json!({
+                        "path": path,
+                        "verified": false,
+                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                    });
+                    if suspected_noop {
+                        structured["escalation"] = non_ax_escalation();
+                    }
+                    ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
+                        .with_structured(structured)
+                }
                 Ok(Err(e)) => ToolResult::error(format!("AT-SPI element click failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1355,12 +1483,13 @@ impl Tool for ClickTool {
         }).await;
         let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
         match result {
-            // A click is never driver-verifiable (no read-back) — verified:false,
-            // the caller confirms via screenshot. path reports the rung taken.
+            // A pixel/coordinate click is never driver-verifiable (no read-back) —
+            // verified:false, effect:"unverifiable"; the caller confirms via
+            // screenshot. path reports the rung taken.
             Ok(Ok(path)) => ToolResult::text(format!(
                 "✅ Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label})."
             ))
-            .with_structured(json!({ "path": path, "verified": false })),
+            .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" })),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -1443,7 +1572,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (focus-free via EIS compositor)."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
+                .with_structured(type_text_structured("key_events", text_len, false)),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1461,7 +1590,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
+                .with_structured(type_text_structured("key_events", text_len, false)),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1495,7 +1624,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
+                .with_structured(type_text_structured("key_events", text_len, false)),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1544,7 +1673,7 @@ impl Tool for TypeTextTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) into the focused widget."
                 ))
-                .with_structured(json!({ "path": "key_events", "characters": text_len, "verified": false })),
+                .with_structured(type_text_structured("key_events", text_len, false)),
                 Ok(Err(e)) => ToolResult::error(e.to_string()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -1560,7 +1689,7 @@ impl Tool for TypeTextTool {
             Ok(Ok(())) => {
                 // AT-SPI succeeded — focus-free typing worked (Qt6, GTK4, etc.)!
                 return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI)."))
-                    .with_structured(json!({ "path": "ax", "characters": text_len, "verified": true }));
+                    .with_structured(type_text_structured("ax", text_len, true));
             }
             _ => {
                 // AT-SPI failed (no editable exposed). Qt5 doesn't expose widgets
@@ -1589,7 +1718,7 @@ impl Tool for TypeTextTool {
         match qt5_result {
             Ok(Ok(())) => {
                 return ToolResult::text(format!("Typed {text_len} character(s) (via AT-SPI with focus workaround)."))
-                    .with_structured(json!({ "path": "ax", "characters": text_len, "verified": true }));
+                    .with_structured(type_text_structured("ax", text_len, true));
             }
             _ => {
                 // AT-SPI still didn't work. Fall back to X11 XSendEvent.
@@ -1642,7 +1771,7 @@ impl Tool for TypeTextTool {
             Ok(Ok(path)) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))
-            .with_structured(json!({ "path": path, "characters": text_len, "verified": path == "ax" })),
+            .with_structured(type_text_structured(path, text_len, path == "ax")),
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -3953,7 +4082,7 @@ impl Tool for SetConfigTool {
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
-                "capture_mode":{"type":"string","enum":["som","vision","ax"],"description":"Legacy per-field shape. Default capture mode for get_window_state."},
+                "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "capture_scope":{"type":"string","enum":["window","desktop"],"description":"Capture scope: single window or whole desktop. Default window."},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},

@@ -2690,7 +2690,7 @@ pub fn run_config_cmd(
             // The set_config tool keeps existing values if keys are absent,
             // so we send the known defaults explicitly.
             let defaults = serde_json::json!({
-                "capture_mode": "som",
+                "capture_mode": "ax",
                 "max_image_dimension": 0
             });
             let result = rt.block_on(async {

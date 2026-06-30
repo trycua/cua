@@ -13,13 +13,16 @@ Every Cua Driver action is defined by three independent choices: **what the agen
 
 Set with `set_config capture_mode=…`, or per call on `get_window_state`.
 
-| `capture_mode` | What you get | Use when |
-|---|---|---|
-| `som` (default) | Set-of-marks: accessibility tree **plus** a screenshot, every actionable element tagged `[element_index N]`. | General driving — the model sees both structure and pixels. |
-| `ax` | Accessibility tree only, no screenshot. | The target exposes good structure and you want the cheapest, most robust path. No Screen Recording grant needed. |
-| `vision` | Screenshot only, no tree. | The target has no usable accessibility tree (canvas, custom-drawn UI, pure web content). |
+There are exactly two capture modes, and they map one-to-one onto the two ways an action is addressed:
 
-`ax` and `som`/`vision` differ in how the agent then *acts*: an `ax` observation yields an `element_index`, which drives the semantic action path (UIA Invoke, `AXPerformAction`, AT-SPI). A `vision` observation yields pixels, so the agent grounds a target to `(x, y)` and acts by coordinate.
+| `capture_mode` | What you get | Act by | Use when |
+|---|---|---|---|
+| `ax` (default) | Accessibility tree only — **no screenshot** in the response (the frame is written to disk only if you set `screenshot_out_file`). Every actionable element carries an `element_index`. | `element_index` | The target exposes good structure and you want the cheapest, most robust, driver-verifiable path. No Screen Recording grant needed. |
+| `vision` | A fresh screenshot only, no AX walk. | `x, y` pixel | The target has no usable accessibility tree (canvas, custom-drawn UI, pure web content). |
+
+The two modes differ in how the agent then *acts*: an `ax` observation yields an `element_index`, which drives the semantic action path (UIA Invoke, `AXPerformAction`, AT-SPI `doAction`). A `vision` observation yields pixels, so the agent grounds a target to `(x, y)` and acts by coordinate. There is no third "both" mode — pick the structure path or the pixel path.
+
+> **Deprecated aliases.** `som` (the old set-of-marks mode) still decodes, but only as an alias for `ax`; `screenshot` still decodes as an alias for `vision`. Neither is an advertised mode — new callers should use `ax` or `vision`.
 
 ### 2. Dispatch — how input is delivered
 
@@ -65,7 +68,7 @@ The two rejections are enforced, not advisory. A window-less click while `captur
 
 | Axis / value | Windows | macOS | Linux |
 |---|---|---|---|
-| `capture_mode` `ax` / `vision` / `som` | ✅ | ✅ | ✅ |
+| `capture_mode` `ax` / `vision` | ✅ | ✅ | ✅ |
 | `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11 and Wayland via AT-SPI; raw keyboard into native-Wayland apps is the [residual gap](/explanation/the-no-foreground-contract#linux)) |
 | `dispatch: foreground` + `bring_to_front` | ✅ explicit activation | ✅ explicit activation (`NSRunningApplication.activate`) | ✅ X11 EWMH activation (`_NET_ACTIVE_WINDOW` + input focus); Wayland raise is compositor-constrained |
 | `capture_scope: desktop` (full screen-absolute loop) | ✅ | rolling out | rolling out |

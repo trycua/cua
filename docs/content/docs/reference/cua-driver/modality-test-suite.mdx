@@ -199,17 +199,19 @@ verifier asserts on them:
 
 ### Capture mode (`get_window_state` `capture_mode`)
 
+There are exactly **two** capture modes, mapping one-to-one onto the two
+action-addressing paths:
+
 | Mode     | What the agent sees                  | How actions dispatch |
 |----------|--------------------------------------|----------------------|
-| `ax`     | accessibility tree only (element indices) | **`element_index`** — UIA Invoke (Windows) / AT-SPI `doAction` (Linux) / AX actions (macOS) |
-| `vision` | raw screenshot / pixels only         | **pixel coordinates** — synthetic/injected pointer events at (x,y) |
-| `som`    | screenshot + indexed overlays (set-of-marks) | hybrid: indices map back onto pixel regions |
+| `ax` (default) | accessibility tree only (element indices), **no screenshot** in the response (frame written to disk only if `screenshot_out_file` is set) | **`element_index`** — UIA Invoke (Windows) / AT-SPI `doAction` (Linux) / AX actions (macOS) |
+| `vision` | a fresh screenshot / pixels only     | **pixel coordinates** — synthetic/injected pointer events at (x,y) |
 
-> `som` (set-of-marks) is a capture/presentation variant — a screenshot with
-> numbered overlays on detected elements. The modality recorder runs `ax` and
-> `vision` only; `som` is part of the driver's capture surface (and is covered by
-> the Rust `modality_capture_mode_test`) but is **not separately scored by the
-> modality recorder** **(unverified — no `som` recorder run exists in this branch)**.
+> **Deprecated aliases.** `som` (the old set-of-marks mode) is no longer an
+> advertised capture mode — it still decodes as an alias for `ax`, and
+> `screenshot` decodes as an alias for `vision`. The modality recorder always ran
+> `ax` and `vision` only, so the recorder runs and the results matrices below are
+> unchanged; only the now-removed third mode is gone from the capture surface.
 
 ### Capture scope (`capture_scope`)
 

@@ -298,6 +298,37 @@ is suppressed. Full mechanics in
 `Sources/CuaDriverCore/Input/MouseInput.swift` (`clickViaAuthSignedPost`)
 and the companion `FocusWithoutRaise.swift`.
 
+### `delivery_mode` on the pointer family (macOS)
+
+`click`, `double_click`, `right_click`, `drag`, and `scroll` accept
+`delivery_mode` (`"background"` default / `"foreground"`) — matching the
+breadth Windows and Linux already exposed (`type_text` / `press_key` /
+`hotkey` carry it too). `"background"` is the SkyLight per-pid path above:
+no raise, no focus steal. `"foreground"` briefly fronts the owning app,
+acts, then restores the prior frontmost — the explicit last resort for a
+surface that only accepts events while frontmost (the canvas/viewport/game
+case below). Element-indexed (AX) actions are inherently background and
+hold the no-foreground contract without the flag.
+
+macOS-specific residuals worth knowing (the rest of the capture/dispatch/
+addressing params are a shared cross-platform contract — see `SKILL.md` →
+*Cross-platform parameter contract*):
+
+- **`check_permissions.prompt` is macOS-only.** It raises the TCC
+  Accessibility / Screen-Recording dialogs; pass `{"prompt":false}` for a
+  read-only status check. There is no Windows/Linux equivalent — TCC is a
+  macOS construct, so the param is intentionally absent from the shared
+  contract.
+- **`session` always worked on macOS;** the cross-platform change is that
+  Windows/Linux stopped *rejecting* it. No macOS-side change to how you
+  pass it.
+- **`scope`** (`window` default / `desktop`) is a **macOS-specific per-call
+  param** on the pointer tools — pass `scope:"desktop"` with `x,y` and no
+  pid/window_id for a screen-absolute click. Windows and Linux support the
+  same windowless capability but gate it on the persisted `capture_scope`
+  config instead (`set_config capture_scope=desktop`), so they have no
+  per-call `scope` param. Unifying the knob is a tracked follow-up.
+
 ### Canvases, viewports, games (Blender, Unity, GHOST, Qt, wxWidgets)
 
 Apps whose main surface is an OpenGL / Metal / Qt / wxWidgets

@@ -19,6 +19,35 @@ Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a te
 
 ---
 
+## Common parameters
+
+Several parameters are a **shared cross-platform contract**: the same JSON shape on Windows, macOS, and Linux, composed from canonical schema fragments and enforced by a CI consistency gate so the three platforms cannot drift. Tools accept them uniformly.
+
+| Parameter | Where | Notes |
+| --------- | ----- | ----- |
+| `session` | every action and cursor tool | Optional run identity for the agent cursor and per-session state; the same id works over MCP, the CLI, or the raw socket and follows the run across apps and windows. Accepted on all three platforms — earlier Windows and Linux builds rejected it via `additionalProperties:false`. |
+| `delivery_mode` | the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) | `background` (default) injects without fronting or raising the target — the [no-foreground contract](/explanation/the-no-foreground-contract). `foreground` briefly fronts the target, acts, then restores the prior frontmost — the explicit last resort when a background attempt did not land. |
+| `capture_mode` | `get_window_state` | `ax` (default) or `vision`. See [capture and dispatch modalities](/explanation/capture-and-dispatch-modalities). |
+| `modifier`, `button`, `element_index`, `element_token` | pointer and element tools | Held modifier keys, mouse button, and the two element-addressing handles. |
+
+### Required parameters
+
+The `required` set is uniform across platforms: `click` requires nothing, `scroll` requires `direction`, and `zoom` requires `window_id` plus `x1`/`y1`/`x2`/`y2`. `pid` is **conditionally** required — needed for every per-window action, omitted for a windowless desktop-scope call — so it is validated in code with a clear error rather than pinned in the schema. A client that omits `pid` for a desktop-scope action is therefore not schema-rejected.
+
+### Platform-specific parameters
+
+A few parameters are platform-specific by design and are intentionally NOT part of the shared contract:
+
+| Parameter or tool | Platform | Why |
+| ----------------- | -------- | --- |
+| `launch_app` identifiers | macOS: `bundle_id`, `urls`. Windows: `aumid`, `launch_path`, `path`, `start_minimized`. | App launch is OS-native. `name` is the portable fallback that works on both. |
+| `debug_window_info` | Windows only | A window-handle / class / rect / z-order debug tool with no macOS or Linux counterpart. |
+| `check_permissions.prompt` | macOS only | Raises the TCC permission dialogs; there is no Windows or Linux equivalent of TCC. |
+| Windowless screen-absolute (desktop-scope) clicks/scrolls | all three platforms, **exposed differently** | The capability exists everywhere, but the knob differs: macOS takes a **per-call `scope:"desktop"`** parameter on the pointer tools, while Windows and Linux gate it on the persisted **`capture_scope:"desktop"`** config (`set_config`). So a per-call `scope` param appears only on macOS; on Windows/Linux you opt in once via config. Unifying this knob is a tracked follow-up. |
+| `modifier` on a *background* click | honored on macOS and Linux; dropped on a Windows background click | A Windows background click goes through UIA Invoke / PostMessage, which carry no live keyboard state, so `modifier` takes effect only on the `delivery_mode:"foreground"` (SendInput) rung there. |
+
+---
+
 ## Inspection tools
 
 ### `list_apps`
@@ -64,7 +93,7 @@ Walk a running app's AX tree and return a Markdown rendering of its UI, tagging 
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
 | `window_id` | integer | Yes | Target window ID from `list_windows`. |
-| `capture_mode` | string | No | `som` = AX + screenshot (default); `vision` = screenshot only; `ax` = AX only. |
+| `capture_mode` | string | No | `ax` (default) = AX tree only, screenshot withheld; `vision` = screenshot only, no AX walk. (`som` is a deprecated alias for `ax`.) |
 | `query` | string | No | Case-insensitive filter for `tree_markdown`. Element indices are unchanged. |
 | `screenshot_out_file` | string | No | When set, write the PNG to this file path (`~` expanded) instead of embedding base64 in the response. |
 

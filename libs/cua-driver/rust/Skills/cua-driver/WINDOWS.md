@@ -289,6 +289,36 @@ SendInput-swap path (`send_key_synthesized`) remains the dispatch for
 classic Notepad) use `TranslateAccelerator` which requires the system
 modifier state updated, and PostMessage can't do that.
 
+**`modifier` on a *background* click is a Windows residual.** A
+backgrounded click delivers through UIA `Invoke` or `PostMessage`, and
+neither carries live keyboard state — so a `modifier` (Ctrl/Shift/etc.)
+passed alongside a `delivery_mode:"background"` click **is not honored**
+on Windows. The `modifier` *param* is part of the shared schema and is
+accepted everywhere; it only takes effect on the SendInput rung, i.e. a
+`delivery_mode:"foreground"` (or `bring_to_front`-then-foreground) click,
+where SendInput sets real modifier state. If you need a modifier-click on
+Windows, escalate that one action to `foreground`.
+
+### Cross-platform schema residuals (Windows)
+
+The capture/dispatch/addressing params are a shared cross-platform
+contract (see `SKILL.md` → *Cross-platform parameter contract*). Three
+Windows-relevant notes:
+
+- **`session` is now accepted on every action/cursor tool.** Earlier
+  Windows builds rejected `session` via `additionalProperties:false` (it
+  was effectively a macOS-only key); the shared contract makes it
+  uniformly schema-accepted — cursor-wired where a cursor glides,
+  accepted elsewhere.
+- **`debug_window_info` is a Windows-only tool** (window-handle / class /
+  rect / z-order diagnostics for triaging the click chain). It is
+  deliberately not part of the cross-platform surface — there is no macOS
+  or Linux counterpart.
+- **`launch_app` identifiers are platform-specific.** Windows takes
+  `aumid` / `launch_path` / `path` / `start_minimized` (plus `bundle_id`
+  overloaded for AUMIDs); macOS takes `bundle_id` / `urls`. `name` is the
+  portable fallback. See the AUMID section below.
+
 **Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
 on a Chromium target falls through to `send_click_synthesized` (SendInput
 + brief foreground swap) because Chromium's input thread filters by

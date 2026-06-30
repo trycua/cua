@@ -482,6 +482,51 @@ occluded / off-desktop windows, no focus steal, stable across
 rebuilds, labels tell you what you're clicking. Reach for pixel
 coordinates only when the accessibility tree can't.
 
+## Cross-platform parameter contract
+
+The capture, dispatch, and addressing params — `session`,
+`delivery_mode`, `capture_mode`, `scope`, `modifier`, `button`,
+`element_index`, `element_token` — are a **shared schema contract**:
+identical *shape* (`type`/`enum`/`items`) on macOS, Windows, and Linux.
+They compose from canonical fragments in
+`cua-driver-core::tool_schema` (+ `capture_mode`), and a CI gate
+(`schema_consistency_test`) runs every tool's live `tools/list` through a
+structural checker on each platform, so the three surfaces can't
+silently drift. *Contributor note:* when you add or edit one of these
+shared params on a tool, pull from the fragment — don't re-hand-write the
+JSON, or the gate fails. (Descriptions may legitimately vary per tool;
+the gate compares shape, not prose.)
+
+Two consequences for callers:
+
+- **`session` is accepted on every action and cursor tool, on all three
+  platforms.** It's cursor-wired where the platform glides a cursor and
+  schema-accepted everywhere else — so the same `session` you pass on
+  macOS is no longer *rejected* by Windows/Linux, which previously
+  refused unknown keys via `additionalProperties:false`.
+- **`delivery_mode` (`"background"` default / `"foreground"`) is on the
+  whole input family** — `click`, `double_click`, `right_click`, `drag`,
+  `scroll`, `type_text`, `press_key`, `hotkey` — uniformly. The
+  `foreground` rung briefly fronts the target, acts, then restores the
+  prior frontmost: the explicit last resort when a background attempt
+  didn't land. What each platform's *background* rung can actually carry
+  differs (e.g. a Windows background click can't carry `modifier` state —
+  see `WINDOWS.md`); the schema is uniform, the residual limits are
+  per-OS.
+
+**Required-set contract.** `click` requires nothing (`required:[]`),
+`scroll` requires `["direction"]`, `zoom` requires
+`["window_id","x1","y1","x2","y2"]` — same on every platform. `pid` is
+**conditionally** required (needed unless a windowless desktop-scope
+call) and validated in code with a clear error, NOT pinned in the schema
+— so omitting `pid` for a desktop-scope action is no longer
+schema-rejected.
+
+Genuinely platform-specific params stay OUT of the shared contract by
+design (launch-app identifiers, the Windows-only `debug_window_info`, the
+macOS-only `check_permissions.prompt`). The per-OS files list the
+residuals that matter when you drive on that platform.
+
 ## Pixel-coordinate clicks
 
 The pixel path (`click({pid, x, y})`) is for surfaces the

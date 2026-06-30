@@ -83,6 +83,25 @@ is the cue to cross to `vision` (X11) or escalate to `delivery_mode:"foreground"
 (Wayland). (`som` still decodes as a deprecated alias for `ax`; it no longer
 means "tree + screenshot".)
 
+## Cross-platform schema residuals (Linux)
+
+The capture/dispatch/addressing params are a shared cross-platform
+contract (see `SKILL.md` → *Cross-platform parameter contract*) — the
+same `session`, `delivery_mode`, `capture_mode`, `scope`, `modifier`,
+`element_index`/`element_token` *shapes* as macOS and Windows, gated in
+CI so the three surfaces can't drift. Linux-relevant notes:
+
+- **`session` is now accepted on every action/cursor tool.** Earlier
+  Linux builds rejected it via `additionalProperties:false` (it was
+  effectively macOS-only); it is now uniformly schema-accepted — Linux
+  glides a per-session cursor on X11 where the overlay is available.
+- **Windowless screen-absolute clicks** are supported on Linux, but Linux
+  has **no per-call `scope` param** (that form is macOS-only). Linux gates
+  the windowless path on the persisted `capture_scope` config: opt in once
+  with `set_config capture_scope=desktop`, then send `x,y` with no
+  pid/window_id. Under the default `capture_scope=window` a windowless
+  action is rejected with a structured `desktop_scope_disabled` error.
+
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
 AT-SPI — the accessibility tree behind `get_window_state`, element-indexed

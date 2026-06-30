@@ -26,15 +26,14 @@ The two modes differ in how the agent then *acts*: an `ax` observation yields an
 
 ### 2. Dispatch — how input is delivered
 
-Set per call on the input tools (`click`, `type_text`, `press_key`, …) with `dispatch`.
+Set per call on the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) with the `delivery_mode` field. This field is a shared cross-platform parameter — the same two values, accepted uniformly on Windows, macOS, and Linux.
 
-| `dispatch` | Behavior |
+| `delivery_mode` | Behavior |
 |---|---|
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched. This is the [no-foreground contract](/explanation/the-no-foreground-contract). |
-| `foreground` | The target is activated first (pair with `bring_to_front`), then input lands on the now-active window. Use for apps that only accept events when foregrounded — DirectInput games, raw-input canvases. |
-| `auto` | Historical heuristic that picks per target. Prefer an explicit value. |
+| `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. The explicit last resort when a background attempt did not land — and the only path for apps that accept events solely when foregrounded (DirectInput games, raw-input canvases). |
 
-`element_index` (AX) actions are inherently background — they address an element, not the focused window — so they hold the contract without any `dispatch` flag. The `dispatch` axis matters most for coordinate (vision) input, where `background` routes the event to the target and `foreground` raises the window first.
+Only `background` and `foreground` are valid; any other value (including the historical `auto` heuristic) resolves to `background`. `element_index` (AX) actions are inherently background — they address an element, not the focused window — so they hold the contract without any `delivery_mode` flag. The dispatch axis matters most for coordinate (vision) input, where `background` routes the event to the target and `foreground` raises the window first.
 
 ### 3. Capture scope — what coordinate space the action targets
 

@@ -1260,9 +1260,20 @@ impl Tool for ClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        if let Ok(Ok((sx, sy))) =
-            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
-        {
+        // Resolve the screen point the cursor glides to. On native Wayland the
+        // agent already passes screen coordinates (the vision screenshot and
+        // `get_window_state` frames are screen-space, and `window_local_to_screen`
+        // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
+        // so use them directly. On X11 the coords are window-local; translate.
+        let glide_target = if crate::wayland::is_wayland() {
+            Some((x, y))
+        } else {
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+        };
+        if let Some((sx, sy)) = glide_target {
             overlay_glide_to_for(&cursor_id, sx, sy).await;
             crate::overlay::send_command_for(
                 cursor_id.clone(),
@@ -1278,6 +1289,20 @@ impl Tool for ClickTool {
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
             if crate::wayland::is_wayland() {
+                // Vision/pixel click on native Wayland. Mutter drops synthetic
+                // virtual-pointer events (the `wayland::click` warp doesn't land),
+                // so for a plain left single click resolve the screen pixel to the
+                // covering accessible element and fire its action by
+                // `element_index` — the coordinate-free path already verified
+                // working. (x,y) are screen coords here, matching the frames in
+                // `get_window_state`. Miss → fall through to the injection paths.
+                if button == 1 && count == 1 {
+                    if let Ok(Some(_)) =
+                        crate::atspi::perform_action_at_screen_point(pid, xid, xi, yi)
+                    {
+                        return Ok("wayland_atspi");
+                    }
+                }
                 if crate::wayland::is_inject_mode() {
                     crate::wayland::inject_click(xid, x, y, count as u32, button)?;
                     return Ok("wayland_libei");
@@ -2170,9 +2195,20 @@ impl Tool for DoubleClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        if let Ok(Ok((sx, sy))) =
-            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
-        {
+        // Resolve the screen point the cursor glides to. On native Wayland the
+        // agent already passes screen coordinates (the vision screenshot and
+        // `get_window_state` frames are screen-space, and `window_local_to_screen`
+        // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
+        // so use them directly. On X11 the coords are window-local; translate.
+        let glide_target = if crate::wayland::is_wayland() {
+            Some((x, y))
+        } else {
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+        };
+        if let Some((sx, sy)) = glide_target {
             overlay_glide_to_for(&cursor_id, sx, sy).await;
             crate::overlay::send_command_for(
                 cursor_id.clone(),
@@ -2334,9 +2370,20 @@ impl Tool for RightClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        if let Ok(Ok((sx, sy))) =
-            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y)).await
-        {
+        // Resolve the screen point the cursor glides to. On native Wayland the
+        // agent already passes screen coordinates (the vision screenshot and
+        // `get_window_state` frames are screen-space, and `window_local_to_screen`
+        // — an X11 `translate_coordinates` call — can't run with DISPLAY unset),
+        // so use them directly. On X11 the coords are window-local; translate.
+        let glide_target = if crate::wayland::is_wayland() {
+            Some((x, y))
+        } else {
+            tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+        };
+        if let Some((sx, sy)) = glide_target {
             overlay_glide_to_for(&cursor_id, sx, sy).await;
             crate::overlay::send_command_for(
                 cursor_id.clone(),

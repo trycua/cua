@@ -108,6 +108,20 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
     native::perform_action_at_point(pid, win_x, win_y)
 }
 
+/// Resolve a *screen* pixel to the indexable element whose reconstructed screen
+/// frame covers it and fire its primary action by `element_index` — the
+/// vision/pixel click that lands on Wayland (no pointer injection) and on GTK4
+/// generally (no `CoordType::Screen`, which reports (0,0)). See
+/// [`native::perform_action_at_screen_point`].
+pub fn perform_action_at_screen_point(
+    pid: u32,
+    xid: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Result<Option<String>> {
+    native::perform_action_at_screen_point(pid, xid, screen_x, screen_y)
+}
+
 /// Try to type text into any editable field in the window via AT-SPI EditableText.
 /// This works for unfocused windows if the toolkit exposes EditableText (Qt6, some GTK).
 /// For Qt5, which doesn't expose widgets when unfocused, this will return Err.

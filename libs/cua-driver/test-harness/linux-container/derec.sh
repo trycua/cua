@@ -7,15 +7,20 @@
 # only lane that exercises the genuinely different desktops/toolkits:
 #   - KDE Plasma (X11) with kcalc      (Qt)
 #   - GNOME Shell (X11, console Xorg)  with gnome-calculator (GTK4)
-# It auto-discovers the live X session env (DISPLAY/XAUTHORITY/dbus) from a
-# running DE process, so the same script works on any of them.
+# It auto-discovers the live session env (DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/
+# dbus) from a running DE process, so the same script works on any of them —
+# including the GNOME Mutter / KDE KWin *Wayland* lane (WAYLAND=1), where it
+# drives the native Wayland backend off the release build.
 #
-#   derec.sh setup            # fresh daemon + launch $APP + snapshot AT-SPI tree
-#   derec.sh verify           # assert the coordinate invariant (see below)
-#   derec.sh record i.. i..   # record start_recording -> element clicks -> stop
-#   derec.sh env              # print the discovered session env
+#   derec.sh setup                 # fresh daemon + launch $APP + snapshot AT-SPI tree
+#   derec.sh verify                # assert the coordinate invariant (see below)
+#   derec.sh keytest               # foreground-keyboard EFFECT check (3*4=12)
+#   derec.sh vclick 789 C 7 8 9    # vision pixel-click EFFECT check (no element_index)
+#   derec.sh record i.. i..        # record start_recording -> element clicks -> stop
+#   derec.sh env                   # print the discovered session env
 #
 # APP defaults to gnome-calculator; set APP=kcalc / galculator for the others.
+# WAYLAND=1 selects the Wayland lane (GTK4 gnome-calculator on Mutter).
 #
 # COORDINATE INVARIANT (the GTK4 regression guard):
 #   GTK4's AT-SPI returns GetExtents(SCREEN) as (0,0) for every widget, which
@@ -33,9 +38,24 @@ done
 if [ -n "$DE_PID" ]; then
   while IFS= read -r kv; do export "$kv"; done < <(tr '\0' '\n' </proc/$DE_PID/environ 2>/dev/null | grep -E '^(DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR)=')
 fi
-[ -n "$DISP" ] && export DISPLAY="$DISP"
-export DISPLAY="${DISPLAY:-:0}"
-CUA=$HOME/.local/bin/cua-driver
+# Lane selector (mirrors APP=): WAYLAND=1 engages the native Wayland backend.
+# `is_wayland()` needs WAYLAND_DISPLAY set, DISPLAY UNSET, and the opt-in env;
+# GTK apps need the wayland GDK backend; and the daemon must be the release
+# build (the .local/bin copy can lag the Wayland fixes). gnome-shell's environ
+# (discovered above) already supplied WAYLAND_DISPLAY/XDG_RUNTIME_DIR/DBUS.
+if [ -n "$WAYLAND" ]; then
+  export CUA_DRIVER_RS_ENABLE_WAYLAND=1
+  export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+  unset DISPLAY
+  # Software-GL + wayland backend so GTK4 apps render on the GPU-less VM and
+  # are spawned as Wayland clients (children of the daemon inherit this env).
+  export GDK_BACKEND=wayland LIBGL_ALWAYS_SOFTWARE=1 GSK_RENDERER=cairo
+  CUA="${CUA_BIN:-$HOME/cua-rust/target/release/cua-driver}"
+else
+  [ -n "$DISP" ] && export DISPLAY="$DISP"
+  export DISPLAY="${DISPLAY:-:0}"
+  CUA="${CUA_BIN:-$HOME/.local/bin/cua-driver}"
+fi
 APP="${APP:-gnome-calculator}"; SESS=demo
 
 resolve_pid(){ python3 -c "import json,re
@@ -47,7 +67,7 @@ if not p:
 print(p or '')"; }
 
 case "$1" in
- env) echo "DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY dbus=${DBUS_SESSION_BUS_ADDRESS:+set} APP=$APP DE_PID=$DE_PID($p)";;
+ env) echo "lane=$([ -n "$WAYLAND" ] && echo wayland || echo x11) DISPLAY=${DISPLAY:-<unset>} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>} XAUTHORITY=$XAUTHORITY dbus=${DBUS_SESSION_BUS_ADDRESS:+set} CUA=$CUA APP=$APP DE_PID=$DE_PID";;
  setup)
   pkill -f 'cua-driver serve' 2>/dev/null; pkill -f "$APP" 2>/dev/null; sleep 2
   rm -f ~/.cache/cua-driver/cua-driver.sock
@@ -116,6 +136,39 @@ hit=any(str(e.get('label')).strip()=='12' or str(e.get('value')).strip()=='12' f
 print('FOREGROUND KEY EFFECT:', 'PASS (3*4=12 landed)' if hit else 'FAIL (display != 12)')
 sys.exit(0 if hit else 1)"
   ;;
+ vclick) # vclick <expected> <label>...  VISION pixel-click EFFECT check.
+  # Clicks each labelled button by its SCREEN-frame CENTER via {x,y} (NO
+  # element_index), then confirms the calculator result — proving pixel/vision
+  # coordinates ACTUATE, not GTK4-false-succeed on the inner label. Works on
+  # X11 and Wayland; on Wayland the rung is `wayland_atspi` (screen pixel ->
+  # covering element -> element_index doAction), since Mutter drops synthetic
+  # pointer events.  e.g.  WAYLAND=1 derec.sh vclick 789 C 7 8 9
+  PID=$(cat $W/pid); WID=$(cat $W/wid); shift
+  EXPECT="$1"; shift
+  "$CUA" call start_session "{\"session\":\"$SESS\"}" >/dev/null 2>&1
+  for lbl in "$@"; do
+    read CX CY < <(python3 -c "import json
+d=json.load(open('$W/state.json'))
+for e in d['elements']:
+ if str(e.get('label'))=='$lbl' and 'button' in str(e.get('role','')).lower():
+  f=e.get('frame')
+  if f: print(int(f['x']+f['w']/2), int(f['y']+f['h']/2))
+  break")
+    if [ -z "$CX" ]; then echo "  '$lbl' -> no frame (skipped)"; continue; fi
+    R=$("$CUA" call click "{\"pid\":$PID,\"window_id\":$WID,\"x\":$CX,\"y\":$CY,\"delivery_mode\":\"background\",\"session\":\"$SESS\"}" 2>&1)
+    PV=$(echo "$R" | python3 -c "import json,sys
+try: print(json.load(sys.stdin).get('path','?'))
+except: print('?')" 2>/dev/null)
+    echo "  vision-click '$lbl' @($CX,$CY) -> path=$PV"
+    sleep 0.7
+  done
+  sleep 0.5
+  "$CUA" call get_window_state "{\"pid\":$PID,\"window_id\":$WID,\"capture_mode\":\"ax\"}" 2>/dev/null | python3 -c "import json,sys
+d=json.load(sys.stdin); exp='$EXPECT'
+hit=any(str(e.get('label')).strip()==exp or str(e.get('value')).strip()==exp for e in d.get('elements',[]))
+print('VISION CLICK EFFECT:', f'PASS ({exp} via pixel coords)' if hit else f'FAIL (display != {exp})')
+sys.exit(0 if hit else 1)"
+  ;;
  record) # record <idx>...  start_recording -> element clicks (in order) -> stop
   PID=$(cat $W/pid); WID=$(cat $W/wid); shift
   rm -rf $W/rec; mkdir -p $W/rec
@@ -130,5 +183,6 @@ sys.exit(0 if hit else 1)"
   "$CUA" call stop_recording '{}' 2>&1 | head -1
   ls -la $W/rec/recording.mp4 2>&1 | tail -1
   ;;
- *) echo "usage: derec.sh setup|verify|keytest|record <idx>...|env  (APP=gnome-calculator|kcalc|galculator)";;
+ *) echo "usage: derec.sh setup|verify|keytest|vclick <expected> <label>...|record <idx>...|env
+       APP=gnome-calculator|kcalc|galculator   WAYLAND=1 for the Mutter/KWin Wayland lane";;
 esac

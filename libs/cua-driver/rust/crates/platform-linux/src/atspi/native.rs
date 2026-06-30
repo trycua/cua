@@ -955,11 +955,13 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
             None => return Ok(None),
         };
 
-        // Find the smallest-area actionable node whose window-local bounds
-        // contain the point. Pre-order means a container is visited before its
-        // children, so comparing area picks the innermost actuator (button)
-        // over its parents (panel/scroll pane).
-        let mut best: Option<(i64, usize)> = None;
+        // Collect actionable nodes whose window-local bounds contain the point,
+        // then let `select_click_target` pick the innermost *real actuator* —
+        // preferring a button over its slightly-smaller inner label (GTK4 nests
+        // one inside every button; an area-only pick lands on the inert label
+        // and `do_action` silently no-ops). Pre-order keeps containers ahead of
+        // children, but the area/role split is what actually disambiguates.
+        let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
         for (i, v) in visited.iter().enumerate() {
             if v.actions.is_empty() || !v.has_component {
                 continue;
@@ -972,15 +974,10 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
             if w <= 0 || h <= 0 {
                 continue;
             }
-            if win_x >= x && win_x < x + w && win_y >= y && win_y < y + h {
-                let area = (w as i64) * (h as i64);
-                if best.map(|(a, _)| area < a).unwrap_or(true) {
-                    best = Some((area, i));
-                }
-            }
+            frames.push((i, x, y, w as u32, h as u32, is_passive_role(&v.role)));
         }
 
-        let Some((_, idx)) = best else { return Ok(None) };
+        let Some(idx) = select_click_target(&frames, win_x, win_y) else { return Ok(None) };
         let target = &visited[idx];
         let ap = target
             .acc
@@ -995,6 +992,129 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
             .map_err(|e| anyhow!("doAction failed: {e}"))?;
         Ok(Some(target.actions.first().cloned().unwrap_or_default()))
     }, || Ok(None))
+}
+
+/// Vision/pixel click that actually lands — the Wayland answer (and a robust
+/// GTK4 path generally). Maps a *screen* pixel to the smallest `element_index`
+/// whose reconstructed screen frame covers it, then fires that element's
+/// primary action via [`perform_action`].
+///
+/// Why not [`perform_action_at_point`]: that one hit-tests raw
+/// `CoordType::Window` extents over an ad-hoc node set and `do_action`s the node
+/// it resolves directly. On GTK4 that can land on an inner, non-actuating node
+/// (a label inside the button) → a silent no-op that still returns `Some`
+/// ("false success"). And on native Wayland there is no virtual-pointer click to
+/// fall back to (Mutter drops synthetic pointer events). This routine instead
+/// reuses [`get_all_element_bounds`] — the SAME screen frames `get_window_state`
+/// exposes to the agent, reconstructed via the GNOME Shell helper on Wayland and
+/// `_GTK_FRAME_EXTENTS` on X11 — and actuates by `element_index`, the click path
+/// already verified working. So "click at pixel (x,y)" becomes "click the
+/// element the agent sees there", with no pointer injection and no reliance on
+/// `CoordType::Screen` (which GTK4 reports as (0,0)).
+///
+/// `screen_x`/`screen_y` are full-display screen pixels (what the vision
+/// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
+/// on a hit, `Ok(None)` when no element covers the point so the caller can fall
+/// back to its native injection path.
+pub fn perform_action_at_screen_point(
+    pid: u32,
+    xid: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Result<Option<String>> {
+    bounded(async {
+        let conn = AccessibilityConnection::new()
+            .await
+            .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+        let visited = match collect_visited(&conn, pid).await? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        // Reconstruct each indexable element's SCREEN frame the same way
+        // get_window_state does: WINDOW-relative extents (GTK4 reports these
+        // correctly; Screen is (0,0)) plus the window's screen origin (the
+        // GNOME Shell helper on Wayland, _GTK_FRAME_EXTENTS on X11). When no
+        // offset resolves, fall back to CoordType::Screen (correct on Qt/GTK3).
+        let offset = window_to_screen_offset(pid, xid);
+        let coord = if offset.is_some() { CoordType::Window } else { CoordType::Screen };
+        let (ox, oy) = offset.unwrap_or((0, 0));
+
+        // (element_index, x, y, w, h, is_passive_label) over the SAME indexable
+        // list `perform_action`/`get_window_state` use, so the chosen index
+        // maps straight back to a verified `element_index` actuation.
+        let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
+        let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
+        for (idx, node) in action_nodes.iter().enumerate() {
+            if !node.has_component {
+                continue;
+            }
+            let Some(Ok(proxies)) = call(node.acc.proxies()).await else { continue };
+            let Some(Ok(comp)) = call(proxies.component()).await else { continue };
+            let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await else {
+                continue;
+            };
+            if x == i32::MIN || y == i32::MIN || w <= 1 || h <= 1 {
+                continue;
+            }
+            frames.push((idx, x + ox, y + oy, w as u32, h as u32, is_passive_role(&node.role)));
+        }
+
+        let Some(idx) = select_click_target(&frames, screen_x, screen_y) else {
+            return Ok(None);
+        };
+        let target = action_nodes[idx];
+        let ap = target
+            .acc
+            .proxies()
+            .await
+            .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?
+            .action()
+            .await
+            .map_err(|e| anyhow!("Action unavailable: {e}"))?;
+        ap.do_action(0)
+            .await
+            .map_err(|e| anyhow!("doAction failed: {e}"))?;
+        Ok(Some(target.actions.first().cloned().unwrap_or_default()))
+    }, || Ok(None))
+}
+
+/// Roles that draw text/graphics but don't *do* anything when actuated. GTK4
+/// nests a `label` inside every `button` with a near-identical (slightly
+/// smaller) frame, so an area-only hit-test lands on the inert label —
+/// `do_action` is a silent no-op (the "false success"). Treat these as
+/// last-resort click targets.
+fn is_passive_role(role: &str) -> bool {
+    matches!(
+        role,
+        "label" | "static" | "static text" | "separator" | "filler" | "image" | "icon"
+    )
+}
+
+/// Pick the `element_index` to actuate for a click at `(px, py)`. `frames` are
+/// `(element_index, x, y, w, h, is_passive_label)` in the same coordinate space
+/// as the point. Prefers the smallest covering *real actuator*; only falls back
+/// to a passive label if nothing else covers the point. Smallest-area within a
+/// class wins so the click lands on the button, not its enclosing panel.
+/// Right/bottom edges are exclusive (`px < x + w`). `None` if nothing covers it.
+fn select_click_target(
+    frames: &[(usize, i32, i32, u32, u32, bool)],
+    px: i32,
+    py: i32,
+) -> Option<usize> {
+    let mut best_active: Option<(i64, usize)> = None;
+    let mut best_passive: Option<(i64, usize)> = None;
+    for &(idx, x, y, w, h, passive) in frames {
+        let (w, h) = (w as i32, h as i32);
+        if px >= x && px < x + w && py >= y && py < y + h {
+            let area = (w as i64) * (h as i64);
+            let slot = if passive { &mut best_passive } else { &mut best_active };
+            if slot.map(|(a, _)| area < a).unwrap_or(true) {
+                *slot = Some((area, idx));
+            }
+        }
+    }
+    best_active.or(best_passive).map(|(_, idx)| idx)
 }
 
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
@@ -1315,6 +1435,60 @@ pub fn get_all_element_bounds(pid: u32, xid: u64) -> Result<Vec<(usize, i32, i32
 #[cfg(test)]
 mod coord_tests {
     use super::parse_gtk_frame_extents;
+    use super::{is_passive_role, select_click_target};
+
+    #[test]
+    fn click_target_prefers_button_over_its_inner_label() {
+        // The exact live GTK4 gnome-calculator case this fixes: button "7"
+        // (idx 6, role 'button', 82,331 64x44) wraps a slightly smaller inner
+        // label (idx 7, role 'label', 82,331 56x40). A click at the shared
+        // center must actuate the BUTTON (idx 6) — area alone would pick the
+        // smaller inert label (idx 7) → silent no-op "false success".
+        let frames = vec![
+            (6usize, 82, 331, 64, 44, false), // button "7"
+            (7usize, 82, 331, 56, 40, true),  // inner label "7"
+        ];
+        assert_eq!(select_click_target(&frames, 114, 353), Some(6));
+    }
+
+    #[test]
+    fn click_target_smallest_active_over_enclosing_panel() {
+        let frames = vec![
+            (0usize, 0, 0, 400, 600, false),    // panel
+            (3usize, 80, 320, 64, 44, false),   // button "7"
+            (5usize, 150, 320, 64, 44, false),  // button "8"
+        ];
+        assert_eq!(select_click_target(&frames, 100, 340), Some(3));
+        assert_eq!(select_click_target(&frames, 180, 340), Some(5));
+    }
+
+    #[test]
+    fn click_target_falls_back_to_label_when_no_actuator_covers() {
+        // A lone clickable label (no button covers the point) is still a valid
+        // last-resort target — don't drop the click entirely.
+        let frames = vec![(9usize, 10, 10, 30, 20, true)];
+        assert_eq!(select_click_target(&frames, 20, 15), Some(9));
+    }
+
+    #[test]
+    fn click_target_edges_exclusive_and_misses_return_none() {
+        let frames = vec![(7usize, 10, 10, 20, 20, false)];
+        assert_eq!(select_click_target(&frames, 10, 10), Some(7)); // top-left inclusive
+        assert_eq!(select_click_target(&frames, 29, 29), Some(7)); // inside
+        assert_eq!(select_click_target(&frames, 30, 20), None); // right edge exclusive
+        assert_eq!(select_click_target(&frames, 20, 30), None); // bottom edge exclusive
+        assert_eq!(select_click_target(&frames, 5, 5), None); // outside
+        assert_eq!(select_click_target(&[], 0, 0), None); // no frames
+    }
+
+    #[test]
+    fn passive_roles_classified() {
+        assert!(is_passive_role("label"));
+        assert!(is_passive_role("static text"));
+        assert!(!is_passive_role("button"));
+        assert!(!is_passive_role("push button"));
+        assert!(!is_passive_role("text box")); // editable display is a real target
+    }
 
     #[test]
     fn frame_extents_maps_left_and_top_not_right_or_bottom() {

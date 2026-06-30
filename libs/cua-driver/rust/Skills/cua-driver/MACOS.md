@@ -372,37 +372,50 @@ There is no backgrounded path that reaches these apps today.
 
 ### Known text-input limits (Catalyst + Electron)
 
-`type_text` returns `✅ Inserted N char(s)` against **Catalyst** apps
-(WhatsApp, Reminders, Notes-via-Catalyst, anything in `/Applications`
-that's actually `iOSAppOnMac.app`) and **Electron** apps (VSCode's
-Monaco editor, Slack composer, Discord, Linear) but the characters
-don't reach the rendered text view. The AX path (`AXSetAttribute` on
-`kAXSelectedText`) reports success because the API call succeeds on
-the AX shim, but the UIKit/Chromium text view that owns the actual
-input doesn't observe the AX value change. The CGEvent fallback path
-runs, but the renderer's focused-process check drops the keystrokes
-when the app isn't WindowServer-frontmost.
+On **Catalyst** apps (WhatsApp, Reminders, Notes-via-Catalyst,
+anything in `/Applications` that's actually `iOSAppOnMac.app`) and
+**Electron** apps (VS Code's Monaco editor, Slack composer, Discord,
+Linear), an AX `type_text` can't reach the rendered text view: the
+`AXSetAttribute(kAXSelectedText)` write succeeds on the AX shim, but
+the UIKit/Chromium view that owns the input never observes it — and on
+Electron the shim *echoes the value straight back through `AXValue`*,
+so a naive read-back "confirms" a value that isn't really there.
 
-Fix — establish real renderer focus with a **pixel click**, then type.
-Do NOT reach for a clipboard + `Cmd+V` dance:
+The driver **detects Electron and refuses to trust that echo**: an
+AX-path `type_text` on an Electron app returns `effect:"unverifiable"`
++ `escalation:{recommended:"px"}`, **never** a false `verified:true`.
+(On Catalyst the AX value reads back unreadable, so it reports
+unverified too.) Bottom line: on these surfaces **do not trust the AX
+confirm — the screenshot in the same response is the only truth.**
 
-1. **Pixel-click the input field** (`click({pid, window_id, x, y})` —
-   an **element px action**, not an `element_index` AX press). The AX
-   press opens/focuses the control at the AX layer but the Chromium /
-   UIKit renderer never gets real keyboard focus, which is exactly why
-   the keystrokes dropped. A pixel click delivers a synthetic HID-style
-   click the renderer accepts as genuine focus.
-2. **`type_text({pid, window_id, text})`** with NO `element_index` — the
-   background key-events path now lands because the renderer is focused.
-   (Re-snapshot and read the text off the screenshot to confirm; the AX
-   value can still lag on Catalyst/Electron.)
-3. Only if the background keystrokes *still* drop (a focus-polling app),
-   escalate that one `type_text` with `delivery_mode:"foreground"`.
+Fix — **one call**: `type_text({pid, window_id, x, y, text})`. Passing
+`x,y` (no `element_index`) is the **element px action** form of
+`type_text` — the tool pixel-clicks at `(x,y)` to give the Chromium /
+UIKit renderer the real keyboard focus the AX layer can't, then types
+into the now-focused field. Read `x,y` straight off the screenshot in
+the `get_window_state` response (same convention as `click`). This is
+the one-call replacement for the old two-step "pixel-click then
+`type_text`" — and you do **not** reach for a clipboard + `Cmd+V`
+dance.
 
-Why not `Cmd+V` / `hotkey`: a keyboard combo does **not** focus a text
-field, and `hotkey`/`press_key` no longer raise the window on their own
-(raising is gated on `delivery_mode:"foreground"`, like every other
-tool). The reliable move is *pixel-click to focus → type_text*.
+0. **If the control is CLOSED, open it first.** A px focus-click won't
+   reliably *open and focus* a closed control (a search button, a
+   collapsed field) — it lands on whatever is already focused (e.g.
+   the message composer), so your text leaks there. **AX-press to
+   open/activate the control first** (AX actions work in the
+   background), then px-type into the now-open field.
+1. **`type_text({pid, window_id, x, y, text})`** — focus + type in a
+   single call. Re-snapshot and read the text off the screenshot to
+   confirm; the AX value can still lag on Catalyst/Electron.
+2. Only if the keystrokes *still* drop (a focus-polling app), escalate
+   that one `type_text` with `delivery_mode:"foreground"`.
+
+The `x,y` (px) form is **mutually exclusive** with `element_index`
+(ax) — pass one or the other, not both. Why not `Cmd+V` / `hotkey`: a
+keyboard combo does **not** focus a text field, and `hotkey` /
+`press_key` no longer raise the window on their own (raising is gated
+on `delivery_mode:"foreground"`, like every other tool). The reliable
+move is the px form of `type_text` — focus and type in one call.
 
 ## Navigating native menu bars (AXMenuBar)
 

@@ -74,14 +74,16 @@ Desktop scope is the screen-absolute "Computer-Use 1.0" loop: read the whole scr
 
 ## How an action is routed
 
-A `click` (and `scroll`, `type_text`) picks its path from the arguments present:
+Every input tool — `click`, `scroll`, and the keyboard family (`type_text`, `press_key`, `hotkey`) — picks its path from the arguments present:
 
 | Arguments | Path | Behavior |
 |---|---|---|
 | `element_index` + `window_id` | accessibility action | UIA Invoke / `AXPerformAction` / AT-SPI — background, no cursor move, no focus steal |
-| `x`, `y` + `pid` | window-local pixel | coordinates are relative to that window's screenshot |
+| `x`, `y` + `pid` | window-local pixel | coordinates are relative to that window's screenshot. For the **keyboard family** this px form pixel-clicks `(x, y)` to establish real renderer focus, then delivers the keystroke(s) to the now-focused element — the one-call path for Chromium/Electron inputs the AX layer can't focus |
 | `x`, `y`, **no** `pid`/`window_id`, scope `desktop` | screen-absolute | true screen pixels, lands on whatever is frontmost there |
 | `x`, `y`, **no** `pid`/`window_id`, scope `window` | rejected | structured `desktop_scope_disabled` error |
+
+The keyboard family's `x, y` (px) form is mutually exclusive with `element_index` (ax) — pass one or the other, not both.
 
 A window-less action is **never silently reinterpreted**. Under window scope it is rejected with a structured `desktop_scope_disabled` error that points the caller at `set_config capture_scope=desktop`, rather than treating screen pixels as window-local pixels.
 

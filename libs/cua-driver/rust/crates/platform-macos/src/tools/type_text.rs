@@ -61,15 +61,18 @@ fn def() -> &'static ToolDef {
              `get_window_state` snapshot) directs the write to a specific field. \
              Without `element_index`, the write goes to the pid's currently \
              focused element.\n\n\
-             ELECTRON/CHROMIUM false-confirm: the AX path can return \
-             effect:\"confirmed\" while the rendered input stays empty (AXValue is \
-             set on the shim but the renderer never observes it). If a re-snapshot \
-             shows the field still empty, the fix is NOT a clipboard/Cmd+V dance — \
-             it's renderer focus: do an **element px action** (pixel `click({pid, \
-             window_id, x, y})` on the field to give the Chromium renderer real \
-             keyboard focus), then call `type_text` again WITHOUT `element_index` \
-             (the background key-events path lands once focused). Escalate that \
-             call to `delivery_mode:\"foreground\"` only if it still drops."
+             ELECTRON/CHROMIUM: the AX layer accepts a write and echoes it back \
+             through AXValue while the renderer never observes it. The driver \
+             DETECTS Electron and refuses to trust that echo — an AX-path insert \
+             on an Electron app returns effect:\"unverifiable\" + \
+             escalation:{recommended:\"px\"}, never a false \"confirmed\". The fix \
+             is this tool's px form: pass x,y (no element_index) to pixel-click the \
+             field — giving the Chromium renderer real keyboard focus — then type, \
+             in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED \
+             control; AX-press to open/activate it first (works in the background), \
+             then px-type into the open field. Confirm via the screenshot \
+             regardless of effect; if px-background still drops, escalate to \
+             delivery_mode:\"foreground\"."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -241,12 +244,33 @@ impl Tool for TypeTextTool {
 
         match result {
             Ok(Ok((detail, path, verified))) => {
+                // SURFACE-AWARE VERIFICATION. On Electron/Chromium web inputs the
+                // AX layer accepts a write and echoes it straight back through
+                // `AXValue` while the renderer never observes it — so an AX-path
+                // read-back "confirm" is a shim echo, not ground truth (the
+                // Slack-search false-confirm). Refuse to claim verified there: the
+                // screenshot is the only truth and the next rung is the element px
+                // action. Probe ONLY when it would otherwise confirm via the AX
+                // path, so native types pay nothing.
+                let ax_echo_surface = verified
+                    && path == PATH_AX
+                    && crate::browser::electron_js::ElectronJs::is_electron(pid);
+                let verified = verified && !ax_echo_surface;
+
                 // `verified:false` means the driver could not confirm the text
-                // landed (unreadable AXValue on Catalyst, or a CGEvent rung the
-                // app may have dropped). Don't dress that as a confirmed insert —
-                // tell the agent to look, and point at the next rung.
+                // landed (Electron AX echo, unreadable AXValue on Catalyst, or a
+                // CGEvent rung the app may have dropped). Don't dress that as a
+                // confirmed insert — tell the agent to look, and point at the
+                // right next rung.
                 let (mark, note) = if verified {
                     ("✅ Inserted", String::new())
+                } else if ax_echo_surface {
+                    ("📨 Sent (unverified)",
+                     " — Electron/web surface: the AX layer accepts and echoes the \
+                      write but the renderer may not have observed it, so the driver \
+                      cannot confirm via AX. Verify via the screenshot; if it didn't \
+                      land, re-type with the px form (pass x,y to pixel-focus the \
+                      field).".to_string())
                 } else if path == PATH_KEY_EVENTS_FG {
                     ("📨 Sent (unverified)",
                      " — driver could not confirm; verify via screenshot.".to_string())
@@ -260,21 +284,29 @@ impl Tool for TypeTextTool {
                     changes.result_suffix()
                 ))
                 .with_structured({
-                    // `effect` is the cross-tool tri-state mirroring `verified`'s
-                    // read-back: a positive read-back is "confirmed"; an
-                    // unreadable/unchanged AXValue (Catalyst silent-accept, or a
-                    // CGEvent rung the app dropped) is "unverifiable". For
-                    // type_text the next rung is delivery_mode:"foreground" (the
-                    // field IS in the AX tree — it's a focus/accept problem, not a
-                    // missing element), so the escalation points there rather than
-                    // at the px rung.
+                    // `effect` mirrors `verified`'s read-back tri-state: a TRUSTED
+                    // positive read-back is "confirmed"; an unreadable/unchanged
+                    // AXValue, a dropped CGEvent rung, or an Electron AX echo we
+                    // refuse to trust is "unverifiable".
                     let mut s = serde_json::json!({
                         "path": path,
                         "characters": char_count,
                         "verified": verified,
                         "effect": if verified { "confirmed" } else { "unverifiable" },
                     });
-                    if !verified && path != PATH_KEY_EVENTS_FG {
+                    if ax_echo_surface {
+                        // Electron AX echo → the element px action is the next rung,
+                        // not foreground (it's a renderer-focus problem, not an
+                        // activation one).
+                        s["escalation"] = serde_json::json!({
+                            "recommended": "px",
+                            "reason": "Electron/web surface — the AX write was echoed \
+                                       but the renderer may not have observed it. \
+                                       Confirm via the screenshot; if it didn't land, \
+                                       re-type with the element px action (pass x,y to \
+                                       pixel-focus the field, then type)."
+                        });
+                    } else if !verified && path != PATH_KEY_EVENTS_FG {
                         s["escalation"] = serde_json::json!({
                             "recommended": "foreground",
                             "reason": "background insert could not be confirmed — \

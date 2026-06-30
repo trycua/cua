@@ -77,7 +77,7 @@ stub_tool!(right_click_m, RightClickTool, "right_click",
 
 stub_tool!(type_text_m, TypeTextTool, "type_text",
     "Insert text into the target pid via AT-SPI SetTextContents or XSendEvent keystrokes.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"},"x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form: pixel-click there to focus, then type. Pass with y, no element_index."},"y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."}},"additionalProperties":false}));
 
 stub_tool!(type_chars_m, TypeTextCharsTool, "type_text_chars",
     "Type text character-by-character with configurable per-character delay.",
@@ -85,11 +85,11 @@ stub_tool!(type_chars_m, TypeTextCharsTool, "type_text_chars",
 
 stub_tool!(press_key_m, PressKeyTool, "press_key",
     "Press and release a single key delivered directly to the target pid. No focus steal.",
-    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Pass with y, no element_index."},"y":{"type":"number","description":"Screenshot-pixel Y (see x)."}},"additionalProperties":false}));
 
 stub_tool!(hotkey_m, HotkeyTool, "hotkey",
     "Press a combination of keys simultaneously, e.g. [\"ctrl\",\"c\"] for Copy.",
-    serde_json::json!({"type":"object","required":["pid","keys"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"keys":{"type":"array","items":{"type":"string"},"minItems":2}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","keys"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"keys":{"type":"array","items":{"type":"string"},"minItems":2},"x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo. Pass with y."},"y":{"type":"number","description":"Screenshot-pixel Y (see x)."}},"additionalProperties":false}));
 
 stub_tool!(set_value_m, SetValueTool, "set_value",
     "Set the value of an AT-SPI element (text field, dropdown, checkbox).",

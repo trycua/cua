@@ -311,16 +311,27 @@ Press-drag-release gesture from `(from_x, from_y)` to `(to_x, to_y)` in window-l
 
 Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized. For Chromium/Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically.
 
+Two addressing forms — mutually exclusive:
+
+- **Element index** (`element_index` + `window_id`): the **element ax action**. Directs the write to a specific field, no pre-click.
+- **Pixel** (`x`, `y`, no `element_index`): the **element px action**. The tool pixel-clicks at `(x, y)` to establish real renderer focus, then types into the now-focused element (reusing `click`'s coordinate translation and `delivery_mode`). This is the one-call fix for Chromium/Electron inputs the AX path can't reach — read `x, y` off the `get_window_state` screenshot, same convention as `click`.
+
 | Argument | Type | Required | Description |
 | -------- | ---- | -------- | ----------- |
 | `pid` | integer | Yes | Target process ID. |
 | `text` | string | Yes | Text to insert at the target's cursor. |
-| `element_index` | integer | No | Element index from last `get_window_state`. Directs the write to a specific field. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). |
+| `element_index` | integer | No | Element index from last `get_window_state`. Directs the write to a specific field. Requires `pid` and `window_id` alongside it — `element_index` with no `pid` fails fast with `Missing required integer field: pid` (it is not a silent no-op). Mutually exclusive with `x`/`y`. |
 | `window_id` | integer | No | CGWindowID. Required when `element_index` is used. |
+| `x` | number | No | Window-local screenshot X of the field to type into — the px form. Pass with `y` and no `element_index`; the tool pixel-clicks there to focus, then types. |
+| `y` | number | No | Window-local screenshot Y of the field. See `x`. |
 | `delay_ms` | integer | No | Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds. |
 
 ```json
 {"pid": 844, "text": "hello"}
+```
+
+```json
+{"pid": 844, "window_id": 10725, "x": 320, "y": 210, "text": "hello"}
 ```
 
 ---
@@ -329,8 +340,9 @@ Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for
 
 Press and release a single key, delivered to the target pid via `CGEventPostToPid`. No focus steal.
 
-Three delivery paths:
-- `window_id` + `element_index`: focuses the AX element first, then posts via the auth-message path (Chromium-safe).
+Delivery paths:
+- `window_id` + `element_index` (ax): focuses the AX element first, then posts via the auth-message path (Chromium-safe).
+- `x`, `y`, no `element_index` (px): pixel-clicks at `(x, y)` to establish real renderer focus, then sends the key to the now-focused element. Use when the key must reach a Chromium/Electron surface the AX path can't focus. Mutually exclusive with `element_index`.
 - `window_id` only (no `element_index`): NSMenu path. Briefly activates the window, posts without the auth envelope so `IOHIDPostEvent` fires and `NSApplication.sendEvent:` dispatches NSMenu key equivalents. Restores prior frontmost immediately.
 - No `window_id`: standard auth-message path.
 
@@ -341,8 +353,10 @@ Key names: `return`, `tab`, `escape`, `up`/`down`/`left`/`right`, `space`, `dele
 | `pid` | integer | Yes | Target process ID. |
 | `key` | string | Yes | Key name: `return`, `tab`, `escape`, `up`, `down`, etc. |
 | `modifiers` | array of string | No | Modifier keys: `cmd`, `shift`, `option`/`alt`, `ctrl`, `fn`. |
-| `element_index` | integer | No | Element index. |
+| `element_index` | integer | No | Element index (ax). Mutually exclusive with `x`/`y`. |
 | `window_id` | integer | No | Target window ID. |
+| `x` | number | No | Window-local screenshot X — the px form: pixel-click there to focus, then send the key. Pass with `y`, no `element_index`. |
+| `y` | number | No | Window-local screenshot Y. See `x`. |
 
 ```json
 {"key": "return", "pid": 844}
@@ -354,8 +368,9 @@ Key names: `return`, `tab`, `escape`, `up`/`down`/`left`/`right`, `space`, `dele
 
 Press a combination of keys simultaneously. The combo is posted directly to the target pid's event queue; the target does NOT need to be frontmost.
 
-Two delivery paths:
+Delivery paths:
 - Default (no `window_id`): auth-message envelope. Chromium/Electron apps accept the keystrokes as trusted live input on macOS 14+.
+- `x`, `y` (px): pixel-clicks at `(x, y)` to establish real renderer focus first, then sends the combo to the now-focused field — e.g. `["cmd", "v"]` to paste into a specific Chromium/Electron input the background combo can't reach. A keyboard combo on its own does not focus a field.
 - With `window_id`: NSMenu path. Briefly activates the target WindowServer-frontmost, posts without the auth envelope so `IOHIDPostEvent` fires and NSMenu key equivalents dispatch (e.g. Cmd+Z undo, Cmd+W close). Restores prior frontmost immediately.
 
 Recognized modifiers: `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`, `fn`. Order: modifiers first, one non-modifier last.
@@ -365,6 +380,8 @@ Recognized modifiers: `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`
 | `pid` | integer | Yes | Target process ID. |
 | `keys` | array of string | Yes | Modifier(s) and one non-modifier key, e.g. `["cmd", "c"]`. |
 | `window_id` | integer | No | When set, uses NSMenu path. |
+| `x` | number | No | Window-local screenshot X — the px form: pixel-click there to focus, then send the combo. Pass with `y`. |
+| `y` | number | No | Window-local screenshot Y. See `x`. |
 
 ```json
 {"keys": ["cmd", "c"], "pid": 844}

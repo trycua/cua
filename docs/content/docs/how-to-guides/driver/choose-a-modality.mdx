@@ -39,11 +39,12 @@ You don't have to guess when the AX path failed — every action response carrie
 
 1. **Element ax action, background (the default).** Act by `element_index`. If the response shows `effect: "confirmed"`, you're done — the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree) or an action returns `effect: "suspected_noop"` (the AX action dispatched but likely no-op'd), or the tree disagrees with the screenshot (an `h:1` or off-viewport row), the response's `escalation` hint points you to the next rung. Step down.
 
-2. **Element px action, background.** Pick the target pixel from the screenshot already in the `get_window_state` response and click it — no re-capture to switch rung, because the screenshot was always there. Coordinates are window-relative for a windowed target.
+2. **Element px action, background.** Pick the target pixel from the screenshot already in the `get_window_state` response and click it — no re-capture to switch rung, because the screenshot was always there. Coordinates are window-relative for a windowed target. The keyboard family takes the same px form: passing `x, y` to `type_text` pixel-clicks to focus the field, then types — the one-call fix for a Chromium/Electron input where the `element_index` (ax) `type_text` reported `confirmed` but the text didn't land.
 
    ```jsonc
    // the screenshot is already in the snapshot above — just read a pixel off it
    click({ pid, window_id, x: 320, y: 210 })                      // click a pixel
+   type_text({ pid, window_id, x: 320, y: 210, text: "hello" })   // focus by pixel, then type
    ```
 
    On Linux this still avoids synthetic input where it can: the driver resolves the pixel to the element under it and fires that element's action via AT-SPI `doAction` at that point. See [Linux and Wayland](/explanation/linux-and-wayland) for why.

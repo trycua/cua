@@ -1508,9 +1508,51 @@ impl Tool for ClickTool {
     }
 }
 
+// ── px-focus helper (keyboard family) ───────────────────────────────────────
+
+/// px-focus for the keyboard family (type_text / press_key / hotkey): pixel-click
+/// at (x,y) to establish real renderer focus before a keystroke — the *element px
+/// action* form of a keyboard tool. Reuses ClickTool's exact coordinate
+/// translation + delivery_mode so it lands on the same pixel a px-click would.
+/// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
+///
+/// Mirrors macOS `tools::focus_by_pixel`. Linux differences: `pid` is `u32`,
+/// `window_id` is `u64` (the X11 XID / window id), and there is no `_session_id`
+/// field — the Linux ClickTool resolves the agent cursor from `session` /
+/// `cursor_id` only (`resolve_cursor_key`).
+async fn focus_by_pixel(
+    state: &Arc<ToolState>,
+    pid: u32,
+    window_id: Option<u64>,
+    x: f64,
+    y: f64,
+    foreground: bool,
+    session: Option<String>,
+    from_zoom: bool,
+) -> Result<(), ToolResult> {
+    let mut click_args = json!({
+        "pid": pid, "x": x, "y": y,
+        "delivery_mode": if foreground { "foreground" } else { "background" },
+    });
+    if let Some(wid) = window_id { click_args["window_id"] = json!(wid); }
+    if let Some(s) = session { click_args["session"] = json!(s); }
+    if from_zoom { click_args["from_zoom"] = json!(true); }
+    let focus = ClickTool { state: state.clone() }.invoke(click_args).await;
+    if focus.is_error == Some(true) {
+        return Err(ToolResult::error(format!(
+            "focus pixel-click at ({x:.0},{y:.0}) failed."
+        )));
+    }
+    // Brief settle so the renderer registers focus before the keystrokes.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    Ok(())
+}
+
 // ── type_text ─────────────────────────────────────────────────────────────────
 
-pub struct TypeTextTool;
+pub struct TypeTextTool {
+    state: Arc<ToolState>,
+}
 static TYPE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -1527,6 +1569,8 @@ impl Tool for TypeTextTool {
                     "text":{"type":"string"},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click."},
+                    "y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1573,6 +1617,31 @@ impl Tool for TypeTextTool {
                 }
             }
         };
+
+        // ── px form: focus by pixel-click, then type into the now-focused element ──
+        // Pass x,y (no element_index/token) for an *element px action*: pixel-click
+        // the field to give the renderer the real keyboard focus the AT-SPI path
+        // can't, then fall through to the focused-element type path below (it
+        // escalates AT-SPI → key events and lands once focused). Reuses ClickTool's
+        // exact coordinate translation + delivery_mode.
+        if let (Some(cx), Some(cy)) =
+            (args.get("x").and_then(|v| v.as_f64()), args.get("y").and_then(|v| v.as_f64()))
+        {
+            if resolved_elem_idx.is_some() {
+                return ToolResult::error(
+                    "Pass either element_index (ax) or x,y (px) to type_text, not both."
+                );
+            }
+            let fg = crate::input::delivery::DeliveryMode::from_args(&args).is_foreground();
+            let from_zoom = args.bool_or("from_zoom", false);
+            if let Err(e) = focus_by_pixel(
+                &self.state, pid, Some(xid), cx, cy, fg, args.opt_str("session"), from_zoom,
+            ).await {
+                return e;
+            }
+            // resolved_elem_idx stays None → the type path below writes to the now-
+            // focused element via the background key / AT-SPI rung.
+        }
 
         // EIS nested compositor: focus-FREE per-surface typing into window_id
         // (the target need not be focused). Routed over the inject control socket.
@@ -1793,7 +1862,9 @@ impl Tool for TypeTextTool {
 
 // ── press_key ─────────────────────────────────────────────────────────────────
 
-pub struct PressKeyTool;
+pub struct PressKeyTool {
+    state: Arc<ToolState>,
+}
 static PRESS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -1811,6 +1882,8 @@ impl Tool for PressKeyTool {
                     "modifiers":{"type":"array","items":{"type":"string"}},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index."},
+                    "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1856,6 +1929,32 @@ impl Tool for PressKeyTool {
                 }
             }
         };
+
+        // ── px form: pixel-click to focus, then the key goes to the focused element ──
+        // Reuses click's translation + delivery_mode; after it, deliver via the plain
+        // background path (the focus-click already handled fronting when fg). Pass x,y
+        // (no element_index) for Chromium/Electron surfaces the AX path can't focus.
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let px_focused = {
+            let px = args.get("x").and_then(|v| v.as_f64());
+            let py = args.get("y").and_then(|v| v.as_f64());
+            if let (Some(cx), Some(cy)) = (px, py) {
+                if element_index_arg.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to press_key, not both."
+                    );
+                }
+                let from_zoom = args.bool_or("from_zoom", false);
+                if let Err(e) = focus_by_pixel(
+                    &self.state, pid, Some(xid), cx, cy, delivery.is_foreground(),
+                    args.opt_str("session"), from_zoom,
+                ).await {
+                    return e;
+                }
+                true
+            } else { false }
+        };
+
         // EIS nested compositor: focus-free named-key into window_id.
         if crate::wayland::is_inject_mode() {
             let key_w = key.clone();
@@ -1882,7 +1981,9 @@ impl Tool for PressKeyTool {
         }
 
         let key_for_task = key.clone();
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        // px-focus already clicked (and fronted, when fg) the target → deliver via
+        // the plain background path. Otherwise honor the requested delivery_mode.
+        let deliver_fg = delivery.is_foreground() && !px_focused;
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if mods.is_empty() && key_for_task.eq_ignore_ascii_case("enter") {
                 if inject_terminal_input(pid, xid, "\n")? {
@@ -1895,14 +1996,14 @@ impl Tool for PressKeyTool {
             // GTK/Qt/Chromium/Firefox, so the foreground rung must use XTest —
             // it delivers to the now-focused window. background = direct
             // XSendEvent (no focus steal) for apps that accept it.
-            if delivery.is_foreground() {
+            if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
                     crate::input::send_key_xtest(&key_for_task, &m)
                 });
             }
             crate::input::send_key(xid, &key_for_task, &m)
         }).await;
-        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
+        let mode_label = if deliver_fg { "foreground" } else { "background" };
         match result {
             Ok(Ok(())) => ToolResult::text(format!("Pressed key '{key}' (delivery_mode={mode_label})."))
                 .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
@@ -1919,7 +2020,9 @@ fn is_modifier(k: &str) -> bool {
         "ctrl" | "control" | "shift" | "alt" | "super" | "meta" | "cmd" | "command" | "win" | "windows")
 }
 
-pub struct HotkeyTool;
+pub struct HotkeyTool {
+    state: Arc<ToolState>,
+}
 static HOTKEY_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -1936,6 +2039,8 @@ impl Tool for HotkeyTool {
                     "window_id":{"type":"integer"},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."},
+                    "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
+                    "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1980,6 +2085,27 @@ impl Tool for HotkeyTool {
         let key_for_wayland = key.clone();
         let mods_for_wayland = mods.clone();
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+
+        // ── px form: pixel-click to focus, then the combo acts on the focused field ──
+        // (e.g. Ctrl+V into a Chromium input). Reuses click's translation +
+        // delivery_mode; after it, deliver the combo via the plain background path
+        // (the focus-click already fronted when fg).
+        let px_focused = {
+            let px = args.get("x").and_then(|v| v.as_f64());
+            let py = args.get("y").and_then(|v| v.as_f64());
+            if let (Some(cx), Some(cy)) = (px, py) {
+                let from_zoom = args.bool_or("from_zoom", false);
+                if let Err(e) = focus_by_pixel(
+                    &self.state, pid, Some(xid), cx, cy, delivery.is_foreground(),
+                    args.opt_str("session"), from_zoom,
+                ).await {
+                    return e;
+                }
+                true
+            } else { false }
+        };
+        let deliver_fg = delivery.is_foreground() && !px_focused;
+
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if crate::wayland::is_wayland() {
                 // Native Wayland: route the modifier combo through wtype's
@@ -1994,14 +2120,14 @@ impl Tool for HotkeyTool {
             // as REAL key events via XTest. Synthetic XSendEvent keys
             // (`send_key`) are dropped by GTK/Qt/Chromium/Firefox, so the
             // foreground rung must use XTest, which reaches the focused window.
-            if delivery.is_foreground() {
+            if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
                     crate::input::send_key_xtest(&key, &m)
                 });
             }
             crate::input::send_key(xid, &key, &m)
         }).await;
-        let mode_label = if delivery.is_foreground() { "foreground" } else { "background" };
+        let mode_label = if deliver_fg { "foreground" } else { "background" };
         match result {
             Ok(Ok(())) => ToolResult::text(format!("Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."))
                 .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
@@ -4614,9 +4740,9 @@ pub fn build_registry(compat: bool) -> ToolRegistry {
     r.register(Box::new(MouseDragTool { state: state.clone() }));
     r.register(Box::new(MouseButtonUpTool { state: state.clone() }));
     r.register(Box::new(ParallelMouseDragTool { state: state.clone() }));
-    r.register(Box::new(TypeTextTool));
-    r.register(Box::new(PressKeyTool));
-    r.register(Box::new(HotkeyTool));
+    r.register(Box::new(TypeTextTool { state: state.clone() }));
+    r.register(Box::new(PressKeyTool { state: state.clone() }));
+    r.register(Box::new(HotkeyTool { state: state.clone() }));
     r.register(Box::new(SetValueTool));
     r.register(Box::new(ScrollTool));
     // `screenshot` removed - see the matching comment in

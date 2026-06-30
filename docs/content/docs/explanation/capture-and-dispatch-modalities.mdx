@@ -30,6 +30,8 @@ You don't pick a capture mode; you pick **how you address the target** on the ac
 
 Default to the element ax action — it is verifiable and backgroundable. Drop to an element px action when the tree can't disambiguate (repeated or empty labels), when it's empty (`degraded` — a non-AX surface), when an action came back `suspected_noop`, or when the tree disagrees with the pixels. You never re-capture to switch rungs: the screenshot is already in the snapshot, so you only change *how you address* the target.
 
+Both rungs apply to the **keyboard family** (`type_text`, `press_key`, `hotkey`), not just the pointer tools. Address by `element_index` (ax) to target a field with no pre-click, or by `x, y` (px) — which **pixel-clicks at `(x, y)` to establish real renderer focus, then delivers the keystroke(s)** to the now-focused element. The px form is the one-call path for Chromium/Electron inputs the AX layer can't focus: `type_text({ pid, window_id, x, y, text })` focuses and types in a single call. The two forms are mutually exclusive. (`set_value` is the exception — it stays ax-only, because it sets the value of a non-text control like a dropdown, checkbox, or slider; its pixel counterpart is a `click`/`drag` on the control, not a "set value at a pixel.")
+
 ### 3. Dispatch — how input is delivered
 
 Set per call on the input family (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`) with the `delivery_mode` field. This field is a shared cross-platform parameter — the same two values, accepted uniformly on Windows, macOS, and Linux.

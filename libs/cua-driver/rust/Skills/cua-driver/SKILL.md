@@ -243,6 +243,35 @@ on the action call, and that one choice selects the rung:
 for the *dispatch* path — it conflated perception with dispatch.
 Perception is always both; dispatch is `ax` or `px`.
 
+**The keyboard family has both forms too.** `type_text`, `press_key`,
+and `hotkey` take `element_index` (ax) **or** `x,y` (px) — mutually
+exclusive, same as the pointer tools. The px form **pixel-clicks at
+`(x,y)` to establish real renderer focus, then delivers the
+keystroke(s)** to the now-focused element (it reuses `click`'s
+coordinate translation + `delivery_mode`). That gives e.g.
+`type_text({pid, window_id, x, y, text})` as a one-call focus-then-type
+for Chromium/Electron inputs the AX path can't reach, and
+`hotkey({pid, x, y, keys:["cmd","v"]})` to paste into a specific field.
+
+**Typing default (the ladder).** Call `type_text` directly with
+`element_index` (ax) — it targets the field, no pre-click. On
+Electron/Catalyst the AX layer echoes the write without rendering it,
+so the driver returns `effect:"unverifiable"` + `escalation:"px"`
+there (never a false `verified:true`) — follow it, and cross-check the
+screenshot in the response (the only ground truth). Escalate to the px
+form — `type_text({pid, window_id, x, y, text})` — which pixel-clicks
+to focus, then types. **If the target control is closed** (a search
+button, a collapsed field), AX-press to open it first (AX actions work
+in the background): a px focus-click won't reliably open *and* focus a
+closed control, so the text leaks into whatever's already focused.
+Escalate to `delivery_mode:"foreground"` only if it still drops.
+
+**`set_value` stays AX-only by design** — it's for **non-text**
+controls (dropdown / `AXPopUpButton`, checkbox, slider, stepper). Its
+pixel counterpart is a `click`/`drag` on the control, not a "set value
+at a pixel." So: text → `type_text` (ax+px); non-text control values →
+`set_value`; pixel-manipulate a control → `click`/`drag`.
+
 **Action responses carry an effect/escalation verdict**
 
 Every action response keeps `verified` (did the driver read back a
@@ -486,12 +515,12 @@ against a specific window.
 | Left click | `click({pid, window_id, element_index})` | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]` |
 | Double-click / open | `double_click({pid, window_id, element_index})` | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center |
 | Right click / context menu | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Chromium web-content coerces pixel right-click to left on macOS — see `WEB_APPS.md` |
-| Type at cursor | `type_text({pid, text, window_id, element_index})` | focuses element first, then writes via the platform's text-set primitive |
-| Set whole field value | `set_value({pid, window_id, element_index, value})` | sliders, steppers, text fields; **use for keyboard-commit workarounds on minimized windows** |
+| Type at cursor | `type_text({pid, text, window_id, element_index})` (ax) or `type_text({pid, text, window_id, x, y})` (px) | ax focuses the element then writes via the platform's text-set primitive; **px** pixel-clicks `(x,y)` to focus the renderer, then types — the one-call fix for Chromium/Electron inputs the AX path can't reach |
+| Set whole non-text control value | `set_value({pid, window_id, element_index, value})` | **AX-only by design** — dropdown/`AXPopUpButton`, checkbox, slider, stepper; **also the keyboard-commit workaround on minimized windows.** For text use `type_text`; to pixel-manipulate a control use `click`/`drag` |
 | Scroll | `scroll({pid, direction, amount, by, window_id, element_index})` | synthesizes per-pid PageUp/PageDown/arrows |
-| Focus + send key | `press_key({pid, key, window_id, element_index, modifiers})` | element_index sets focus, then posts key |
+| Focus + send key | `press_key({pid, key, window_id, element_index, modifiers})` (ax) or `press_key({pid, key, x, y})` (px) | ax `element_index` sets focus then posts the key; **px** pixel-clicks `(x,y)` to focus, then sends the key |
 | Send key to pid | `press_key({pid, key, modifiers})` | no focus change; key goes to pid's current focus |
-| Modifier combo | `hotkey({pid, keys})` | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap |
+| Modifier combo | `hotkey({pid, keys})` (no focus) or `hotkey({pid, x, y, keys})` (px) | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap. **px** pixel-clicks `(x,y)` to focus a field first, e.g. `["cmd","v"]` to paste into it |
 
 **All keyboard/text primitives require `pid`.** There is no
 frontmost-routed variant — every key goes to the named target via

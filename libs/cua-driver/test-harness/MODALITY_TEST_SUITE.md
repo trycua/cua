@@ -530,8 +530,11 @@ Linux (X11/XFCE and real-desktop VMs) now validates the same `delivery_mode` bac
 | Pixel click (escalated) | foreground | `x11_pixel_fg` (EWMH activate → inject → restore) | no — confirm via screenshot |
 | `type_text` into editable | background | `ax` (AT-SPI `insertText`) | yes (`verified: true`) |
 | `type_text`, non-editable focus | background / foreground | `key_events` / `key_events_fg` | no — confirm via screenshot |
+| `press_key` / `hotkey` | foreground | `x11_xtest_fg` (XSetInputFocus → XTEST key) | no — confirm via screenshot / effect (`keytest`) |
 
 Background pixel/vision clicks do land on X11: apps that expose AT-SPI take the focus-free `doAction`-at-point path (`x11_atspi`), matching the macOS/Windows background-click behavior. The fallback to MPX `x11_pixel` (which requires a real Xorg server with `/dev/uinput` — unavailable under Xvnc or minimal containers) fires only for non-AX surfaces; escalate to `delivery_mode: foreground` there.
+
+**Foreground keyboard (`press_key` / `hotkey`, and `type_text` foreground) lands under Xvnc.** The XTEST keyboard path injects on a short-lived X connection; it now **round-trips after injection** so the server delivers the key before the connection closes — under Xvnc a connection that closed right after `flush()` had its queued KeyPress/KeyRelease dropped (pointer events survived the same close, which masked the bug as "foreground clicks work but keys don't"). Two companion fixes: shifted-level symbols (`*`, `+`, `(`) **auto-hold Shift** via slot-0/slot-1 keysym resolution (a bare keycode press emitted the unshifted glyph, e.g. `*`→`8`); and the foreground rung now **`XSetInputFocus`es the target** (KWin honours EWMH `_NET_ACTIVE_WINDOW` as raise-only — fine for clicks that land by stacking, but keys route to the X input focus). `derec.sh keytest` effect-confirms the whole path across toolkits (AC, `3*4=` → display reads `12`).
 
 ### The XFCE container lane
 
@@ -563,6 +566,7 @@ The harness script lives at `libs/cua-driver/test-harness/linux-container/calc.s
 | Kasm container | `trycua/cua-ubuntu` (Kasm/XFCE) | `az exec` | galculator (GTK3) | `libs/cua-driver/test-harness/linux-container/calc.sh` |
 | KDE Plasma VM | Azure VM, KDE Plasma X11 | SSH → `derec.sh` | kcalc (Qt) | `libs/cua-driver/test-harness/linux-container/derec.sh` |
 | GNOME Shell VM | Azure VM, GNOME Shell X11 (console Xorg) | SSH → `derec.sh` | gnome-calculator (GTK4) | `libs/cua-driver/test-harness/linux-container/derec.sh` |
+| GNOME Wayland VM | Azure VM, GNOME Mutter **Wayland** | SSH → `derec.sh` | gnome-calculator (GTK4) | `libs/cua-driver/test-harness/linux-container/derec.sh` |
 
 The VM lanes are driven over SSH by `derec.sh`, in contrast to the container lanes which use `az exec`. GNOME Shell requires the real console Xorg session (software GLX) and is not drivable over VNC (no GLX). KDE Plasma works over both console Xorg and VNC.
 
@@ -579,6 +583,20 @@ Verified live: gnome-calculator button "7" = window-origin (55, 27) + inset (61,
 Non-GTK toolkits (Qt) keep the existing SCREEN path — the gate is the presence of `_GTK_FRAME_EXTENTS`.
 
 **Invariant worth guarding:** `frame_center ≈ x11_window_origin + _GTK_FRAME_EXTENTS + atspi_WINDOW_xy`. Any divergence means the reconstruction is broken. Before the fix, pixel clicks silently collapsed to the window corner; `doAction` element clicks landed regardless (coordinate-free).
+
+### The Wayland lane (GNOME Mutter / KDE Plasma)
+
+On a native Wayland session the **background AX rung is the same coordinate-free AT-SPI `doAction`** as on X11, and it is the one rung that works unchanged: `Action.DoAction` is dispatched toolkit-side (GTK/Qt invoke the widget's own action), so it needs no coordinates, no portal, no cursor move, and no focus steal. Element-index clicks therefore land on Mutter/KWin exactly as on X11. (Pixel/vision coordinate clicks are the hard case on Wayland — there is no global coordinate space; the standing approach is per-window-relative AT-SPI extents injected into a per-window ScreenCast stream via the RemoteDesktop portal + libei, which is compositor-cooperative rather than free.)
+
+Two Wayland-specific facts the lane exercises:
+
+- **Window enumeration via AT-SPI.** Native Wayland apps have no X11 XID, and GNOME Mutter / KDE KWin do **not** implement `zwlr_foreign_toplevel_management` (that is wlroots-only), so `wayland::list_windows` is empty there. `list_windows_dispatch` now falls back to **`atspi::list_windows`**, which enumerates top-level frames from the AT-SPI registry and hands back a synthetic, stable `window_id`. Downstream `get_window_state` / `click` walk the AT-SPI tree by **pid** (the xid is unused for the walk), so the full `list_windows → get_window_state → click` flow works. Validated live on Mutter Wayland: `7+8=` via `element_index` background clicks computes `15`.
+- **Engaging the Wayland backend.** `is_wayland()` requires the opt-in `CUA_DRIVER_RS_ENABLE_WAYLAND=1`, `WAYLAND_DISPLAY` set, **and** `DISPLAY` unset — otherwise the daemon stays on the X11 path. Start the daemon with all three for a pure-Wayland session.
+
+Bringing up a headless GNOME **Wayland** VM (the lane's host) has two gotchas worth recording, neither cua-driver's concern but both block the lane:
+
+- **GDM disables Wayland for the Azure virtual GPU.** The `hyperv_drm` DRM driver exposes no `parameters/modeset`, so GDM's `61-gdm.rules` udev gate (`ATTR{parameters/modeset}!="Y"`) force-selects Xorg. Override by shadowing the rule in `/etc/udev/rules.d/61-gdm.rules` (drop the modeset + bare `GOTO="gdm_disable_wayland"` lines) and set `Session=ubuntu-wayland` in `/var/lib/AccountsService/users/<user>`, then restart gdm.
+- **GTK4 apps need software GL on a GPU-less box.** Launch with `LIBGL_ALWAYS_SOFTWARE=1 GSK_RENDERER=cairo`, else the GL renderer fails (EGL/ZINK) and the app exits.
 
 ---
 

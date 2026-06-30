@@ -926,6 +926,15 @@ impl Tool for GetWindowStateTool {
                             if let Some(label) = label {
                                 entry["label"] = json!(label);
                             }
+                            // Surface the element's value separately from `label`
+                            // (which collapses name→value→automation_id→help): a
+                            // control with both a name AND text (a ValuePattern
+                            // edit holding typed content) would otherwise hide the
+                            // text from a caller reading the structured side. See
+                            // the macOS get_window_state builder for the rationale.
+                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+                                entry["value"] = json!(value);
+                            }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
                             }

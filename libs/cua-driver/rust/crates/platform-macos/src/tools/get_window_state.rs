@@ -26,8 +26,10 @@ fn def() -> &'static ToolDef {
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
             element-indexed action. The index map is replaced by the next snapshot.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-            indexed row with `element_index`, `role`, `label`, `frame: {x,y,w,h}`, \
-            `parent_index`, `depth`). The markdown `tree_markdown` stays available \
+            indexed row with `element_index`, `role`, `label`, `value` (the \
+            element's text/AXValue when present — use it to verify what a field \
+            holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
             Two capture modes that map 1:1 to how you'll act. `ax` (default): \
@@ -384,6 +386,17 @@ pub(crate) fn build_elements_array_with_token(
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
             }
+            // Surface the element's AXValue separately from `label`. `label`
+            // collapses title→description→value→identifier into one display
+            // string, so on a control that has BOTH a title/description AND a
+            // value (e.g. a "Compose message" text field holding typed text),
+            // the value is shadowed and invisible to a caller reading the
+            // structured side — it only showed up in `tree_markdown`, forcing a
+            // markdown grep to verify what landed. Emit it explicitly so the
+            // verify-then-escalate loop can read the typed text structurally.
+            if let Some(value) = node.value.clone().filter(|v| !v.is_empty()) {
+                entry["value"] = serde_json::Value::String(value);
+            }
             if let Some(frame) = frame {
                 entry["frame"] = frame;
             }
@@ -471,6 +484,30 @@ mod tests {
         assert_eq!(frame["y"], 2.5);
         assert_eq!(frame["w"], 33.0);
         assert_eq!(frame["h"], 44.0);
+    }
+
+    #[test]
+    fn elements_surface_value_separately_from_label() {
+        // A field with BOTH a title and a value (e.g. WhatsApp's "Compose
+        // message" box holding typed text): label is the title, but the typed
+        // value must ALSO be exposed so the caller can verify what landed.
+        let mut nodes = vec![
+            node(Some(0), "AXTextArea", Some("Compose message"), 1, None, None),
+        ];
+        nodes[0].value = Some("i love u".into());
+        let entry = &build_elements_array(&nodes)[0];
+        assert_eq!(entry["label"], "Compose message", "label stays the title");
+        assert_eq!(entry["value"], "i love u", "value must be surfaced separately");
+    }
+
+    #[test]
+    fn elements_omit_empty_value() {
+        // An empty AXValue must not emit a `value` field (matches the other
+        // optional fields' omit-when-absent contract).
+        let mut nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None)];
+        nodes[0].value = Some(String::new());
+        let entry = &build_elements_array(&nodes)[0];
+        assert!(entry.get("value").is_none(), "empty value must be omitted");
     }
 
     #[test]

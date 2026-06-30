@@ -604,6 +604,15 @@ impl Tool for GetWindowStateTool {
                             if let Some(label) = label {
                                 entry["label"] = json!(label);
                             }
+                            // Surface the element's value separately from `label`
+                            // (which collapses name→value→description): a field
+                            // with both a name AND typed text would otherwise hide
+                            // the text from a caller reading the structured side,
+                            // leaving it only in tree_markdown. See the macOS
+                            // get_window_state builder for the rationale.
+                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+                                entry["value"] = json!(value);
+                            }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
                             }

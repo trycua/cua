@@ -84,7 +84,8 @@ fn def() -> &'static ToolDef {
                 "from_zoom": {
                     "type": "boolean",
                     "description": "When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates."
-                }
+                },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -102,6 +103,11 @@ impl Tool for DragTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        // delivery_mode: foreground briefly fronts the window before the
+        // press-drag-release gesture (the explicit last resort for surfaces
+        // that drop background CGEvents), via the same skylight assist click
+        // uses. Requires a window_id to have a window to front.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         // Coerce integer or float from JSON for coordinate fields.
@@ -209,25 +215,36 @@ impl Tool for DragTool {
 
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
+        let fg = delivery_mode.is_foreground() && window_id.is_some();
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
             prior_front,
             "drag.CGEvent",
             || async move {
-                tokio::task::spawn_blocking(move || {
-                    let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    crate::input::mouse::drag_at_xy(
-                        pid,
-                        from_sx, from_sy,
-                        to_sx,   to_sy,
-                        Some((from_lx, from_ly)),
-                        Some((to_lx,   to_ly)),
-                        window_id,
-                        duration_ms,
-                        steps,
-                        &m,
-                        button,
-                    )
+                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let do_it = move || -> anyhow::Result<()> {
+                        let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                        crate::input::mouse::drag_at_xy(
+                            pid,
+                            from_sx, from_sy,
+                            to_sx,   to_sy,
+                            Some((from_lx, from_ly)),
+                            Some((to_lx,   to_ly)),
+                            window_id,
+                            duration_ms,
+                            steps,
+                            &m,
+                            button,
+                        )
+                    };
+                    // Foreground rung: brief front → drag → restore prior frontmost.
+                    match (fg, window_id) {
+                        (true, Some(wid)) => {
+                            crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_it)?;
+                            Ok(())
+                        }
+                        _ => do_it(),
+                    }
                 })
                 .await
             },
@@ -254,12 +271,13 @@ impl Tool for DragTool {
             format!(" ({button_str} button)")
         };
 
+        let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps \
+                 in {duration_ms}ms / {steps} steps{mode_label} \
                  (background CGEvent; not driver-verified — confirm via screenshot).{}",
                 from_x as i64, from_y as i64,
                 to_x   as i64, to_y   as i64,
@@ -267,7 +285,9 @@ impl Tool for DragTool {
                 to_sx   as i64, to_sy   as i64,
                 changes.result_suffix(),
             ))
-            .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
+            .with_structured(serde_json::json!({
+                "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+            })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

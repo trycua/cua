@@ -56,7 +56,9 @@ fn def() -> &'static ToolDef {
             wheel notches (pixel path) or keystroke repetitions (keystroke path).".into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid", "direction"],
+            // `pid` conditionally required (validated in code), not pinned in the
+            // schema — keeps the contract consistent across platforms.
+            "required": ["direction"],
             "properties": {
                 "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
                 "pid": { "type": "integer" },
@@ -80,7 +82,8 @@ fn def() -> &'static ToolDef {
                 "element_index": { "type": "integer", "description": "Element from last get_window_state. Routes through the pixel-wheel path AT this element's center — use it to scroll a nested overflow region you located in the AX tree." },
                 "element_token": { "type": "string", "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded. Routes through the pixel-wheel path at the element's center." },
                 "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
-                "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." }
+                "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -98,6 +101,11 @@ impl Tool for ScrollTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        // delivery_mode: foreground briefly fronts the window before the
+        // pixel-wheel dispatch (the explicit last resort for surfaces that drop
+        // background CGEvents). Only the pixel-wheel path honors it; the
+        // keystroke path is background-by-design and untouched.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let direction = match args.require_str("direction") { Ok(v) => v, Err(e) => return e };
         let by = args.str_or("by", "line");
         let amount = args.u64_or("amount", 3) as usize;
@@ -233,16 +241,27 @@ impl Tool for ScrollTool {
 
             let WheelTarget { screen_x, screen_y, win_local, wid } = target;
             let amount_ticks = amount;
+            let fg = delivery_mode.is_foreground() && wid.is_some();
             let result = focus_guard::with_focus_suppressed(
                 Some(pid),
                 prior_front,
                 "scroll.CGScrollWheel",
                 || async move {
-                    tokio::task::spawn_blocking(move || {
-                        crate::input::mouse::scroll_wheel_at_xy(
-                            pid, screen_x, screen_y, win_local, wid,
-                            delta_y, delta_x, amount_ticks,
-                        )
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                        let do_it = move || -> anyhow::Result<()> {
+                            crate::input::mouse::scroll_wheel_at_xy(
+                                pid, screen_x, screen_y, win_local, wid,
+                                delta_y, delta_x, amount_ticks,
+                            )
+                        };
+                        // Foreground rung: brief front → wheel → restore prior frontmost.
+                        match (fg, wid) {
+                            (true, Some(w)) => {
+                                crate::input::skylight::with_foreground_assist(pid as libc::pid_t, w, do_it)?;
+                                Ok(())
+                            }
+                            _ => do_it(),
+                        }
                     })
                     .await
                 },
@@ -250,14 +269,17 @@ impl Tool for ScrollTool {
             .await;
 
             let changes = snapshot.detect_async().await;
+            let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
-                     ({screen_x:.0}, {screen_y:.0}) (background CGEvent; not \
+                     ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
                      driver-verified — confirm via screenshot).{}",
                     changes.result_suffix()
                 ))
-                .with_structured(serde_json::json!({ "path": "cgevent", "verified": false })),
+                .with_structured(serde_json::json!({
+                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                })),
                 Ok(Err(e)) => ToolResult::error(format!("Wheel scroll failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };

@@ -65,24 +65,26 @@ impl DeliveryMode {
 /// input tool's `input_schema.properties.delivery_mode`. Two modes, matching
 /// the macOS / Windows surface.
 pub fn delivery_mode_schema() -> Value {
-    serde_json::json!({
-        "type": "string",
-        "enum": ["background", "foreground"],
-        "default": "background",
-        "description":
-            "Input delivery mode. 'background' (default) never activates or raises \
-             the target window. On X11 it injects via XTEST / the XInput2 master \
-             pointer (no focus steal). On Wayland it goes through libei + \
-             xdg-desktop-portal, which injects to the compositor's input focus — \
-             Wayland's security model has no per-window background targeting, so a \
-             specific non-focused window cannot be aimed at; when no libei backend \
-             is available the tool returns a structured background_unavailable \
-             error. 'foreground' is the explicit escalation: activate the target \
-             (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then \
-             restore the prior active window — a brief focus swap unless the \
-             target was already active. Call bring_to_front first to avoid the \
-             flash. Matches the macOS / Windows delivery_mode surface."
-    })
+    // Source the SHAPE (`type` + `enum`) from the shared canon so it can't drift
+    // from macOS / Windows, while keeping the Linux-specific Wayland/X11 prose
+    // (the gate compares shape only — descriptions may vary per platform). The
+    // `default` advertisement is additive on top of the canon shape.
+    let mut v = cua_driver_core::tool_schema::delivery_mode_schema_with(
+        "Input delivery mode. 'background' (default) never activates or raises \
+         the target window. On X11 it injects via XTEST / the XInput2 master \
+         pointer (no focus steal). On Wayland it goes through libei + \
+         xdg-desktop-portal, which injects to the compositor's input focus — \
+         Wayland's security model has no per-window background targeting, so a \
+         specific non-focused window cannot be aimed at; when no libei backend \
+         is available the tool returns a structured background_unavailable \
+         error. 'foreground' is the explicit escalation: activate the target \
+         (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then \
+         restore the prior active window — a brief focus swap unless the \
+         target was already active. Call bring_to_front first to avoid the \
+         flash. Matches the macOS / Windows delivery_mode surface.",
+    );
+    v["default"] = serde_json::json!("background");
+    v
 }
 
 /// Reason a `background` delivery cannot be performed on Wayland.

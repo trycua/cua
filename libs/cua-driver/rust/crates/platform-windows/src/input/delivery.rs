@@ -106,21 +106,20 @@ impl DeliveryMode {
 /// input tool's `input_schema.properties.delivery_mode`. Two modes, matching
 /// the macOS surface.
 pub fn delivery_mode_schema() -> Value {
-    serde_json::json!({
-        "type": "string",
-        "enum": ["background", "foreground"],
-        "default": "background",
-        "description":
-            "Input delivery mode. 'background' (default) never swaps foreground: \
-             it routes through UIA Invoke / PostMessage and the window is never \
-             raised. For targets whose input stack silently drops posted events \
-             (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) \
-             the tool returns a structured background_unavailable error rather than \
-             fronting. 'foreground' is the explicit escalation: a brief \
-             SetForegroundWindow swap + SendInput, restoring the prior foreground \
-             afterward (call bring_to_front first to avoid the flash). Matches the \
-             macOS delivery_mode surface."
-    })
+    // Borrow the canonical SHAPE (type/enum) from the shared cross-platform
+    // builder so it can never drift from the consistency gate, while keeping the
+    // Windows-specific prose (UIA Invoke / PostMessage / background_unavailable).
+    cua_driver_core::tool_schema::delivery_mode_schema_with(
+        "Input delivery mode. 'background' (default) never swaps foreground: \
+         it routes through UIA Invoke / PostMessage and the window is never \
+         raised. For targets whose input stack silently drops posted events \
+         (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) \
+         the tool returns a structured background_unavailable error rather than \
+         fronting. 'foreground' is the explicit escalation: a brief \
+         SetForegroundWindow swap + SendInput, restoring the prior foreground \
+         afterward (call bring_to_front first to avoid the flash). Matches the \
+         macOS delivery_mode surface.",
+    )
 }
 
 /// Returns true if PostMessage on `hwnd` for this `event_kind` is empirically

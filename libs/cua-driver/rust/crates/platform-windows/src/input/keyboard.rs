@@ -554,10 +554,23 @@ fn modifier_vk(name: &str) -> Option<VIRTUAL_KEY> {
     match name.to_lowercase().as_str() {
         "ctrl" | "control" => Some(VK_CONTROL),
         "shift" => Some(VK_SHIFT),
-        "alt" | "menu" => Some(VK_MENU),
-        "win" | "meta" | "windows" => Some(VK_LWIN),
+        "alt" | "menu" | "option" => Some(VK_MENU),
+        "win" | "meta" | "windows" | "cmd" | "command" => Some(VK_LWIN),
         _ => None,
     }
+}
+
+/// Build the SendInput `INPUT` events that HOLD the named modifier keys around a
+/// pointer action: `(downs, ups)` where `downs` presses each modifier (in order)
+/// and `ups` releases them (reverse order). A pointer path emits `downs`, does
+/// the click, then emits `ups`. Unknown modifier names are skipped. Empty input
+/// → two empty vecs (no-op). Lets the mouse SendInput path hold cmd/shift/alt/
+/// ctrl exactly like `send_key_synthesized` does for keystrokes.
+pub fn modifier_hold_inputs(modifiers: &[&str]) -> (Vec<INPUT>, Vec<INPUT>) {
+    let mod_vks: Vec<VIRTUAL_KEY> = modifiers.iter().filter_map(|m| modifier_vk(m)).collect();
+    let downs: Vec<INPUT> = mod_vks.iter().map(|v| key_input(*v, false)).collect();
+    let ups: Vec<INPUT> = mod_vks.iter().rev().map(|v| key_input(*v, true)).collect();
+    (downs, ups)
 }
 
 fn is_extended(vk: VIRTUAL_KEY) -> bool {

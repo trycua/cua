@@ -448,6 +448,7 @@ impl Tool for GetWindowStateTool {
                 the markdown and the structured elements are truncated \
                 identically. Omit both for current default behaviour.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"X11 XID from list_windows."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
@@ -1180,15 +1181,22 @@ impl Tool for ClickTool {
                 via the virtual-pointer protocol — right/middle return an error rather than \
                 silently degrading to left.".into(),
             input_schema: json!({
-                "type":"object","required":["pid"],"properties":{
-                    "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                // `pid` is conditionally required (validated in code: needed for
+                // window/element clicks, omitted for windowless scope="desktop"),
+                // so it is NOT pinned in `required` — matches the click→[] canon
+                // in cua_driver_core::tool_schema.
+                "type":"object","required":[],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "x":{"type":"number"},
                     "y":{"type":"number"},
-                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    // Shape matches the shared button_schema() canon (string +
+                    // [left,right,middle]); kept inline to carry the Linux/Wayland
+                    // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
                     "count":{"type":"integer"},
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
@@ -1509,11 +1517,12 @@ impl Tool for TypeTextTool {
             description: "Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state (accepted for cross-platform parity). REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1791,12 +1800,13 @@ impl Tool for PressKeyTool {
             description: "Press a key via XSendEvent to a window. No focus steal.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","key"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "key":{"type":"string"},
                     "modifiers":{"type":"array","items":{"type":"string"}},
-                    "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. Resolves window_id when window_id is omitted."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -1917,6 +1927,7 @@ impl Tool for HotkeyTool {
                 Sent via XSendEvent directly to the target pid; target does NOT need to be frontmost.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","keys"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
@@ -2009,10 +2020,11 @@ impl Tool for SetValueTool {
             description: "Set value of an AT-SPI element via SetValue action.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","value"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer","description":"Required when element_index is used; optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "value":{"type":"string"}
                 },"additionalProperties":false
             }),
@@ -2084,14 +2096,19 @@ impl Tool for ScrollTool {
             description: "Scroll the target pid's focused region via XSendEvent Button4/5. \
                 direction required; by defaults to line, amount defaults to 3.".into(),
             input_schema: json!({
-                "type":"object","required":["pid","direction"],"properties":{
+                // `pid` is conditionally required (validated in code), so only
+                // `direction` is pinned — matches the scroll→["direction"] canon
+                // in cua_driver_core::tool_schema.
+                "type":"object","required":["direction"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
+                    "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                     "pid":{"type":"integer"},
                     "direction":{"type":"string","enum":["up","down","left","right"]},
                     "by":{"type":"string","enum":["line","page"]},
                     "amount":{"type":"integer","minimum":1,"maximum":50},
                     "window_id":{"type":"integer"},
-                    "element_index":{"type":"integer"},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -2225,14 +2242,14 @@ impl Tool for DoubleClickTool {
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
-                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -2399,15 +2416,15 @@ impl Tool for RightClickTool {
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index":{"type":"integer","description":"AT-SPI element index from get_window_state. REQUIRES `pid` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op. Pass `window_id` too when known to scope the cache lookup."},
-                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
-                "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys to hold."},
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -2573,7 +2590,7 @@ impl Tool for DragTool {
                           window-local screenshot pixels via XSendEvent (ButtonPress + MotionNotify × steps + ButtonRelease). \
                           duration_ms (default 500), steps (default 20). No focus steal.".into(),
             input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
-                "session":{"type":"string","description":"Optional multi-cursor session id; takes precedence over cursor_id."},
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"Target window XID. Required."},
@@ -2583,8 +2600,8 @@ impl Tool for DragTool {
                 "to_y":{"type":"number"},
                 "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Total drag duration. Default: 500."},
                 "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Intermediate MotionNotify events. Default: 20."},
-                "modifier":{"type":"array","items":{"type":"string"}},
-                "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: left."},
+                "modifier": cua_driver_core::tool_schema::modifier_schema(),
+                "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean"}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -2789,7 +2806,7 @@ impl Tool for MouseButtonDownTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: left."},
+                "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -3204,7 +3221,7 @@ impl Tool for ParallelMouseDragTool {
                     "from_y":{"type":"number"},
                     "to_x":{"type":"number"},
                     "to_y":{"type":"number"},
-                    "button":{"type":"string","enum":["left","right","middle"],"description":"Default: left."},
+                    "button": cua_driver_core::tool_schema::button_schema(),
                     "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Default: 1500 for fn paths, 500 for straight."},
                     "steps":{"type":"integer","minimum":1,"maximum":300,"description":"Motion sub-steps along the whole path. Default: scaled to path length."}
                 },"additionalProperties":false}}
@@ -3615,7 +3632,7 @@ impl Tool for MoveCursorTool {
             name: "move_cursor".into(),
             description: "Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
-                "x":{"type":"number"},"y":{"type":"number"},"session":{"type":"string"},"cursor_id":{"type":"string"}
+                "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -4379,7 +4396,7 @@ impl Tool for TypeTextCharsTool {
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
                     "delay_ms":{"type":"integer","description":"Milliseconds between chars (default 30)."},
-                    "element_index":{"type":"integer"},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "type_chars_only":{"type":"boolean","description":"Skip element focus, type directly. Default false."}
                 },"additionalProperties":false
             }),

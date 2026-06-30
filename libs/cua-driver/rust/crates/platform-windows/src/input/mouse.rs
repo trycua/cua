@@ -326,6 +326,24 @@ pub fn send_click_synthesized(
     count: usize,
     button: &str,
 ) -> Result<()> {
+    send_click_synthesized_mods(target, sx, sy, count, button, &[])
+}
+
+/// Like [`send_click_synthesized`] but HOLDS the named modifier keys
+/// (cmd/shift/option/ctrl) for the duration of the click: modifier-down via
+/// SendInput before the click sequence, modifier-up after. Mirrors the macOS
+/// click `modifier` surface. Only this SendInput (foreground / desktop-scope)
+/// path can carry modifiers — the background UIA-Invoke and PostMessage paths
+/// have no keyboard state to hold them, so a `modifier` passed to a background
+/// pixel/element click is necessarily ignored on those rungs.
+pub fn send_click_synthesized_mods(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
     let target = HWND(target as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -426,6 +444,16 @@ pub fn send_click_synthesized(
         // coordinated move event.
         let _ = SetCursorPos(sx, sy);
 
+        // Hold modifier keys (ctrl/shift/alt/win) across the click — the macOS
+        // `modifier` surface. Pressed via the system input queue so apps that
+        // poll GetKeyState (WPF, Chromium) observe the held state, then released
+        // after the click loop below.
+        let (mod_downs, mod_ups) = crate::input::keyboard::modifier_hold_inputs(modifiers);
+        if !mod_downs.is_empty() {
+            SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            sleep(Duration::from_millis(5));
+        }
+
         let count = count.max(1);
         let mut sent_ok = true;
         for i in 0..count {
@@ -438,6 +466,11 @@ pub fn send_click_synthesized(
             if i + 1 < count {
                 sleep(Duration::from_millis(80));
             }
+        }
+
+        // Release any held modifiers (reverse order) before restoring z-order.
+        if !mod_ups.is_empty() {
+            SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
         }
 
         // Brief settle so the target processes the click, then restore z-order:

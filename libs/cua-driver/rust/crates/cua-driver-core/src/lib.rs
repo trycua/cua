@@ -33,6 +33,7 @@ pub mod session;
 pub mod session_tools;
 pub mod text_sanitize;
 pub mod tool;
+pub mod tool_schema;
 pub mod tool_args;
 pub mod video;
 pub mod video_ffmpeg;

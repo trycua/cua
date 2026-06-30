@@ -40,7 +40,8 @@ fn def() -> &'static ToolDef {
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
                 "window_id":     { "type": "integer", "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)." },
                 "element_index": { "type": "integer", "description": "Element index from last get_window_state. Uses AX path. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." }
+                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -58,6 +59,10 @@ impl Tool for DoubleClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        // delivery_mode: foreground briefly fronts the window before the pixel
+        // double-click (the explicit last resort for surfaces that drop
+        // background CGEvents), via the same skylight assist click uses.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         // Surface 6: token / index precedence — see click.rs for the
         // canonical comment.
@@ -166,18 +171,33 @@ impl Tool for DoubleClickTool {
             cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
         );
 
-        let result = tokio::task::spawn_blocking(move || {
-            if let Some(wid) = window_id {
-                crate::input::mouse::click_at_xy_with_window_local(
-                    pid, screen_x, screen_y, win_local_x, win_local_y, wid, 2, &[],
-                )
-            } else {
-                crate::input::mouse::click_at_xy(pid, screen_x, screen_y, 2, &[])
+        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let do_click = move || -> anyhow::Result<()> {
+                if let Some(wid) = window_id {
+                    crate::input::mouse::click_at_xy_with_window_local(
+                        pid, screen_x, screen_y, win_local_x, win_local_y, wid, 2, &[],
+                    )
+                } else {
+                    crate::input::mouse::click_at_xy(pid, screen_x, screen_y, 2, &[])
+                }
+            };
+            // Foreground rung: brief front → double-click → restore prior frontmost.
+            match (fg, window_id) {
+                (true, Some(wid)) => {
+                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_click)?;
+                    Ok(())
+                }
+                _ => do_click(),
             }
         }).await;
 
+        let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}).")),
+            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
+                .with_structured(serde_json::json!({
+                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                })),
             Ok(Err(e)) => ToolResult::error(format!("Double-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

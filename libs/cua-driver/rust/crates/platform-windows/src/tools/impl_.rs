@@ -720,6 +720,7 @@ impl Tool for GetWindowStateTool {
                 (≤5 000 elements, depth ≤25).\n\n\
                 Windows requires no special permissions.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
@@ -2155,14 +2156,16 @@ impl Tool for ClickTool {
                 fields aren't supported yet.".into(),
             input_schema: json!({
                 "type":"object","properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID. Required UNLESS using window-less desktop-scope clicks: with capture_scope=\"desktop\" and no pid/window_id, x/y are treated as TRUE SCREEN pixels (call get_desktop_state first)."},
                     "window_id":{"type":"integer","description":"HWND for the window whose get_window_state produced the element_index. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
                     "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
-                    "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Windows-only convenience; Swift exposes right-click as a separate `right_click` tool."},
+                    "button": cua_driver_core::tool_schema::button_schema(),
                     "count":{"type":"integer","minimum":1,"maximum":3,"description":"Click count — 1 (single), 2 (double), 3 (triple). Default 1."},
+                    "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
@@ -2210,6 +2213,7 @@ impl Tool for ClickTool {
             }
             let button = if button_raw.is_empty() { "left".to_string() } else { button_raw };
             let count = args.u64_or("count", 1) as usize;
+            let modifiers: Vec<String> = args.str_array("modifier");
             let sx = args.f64_or("x", 0.0) as i32;
             let sy = args.f64_or("y", 0.0) as i32;
 
@@ -2233,7 +2237,8 @@ impl Tool for ClickTool {
                     anyhow::bail!("No window under screen point ({sx},{sy}).");
                 }
                 let hwnd_u = target.0 as u64;
-                crate::input::send_click_synthesized(hwnd_u, sx, sy, count, &button)?;
+                let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                crate::input::send_click_synthesized_mods(hwnd_u, sx, sy, count, &button, &mod_refs)?;
                 Ok(hwnd_u)
             }).await;
             return match send_result {
@@ -2287,6 +2292,12 @@ impl Tool for ClickTool {
         }
         let button = if button_raw.is_empty() { "left".to_string() } else { button_raw };
         let count = args.u64_or("count", 1) as usize;
+        // macOS click `modifier` surface: held keys (cmd/shift/option/ctrl). Only
+        // the SendInput rung (delivery_mode:"foreground" pixel tap, and the
+        // window-less desktop-scope click above) can hold them; the background
+        // UIA-Invoke / PostMessage rungs have no keyboard state to carry them, so
+        // a modifier passed to a background click is necessarily ignored there.
+        let modifiers: Vec<String> = args.str_array("modifier");
         let delivery = DeliveryMode::from_args(&args);
         // For every non-foreground click, mark the target window
         // non-activatable (WS_EX_NOACTIVATE) for the duration so a target that
@@ -2672,8 +2683,10 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
+                let mods_owned = modifiers.clone();
                 let send_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized(hwnd, sx as i32, sy as i32, count, &btn)
+                    let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    crate::input::send_click_synthesized_mods(hwnd, sx as i32, sy as i32, count, &btn, &mod_refs)
                 }).await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
@@ -2825,11 +2838,12 @@ impl Tool for TypeTextTool {
                 UIA path (SetValue is atomic).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
                     "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). When supplied, type_text (1) writes via UIA ValuePattern.SetValue on that element (works for WPF/WinForms/UWP/XAML without focus steal) and (2) verifies by reading that element's value back by handle — focus-independent, so the structured `verify` reaches `confirmed`/`unchanged` even when the target isn't foreground. Strongly preferred over typing into 'whatever is focused' (no element_index), which falls back to PostMessage WM_CHAR + a foreground-only focused-element read-back. Requires window_id."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
@@ -3274,6 +3288,7 @@ impl Tool for PressKeyTool {
                 currently no-op on Windows (no UIA SetFocus path wired up yet).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","key"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID."},
                     "key":{"type":"string","description":"Key name (return, tab, escape, up, down, left, right, space, delete, home, end, pageup, pagedown, f1-f12, letter, digit)."},
                     "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier names held while the key is pressed (ctrl/shift/alt/win)."},
@@ -3426,6 +3441,7 @@ impl Tool for HotkeyTool {
                 letters, digits). Order: modifiers first, one non-modifier last.".into(),
             input_schema: json!({
                 "type":"object","required":["pid","keys"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID."},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
@@ -3644,10 +3660,11 @@ impl Tool for SetValueTool {
                 caveat as Swift's `AXValue`-vs-WebKit).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","value"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID."},
                     "window_id":{"type":"integer","description":"HWND of the window. Required when element_index is used; optional when element_token is supplied (the token carries it)."},
-                    "element_index":{"type":"integer","description":"Element index from the last get_window_state. Required unless element_token is supplied. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."}
                 },"additionalProperties":false
             }),
@@ -3811,6 +3828,7 @@ impl Tool for ScrollTool {
                 no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).".into(),
             input_schema: json!({
                 "type":"object","required":["direction"],"properties":{
+                    "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID. Required UNLESS using window-less desktop-scope scroll: with capture_scope=\"desktop\" and no pid/window_id, x/y are TRUE SCREEN pixels and the wheel routes to the window under that point."},
                     "direction":{"type":"string","enum":["up","down","left","right"]},
                     "by":{"type":"string","enum":["line","page"],"description":"Scroll granularity. Default: line."},
@@ -3820,7 +3838,7 @@ impl Tool for ScrollTool {
                     "y":{"type":"number","description":"Screen-absolute Y (desktop scope only). Must be paired with x and no pid/window_id."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required when element_index is used; otherwise auto-resolves the pid's first visible window."},
                     "element_index":{"type":"integer","description":"Optional element_index. Accepted for parity; currently no-op on Windows."},
-                    "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -4261,13 +4279,14 @@ impl Tool for DoubleClickTool {
                 `element_index` is used. The macOS-only `modifier` field is accepted for \
                 parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Target process ID."},
                 "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
-                "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
-                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
-                "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the gesture. Accepted for parity; currently no-op on Windows."},
+                "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "from_zoom":{"type":"boolean","description":"After a zoom call, pass true to translate zoom-image coords back to window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -4532,13 +4551,14 @@ impl Tool for RightClickTool {
                 `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't \
                 propagate modifier-key state).".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Target process ID."},
                 "window_id":{"type":"integer","description":"HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it)."},
-                "element_index":{"type":"integer","description":"Element index from the last get_window_state for the same (pid, window_id). REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."},
-                "element_token":{"type":"string","description":"Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."},
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x":{"type":"number","description":"X in window-local screenshot pixels. Must be provided together with y."},
                 "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
-                "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys held during the right-click. Accepted for parity; currently no-op on Windows."},
+                "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "from_zoom":{"type":"boolean","description":"After a zoom call, pass true to translate zoom-image coords back to window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -4782,6 +4802,7 @@ impl Tool for DragTool {
                           duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate \
                           WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true.".into(),
             input_schema: json!({"type":"object","required":["pid","from_x","from_y","to_x","to_y"],"properties":{
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Target process ID."},
                 "window_id":{"type":"integer","description":"Target window handle (HWND). Optional — driver picks frontmost window of pid when omitted."},
                 "from_x":{"type":"number","description":"Drag-start X in window-local screenshot pixels."},
@@ -4790,8 +4811,8 @@ impl Tool for DragTool {
                 "to_y":{"type":"number","description":"Drag-end Y in window-local screenshot pixels."},
                 "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Wall-clock duration of drag path. Default: 500."},
                 "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Number of intermediate WM_MOUSEMOVE events. Default: 20."},
-                "modifier":{"type":"array","items":{"type":"string"},"description":"Modifier keys: cmd/shift/option/ctrl (held via keyboard)."},
-                "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: left."},
+                "modifier": cua_driver_core::tool_schema::modifier_schema(),
+                "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean","description":"When true, coordinates are in the last zoom image for this pid."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -5209,6 +5230,7 @@ impl Tool for MoveCursorTool {
             name: "move_cursor".into(),
             description: "Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
+                "session": cua_driver_core::tool_schema::session_schema(),
                 "x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
@@ -6111,8 +6133,8 @@ impl Tool for ZoomTool {
                 `pid` is also required (used to scope the zoom translation registry, matching \
                 Swift's per-pid zoom context).".into(),
             input_schema: json!({
-                "type":"object","required":["pid","window_id","x1","y1","x2","y2"],"properties":{
-                    "pid":{"type":"integer","description":"Target process ID."},
+                "type":"object","required":["window_id","x1","y1","x2","y2"],"properties":{
+                    "pid":{"type":"integer","description":"Target process ID. Validated in code (an explicit \"Missing required integer field pid\" error when absent); kept out of `required` to match the shared cross-platform zoom contract."},
                     "window_id":{"type":"integer","description":"HWND of the target window."},
                     "x1":{"type":"number","description":"Left edge of the region (resized-image pixels)."},
                     "y1":{"type":"number","description":"Top edge of the region (resized-image pixels)."},

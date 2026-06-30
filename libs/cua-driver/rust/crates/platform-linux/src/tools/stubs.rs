@@ -51,7 +51,7 @@ stub_tool!(list_windows_m, ListWindowsTool, "list_windows",
 stub_tool!(get_window_state_m, GetWindowStateTool, "get_window_state",
     "Walk a running app's AT-SPI tree and return a Markdown rendering of its UI. \
      `ax` (default) returns the tree only; `vision` returns a screenshot only.",
-    serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema()},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema()},"additionalProperties":false}));
 
 stub_tool!(launch_app_m, LaunchAppTool, "launch_app",
     "Launch an app in the background. Provide name or bundle_id.",
@@ -63,39 +63,39 @@ stub_tool!(kill_app_m, KillAppTool, "kill_app",
 
 stub_tool!(click_m, ClickTool, "click",
     "Click at (x, y) or on an AT-SPI element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier":{"type":"array","items":{"type":"string"}},"from_zoom":{"type":"boolean"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false}));
 
 stub_tool!(double_click_m, DoubleClickTool, "double_click",
     "Double-click at (x, y) or on an AT-SPI element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_index":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
 
 stub_tool!(right_click_m, RightClickTool, "right_click",
     "Right-click (AT-SPI action on element, or synthesized event at x,y).",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"pid":{"type":"integer"},"element_index":{"type":"integer"},"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema()},"additionalProperties":false}));
 
 stub_tool!(type_text_m, TypeTextTool, "type_text",
     "Insert text into the target pid via AT-SPI SetTextContents or XSendEvent keystrokes.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"element_index":{"type":"integer"},"window_id":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"}},"additionalProperties":false}));
 
 stub_tool!(type_chars_m, TypeTextCharsTool, "type_text_chars",
     "Type text character-by-character with configurable per-character delay.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"delay_ms":{"type":"integer"},"window_id":{"type":"integer"},"element_index":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"delay_ms":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
 
 stub_tool!(press_key_m, PressKeyTool, "press_key",
     "Press and release a single key delivered directly to the target pid. No focus steal.",
-    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_index":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
 
 stub_tool!(hotkey_m, HotkeyTool, "hotkey",
     "Press a combination of keys simultaneously, e.g. [\"ctrl\",\"c\"] for Copy.",
-    serde_json::json!({"type":"object","required":["pid","keys"],"properties":{"pid":{"type":"integer"},"keys":{"type":"array","items":{"type":"string"},"minItems":2}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","keys"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"keys":{"type":"array","items":{"type":"string"},"minItems":2}},"additionalProperties":false}));
 
 stub_tool!(set_value_m, SetValueTool, "set_value",
     "Set the value of an AT-SPI element (text field, dropdown, checkbox).",
-    serde_json::json!({"type":"object","required":["pid","window_id","element_index","value"],"properties":{"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index":{"type":"integer"},"value":{"type":"string"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","value"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"value":{"type":"string"}},"additionalProperties":false}));
 
 stub_tool!(scroll_m, ScrollTool, "scroll",
     "Scroll the target pid's focused region. direction required; by defaults to line, amount defaults to 3.",
-    serde_json::json!({"type":"object","required":["pid","direction"],"properties":{"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_index":{"type":"integer"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
 
 stub_tool!(screenshot_m, ScreenshotTool, "screenshot",
     "Capture a screenshot. Without window_id captures the full display. Supports png and jpeg formats.",
@@ -153,7 +153,7 @@ mod move_cursor_m {
                 name: "move_cursor".into(),
                 description: "Move the agent cursor overlay to (x, y). Does NOT move the real \
                     mouse cursor — the user's cursor stays where it is.".into(),
-                input_schema: serde_json::json!({"type":"object","required":["x","y"],"properties":{"x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}},"additionalProperties":false}),
+                input_schema: serde_json::json!({"type":"object","required":["x","y"],"properties":{"x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"}},"additionalProperties":false}),
                 read_only: false, destructive: false, idempotent: true, open_world: false,
             })
         }

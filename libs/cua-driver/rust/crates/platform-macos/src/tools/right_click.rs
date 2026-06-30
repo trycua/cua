@@ -65,7 +65,8 @@ fn def() -> &'static ToolDef {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only."
-                }
+                },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -83,6 +84,11 @@ impl Tool for RightClickTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        // delivery_mode: foreground briefly fronts the window before the pixel
+        // right-click (the explicit last resort for surfaces that drop
+        // background CGEvents), via the same skylight assist click uses. The AX
+        // (AXShowMenu) path is background-by-design and untouched.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         // Surface 6: element_token / element_index precedence resolution.
@@ -206,18 +212,33 @@ impl Tool for RightClickTool {
             format!(" with {}", modifiers.join("+"))
         };
 
-        let result = tokio::task::spawn_blocking(move || {
-            let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            if let Some(wid) = window_id {
-                crate::input::mouse::right_click_at_xy_with_window_local(
-                    pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
-                )
-            } else {
-                crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
+        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let do_it = move || -> anyhow::Result<()> {
+                let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if let Some(wid) = window_id {
+                    crate::input::mouse::right_click_at_xy_with_window_local(
+                        pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
+                    )
+                } else {
+                    crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
+                }
+            };
+            // Foreground rung: brief front → right-click → restore prior frontmost.
+            match (fg, window_id) {
+                (true, Some(wid)) => {
+                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_it)?;
+                    Ok(())
+                }
+                _ => do_it(),
             }
         }).await;
+        let mode_label = if fg { " (delivery_mode:foreground)" } else { "" };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}).")),
+            Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
+                .with_structured(serde_json::json!({
+                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                })),
             Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

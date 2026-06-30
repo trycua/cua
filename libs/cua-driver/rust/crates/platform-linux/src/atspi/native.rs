@@ -559,6 +559,123 @@ pub fn walk_tree_bounded(
     })
 }
 
+/// Enumerate top-level windows from the AT-SPI registry — the window-listing
+/// fallback for Wayland compositors that DON'T implement
+/// `zwlr_foreign_toplevel_management` (GNOME Mutter, KDE KWin). Native Wayland
+/// apps have no X11 XID and Mutter/KWin expose no foreign-toplevel list, so
+/// `wayland::list_windows` comes back empty there and the whole element flow
+/// (get_window_state -> click by element_index) is unreachable — even though the
+/// AT-SPI tree itself is keyed by PID and works fine (see `walk_tree_bounded`,
+/// whose walk ignores the xid). This bridges that gap: it returns one
+/// [`WindowInfo`] per application top-level frame, with a SYNTHETIC but stable
+/// `xid`. Downstream `get_window_state` / `click` walk the tree by PID and never
+/// dereference the xid against X11, so the synthetic value only needs to be
+/// non-zero and to round-trip back from the caller.
+pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    use crate::x11::WindowInfo;
+    runtime().block_on(async {
+        let work = async {
+            let conn = AccessibilityConnection::new()
+                .await
+                .map_err(|e| anyhow!("AT-SPI connect failed: {e}"))?;
+            let zconn = conn.connection();
+            let root = match call(conn.root_accessible_on_registry()).await {
+                Some(Ok(r)) => r,
+                _ => return Ok(Vec::new()),
+            };
+            let dbus = atspi::zbus::fdo::DBusProxy::new(zconn)
+                .await
+                .map_err(|e| anyhow!("DBus proxy unavailable: {e}"))?;
+            let apps = match call(root.get_children()).await {
+                Some(Ok(a)) => a,
+                _ => return Ok(Vec::new()),
+            };
+            let mut out: Vec<WindowInfo> = Vec::new();
+            for app_ref in apps {
+                // Skip apps that can't answer the pid query (modal-grabbed) and
+                // apps that don't match the filter.
+                let cpid = match call(pid_of(&dbus, &app_ref)).await {
+                    Some(Some(p)) => p,
+                    _ => continue,
+                };
+                if let Some(want) = filter_pid {
+                    if cpid != want {
+                        continue;
+                    }
+                }
+                let app = match call(accessible_for(zconn, &app_ref)).await {
+                    Some(Ok(a)) => a,
+                    _ => continue,
+                };
+                let app_name = call(app.name()).await.and_then(|r| r.ok()).unwrap_or_default();
+                let frames = match call(app.get_children()).await {
+                    Some(Ok(c)) => c,
+                    _ => Vec::new(),
+                };
+                let mut emitted = 0usize;
+                for (i, frame_ref) in frames.iter().enumerate() {
+                    let frame = match call(accessible_for(zconn, frame_ref)).await {
+                        Some(Ok(f)) => f,
+                        _ => continue,
+                    };
+                    let role = call(frame.get_role_name())
+                        .await
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default();
+                    if !matches!(
+                        role.as_str(),
+                        "frame" | "window" | "dialog" | "alert" | "file chooser"
+                    ) {
+                        continue;
+                    }
+                    let title = call(frame.name())
+                        .await
+                        .and_then(|r| r.ok())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| app_name.clone());
+                    // Stable, non-zero, unique per (pid, frame ordinal).
+                    let xid = (((cpid as u64) << 16) | (i as u64)).max(1);
+                    out.push(WindowInfo {
+                        xid,
+                        pid: Some(cpid),
+                        title,
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    });
+                    emitted += 1;
+                }
+                // App with no enumerable top-level frame still gets one handle so
+                // the by-pid AT-SPI element flow stays reachable.
+                if emitted == 0 {
+                    out.push(WindowInfo {
+                        xid: (cpid as u64).max(1),
+                        pid: Some(cpid),
+                        title: app_name,
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    });
+                }
+            }
+            Ok::<_, anyhow::Error>(out)
+        };
+        match tokio::time::timeout(OP_TIMEOUT, work).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                dlog!("atspi list_windows failed: {e}");
+                Vec::new()
+            }
+            Err(_) => {
+                dlog!("atspi list_windows timed out");
+                Vec::new()
+            }
+        }
+    })
+}
+
 /// Pick the editable node to write into, by priority:
 ///   1. the focused editable (if the toolkit exposes focus),
 ///   2. an editable inside web/document content — for a browser this is the

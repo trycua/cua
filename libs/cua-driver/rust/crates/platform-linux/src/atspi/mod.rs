@@ -90,6 +90,15 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<String> {
     native::perform_action(pid, idx)
 }
 
+/// Enumerate top-level windows from the AT-SPI registry. The window-listing
+/// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
+/// (GNOME Mutter / KDE KWin), where native apps have no X11 XID. Returns one
+/// entry per application top-level frame with a synthetic, stable `xid` that
+/// round-trips into the by-pid AT-SPI element flow. See [`native::list_windows`].
+pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
+    native::list_windows(filter_pid)
+}
+
 /// Resolve a window-local pixel to the actionable AT-SPI element at that point
 /// and perform its primary action — the no-focus-steal way to land a *pixel*
 /// click on toolkits (GTK) that drop synthetic X11 pointer events. Returns

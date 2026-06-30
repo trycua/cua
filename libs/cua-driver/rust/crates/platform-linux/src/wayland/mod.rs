@@ -1350,10 +1350,31 @@ pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
 /// Window-enumeration dispatcher: native Wayland when applicable, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if is_wayland() {
+        // wlroots compositors expose zwlr_foreign_toplevel_management — use it
+        // (it has no pid, so filter_pid can't apply there).
         match list_windows() {
-            Ok(ws) => return ws, // foreign-toplevel has no pid, so filter_pid can't apply
-            Err(e) => tracing::warn!("wayland list_windows failed, falling back to X11: {e}"),
+            Ok(ws) if !ws.is_empty() => return ws,
+            Ok(_) => {
+                // GNOME Mutter / KDE KWin don't implement foreign-toplevel, so the
+                // list came back empty. Native Wayland apps have no X11 XID either,
+                // so fall back to enumerating windows from the AT-SPI registry
+                // (keyed by pid — the same tree get_window_state walks).
+                let ws = crate::atspi::list_windows(filter_pid);
+                if !ws.is_empty() {
+                    return ws;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "wayland foreign-toplevel list_windows failed: {e}; trying AT-SPI registry"
+                );
+                let ws = crate::atspi::list_windows(filter_pid);
+                if !ws.is_empty() {
+                    return ws;
+                }
+            }
         }
+        // Last resort under Wayland: an Xwayland app may still have an X11 XID.
     }
     crate::x11::list_windows(filter_pid)
 }

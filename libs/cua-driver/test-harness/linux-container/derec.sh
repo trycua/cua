@@ -97,6 +97,25 @@ for f in fails[:8]: print('  -', f)
 sys.exit(0 if not fails else 1)
 PY
   ;;
+ keytest) # foreground-keyboard EFFECT check: AC, 3 * 4 = -> display reads 12
+  # Guards the Xvnc XTEST keyboard fix (round-trip-before-close + shift-level
+  # auto-Shift so '*' multiplies instead of typing '8'). Effect-confirmed, not
+  # status-confirmed: scans the AT-SPI tree for the result "12" so it generalises
+  # across kcalc (Qt), gnome-calculator (GTK4) and galculator (GTK3), each of
+  # which exposes its LCD under a different role.
+  PID=$(cat $W/pid); WID=$(cat $W/wid)
+  "$CUA" call press_key "{\"pid\":$PID,\"window_id\":$WID,\"key\":\"Escape\",\"delivery_mode\":\"foreground\"}" >/dev/null 2>&1; sleep 0.4
+  for k in 3 asterisk 4 equal; do
+    "$CUA" call press_key "{\"pid\":$PID,\"window_id\":$WID,\"key\":\"$k\",\"delivery_mode\":\"foreground\"}" >/dev/null 2>&1
+    sleep 0.5
+  done
+  sleep 0.4
+  "$CUA" call get_window_state "{\"pid\":$PID,\"window_id\":$WID,\"capture_mode\":\"ax\"}" 2>/dev/null | python3 -c "import json,sys
+d=json.load(sys.stdin)
+hit=any(str(e.get('label')).strip()=='12' or str(e.get('value')).strip()=='12' for e in d.get('elements',[]))
+print('FOREGROUND KEY EFFECT:', 'PASS (3*4=12 landed)' if hit else 'FAIL (display != 12)')
+sys.exit(0 if hit else 1)"
+  ;;
  record) # record <idx>...  start_recording -> element clicks (in order) -> stop
   PID=$(cat $W/pid); WID=$(cat $W/wid); shift
   rm -rf $W/rec; mkdir -p $W/rec
@@ -111,5 +130,5 @@ PY
   "$CUA" call stop_recording '{}' 2>&1 | head -1
   ls -la $W/rec/recording.mp4 2>&1 | tail -1
   ;;
- *) echo "usage: derec.sh setup|verify|record <idx>...|env  (APP=gnome-calculator|kcalc|galculator)";;
+ *) echo "usage: derec.sh setup|verify|keytest|record <idx>...|env  (APP=gnome-calculator|kcalc|galculator)";;
 esac

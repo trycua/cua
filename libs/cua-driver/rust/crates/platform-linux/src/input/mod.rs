@@ -1777,6 +1777,67 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Press a named key (with optional modifiers) into whatever window holds X
+/// keyboard focus, via the XTest extension. This is the REAL-input analogue of
+/// [`send_key`]: XTest events are indistinguishable from physical input, so
+/// GTK/Qt/Chromium/Firefox accept them — whereas the synthetic `XSendEvent`
+/// path in [`send_key`] is silently dropped by those toolkits (they check the
+/// `send_event` flag). Used by the `foreground` delivery rung, which activates
+/// the target first, so XTest-to-focus lands on the intended widget.
+///
+/// Modifiers (e.g. `["ctrl"]`, `["ctrl","shift"]`) are pressed before and
+/// released after the key. Modifier names resolve to their keysyms
+/// (Control_L/Shift_L/Alt_L/Super_L), then to keycodes that are in the server's
+/// modifier map, so the modifier mask actually engages. Sparse/headless keymaps
+/// that lack a keysym borrow a spare keycode (xdotool-style) via
+/// [`keycode_for_keysym`]; the returned guards restore the map on drop.
+pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (conn, _) = connect_x11_for_input()?;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+
+    // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
+    // until after the events are delivered (drop at end of fn).
+    let mut guards = Vec::new();
+    let mut mod_keycodes = Vec::new();
+    for m in modifiers {
+        let ks = key_name_to_keysym(m)?;
+        let (kc, guard) = keycode_for_keysym(&conn, &mapping, ks, m)?;
+        if let Some(g) = guard {
+            guards.push(g);
+        }
+        mod_keycodes.push(kc);
+    }
+
+    // Resolve the main key.
+    let keysym = key_name_to_keysym(key)?;
+    let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+    if let Some(g) = guard {
+        guards.push(g);
+    }
+
+    // Press modifiers, tap the key, release modifiers in reverse order.
+    for &kc in &mod_keycodes {
+        conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    sleep(Duration::from_millis(KEY_DELAY_MS));
+    conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    for &kc in mod_keycodes.iter().rev() {
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    conn.flush()?;
+
+    // If we borrowed spare keycodes, round-trip so the target translates the
+    // events under the temporary mapping before the guards restore it on drop.
+    if !guards.is_empty() {
+        let _ = conn.get_input_focus()?.reply();
+        sleep(Duration::from_millis(KEY_DELAY_MS));
+    }
+    drop(guards);
+    Ok(())
+}
+
 /// Screen-absolute click via the XTest extension — the `capture_scope="desktop"`
 /// foreground click. It warps the real pointer to `(x, y)` and injects a true
 /// button press/release there, so the event lands on whatever window owns that

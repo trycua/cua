@@ -1293,6 +1293,24 @@ impl Tool for ClickTool {
                         return Ok("x11_atspi");
                     }
                 }
+                if fg {
+                    // Foreground: the window is already activated. Deliver a REAL
+                    // XTest warp+button click. Synthetic XSendEvent button events
+                    // are dropped by GTK/Qt/Chromium/Firefox, and the MPX uinput
+                    // path needs /dev/uinput, which headless X servers
+                    // (Xvfb/Xtigervnc) lack — so neither focuses the clicked
+                    // widget. XTest is accepted as real input and gives the
+                    // widget keyboard focus, so a following type lands.
+                    if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
+                        crate::input::send_click_xtest_desktop(
+                            sx.round() as i32,
+                            sy.round() as i32,
+                            button,
+                            count,
+                        )?;
+                        return Ok("x11_xtest_fg");
+                    }
+                }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, button, count)?;
                 Ok(if fg { "x11_pixel_fg" } else { "x11_pixel" })
             };
@@ -1696,11 +1714,14 @@ impl Tool for PressKeyTool {
                 }
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-            // foreground: activate the window first so the key reaches a widget
-            // that only accepts input while focused; background = direct send.
+            // foreground: activate the window first, then inject a REAL key via
+            // XTest. Synthetic XSendEvent keys (`send_key`) are dropped by
+            // GTK/Qt/Chromium/Firefox, so the foreground rung must use XTest —
+            // it delivers to the now-focused window. background = direct
+            // XSendEvent (no focus steal) for apps that accept it.
             if delivery.is_foreground() {
                 return crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_key(xid, &key_for_task, &m)
+                    crate::input::send_key_xtest(&key_for_task, &m)
                 });
             }
             crate::input::send_key(xid, &key_for_task, &m)
@@ -1792,11 +1813,13 @@ impl Tool for HotkeyTool {
                 return crate::wayland::hotkey(&combo);
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-            // foreground: activate the target first so the accelerator reaches a
-            // widget that reads its key state only while focused.
+            // foreground: activate the target first, then inject the accelerator
+            // as REAL key events via XTest. Synthetic XSendEvent keys
+            // (`send_key`) are dropped by GTK/Qt/Chromium/Firefox, so the
+            // foreground rung must use XTest, which reaches the focused window.
             if delivery.is_foreground() {
                 return crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_key(xid, &key, &m)
+                    crate::input::send_key_xtest(&key, &m)
                 });
             }
             crate::input::send_key(xid, &key, &m)

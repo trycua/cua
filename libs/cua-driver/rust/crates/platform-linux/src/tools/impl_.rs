@@ -913,6 +913,14 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     if !crate::overlay::is_enabled_for(cursor_id) {
         return;
     }
+    // Wayland (Mutter/KDE, no layer-shell): glide the agent cursor via the
+    // WinRects shell extension. It eases to the target itself, so send the
+    // destination once here rather than the interpolated stream the X11 render
+    // loop uses (which is invisible on those compositors anyway). No-op if the
+    // extension isn't installed.
+    if crate::wayland::is_wayland() {
+        crate::wayland::shell_helper::move_cursor(sx as i32, sy as i32);
+    }
     let pos = crate::overlay::current_position_for(cursor_id);
     if pos.0 < 0.0 && pos.1 < 0.0 {
         crate::overlay::send_command_for(

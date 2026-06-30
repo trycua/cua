@@ -1196,7 +1196,15 @@ fn parse_gtk_frame_extents(vals: &[u32]) -> Option<(i32, i32)> {
 /// query screen origins, by design) or when no X11 window resolves.
 fn window_to_screen_offset(pid: u32, xid: u64) -> Option<(i32, i32)> {
     if crate::wayland::is_wayland() {
-        return None;
+        // Native Wayland: clients can't query a window's screen origin, and
+        // AT-SPI CoordType::Screen collapses to (0,0) on Mutter. The bundled
+        // `org.cua.WinRects` GNOME Shell extension supplies the window's screen
+        // origin (`meta_window.get_frame_rect()`); combined with the per-widget
+        // CoordType::Window coords (which GTK4 reports correctly on Wayland too)
+        // this reconstructs real screen coords — the GNOME analogue of the X11
+        // `_GTK_FRAME_EXTENTS` path below. `None` (no extension) keeps the
+        // legacy Screen path (still (0,0), but no worse than before).
+        return crate::wayland::shell_helper::window_origin_for_pid(pid);
     }
     // Resolve a usable window xid. `xid == 0` means "no hint" (get_element_bounds
     // has no window context); fall back to this pid's first window — the same

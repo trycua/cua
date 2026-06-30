@@ -14,6 +14,7 @@ pub mod persistent_vptr;
 pub mod portal_screenshot;
 pub mod overlay;
 pub mod ext_screencopy;
+pub mod shell_helper;
 // `portal_screencast` (PipeWire per-window capture) and `libei` (GNOME/KDE
 // input via xdg-desktop-portal RemoteDesktop) need libpipewire-0.3 and reis
 // at build time, which the cross-platform release container (debian:11,

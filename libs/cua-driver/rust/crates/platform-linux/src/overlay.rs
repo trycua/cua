@@ -138,6 +138,22 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     {
         if crate::wayland::is_wayland() {
             let _ = crate::wayland::overlay::forward(&msg);
+            // Non-wlroots compositors (GNOME Mutter / KDE) expose no
+            // `zwlr_layer_shell_v1`, so the forward above is a no-op there. Drive
+            // the agent cursor through the WinRects shell extension instead
+            // (no-op if it isn't installed). Only the SINGLE positioning commands
+            // are forwarded — never the interpolated `MoveTo` stream (the
+            // extension does its own easing; the glide target is sent once from
+            // `overlay_glide_to_for`).
+            match &cmd {
+                cursor_overlay::OverlayCommand::ClickPulse { x, y } => {
+                    crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
+                }
+                cursor_overlay::OverlayCommand::SnapTo { x, y, .. } => {
+                    crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
+                }
+                _ => {}
+            }
         }
     }
 }

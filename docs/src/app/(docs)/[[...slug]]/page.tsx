@@ -12,9 +12,11 @@ import { notFound } from 'next/navigation';
 import { PageFeedback } from '@/components/page-feedback';
 import { DocActionsMenu } from '@/components/doc-actions-menu';
 
-export default async function Page(props: { params: Promise<{ slug: string[] }> }) {
+export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
-  const slug = params.slug;
+  // Optional catch-all: the docs index (`/`) arrives as an undefined slug, which
+  // resolves to content/docs/index.mdx. Any deeper path arrives as segments.
+  const slug = params.slug ?? [];
 
   const page = source.getPage(slug);
   if (!page) notFound();
@@ -272,10 +274,10 @@ export function generateStaticParams() {
 }
 
 export async function generateMetadata(props: {
-  params: Promise<{ slug: string[] }>;
+  params: Promise<{ slug?: string[] }>;
 }): Promise<Metadata> {
   const params = await props.params;
-  const page = source.getPage(params.slug);
+  const page = source.getPage(params.slug ?? []);
   if (!page) notFound();
 
   const title = `${page.data.title} | Cua`;

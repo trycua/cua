@@ -5,7 +5,7 @@ description: Documented behavioral limits of Cua Driver and available workaround
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Cua Driver's *no-foreground contract* holds for every app it reaches via AX or via the SkyLight-routed pixel click. Four categories of target fall outside that envelope.
+Cua Driver's *no-foreground contract* holds for every app it reaches via AX or a routed pixel click. A handful of targets and platform quirks fall outside that envelope. The macOS cases come first, followed by the Linux session-stack limits.
 
 ---
 
@@ -74,6 +74,36 @@ Cua Driver's *no-foreground contract* holds for every app it reaches via AX or v
 <Callout type="info">
   `set_value` is the correct approach 90% of the time. It sidesteps both the minimized-focus issue and the general "which event commits this field" ambiguity.
 </Callout>
+
+---
+
+## Native Wayland apps can't receive synthetic keystrokes
+
+**Affected:** GTK/Qt apps running as native Wayland clients on GNOME Mutter or KDE KWin (no X11 surface).
+
+**Symptom:** `press_key` / `hotkey` — and `type_text` into a field that isn't AT-SPI-editable — return success but the keystroke never reaches the app. Clicks and element actions on the same app work fine.
+
+**Cause:** Wayland blocks one client from synthesizing input into another by design. The compositor-cooperative paths that would re-enable it are not free here: `libei` requires a one-time RemoteDesktop-portal grant, and `wtype` (virtual-keyboard) is wlroots-only, so it fails on Mutter/KWin.
+
+**Workarounds:**
+
+1. Type into accessible text fields with `type_text` — AT-SPI `insertText` writes the field directly, no synthetic key event involved.
+2. Drive controls by `element_index` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
+3. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It then exposes an X11 surface and the X11 `XTEST` keyboard path applies.
+
+<Callout type="info">
+  This is keyboard-only. Background **clicks and element actions** land on native Wayland via AT-SPI; coordinate (vision) clicks land too, resolved to the element under the pixel.
+</Callout>
+
+---
+
+## GTK4 reports (0,0) screen coordinates over AT-SPI (handled)
+
+**Symptom:** none in normal use — element `frame`s, the agent cursor, and vision clicks are correct on GTK4. Documented here because the underlying toolkit bug is real and visible in raw AT-SPI.
+
+**Cause:** GTK4's AT-SPI bridge returns `Component.GetExtents(SCREEN)` as `(0,0)` for every widget (GNOME/gtk issues #1564 / #1739). A naive consumer would collapse every element to the window's top-left corner.
+
+**How Cua Driver handles it:** it queries `CoordType::Window` (which GTK4 *does* report correctly per-widget) and adds the window's screen origin — from `_GTK_FRAME_EXTENTS` on X11, or the `org.cua.WinRects` shell helper on Wayland — to reconstruct true screen coordinates. So no caller action is required; GTK4 frames are reliable.
 
 ---
 

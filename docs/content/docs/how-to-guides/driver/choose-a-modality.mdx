@@ -1,0 +1,94 @@
+---
+title: "Choose a Capture and Dispatch Mode"
+description: "Pick the right capture mode, dispatch, and scope for an action — start on the accessibility path, fall back to vision, and escalate to foreground only when you must."
+---
+
+# Choose a Capture and Dispatch Mode
+
+This guide shows you how to pick how the agent observes and acts on a target, so each action lands the first time and stays in the background when it can.
+
+## When to use this guide
+
+Use this when you are wiring an agent to Cua Driver and deciding what to pass to `click`, `type_text`, `get_window_state`, and friends — `element_index` versus `x, y`, `delivery_mode: background` versus `foreground`, and window versus desktop scope.
+
+## Before you start
+
+You should already be connected to the driver and able to launch an app and read a window. For the concepts behind the three axes, see [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities); this guide only covers what to call.
+
+## Start on the accessibility path (the default)
+
+Default to **`ax` capture + `background` dispatch, acting by `element_index`.** It is the only rung the driver can verify, it never steals focus, and it works on Windows, macOS, and Linux (X11 and Wayland).
+
+Read the window, then act on an element from that snapshot:
+
+```jsonc
+// 1. snapshot the accessibility tree
+get_window_state({ pid, window_id, capture_mode: "ax" })
+// → elements[], each with an element_index and a frame
+
+// 2. act by element_index — background, no focus steal
+click({ pid, window_id, element_index: 12 })
+type_text({ pid, text: "hello" })
+```
+
+If you want a screenshot alongside the tree (set-of-marks), use `capture_mode: "som"`; for a screenshot only, `capture_mode: "vision"`.
+
+## Fall back to vision when there is no usable element
+
+If the target has no AX tree (canvas, custom-drawn UI, web content the toolkit doesn't expose), switch to **vision**: read a screenshot and click a coordinate. Coordinates are window-relative for a windowed target.
+
+```jsonc
+get_window_state({ pid, window_id, capture_mode: "vision" })   // screenshot
+click({ pid, window_id, x: 320, y: 210 })                      // click a pixel
+```
+
+On Linux this still avoids synthetic input where it can: the driver resolves the pixel to the element under it and fires that element's action. See [Linux and Wayland](/explanation/linux-and-wayland) for why.
+
+## Escalate to foreground only when background doesn't land
+
+A few targets ignore background input — DirectInput games, raw-input canvases (Blender, Unity), focus-polling apps. When an action doesn't take effect in the background, retry the same call with **`delivery_mode: "foreground"`**, which activates the window first.
+
+```jsonc
+click({ pid, window_id, x: 320, y: 210, delivery_mode: "foreground" })
+```
+
+When you encounter one of these apps, foreground only for the action that needs it, and only when the user isn't actively working on the machine — it raises the window. See [Known limits](/reference/cua-driver/limits) for the specific apps.
+
+## Switch to desktop scope only for screen-absolute work
+
+Reach for **desktop scope** only when the action has no single window — dragging between windows, or clicking absolute screen coordinates. It inherently foregrounds and works on pixels, so it cannot honor the background contract.
+
+```jsonc
+set_config({ capture_scope: "desktop" })
+get_desktop_state()                       // full-screen screenshot
+click({ x: 1280, y: 40 })                 // screen-absolute, no window_id
+```
+
+A window-less click while scope is still `window` is rejected with `desktop_scope_disabled` — that error is the prompt to switch scope.
+
+## Confirm the action landed
+
+Only `ax` actions return `verified: true` (the driver read the result back). For vision and foreground clicks, the response carries `verified: false` and a `path` naming the rung that fired — the *caller* confirms the effect. After such an action, re-read and check:
+
+```jsonc
+click({ pid, window_id, x: 320, y: 210 })   // → { verified: false, path: "..." }
+get_window_state({ pid, window_id, capture_mode: "ax" })  // confirm the change
+```
+
+## Troubleshooting
+
+**Problem: the call returned success but nothing changed (false success).**
+Don't trust the status code on a `verified: false` action. Re-read the window (or screenshot) and confirm the effect; if it didn't land, escalate dispatch (background → foreground) or switch modality (vision → element).
+
+**Problem: `desktop_scope_disabled` on a window-less click.**
+You're in `window` scope. Either pass a `window_id` (+ `element_index` or `x, y`), or `set_config({ capture_scope: "desktop" })` for genuinely screen-absolute work.
+
+**Problem: keystrokes don't land on a Linux app.**
+On native Wayland, raw keys have no background path. Type into accessible fields with `type_text`, drive controls by `element_index`, or run the app under XWayland. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
+
+## Related
+
+- [Capture and dispatch modalities](/explanation/capture-and-dispatch-modalities) — the three axes and the validity matrix
+- [MCP tools](/reference/cua-driver/mcp-tools) — full parameters for every tool
+- [Known limits](/reference/cua-driver/limits) — targets that need foreground
+- [Linux and Wayland](/explanation/linux-and-wayland) — how the Linux rungs work

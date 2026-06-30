@@ -66,8 +66,8 @@ The two rejections are enforced, not advisory. A window-less click while `captur
 | Axis / value | Windows | macOS | Linux |
 |---|---|---|---|
 | `capture_mode` `ax` / `vision` / `som` | ✅ | ✅ | ✅ |
-| `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11/AT-SPI; native Wayland input is a [known gap](/explanation/the-no-foreground-contract#linux)) |
-| `dispatch: foreground` + `bring_to_front` | ✅ explicit activation | ✅ explicit activation (`NSRunningApplication.activate`) | activation differs (stubbed) |
+| `dispatch: background` (the contract) | ✅ | ✅ | ✅ (X11 and Wayland via AT-SPI; raw keyboard into native-Wayland apps is the [residual gap](/explanation/the-no-foreground-contract#linux)) |
+| `dispatch: foreground` + `bring_to_front` | ✅ explicit activation | ✅ explicit activation (`NSRunningApplication.activate`) | ✅ X11 EWMH activation (`_NET_ACTIVE_WINDOW` + input focus); Wayland raise is compositor-constrained |
 | `capture_scope: desktop` (full screen-absolute loop) | ✅ | rolling out | rolling out |
 
 `capture_mode` is recognized everywhere, so window-scope automation — the four window-scope rows of the matrix — works on all three platforms. The desktop-scope loop (`get_desktop_state` plus window-less screen-absolute input via hit-testing) is complete on Windows and rolling out to macOS and Linux; on those platforms a window-less action under window scope is still rejected. See the [MCP tool reference](/reference/cua-driver/mcp-tools) for per-tool parameters and the [no-foreground contract](/explanation/the-no-foreground-contract) for how background dispatch is implemented on each OS.

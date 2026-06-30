@@ -839,6 +839,26 @@ pub fn with_x11_foreground<T>(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
+    // EWMH `_NET_ACTIVE_WINDOW` is honored as *raise-only* by WMs with
+    // focus-stealing prevention (e.g. KWin): the window reaches the top of the
+    // stack — enough for a coordinate click, which lands by stacking — but the X
+    // *input focus* never transfers, so XTest key events (which the server routes
+    // to the focused window) go to whatever was focused before. Set the input
+    // focus explicitly too, exactly as `xdotool windowactivate` does, so the
+    // foreground key/hotkey rung actually reaches the target. Guarded against
+    // BadMatch on a not-yet-viewable window — Xlib's default handler would exit
+    // the process — reusing the scoped `ignore_x_error` pattern used elsewhere.
+    unsafe {
+        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XSetInputFocus(
+            display,
+            xid as x11::xlib::Window,
+            x11::xlib::RevertToParent,
+            x11::xlib::CurrentTime,
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(prev_handler);
+    }
     let result = body();
     // Restore the prior active window (brief swap, like macOS/Windows).
     if let Some(p) = prior {
@@ -1774,6 +1794,10 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         conn.flush()?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
+    // Round-trip so the server delivers the final character's key events before
+    // this short-lived connection drops (see send_key_xtest — keyboard XTEST
+    // events queued on a connection that closes immediately can be lost).
+    let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
 
@@ -1809,29 +1833,71 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         mod_keycodes.push(kc);
     }
 
-    // Resolve the main key.
+    // Resolve the main key, SHIFT-AWARE. A keysym at the shifted level (slot 1)
+    // — e.g. '*', '+', '(' on a US layout, including the spelled-out names
+    // asterisk/plus/parenleft — must be typed with Shift held; a bare keycode
+    // press emits the slot-0 glyph instead (e.g. '*' -> '8', '+' -> '='). Prefer
+    // the slot-0/slot-1 lookup (`char_to_keycode_shift`); fall back to the
+    // spare-keycode remap (which binds the keysym across all levels, so no shift)
+    // only when the keysym is absent from the map.
     let keysym = key_name_to_keysym(key)?;
-    let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
-    if let Some(g) = guard {
-        guards.push(g);
-    }
+    let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, keysym) {
+        Some(found) => found,
+        None => {
+            let (kc, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+            if let Some(g) = guard {
+                guards.push(g);
+            }
+            (kc, false)
+        }
+    };
 
-    // Press modifiers, tap the key, release modifiers in reverse order.
+    // Hold Shift around the key when it lives at the shifted level and the caller
+    // didn't already pass Shift as a modifier. Resolve the Shift keycode from the
+    // server's modifier map so the mask actually engages.
+    let shift_requested = modifiers.iter().any(|m| m.eq_ignore_ascii_case("shift"));
+    let auto_shift_kc = if needs_shift && !shift_requested {
+        let modmap = conn.get_modifier_mapping()?.reply()?;
+        let kpm = modmap.keycodes_per_modifier() as usize;
+        modmap
+            .keycodes
+            .get(..kpm)
+            .and_then(|s| s.iter().copied().find(|&k| k != 0))
+    } else {
+        None
+    };
+
+    // Press modifiers (+ auto-Shift), tap the key, release in reverse order.
     for &kc in &mod_keycodes {
         conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
+    }
+    if let Some(sk) = auto_shift_kc {
+        conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    if let Some(sk) = auto_shift_kc {
+        conn.xtest_fake_input(KEY_RELEASE_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
+    }
     for &kc in mod_keycodes.iter().rev() {
         conn.xtest_fake_input(KEY_RELEASE_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.flush()?;
 
-    // If we borrowed spare keycodes, round-trip so the target translates the
-    // events under the temporary mapping before the guards restore it on drop.
+    // Round-trip so the server actually PROCESSES (delivers) the injected XTEST
+    // key events before this function returns and drops its short-lived
+    // connection. `flush()` only writes the requests to the socket; without a
+    // following reply-bearing request the connection can close before the server
+    // routes the KeyPress/KeyRelease to the focused window, and the events are
+    // dropped. Observed under Xtigervnc: identical raw `xtest_fake_input` calls
+    // deliver when the connection stays alive but vanish from this short-lived
+    // one — pointer events (send_click_xtest_desktop) survive, keyboard events do
+    // not. Unconditional (previously only ran for spare-keycode remaps).
+    let _ = conn.get_input_focus()?.reply();
     if !guards.is_empty() {
-        let _ = conn.get_input_focus()?.reply();
+        // Spare-keycode remap: give the target a beat to translate the events
+        // under the temporary mapping before the guards restore it on drop.
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
     drop(guards);
@@ -1861,6 +1927,11 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
     }
     conn.flush()?;
+    // Round-trip so the server processes the warp+button events before this
+    // short-lived connection drops. Pointer events happened to survive the close
+    // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
+    // it explicit so the desktop click is reliable across X servers too.
+    let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
 
@@ -1973,6 +2044,14 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "f9" => 0xFFC6, "f10" => 0xFFC7, "f11" => 0xFFC8, "f12" => 0xFFC9,
         "shift" => 0xFFE1, "ctrl" | "control" => 0xFFE3, "alt" => 0xFFE9, "super" | "meta" | "win" => 0xFFEB,
         "capslock" => 0xFFE5, "numlock" => 0xFF7F,
+        // Common X keysym names for punctuation. The single-char branch below
+        // already resolves the literal glyph ("+", "=", "*", "/"), but callers
+        // that speak the X keysym-name vocabulary may pass the spelled-out name.
+        // For the ASCII range the keysym value equals the codepoint.
+        "plus" => 0x2B, "minus" | "dash" => 0x2D, "equal" | "equals" => 0x3D,
+        "asterisk" | "star" => 0x2A, "slash" => 0x2F, "backslash" => 0x5C,
+        "period" | "dot" => 0x2E, "comma" => 0x2C, "semicolon" => 0x3B,
+        "colon" => 0x3A, "underscore" => 0x5F, "parenleft" => 0x28, "parenright" => 0x29,
         s if s.len() == 1 => s.chars().next().unwrap() as u32,
         _ => anyhow::bail!("Unknown key: {key}"),
     };

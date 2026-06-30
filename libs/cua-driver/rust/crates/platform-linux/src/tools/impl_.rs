@@ -2180,6 +2180,19 @@ impl Tool for DoubleClickTool {
             }
             if delivery.is_foreground() {
                 return crate::input::with_x11_foreground(xid, 80, || {
+                    // Real XTest double-click at the screen point — synthetic
+                    // XSendEvent button events are dropped by GTK/Qt and the MPX
+                    // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
+                    // neither lands. Mirrors the single-click foreground path.
+                    if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
+                        crate::input::send_click_xtest_desktop(
+                            sx.round() as i32,
+                            sy.round() as i32,
+                            1,
+                            2,
+                        )?;
+                        return Ok(());
+                    }
                     x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
                 });
             }
@@ -2331,6 +2344,18 @@ impl Tool for RightClickTool {
             }
             if delivery.is_foreground() {
                 return crate::input::with_x11_foreground(xid, 80, || {
+                    // Real XTest right-click at the screen point (synthetic
+                    // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).
+                    // Mirrors the single-click foreground path.
+                    if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
+                        crate::input::send_click_xtest_desktop(
+                            sx.round() as i32,
+                            sy.round() as i32,
+                            3,
+                            1,
+                        )?;
+                        return Ok(());
+                    }
                     x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
                 });
             }

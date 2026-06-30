@@ -10,7 +10,7 @@
 //! `cua_driver_core::page` — this file only implements the backend.
 
 use async_trait::async_trait;
-use cua_driver_core::page::PageBackend;
+use cua_driver_core::page::{ClickElementResult, PageBackend};
 use std::sync::Arc;
 
 use super::ToolState;
@@ -100,22 +100,90 @@ impl PageBackend for MacOsPageBackend {
         execute_js(javascript, &bundle_id, pid, window_id).await
     }
 
+    async fn click_element(
+        &self,
+        pid: i32,
+        window_id: u32,
+        selector: &str,
+    ) -> anyhow::Result<ClickElementResult> {
+        let selector_js = json_string(selector);
+        let probe_js = format!(
+            r#"(function() {{
+  var selector = {selector_js};
+  var el = document.querySelector(selector);
+  if (!el) throw new Error("element_not_found:" + selector);
+  var r = el.getBoundingClientRect();
+  return JSON.stringify({{
+    vx: r.left + r.width / 2,
+    vy: r.top + r.height / 2,
+    sx: window.screenX + (window.outerWidth - window.innerWidth) / 2,
+    sy: window.screenY + (window.outerHeight - window.innerHeight),
+    dpr: window.devicePixelRatio || 1
+  }});
+}})();"#
+        );
+        let probe_raw = self.execute_javascript(pid, window_id, &probe_js).await?;
+        let parsed = parse_click_probe(&probe_raw)?;
+
+        let vx = required_finite(&parsed, "vx", &probe_raw)?;
+        let vy = required_finite(&parsed, "vy", &probe_raw)?;
+        let sx = required_finite(&parsed, "sx", &probe_raw)?;
+        let sy = required_finite(&parsed, "sy", &probe_raw)?;
+        let dpr = parsed
+            .get("dpr")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(1.0);
+
+        let screen_x = sx + vx * dpr;
+        let screen_y = sy + vy * dpr;
+        let cursor_key = "default".to_owned();
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
+        );
+        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+        self.state
+            .cursor_registry
+            .update_position(&cursor_key, screen_x, screen_y);
+        crate::cursor::overlay::send_command(
+            cursor_key,
+            cursor_overlay::OverlayCommand::ClickPulse {
+                x: screen_x,
+                y: screen_y,
+            },
+        );
+
+        let click_js = format!(
+            r#"(function() {{
+  var selector = {selector_js};
+  var el = document.querySelector(selector);
+  if (!el) throw new Error("element_not_found_on_click:" + selector);
+  el.click();
+  return "clicked:" + selector;
+}})();"#
+        );
+        let _ = self.execute_javascript(pid, window_id, &click_js).await?;
+
+        Ok(ClickElementResult {
+            screen_x,
+            screen_y,
+            viewport_x: vx,
+            viewport_y: vy,
+            message: format!(
+                "Clicked {selector} at screen ({screen_x:.0},{screen_y:.0}) on pid {pid}."
+            ),
+        })
+    }
+
     async fn enable_javascript_apple_events(&self, bundle_id: &str) -> anyhow::Result<String> {
         BrowserJs::enable_javascript_apple_events(bundle_id).await?;
-        Ok(
-            "JavaScript from Apple Events has been enabled. The browser is restarting."
-                .to_owned(),
-        )
+        Ok("JavaScript from Apple Events has been enabled. The browser is restarting.".to_owned())
     }
 }
 
 /// Route JavaScript execution to the appropriate backend.
-async fn execute_js(
-    js: &str,
-    bundle_id: &str,
-    pid: i32,
-    window_id: u32,
-) -> anyhow::Result<String> {
+async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u32) -> anyhow::Result<String> {
     if BrowserJs::supports(bundle_id) {
         return BrowserJs::execute(js, bundle_id, window_id).await;
     }
@@ -135,11 +203,10 @@ async fn execute_js(
 
 /// Extract page text via the AX tree.
 async fn ax_text_fallback(pid: i32, window_id: u32) -> anyhow::Result<String> {
-    let result = tokio::task::spawn_blocking(move || {
-        crate::ax::tree::walk_tree(pid, Some(window_id), None)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
+    let result =
+        tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
+            .await
+            .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
     Ok(AXPageReader::extract_text(&result.tree_markdown))
 }
 
@@ -150,11 +217,10 @@ async fn ax_query_fallback(
     selector: &str,
 ) -> anyhow::Result<Vec<crate::browser::ax_page_reader::AXElement>> {
     let sel = selector.to_owned();
-    let result = tokio::task::spawn_blocking(move || {
-        crate::ax::tree::walk_tree(pid, Some(window_id), None)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
+    let result =
+        tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
+            .await
+            .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
     Ok(AXPageReader::query(&sel, &result.tree_markdown))
 }
 
@@ -218,4 +284,30 @@ fn json_string(value: &str) -> String {
         .replace('\r', "\\r")
         .replace('\t', "\\t");
     format!("\"{escaped}\"")
+}
+
+fn parse_click_probe(raw: &str) -> anyhow::Result<serde_json::Value> {
+    let first = serde_json::from_str::<serde_json::Value>(raw.trim()).map_err(|error| {
+        anyhow::anyhow!("click_element: could not parse coord JSON from probe {raw:?}: {error}")
+    })?;
+    match first {
+        serde_json::Value::String(inner) => serde_json::from_str(&inner).map_err(|error| {
+            anyhow::anyhow!(
+                "click_element: could not parse inner coord JSON from probe {raw:?}: {error}"
+            )
+        }),
+        other => Ok(other),
+    }
+}
+
+fn required_finite(value: &serde_json::Value, key: &str, raw: &str) -> anyhow::Result<f64> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|number| number.is_finite())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "click_element: probe JSON missing/invalid required field '{key}' (raw: {raw:?})"
+            )
+        })
 }

@@ -7,6 +7,8 @@ use crate::windows::WindowBounds;
 
 pub struct BrowserJs;
 
+const CHROME_APP_BUNDLE_PREFIX: &str = "com.google.Chrome.app.";
+
 #[derive(Clone, Debug)]
 struct NativeWindowTarget {
     title: String,
@@ -20,6 +22,7 @@ fn app_name_for_bundle(bundle_id: &str) -> Option<&'static str> {
         "com.brave.Browser"      => Some("Brave Browser"),
         "com.microsoft.edgemac"  => Some("Microsoft Edge"),
         "com.apple.Safari"       => Some("Safari"),
+        _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => Some("Google Chrome"),
         _                        => None,
     }
 }
@@ -88,6 +91,7 @@ end tell"#
         let home = std::env::var("HOME").unwrap_or_default();
         let profiles_dir = match bundle_id {
             "com.google.Chrome"     => format!("{home}/Library/Application Support/Google/Chrome"),
+            _ if bundle_id.starts_with(CHROME_APP_BUNDLE_PREFIX) => format!("{home}/Library/Application Support/Google/Chrome"),
             "com.brave.Browser"     => format!("{home}/Library/Application Support/BraveSoftware/Brave-Browser"),
             "com.microsoft.edgemac" => format!("{home}/Library/Application Support/Microsoft Edge"),
             _ => anyhow::bail!("No profiles directory for {bundle_id}"),

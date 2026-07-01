@@ -22,7 +22,13 @@ Use the same one-line installer on every platform; it picks the right path for t
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)"
     ```
 
-    Grant Accessibility and Screen Recording (this launches CuaDriver so the prompts are attributed to it):
+    Start the daemon through the app bundle so macOS attributes permission prompts to CuaDriver.app — this is what makes the TCC grant stick to the driver:
+
+    ```bash
+    open -n -g -a CuaDriver --args serve
+    ```
+
+    Then grant Accessibility and Screen Recording:
 
     ```bash
     cua-driver permissions grant

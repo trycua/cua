@@ -134,4 +134,8 @@ internal *page* links. Issues:
 - Hand-doc polish pending: #17 link-text unify, #18 sample-version refresh, #19
   page-name drift; plus macOS omissions (daemon-start callout, unverifiable
   clicks, screen-recording dependency).
-- Linux + Windows (Azure) — not started.
+- Linux + Windows (Azure) — Linux leg in progress.
+
+## Azure cleanup (wind-down MUST run)
+All audit VMs live in resource group **`cua-docs-audit`**. To tear everything
+down: `az group delete -n cua-docs-audit --yes --no-wait`.

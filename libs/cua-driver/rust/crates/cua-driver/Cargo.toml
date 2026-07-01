@@ -21,6 +21,7 @@ cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
 base64 = { workspace = true }
+ring = "0.17"
 uuid = { workspace = true }
 # Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses

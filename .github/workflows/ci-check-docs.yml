@@ -21,10 +21,13 @@ on:
       - "libs/typescript/agent/src/**"
       # Cua-Bot
       - "libs/cuabot/src/**"
+      # Cyclops CS Backend (vendored OpenAPI spec from trycua/cloud)
+      - "scripts/docs-generators/specs/cyclops-cs.swagger.json"
       # Documentation files themselves
       - "docs/content/docs/reference/cua-driver/**"
       - "docs/content/docs/cua/reference/**"
       - "docs/content/docs/cuabot/reference/**"
+      - "docs/content/docs/reference/cyclops-cs/**"
       # Generator scripts
       - "scripts/docs-generators/**"
 
@@ -88,6 +91,10 @@ jobs:
           fi
           if echo "$CHANGED_FILES" | grep -q "^libs/cuabot/src/"; then
             GENERATORS="$GENERATORS cuabot"
+          fi
+          # Cyclops CS: vendored spec, generator, or its output page changed
+          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/specs/cyclops-cs\.swagger\.json\|^scripts/docs-generators/cyclops-cs\.ts\|^docs/content/docs/reference/cyclops-cs/"; then
+            GENERATORS="$GENERATORS cyclops-cs"
           fi
 
           # Individual generator script changes — only trigger their own generator

@@ -722,13 +722,21 @@ impl Tool for LaunchAppTool {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
 
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(
+            String,
+            Option<u32>,
+            String,
+        )> {
             // Open URLs via xdg-open.
             if !urls.is_empty() {
                 for url in &urls {
                     std::process::Command::new("xdg-open").arg(url).spawn()?;
                 }
-                return Ok(format!("Opened {} URL(s) via xdg-open.", urls.len()));
+                return Ok((
+                    format!("Opened {} URL(s) via xdg-open.", urls.len()),
+                    None,
+                    "xdg-open".to_owned(),
+                ));
             }
             // launch_path > name. Both go through the same direct-exec path
             // (so XDG `Exec=` commands round-trip), but launch_path is the
@@ -739,19 +747,60 @@ impl Tool for LaunchAppTool {
                 let prog = parts.next().unwrap_or(cmd);
                 let rest: Vec<&str> = parts.collect();
                 match std::process::Command::new(prog).args(&rest).spawn() {
-                    Ok(child) => return Ok(format!("Launched '{}' with pid {}.", cmd, child.id())),
+                    Ok(child) => {
+                        let pid = child.id();
+                        return Ok((
+                            format!("✅ Launched {cmd} (pid {pid}) in background."),
+                            Some(pid),
+                            cmd.to_owned(),
+                        ));
+                    }
                     Err(_) => {
-                        // Fall back to xdg-open for .desktop app names.
+                        // Fall back to xdg-open for .desktop app names. xdg-open may
+                        // spawn a helper and exit, so do not claim its pid is the app pid.
                         std::process::Command::new("xdg-open").arg(cmd).spawn()?;
-                        return Ok(format!("Opened '{}' via xdg-open.", cmd));
+                        return Ok((
+                            format!("Opened '{cmd}' via xdg-open."),
+                            None,
+                            cmd.to_owned(),
+                        ));
                     }
                 }
             }
             unreachable!()
-        }).await;
+        })
+        .await;
 
         match result {
-            Ok(Ok(msg)) => ToolResult::text(msg),
+            Ok(Ok((message, pid_opt, name))) => {
+                if let Some(pid) = pid_opt {
+                    let windows = tokio::task::spawn_blocking(move || {
+                        crate::x11::list_windows(Some(pid))
+                            .iter()
+                            .map(window_record_json)
+                            .collect::<Vec<_>>()
+                    })
+                    .await
+                    .unwrap_or_default();
+                    ToolResult::text(message).with_structured(json!({
+                        "pid": pid,
+                        "bundle_id": Value::Null,
+                        "name": name,
+                        "running": true,
+                        "active": false,
+                        "windows": windows,
+                    }))
+                } else {
+                    ToolResult::text(message).with_structured(json!({
+                        "pid": Value::Null,
+                        "bundle_id": Value::Null,
+                        "name": name,
+                        "running": Value::Null,
+                        "active": false,
+                        "windows": [],
+                    }))
+                }
+            }
             Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
